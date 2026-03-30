@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from agentic_crawler.agent.state import AgentState
+from agentic_crawler.agent.state import AgentState, StepRecord
 
 SYSTEM_PROMPT = """\
 You are an autonomous web crawling agent. You navigate websites, interact with pages, \
@@ -40,7 +41,7 @@ Choose your next action wisely to make progress toward the goal.
 HISTORY_WINDOW = 15  # Max recent steps to include
 
 
-def build_messages(state: AgentState) -> list[dict[str, Any]]:
+def build_messages(state: AgentState, provider: str = "claude") -> list[dict[str, Any]]:
     """Build the message list for the LLM from current agent state."""
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -56,23 +57,13 @@ def build_messages(state: AgentState) -> list[dict[str, Any]]:
 
     messages.append({"role": "user", "content": user_content})
 
-    # Add history as assistant/user turn pairs (action -> observation)
     recent_history = state.history[-HISTORY_WINDOW:]
-    for step in recent_history:
-        # Assistant turn: the action taken
-        messages.append(
-            {
-                "role": "assistant",
-                "content": f"Action: {step.action}({_format_params(step.params)})",
-            }
-        )
-        # User turn: the observation
-        messages.append(
-            {
-                "role": "user",
-                "content": f"Observation: {step.observation}",
-            }
-        )
+    is_claude = provider == "claude"
+
+    if is_claude:
+        _append_history_claude(messages, recent_history)
+    else:
+        _append_history_openai(messages, recent_history)
 
     # Current page context
     if state.page_summary:
@@ -82,14 +73,17 @@ def build_messages(state: AgentState) -> list[dict[str, Any]]:
                 f"\n\n## Data Extracted So Far\n{len(state.extracted_data)} item(s) collected."
             )
         page_msg += "\n\nWhat is your next action?"
-        messages.append({"role": "user", "content": page_msg})
+
+        if is_claude:
+            _append_user_content_claude(messages, page_msg)
+        else:
+            messages.append({"role": "user", "content": page_msg})
     elif not state.history:
-        messages.append(
-            {
-                "role": "user",
-                "content": "You have not visited any page yet. Start by navigating to a relevant URL.",
-            }
-        )
+        prompt = "You have not visited any page yet. Start by navigating to a relevant URL."
+        if is_claude:
+            _append_user_content_claude(messages, prompt)
+        else:
+            messages.append({"role": "user", "content": prompt})
 
     return messages
 
@@ -109,6 +103,101 @@ def build_plan_messages(goal: str) -> list[dict[str, Any]]:
         },
         {"role": "user", "content": f"Goal: {goal}\n\nProduce a step-by-step plan:"},
     ]
+
+
+def _append_history_openai(messages: list[dict[str, Any]], history: list[StepRecord]) -> None:
+    for step in history:
+        if step.tool_call_id:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": step.tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": step.action,
+                                "arguments": json.dumps(step.params),
+                            },
+                        }
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": step.tool_call_id,
+                    "content": step.observation,
+                }
+            )
+        else:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"Action: {step.action}({_format_params(step.params)})",
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Observation: {step.observation}",
+                }
+            )
+
+
+def _append_history_claude(messages: list[dict[str, Any]], history: list[StepRecord]) -> None:
+    for step in history:
+        if step.tool_call_id:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": step.tool_call_id,
+                            "name": step.action,
+                            "input": step.params,
+                        }
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": step.tool_call_id,
+                            "content": step.observation,
+                        }
+                    ],
+                }
+            )
+        else:
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"Action: {step.action}({_format_params(step.params)})",
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Observation: {step.observation}",
+                }
+            )
+
+
+def _append_user_content_claude(messages: list[dict[str, Any]], text: str) -> None:
+    """Merge into preceding user message when needed — Claude requires alternating roles."""
+    if messages and messages[-1]["role"] == "user":
+        last_content = messages[-1]["content"]
+        if isinstance(last_content, list):
+            last_content.append({"type": "text", "text": text})
+        else:
+            messages[-1]["content"] = last_content + "\n\n" + text
+    else:
+        messages.append({"role": "user", "content": text})
 
 
 def _format_params(params: dict[str, Any]) -> str:

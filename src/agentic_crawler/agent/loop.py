@@ -52,7 +52,7 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                 )
                 break
 
-            messages = build_messages(state)
+            messages = build_messages(state, provider=settings.llm_provider)
             response = await provider.complete(
                 messages=messages,
                 tools=tool_schemas,
@@ -66,6 +66,7 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                     await _execute_tool_call(
                         tool_call.name,
                         tool_call.arguments,
+                        tool_call.id,
                         state,
                         router,
                         actions,
@@ -133,6 +134,7 @@ async def _plan(provider: LLMProvider, goal: str, temperature: float) -> list[st
 async def _execute_tool_call(
     name: str,
     params: dict[str, Any],
+    tool_call_id: str,
     state: AgentState,
     router: FetcherRouter,
     actions: dict[str, Any],
@@ -158,7 +160,7 @@ async def _execute_tool_call(
     result = await action.execute(router, params)
 
     # Update state
-    state.add_step(name, params, result.observation, result.success)
+    state.add_step(name, params, result.observation, result.success, tool_call_id=tool_call_id)
 
     if result.new_url:
         state.current_url = result.new_url

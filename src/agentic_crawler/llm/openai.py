@@ -138,7 +138,26 @@ class OpenAIProvider:
                 else:
                     instructions += "\n\n" + content
             elif role == "assistant":
-                input_items.append({"role": "assistant", "content": content})
+                if "tool_calls" in msg:
+                    for tc in msg["tool_calls"]:
+                        input_items.append(
+                            {
+                                "type": "function_call",
+                                "call_id": tc["id"],
+                                "name": tc["function"]["name"],
+                                "arguments": tc["function"]["arguments"],
+                            }
+                        )
+                elif content:
+                    input_items.append({"role": "assistant", "content": content})
+            elif role == "tool":
+                input_items.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": msg.get("tool_call_id", ""),
+                        "output": content,
+                    }
+                )
             else:
                 input_items.append({"role": "user", "content": content})
 

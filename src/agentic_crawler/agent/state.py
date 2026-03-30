@@ -10,6 +10,7 @@ class StepRecord:
     params: dict[str, Any]
     observation: str
     success: bool
+    tool_call_id: str | None = None
 
 
 @dataclass
@@ -28,8 +29,23 @@ class AgentState:
     done_reason: str = ""
     total_tokens: int = 0
 
-    def add_step(self, action: str, params: dict[str, Any], observation: str, success: bool) -> None:
-        self.history.append(StepRecord(action=action, params=params, observation=observation, success=success))
+    def add_step(
+        self,
+        action: str,
+        params: dict[str, Any],
+        observation: str,
+        success: bool,
+        tool_call_id: str | None = None,
+    ) -> None:
+        self.history.append(
+            StepRecord(
+                action=action,
+                params=params,
+                observation=observation,
+                success=success,
+                tool_call_id=tool_call_id,
+            )
+        )
         self.step_count += 1
         if not success:
             self.errors.append(f"Step {self.step_count}: {observation}")
