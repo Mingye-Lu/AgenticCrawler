@@ -21,29 +21,35 @@ logger = structlog.get_logger()
 console = Console()
 
 MAX_CONSECUTIVE_ERRORS = 5
+MAX_TEXT_ONLY_RESPONSES = 3
 
 
 async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> None:
-    """Main entry point: run the agentic crawl loop."""
     provider = get_provider(settings)
     router = FetcherRouter(headless=settings.headless, browser_timeout=settings.browser_timeout)
     actions = get_action_registry()
     tool_schemas = get_tool_schemas()
 
     state = AgentState(goal=goal, max_steps=settings.max_steps)
+    text_only_count = 0
 
     try:
-        # Phase 1: Planning
         console.print(Panel("[bold]Planning...[/bold]", style="blue"))
         state.plan = await _plan(provider, goal, settings.temperature)
         for i, step in enumerate(state.plan, 1):
             console.print(f"  {i}. {step}")
 
-        # Phase 2: Execute
         console.print(Panel("[bold]Executing...[/bold]", style="green"))
         while not state.done and state.step_count < state.max_steps:
             if state.consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 state.mark_done(f"Stopped after {MAX_CONSECUTIVE_ERRORS} consecutive errors")
+                break
+
+            if text_only_count >= MAX_TEXT_ONLY_RESPONSES:
+                state.mark_done(
+                    "Agent produced text responses without tool calls. "
+                    "Finishing with data collected so far."
+                )
                 break
 
             messages = build_messages(state)
@@ -55,6 +61,7 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
             state.total_tokens += sum(response.usage.values())
 
             if response.has_tool_calls:
+                text_only_count = 0
                 for tool_call in response.tool_calls:
                     await _execute_tool_call(
                         tool_call.name,
@@ -67,11 +74,10 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                     if state.done:
                         break
             elif response.text:
-                # No tool call — check if the agent is signaling done via text
                 if _text_signals_done(response.text):
                     state.mark_done(response.text)
                 else:
-                    # Log the thinking and continue
+                    text_only_count += 1
                     if verbose:
                         console.print(f"[dim]Agent: {response.text[:200]}[/dim]")
 
@@ -82,13 +88,23 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
 
         # Output results
         if state.extracted_data:
-            console.print(Panel(f"[bold green]Done![/bold green] Extracted {len(state.extracted_data)} item(s)"))
+            console.print(
+                Panel(
+                    f"[bold green]Done![/bold green] Extracted {len(state.extracted_data)} item(s)"
+                )
+            )
             write_output(state.extracted_data, settings.output_format, settings.output_file)
         else:
-            console.print(Panel(f"[bold yellow]Done.[/bold yellow] {state.done_reason or 'No data extracted.'}"))
+            console.print(
+                Panel(
+                    f"[bold yellow]Done.[/bold yellow] {state.done_reason or 'No data extracted.'}"
+                )
+            )
 
         # Stats
-        console.print(f"Steps: {state.step_count} | Tokens: {state.total_tokens} | Errors: {len(state.errors)}")
+        console.print(
+            f"Steps: {state.step_count} | Tokens: {state.total_tokens} | Errors: {len(state.errors)}"
+        )
 
     finally:
         await router.close()
@@ -96,7 +112,6 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
 
 
 async def _plan(provider: LLMProvider, goal: str, temperature: float) -> list[str]:
-    """Ask the LLM to produce a high-level plan."""
     messages = build_plan_messages(goal)
     response = await provider.complete(messages=messages, temperature=temperature)
 
@@ -123,7 +138,6 @@ async def _execute_tool_call(
     actions: dict[str, Any],
     verbose: bool,
 ) -> None:
-    """Execute a single tool call and update state."""
     step_label = f"[Step {state.step_count + 1}]"
 
     # Handle 'done' specially
@@ -161,13 +175,14 @@ async def _execute_tool_call(
 
 
 def _text_signals_done(text: str) -> bool:
-    """Check if plain text response indicates task completion."""
     lower = text.lower()
-    return any(phrase in lower for phrase in ["task complete", "goal achieved", "i'm done", "task is done", "finished"])
+    return any(
+        phrase in lower
+        for phrase in ["task complete", "goal achieved", "i'm done", "task is done", "finished"]
+    )
 
 
 def _compact_params(params: dict[str, Any]) -> str:
-    """Format params compactly for console output."""
     parts = []
     for k, v in params.items():
         s = str(v)

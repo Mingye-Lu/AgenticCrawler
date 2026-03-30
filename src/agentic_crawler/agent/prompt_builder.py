@@ -19,6 +19,15 @@ and extract structured data to accomplish a user's goal.
 - Do NOT loop indefinitely. If you cannot make progress after several attempts, call 'done' and explain what you found.
 - Keep extracted data clean and well-structured.
 
+## Navigation Strategy
+- Prefer navigating directly to full URLs rather than filling search forms. \
+For example, use navigate(url="https://www.bing.com/search?q=my+query") instead of filling a search box.
+- NEVER use Google Search — it blocks automated browsers. Use Bing (bing.com/search?q=...) or DuckDuckGo (duckduckgo.com/?q=...) instead.
+- After navigating via a search engine, extract the URLs you need from the page content and navigate directly to those URLs.
+- Only use click when you need to interact with a specific page element (buttons, pagination, tabs). \
+For following links, prefer navigate with the link's href URL.
+- The page content shown to you already contains links with their URLs. Use navigate(url=...) to follow them.
+
 ## Available Information
 Each turn, you will see:
 - The current page content (title, text, links, forms)
@@ -41,7 +50,9 @@ def build_messages(state: AgentState) -> list[dict[str, Any]]:
     user_content = f"## Goal\n{state.goal}\n"
 
     if state.plan:
-        user_content += "\n## Plan\n" + "\n".join(f"{i+1}. {step}" for i, step in enumerate(state.plan))
+        user_content += "\n## Plan\n" + "\n".join(
+            f"{i + 1}. {step}" for i, step in enumerate(state.plan)
+        )
 
     messages.append({"role": "user", "content": user_content})
 
@@ -49,37 +60,51 @@ def build_messages(state: AgentState) -> list[dict[str, Any]]:
     recent_history = state.history[-HISTORY_WINDOW:]
     for step in recent_history:
         # Assistant turn: the action taken
-        messages.append({
-            "role": "assistant",
-            "content": f"Action: {step.action}({_format_params(step.params)})",
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": f"Action: {step.action}({_format_params(step.params)})",
+            }
+        )
         # User turn: the observation
-        messages.append({
-            "role": "user",
-            "content": f"Observation: {step.observation}",
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": f"Observation: {step.observation}",
+            }
+        )
 
     # Current page context
     if state.page_summary:
         page_msg = f"## Current Page\n{state.page_summary}"
         if state.extracted_data:
-            page_msg += f"\n\n## Data Extracted So Far\n{len(state.extracted_data)} item(s) collected."
+            page_msg += (
+                f"\n\n## Data Extracted So Far\n{len(state.extracted_data)} item(s) collected."
+            )
         page_msg += "\n\nWhat is your next action?"
         messages.append({"role": "user", "content": page_msg})
     elif not state.history:
-        messages.append({"role": "user", "content": "You have not visited any page yet. Start by navigating to a relevant URL."})
+        messages.append(
+            {
+                "role": "user",
+                "content": "You have not visited any page yet. Start by navigating to a relevant URL.",
+            }
+        )
 
     return messages
 
 
 def build_plan_messages(goal: str) -> list[dict[str, Any]]:
-    """Build messages for the initial planning step."""
     return [
         {
             "role": "system",
             "content": (
                 "You are a planning agent. Given a web crawling goal, produce a concise step-by-step plan. "
-                "Each step should be a short action description. Return ONLY the plan as a numbered list, nothing else."
+                "Each step should be a short action description. Return ONLY the plan as a numbered list, nothing else.\n\n"
+                "Important constraints:\n"
+                "- Use Bing or DuckDuckGo for web searches, NEVER Google (it blocks automated browsers).\n"
+                "- Navigate directly to URLs when possible instead of filling search forms.\n"
+                "- Prefer navigate(url=...) over click for following links."
             ),
         },
         {"role": "user", "content": f"Goal: {goal}\n\nProduce a step-by-step plan:"},
