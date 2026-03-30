@@ -13,6 +13,22 @@ console = Console()
 
 
 @app.command()
+def login() -> None:
+    """Authenticate with OpenAI via OAuth for Codex models."""
+    from agentic_crawler.llm.oauth import run_login_flow
+
+    try:
+        tokens = run_login_flow()
+        console.print("[bold green]Authenticated successfully![/]")
+        console.print(
+            f"[dim]Token expires at {__import__('datetime').datetime.fromtimestamp(tokens.expires_at)}[/]"
+        )
+    except Exception as exc:
+        console.print(f"[bold red]Login failed:[/] {exc}")
+        raise typer.Exit(1) from exc
+
+
+@app.command()
 def run(
     goal: str = typer.Argument(help="What you want the crawler to do, in natural language"),
     provider: Optional[str] = typer.Option(None, "--provider", "-p", help="LLM provider"),
@@ -28,7 +44,12 @@ def run(
     if provider:
         overrides["llm_provider"] = provider
     if model:
-        overrides[f"{'claude' if provider == 'claude' else 'openai'}_model"] = model
+        if provider == "claude":
+            overrides["claude_model"] = model
+        elif provider == "codex":
+            overrides["codex_model"] = model
+        else:
+            overrides["openai_model"] = model
     if max_steps:
         overrides["max_steps"] = max_steps
     if output:
