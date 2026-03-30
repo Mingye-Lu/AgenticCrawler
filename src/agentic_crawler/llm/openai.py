@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,7 @@ class OpenAIProvider:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         await self._refresh_oauth_if_needed()
 

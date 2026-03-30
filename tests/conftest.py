@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -23,11 +24,15 @@ class MockLLMProvider:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         self.messages_log.append(messages)
         if self.call_count < len(self.responses):
             response = self.responses[self.call_count]
             self.call_count += 1
+            # Fire the thinking callback if the response has thinking
+            if on_thinking and response.thinking:
+                on_thinking(response.thinking)
             return response
         # Default: signal done
         return LLMResponse(

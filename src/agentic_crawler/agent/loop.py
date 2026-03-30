@@ -40,6 +40,18 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
             console.print(f"  {i}. {step}")
 
         console.print(Panel("[bold]Executing...[/bold]", style="green"))
+
+        thinking_started = False
+
+        def _on_thinking(chunk: str) -> None:
+            nonlocal thinking_started
+            if not thinking_started:
+                console.print("[dim italic]  Thinking...[/dim italic]")
+                thinking_started = True
+            # Stream each chunk directly — no newline so tokens flow continuously
+            console.file.write(chunk)
+            console.file.flush()
+
         while not state.done and state.step_count < state.max_steps:
             if state.consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 state.mark_done(f"Stopped after {MAX_CONSECUTIVE_ERRORS} consecutive errors")
@@ -52,12 +64,18 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                 )
                 break
 
+            thinking_started = False
             messages = build_messages(state, provider=settings.llm_provider)
             response = await provider.complete(
                 messages=messages,
                 tools=tool_schemas,
                 temperature=settings.temperature,
+                on_thinking=_on_thinking,
             )
+            if thinking_started:
+                # End the thinking stream with a newline
+                console.file.write("\n")
+                console.file.flush()
             state.total_tokens += sum(response.usage.values())
 
             if response.has_tool_calls:
