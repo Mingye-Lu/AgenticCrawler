@@ -23,6 +23,7 @@ console = Console()
 
 MAX_CONSECUTIVE_ERRORS = 5
 MAX_TEXT_ONLY_RESPONSES = 3
+MAX_TEXT_ONLY_RETRIES = 3
 
 
 async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> None:
@@ -33,6 +34,7 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
 
     state = AgentState(goal=goal, max_steps=settings.max_steps)
     text_only_count = 0
+    text_only_retries = 0
 
     try:
         thinking_started = False
@@ -63,6 +65,14 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                 break
 
             if text_only_count >= MAX_TEXT_ONLY_RESPONSES:
+                if text_only_retries < MAX_TEXT_ONLY_RETRIES:
+                    text_only_retries += 1
+                    text_only_count = 0
+                    console.print(
+                        f"  [yellow]Agent returned text without tool calls. "
+                        f"Retrying ({text_only_retries}/{MAX_TEXT_ONLY_RETRIES})...[/yellow]"
+                    )
+                    continue
                 state.mark_done(
                     "Agent produced text responses without tool calls. "
                     "Finishing with data collected so far."
