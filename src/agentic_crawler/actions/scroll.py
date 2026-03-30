@@ -14,7 +14,7 @@ class ScrollAction:
         direction = params.get("direction", "down")
         amount = params.get("amount", 500)
 
-        router.escalate_to_browser()
+        await router.ensure_browser_ready()
         result = await router.browser.scroll(direction=direction, amount=amount)
         return ActionResult(
             success=result.success,

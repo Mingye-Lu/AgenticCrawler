@@ -18,7 +18,7 @@ class FillFormAction:
         if not fields:
             return ActionResult(success=False, observation="No fields provided")
 
-        router.escalate_to_browser()
+        await router.ensure_browser_ready()
 
         observations: list[str] = []
         for selector, value in fields.items():

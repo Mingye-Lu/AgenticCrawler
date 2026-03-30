@@ -14,7 +14,7 @@ class WaitAction:
         selector = params.get("selector")
         seconds = params.get("seconds", 2.0)
 
-        router.escalate_to_browser()
+        await router.ensure_browser_ready()
         timeout_ms = seconds * 1000 if not selector else 10000
         result = await router.browser.wait_for(selector=selector, timeout=timeout_ms)
         return ActionResult(success=result.success, observation=result.observation)

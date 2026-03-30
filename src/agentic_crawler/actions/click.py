@@ -17,9 +17,8 @@ class ClickAction:
         if not selector and not text:
             return ActionResult(success=False, observation="No selector or text provided")
 
-        router.escalate_to_browser()
+        await router.ensure_browser_ready()
 
-        # If text is provided, convert to a text-based selector
         if text and not selector:
             selector = f"text={text}"
 

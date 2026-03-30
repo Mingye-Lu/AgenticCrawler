@@ -12,7 +12,7 @@ class ScreenshotAction:
     description = "Take a screenshot of the current page"
 
     async def execute(self, router: FetcherRouter, params: dict[str, Any]) -> ActionResult:
-        router.escalate_to_browser()
+        await router.ensure_browser_ready()
         result = await router.browser.screenshot()
 
         screenshot_b64 = ""
