@@ -18,8 +18,15 @@ def get_provider(settings: Settings) -> LLMProvider:
     if name == "openai":
         from agentic_crawler.llm.openai import OpenAIProvider
 
+        if settings.openai_auth_method == "oauth":
+            return OpenAIProvider(model=settings.openai_model, use_oauth=True)
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required for OpenAI provider")
         return OpenAIProvider(api_key=settings.openai_api_key, model=settings.openai_model)
 
-    raise ValueError(f"Unknown LLM provider: {name}. Supported: claude, openai")
+    if name == "codex":
+        from agentic_crawler.llm.openai import OpenAIProvider
+
+        return OpenAIProvider(model=settings.codex_model, use_oauth=True)
+
+    raise ValueError(f"Unknown LLM provider: {name}. Supported: claude, openai, codex")
