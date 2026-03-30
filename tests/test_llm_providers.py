@@ -39,7 +39,7 @@ async def test_mock_llm_logs_messages() -> None:
 
 
 def test_registry_returns_openai_with_api_key() -> None:
-    settings = Settings(llm_provider="openai", openai_api_key="sk-test", openai_model="gpt-4o")
+    settings = Settings(llm_provider="openai", openai_api_key="sk-test", openai_model="gpt-4o", openai_auth_method="api_key")
     provider = get_provider(settings)
     from agentic_crawler.llm.openai import OpenAIProvider
 
