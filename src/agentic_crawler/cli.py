@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Optional
+
+import typer
+from rich.console import Console
+
+from agentic_crawler.config import get_settings
+
+app = typer.Typer(name="agentic-crawler", help="Autonomous LLM-powered web crawler")
+console = Console()
+
+
+@app.command()
+def run(
+    goal: str = typer.Argument(help="What you want the crawler to do, in natural language"),
+    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="LLM provider"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model name"),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps", help="Max agent steps"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path"),
+    output_format: Optional[str] = typer.Option(None, "--format", "-f", help="json, csv, stdout"),
+    headless: bool = typer.Option(True, "--headless/--no-headless", help="Browser headless mode"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
+) -> None:
+    """Run the agentic crawler with a natural language goal."""
+    overrides: dict[str, object] = {"headless": headless}
+    if provider:
+        overrides["llm_provider"] = provider
+    if model:
+        overrides[f"{'claude' if provider == 'claude' else 'openai'}_model"] = model
+    if max_steps:
+        overrides["max_steps"] = max_steps
+    if output:
+        overrides["output_file"] = output
+    if output_format:
+        overrides["output_format"] = output_format
+
+    settings = get_settings(**overrides)
+
+    from agentic_crawler.utils.logging import setup_logging
+
+    setup_logging(verbose=verbose)
+
+    console.print(f"[bold green]Goal:[/] {goal}")
+    console.print(f"[bold blue]Provider:[/] {settings.llm_provider}")
+    console.print(f"[bold blue]Max steps:[/] {settings.max_steps}")
+
+    from agentic_crawler.agent.loop import run_agent
+
+    asyncio.run(run_agent(goal=goal, settings=settings, verbose=verbose))
+
+
+if __name__ == "__main__":
+    app()
