@@ -202,7 +202,7 @@ async def _execute_tool_call(
 
     status = "[green]OK[/green]" if result.success else "[red]FAIL[/red]"
     if verbose:
-        console.print(f"    {status} {result.observation[:150]}")
+        console.print(f"    {status} {result.observation}")
     else:
         console.print(f"    {status}")
 
