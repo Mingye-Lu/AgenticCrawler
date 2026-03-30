@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from playwright.async_api import Browser, Page, async_playwright, Playwright
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright, Playwright
 
 from agentic_crawler.fetcher.base import BrowserAction, FetchResult
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 
 
 class BrowserFetcher:
@@ -11,13 +17,26 @@ class BrowserFetcher:
         self.timeout = timeout
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
         self._page: Page | None = None
 
     async def _ensure_browser(self) -> Page:
         if self._page is None:
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=self.headless)
-            self._page = await self._browser.new_page()
+            self._browser = await self._playwright.chromium.launch(
+                headless=self.headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                ],
+            )
+            self._context = await self._browser.new_context(
+                user_agent=_USER_AGENT,
+                locale="en-US",
+                timezone_id="America/New_York",
+            )
+            self._page = await self._context.new_page()
             self._page.set_default_timeout(self.timeout)
         return self._page
 
@@ -117,10 +136,13 @@ class BrowserFetcher:
     async def close(self) -> None:
         if self._page:
             await self._page.close()
+        if self._context:
+            await self._context.close()
         if self._browser:
             await self._browser.close()
         if self._playwright:
             await self._playwright.stop()
         self._page = None
+        self._context = None
         self._browser = None
         self._playwright = None
