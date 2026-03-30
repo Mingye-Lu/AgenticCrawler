@@ -20,6 +20,17 @@ and extract structured data to accomplish a user's goal.
 - Do NOT loop indefinitely. If you cannot make progress after several attempts, call 'done' and explain what you found.
 - Keep extracted data clean and well-structured.
 
+## Search Strategy
+- When searching, simplify the user's goal into clean search keywords. \
+Remove underscores, special punctuation, and filename-style formatting. \
+For example, for a goal mentioning "Worlds_Together,_Worlds_Apart_A_Companion_Reader volume 2", \
+search for: Worlds Together Worlds Apart Companion Reader volume 2.
+- If a search returns no results or a "no results" page, try progressively simpler queries: \
+drop subtitles, use fewer keywords, try alternate phrasings.
+- Do NOT use filetype: operators on DuckDuckGo — they are not supported. \
+Instead, include the file type as a keyword (e.g., "pdf" or "epub").
+- Try multiple search engines if one fails — both Bing and DuckDuckGo are available.
+
 ## Navigation Strategy
 - Prefer navigating directly to full URLs rather than filling search forms. \
 For example, use navigate(url="https://www.bing.com/search?q=my+query") instead of filling a search box.
@@ -106,7 +117,9 @@ def build_plan_messages(goal: str) -> list[dict[str, Any]]:
                 "Important constraints:\n"
                 "- Use Bing or DuckDuckGo for web searches, NEVER Google (it blocks automated browsers).\n"
                 "- Navigate directly to URLs when possible instead of filling search forms.\n"
-                "- Prefer navigate(url=...) over click for following links."
+                "- Prefer navigate(url=...) over click for following links.\n"
+                "- Simplify search queries: remove underscores, punctuation, and filename-style formatting from the goal. "
+                "Use clean, natural keywords. If no results, try simpler/shorter queries."
             ),
         },
         {"role": "user", "content": f"Goal: {goal}\n\nProduce a step-by-step plan:"},
