@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -169,23 +170,24 @@ async def _execute_tool_call(
     actions: dict[str, Any],
     verbose: bool,
 ) -> None:
+    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
     step_label = f"[Step {state.step_count + 1}]"
 
     # Handle 'done' specially
     if name == "done":
         summary = params.get("summary", "Task completed")
         state.mark_done(summary)
-        console.print(f"  {step_label} [bold green]Done:[/bold green] {summary}")
+        console.print(f"  {step_label} [dim]{ts}[/dim] [bold green]Done:[/bold green] {summary}")
         return
 
     action = actions.get(name)
     if not action:
         state.add_step(name, params, f"Unknown action: {name}", success=False)
-        console.print(f"  {step_label} [red]Unknown action: {name}[/red]")
+        console.print(f"  {step_label} [dim]{ts}[/dim] [red]Unknown action: {name}[/red]")
         return
 
     # Execute
-    console.print(f"  {step_label} {name}({_compact_params(params)})")
+    console.print(f"  {step_label} [dim]{ts}[/dim] {name}({_compact_params(params)})")
     result = await action.execute(router, params)
 
     # Update state
