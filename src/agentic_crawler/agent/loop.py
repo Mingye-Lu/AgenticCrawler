@@ -34,13 +34,6 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
     text_only_count = 0
 
     try:
-        console.print(Panel("[bold]Planning...[/bold]", style="blue"))
-        state.plan = await _plan(provider, goal, settings.temperature)
-        for i, step in enumerate(state.plan, 1):
-            console.print(f"  {i}. {step}")
-
-        console.print(Panel("[bold]Executing...[/bold]", style="green"))
-
         thinking_started = False
 
         def _on_thinking(chunk: str) -> None:
@@ -51,6 +44,17 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
             # Stream each chunk directly — no newline so tokens flow continuously
             console.file.write(chunk)
             console.file.flush()
+
+        console.print(Panel("[bold]Planning...[/bold]", style="blue"))
+        state.plan = await _plan(provider, goal, settings.temperature, _on_thinking)
+        if thinking_started:
+            console.file.write("\n")
+            console.file.flush()
+            thinking_started = False
+        for i, step in enumerate(state.plan, 1):
+            console.print(f"  {i}. {step}")
+
+        console.print(Panel("[bold]Executing...[/bold]", style="green"))
 
         while not state.done and state.step_count < state.max_steps:
             if state.consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
@@ -130,9 +134,16 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
         await provider.close()
 
 
-async def _plan(provider: LLMProvider, goal: str, temperature: float) -> list[str]:
+async def _plan(
+    provider: LLMProvider,
+    goal: str,
+    temperature: float,
+    on_thinking: Any = None,
+) -> list[str]:
     messages = build_plan_messages(goal)
-    response = await provider.complete(messages=messages, temperature=temperature)
+    response = await provider.complete(
+        messages=messages, temperature=temperature, on_thinking=on_thinking
+    )
 
     if not response.text:
         return ["Navigate to the target website", "Extract the requested data", "Done"]

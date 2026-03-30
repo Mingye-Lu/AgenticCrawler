@@ -73,45 +73,95 @@ class OpenAIProvider:
         await self._refresh_oauth_if_needed()
 
         if self._use_oauth:
-            return await self._complete_codex_api(messages, tools, temperature)
-        return await self._complete_chat_api(messages, tools, temperature)
+            return await self._complete_codex_api(messages, tools, temperature, on_thinking)
+        return await self._complete_chat_api(messages, tools, temperature, on_thinking)
 
     async def _complete_chat_api(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         temperature: float,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "temperature": temperature,
             "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             kwargs["tools"] = self._convert_tools_chat(tools)
 
-        response = await self.client.chat.completions.create(**kwargs)
-        choice = response.choices[0]
-        message = choice.message
+        stream = await self.client.chat.completions.create(**kwargs)
+
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_call_buffers: dict[int, dict[str, str]] = {}
+        usage_data: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+
+        async for chunk in stream:
+            if not chunk.choices:
+                # Final chunk with usage only
+                if chunk.usage:
+                    usage_data["input_tokens"] = chunk.usage.prompt_tokens
+                    usage_data["output_tokens"] = chunk.usage.completion_tokens
+                continue
+
+            delta = chunk.choices[0].delta
+
+            # Reasoning content (o-series models)
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                thinking_parts.append(reasoning)
+                if on_thinking:
+                    on_thinking(reasoning)
+
+            # Text content
+            if delta.content:
+                text_parts.append(delta.content)
+
+            # Tool call deltas
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_call_buffers:
+                        tool_call_buffers[idx] = {
+                            "id": tc_delta.id or "",
+                            "name": tc_delta.function.name if tc_delta.function and tc_delta.function.name else "",
+                            "arguments": "",
+                        }
+                    buf = tool_call_buffers[idx]
+                    if tc_delta.id:
+                        buf["id"] = tc_delta.id
+                    if tc_delta.function and tc_delta.function.name:
+                        buf["name"] = tc_delta.function.name
+                    if tc_delta.function and tc_delta.function.arguments:
+                        buf["arguments"] += tc_delta.function.arguments
+
+            # Usage on final chunk
+            if chunk.usage:
+                usage_data["input_tokens"] = chunk.usage.prompt_tokens
+                usage_data["output_tokens"] = chunk.usage.completion_tokens
 
         tool_calls: list[ToolCall] = []
-        if message.tool_calls:
-            for tc in message.tool_calls:
-                tool_calls.append(
-                    ToolCall(
-                        id=tc.id,
-                        name=tc.function.name,
-                        arguments=json.loads(tc.function.arguments),
-                    )
+        for idx in sorted(tool_call_buffers):
+            buf = tool_call_buffers[idx]
+            tool_calls.append(
+                ToolCall(
+                    id=buf["id"],
+                    name=buf["name"],
+                    arguments=json.loads(buf["arguments"]) if buf["arguments"] else {},
                 )
+            )
+
+        full_thinking = "".join(thinking_parts) if thinking_parts else None
 
         return LLMResponse(
-            text=message.content,
+            text="".join(text_parts) if text_parts else None,
             tool_calls=tool_calls,
-            usage={
-                "input_tokens": response.usage.prompt_tokens if response.usage else 0,
-                "output_tokens": response.usage.completion_tokens if response.usage else 0,
-            },
+            usage=usage_data,
+            thinking=full_thinking,
         )
 
     async def _complete_codex_api(
@@ -119,6 +169,7 @@ class OpenAIProvider:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         temperature: float,
+        on_thinking: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         """Route through chatgpt.com/backend-api/codex/responses.
 
@@ -189,6 +240,7 @@ class OpenAIProvider:
         url = f"{CODEX_BASE_URL}{CODEX_RESPONSES_PATH}"
 
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         usage_data: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
 
@@ -216,6 +268,11 @@ class OpenAIProvider:
                     if current_text:
                         text_parts.append(current_text)
                     current_text = ""
+                elif event_type == "response.reasoning_summary_text.delta":
+                    chunk = event.get("delta", "")
+                    thinking_parts.append(chunk)
+                    if on_thinking:
+                        on_thinking(chunk)
                 elif event_type == "response.function_call_arguments.delta":
                     if current_tool is None:
                         current_tool = {
@@ -251,10 +308,13 @@ class OpenAIProvider:
             if current_text:
                 text_parts.append(current_text)
 
+        full_thinking = "".join(thinking_parts) if thinking_parts else None
+
         return LLMResponse(
             text="\n".join(text_parts) if text_parts else None,
             tool_calls=tool_calls,
             usage=usage_data,
+            thinking=full_thinking,
         )
 
     def _convert_tools_chat(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

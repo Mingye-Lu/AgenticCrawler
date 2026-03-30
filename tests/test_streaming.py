@@ -204,6 +204,111 @@ class TestClaudeProviderStreaming:
 
 
 # ---------------------------------------------------------------------------
+# 3b. OpenAI provider: streaming + reasoning support
+# ---------------------------------------------------------------------------
+
+
+class TestOpenAIProviderStreaming:
+    @pytest.mark.asyncio
+    async def test_openai_chat_api_uses_streaming(self) -> None:
+        """OpenAI Chat API should use streaming (stream=True)."""
+        from agentic_crawler.llm.openai import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test-key")
+
+        # Mock the streaming response
+        mock_chunk_reasoning = MagicMock()
+        mock_chunk_reasoning.choices = [MagicMock()]
+        mock_chunk_reasoning.choices[0].delta.content = None
+        mock_chunk_reasoning.choices[0].delta.tool_calls = None
+        mock_chunk_reasoning.choices[0].delta.reasoning_content = "let me think"
+
+        mock_chunk_text = MagicMock()
+        mock_chunk_text.choices = [MagicMock()]
+        mock_chunk_text.choices[0].delta.content = "the answer"
+        mock_chunk_text.choices[0].delta.tool_calls = None
+        mock_chunk_text.choices[0].delta.reasoning_content = None
+
+        mock_chunk_done = MagicMock()
+        mock_chunk_done.choices = [MagicMock()]
+        mock_chunk_done.choices[0].delta.content = None
+        mock_chunk_done.choices[0].delta.tool_calls = None
+        mock_chunk_done.choices[0].delta.reasoning_content = None
+        mock_chunk_done.usage = MagicMock()
+        mock_chunk_done.usage.prompt_tokens = 10
+        mock_chunk_done.usage.completion_tokens = 20
+
+        async def mock_stream():
+            for chunk in [mock_chunk_reasoning, mock_chunk_text, mock_chunk_done]:
+                yield chunk
+
+        provider.client.chat.completions.create = AsyncMock(return_value=mock_stream())
+
+        thinking_chunks: list[str] = []
+        result = await provider.complete(
+            messages=[{"role": "user", "content": "test"}],
+            on_thinking=lambda c: thinking_chunks.append(c),
+        )
+
+        # Verify stream=True was passed
+        provider.client.chat.completions.create.assert_called_once()
+        call_kwargs = provider.client.chat.completions.create.call_args[1]
+        assert call_kwargs.get("stream") is True
+        assert call_kwargs.get("stream_options") == {"include_usage": True}
+
+        # Verify reasoning was captured
+        assert thinking_chunks == ["let me think"]
+        assert result.thinking == "let me think"
+        assert result.text == "the answer"
+
+        await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_codex_api_captures_reasoning_events(self) -> None:
+        """Codex SSE stream should capture reasoning_summary_text.delta events."""
+        from agentic_crawler.llm.openai import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="unused", model="o4-mini", use_oauth=False)
+        provider._use_oauth = True  # Force codex path without actual tokens
+        provider._access_token = "fake.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjXzEyMyJ9fQ.sig"
+
+        # Build SSE lines simulating reasoning + text + tool call
+        sse_lines = [
+            'data: {"type":"response.reasoning_summary_text.delta","delta":"thinking step 1"}',
+            'data: {"type":"response.reasoning_summary_text.delta","delta":" and step 2"}',
+            'data: {"type":"response.reasoning_summary_text.done","text":"thinking step 1 and step 2"}',
+            'data: {"type":"response.output_text.delta","delta":"my answer"}',
+            'data: {"type":"response.output_text.done","text":"my answer"}',
+            'data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":10}}}',
+            "data: [DONE]",
+        ]
+
+        mock_resp = AsyncMock()
+        mock_resp.status_code = 200
+        mock_resp.aiter_lines = lambda: _async_iter(sse_lines)
+
+        mock_stream_ctx = AsyncMock()
+        mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_stream_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+        provider._get_http_client = AsyncMock(return_value=mock_client)
+
+        thinking_chunks: list[str] = []
+        result = await provider._complete_codex_api(
+            messages=[{"role": "user", "content": "test"}],
+            tools=None,
+            temperature=0.0,
+            on_thinking=lambda c: thinking_chunks.append(c),
+        )
+
+        assert thinking_chunks == ["thinking step 1", " and step 2"]
+        assert result.thinking == "thinking step 1 and step 2"
+        assert result.text == "my answer"
+
+
+# ---------------------------------------------------------------------------
 # 4. Agent loop passes thinking callback to provider
 # ---------------------------------------------------------------------------
 
@@ -248,9 +353,10 @@ class TestAgentLoopThinkingDisplay:
 
             await run_agent("test goal", settings, verbose=True)
 
-        # The execution phase (not planning) should have passed on_thinking
-        assert len(on_thinking_received) > 0
-        assert callable(on_thinking_received[0])
+        # Both planning and execution phases should have passed on_thinking
+        # Call 1 = planning, Call 2 = execution
+        assert len(on_thinking_received) >= 2
+        assert all(callable(cb) for cb in on_thinking_received)
 
 
 # ---------------------------------------------------------------------------
