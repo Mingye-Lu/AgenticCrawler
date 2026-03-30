@@ -66,9 +66,7 @@ def _generate_pkce() -> tuple[str, str]:
     code_verifier = verifier_bytes.hex()
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     # base64url encode without padding
-    code_challenge = (
-        __import__("base64").urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    )
+    code_challenge = __import__("base64").urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return code_verifier, code_challenge
 
 
@@ -233,9 +231,7 @@ async def ensure_valid_tokens(path: Path = DEFAULT_TOKEN_FILE) -> OAuthTokens:
     """Load tokens and refresh if expired. Raises if no tokens stored."""
     tokens = load_tokens(path)
     if tokens is None:
-        raise RuntimeError(
-            "No OAuth tokens found. Run `agentic-crawler login` to authenticate."
-        )
+        raise RuntimeError("No OAuth tokens found. Run `agentic-crawler login` to authenticate.")
     if tokens.is_expired:
         tokens = await refresh_access_token(tokens.refresh_token)
         save_tokens(tokens, path)
