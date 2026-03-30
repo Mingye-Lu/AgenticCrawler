@@ -6,7 +6,8 @@ An autonomous, LLM-powered web crawler. Give it a goal in plain English and it w
 
 - **Full autonomy** — the agent plans, navigates, interacts, and extracts without manual step definitions
 - **Dual fetching** — fast HTTP (httpx) for static pages, headless browser (Playwright) for JS-rendered and interactive sites, with automatic escalation
-- **Multi-provider LLM** — supports Claude and OpenAI out of the box; swap with a single flag
+- **Multi-provider LLM** — supports Claude, OpenAI, and OpenAI Codex out of the box; swap with a single flag
+- **OAuth login** — authenticate with your ChatGPT subscription to use Codex models without an API key
 - **Structured output** — results in JSON or CSV
 - **7 agent tools** — `navigate`, `click`, `fill_form`, `scroll`, `extract_data`, `screenshot`, `wait`
 
@@ -24,20 +25,36 @@ playwright install chromium
 cp .env.example .env
 # Edit .env and add your ANTHROPIC_API_KEY or OPENAI_API_KEY
 
+# Or authenticate via OAuth to use Codex models (no API key needed)
+agentic-crawler login
+
 # Run
-agentic-crawler "scrape all book titles and prices from books.toscrape.com"
+agentic-crawler run "scrape all book titles and prices from books.toscrape.com"
 ```
 
 ## Usage
 
 ```
-agentic-crawler [OPTIONS] GOAL
+agentic-crawler <command> [OPTIONS] [ARGS]
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `run`   | Run the crawler with a natural language goal |
+| `login` | Authenticate with OpenAI via OAuth (for Codex models) |
+
+### `agentic-crawler run`
+
+```
+agentic-crawler run [OPTIONS] GOAL
 ```
 
 | Option | Description |
 |--------|-------------|
 | `GOAL` | What you want the crawler to do, in natural language (required) |
-| `-p, --provider` | LLM provider: `claude` (default) or `openai` |
+| `-p, --provider` | LLM provider: `claude` (default), `openai`, or `codex` |
 | `-m, --model` | Model name override |
 | `--max-steps` | Maximum agent loop iterations (default: 50) |
 | `-o, --output` | Output file path |
@@ -49,18 +66,21 @@ agentic-crawler [OPTIONS] GOAL
 
 ```bash
 # Extract product data to a file
-agentic-crawler "find all products on example-shop.com and extract name, price, and rating" \
+agentic-crawler run "find all products on example-shop.com and extract name, price, and rating" \
   -o products.json
 
 # Use OpenAI instead of Claude
-agentic-crawler "summarize the top 5 Hacker News stories" -p openai
+agentic-crawler run "summarize the top 5 Hacker News stories" -p openai
+
+# Use Codex (requires `agentic-crawler login` first)
+agentic-crawler run "summarize the top 5 Hacker News stories" -p codex
 
 # Watch the browser in action
-agentic-crawler "log into example.com with user demo/demo and download my profile info" \
+agentic-crawler run "log into example.com with user demo/demo and download my profile info" \
   --no-headless
 
 # Output as CSV
-agentic-crawler "get the schedule from example.com/events" -f csv -o events.csv
+agentic-crawler run "get the schedule from example.com/events" -f csv -o events.csv
 ```
 
 ## Configuration
@@ -69,11 +89,13 @@ Settings are loaded from environment variables or a `.env` file:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `claude` | `claude` or `openai` |
+| `LLM_PROVIDER` | `claude` | `claude`, `openai`, or `codex` |
 | `ANTHROPIC_API_KEY` | — | Required for Claude |
-| `OPENAI_API_KEY` | — | Required for OpenAI |
+| `OPENAI_API_KEY` | — | Required for OpenAI (when using API key auth) |
+| `OPENAI_AUTH_METHOD` | `api_key` | `api_key` or `oauth` (for OpenAI provider) |
 | `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Claude model ID |
 | `OPENAI_MODEL` | `gpt-4o` | OpenAI model ID |
+| `CODEX_MODEL` | `codex-mini-latest` | OpenAI Codex model ID |
 | `MAX_STEPS` | `50` | Max agent iterations |
 | `HEADLESS` | `true` | Run browser headless |
 
@@ -120,7 +142,8 @@ src/agentic_crawler/
 ├── llm/
 │   ├── base.py            Provider protocol
 │   ├── claude.py          Anthropic wrapper
-│   ├── openai.py          OpenAI wrapper
+│   ├── openai.py          OpenAI wrapper (API key + OAuth)
+│   ├── oauth.py           OAuth PKCE flow for Codex auth
 │   └── registry.py        Provider factory
 ├── fetcher/
 │   ├── http_fetcher.py    httpx async client
