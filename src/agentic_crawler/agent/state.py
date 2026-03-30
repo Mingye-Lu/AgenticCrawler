@@ -54,6 +54,17 @@ class AgentState:
         self.done = True
         self.done_reason = reason
 
+    def add_text_response(self, text: str) -> None:
+        """Record a text-only response (no tool calls) so it appears in history."""
+        self.history.append(
+            StepRecord(
+                action="__text_response__",
+                params={},
+                observation=text,
+                success=True,
+            )
+        )
+
     @property
     def consecutive_errors(self) -> int:
         count = 0

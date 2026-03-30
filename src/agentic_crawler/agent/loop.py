@@ -112,6 +112,7 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                     state.mark_done(response.text)
                 else:
                     text_only_count += 1
+                    state.add_text_response(response.text)
                     if verbose:
                         console.print(f"[dim]Agent: {response.text[:200]}[/dim]")
 

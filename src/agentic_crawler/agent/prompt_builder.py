@@ -126,9 +126,18 @@ def build_plan_messages(goal: str) -> list[dict[str, Any]]:
     ]
 
 
+_TEXT_ONLY_NUDGE = (
+    "You must respond with a tool call, not text. "
+    "Try a different approach — for example, navigate to a different search engine or a direct URL."
+)
+
+
 def _append_history_openai(messages: list[dict[str, Any]], history: list[StepRecord]) -> None:
     for step in history:
-        if step.tool_call_id:
+        if step.action == "__text_response__":
+            messages.append({"role": "assistant", "content": step.observation})
+            messages.append({"role": "user", "content": _TEXT_ONLY_NUDGE})
+        elif step.tool_call_id:
             messages.append(
                 {
                     "role": "assistant",
@@ -168,7 +177,10 @@ def _append_history_openai(messages: list[dict[str, Any]], history: list[StepRec
 
 def _append_history_claude(messages: list[dict[str, Any]], history: list[StepRecord]) -> None:
     for step in history:
-        if step.tool_call_id:
+        if step.action == "__text_response__":
+            messages.append({"role": "assistant", "content": step.observation})
+            _append_user_content_claude(messages, _TEXT_ONLY_NUDGE)
+        elif step.tool_call_id:
             messages.append(
                 {
                     "role": "assistant",
