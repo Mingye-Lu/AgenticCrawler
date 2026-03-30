@@ -28,6 +28,14 @@ For example, use navigate(url="https://www.bing.com/search?q=my+query") instead 
 - Only use click when you need to interact with a specific page element (buttons, pagination, tabs). \
 For following links, prefer navigate with the link's href URL.
 - The page content shown to you already contains links with their URLs. Use navigate(url=...) to follow them.
+- Use go_back to return to the previous page instead of re-navigating when you need to backtrack.
+
+## Interaction Tools
+- Use hover to reveal dropdown menus, tooltips, or mega-menus before clicking items inside them.
+- Use select_option for <select> dropdowns (do NOT click individual options — use select_option with value, label, or index).
+- Use press_key for keyboard actions: Enter to submit, Escape to close modals, Tab to move between fields, ArrowDown to navigate dropdown lists.
+- Use execute_js when you need computed values, want to trigger page events, or need to reach data that CSS selectors cannot express.
+- Use switch_tab when a click opens content in a new browser tab — switch to it and then continue working.
 
 ## Available Information
 Each turn, you will see:

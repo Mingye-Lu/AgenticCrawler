@@ -4,7 +4,19 @@ from agentic_crawler.fetcher.browser_fetcher import BrowserFetcher
 from agentic_crawler.fetcher.http_fetcher import HttpFetcher
 from agentic_crawler.fetcher.base import FetchResult
 
-BROWSER_ACTIONS = {"click", "fill_form", "scroll", "screenshot", "wait"}
+BROWSER_ACTIONS = {
+    "click",
+    "fill_form",
+    "scroll",
+    "screenshot",
+    "wait",
+    "select_option",
+    "go_back",
+    "execute_js",
+    "hover",
+    "press_key",
+    "switch_tab",
+}
 
 
 class FetcherRouter:

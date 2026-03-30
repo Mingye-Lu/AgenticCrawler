@@ -125,6 +125,116 @@ class BrowserFetcher:
         except Exception as e:
             return BrowserAction(success=False, observation=f"Wait failed: {e}")
 
+    async def select_option(
+        self,
+        selector: str,
+        value: str | None = None,
+        label: str | None = None,
+        index: int | None = None,
+    ) -> BrowserAction:
+        page = await self._ensure_browser()
+        try:
+            if value is not None:
+                await page.select_option(selector, value=value)
+            elif label is not None:
+                await page.select_option(selector, label=label)
+            elif index is not None:
+                await page.select_option(selector, index=index)
+            else:
+                return BrowserAction(
+                    success=False, observation="Provide value, label, or index to select"
+                )
+            return BrowserAction(
+                success=True,
+                observation=f"Selected option in '{selector}'",
+                new_html=await page.content(),
+            )
+        except Exception as e:
+            return BrowserAction(success=False, observation=f"Select failed on '{selector}': {e}")
+
+    async def go_back(self) -> BrowserAction:
+        page = await self._ensure_browser()
+        try:
+            await page.go_back(wait_until="domcontentloaded")
+            return BrowserAction(
+                success=True,
+                observation=f"Navigated back to {page.url}",
+                new_url=page.url,
+                new_html=await page.content(),
+            )
+        except Exception as e:
+            return BrowserAction(success=False, observation=f"Go back failed: {e}")
+
+    async def execute_js(self, script: str) -> BrowserAction:
+        page = await self._ensure_browser()
+        try:
+            result = await page.evaluate(script)
+            result_str = str(result) if result is not None else "undefined"
+            if len(result_str) > 2000:
+                result_str = result_str[:2000] + "... [truncated]"
+            return BrowserAction(
+                success=True,
+                observation=f"JS result: {result_str}",
+                new_html=await page.content(),
+            )
+        except Exception as e:
+            return BrowserAction(success=False, observation=f"JS execution failed: {e}")
+
+    async def hover(self, selector: str) -> BrowserAction:
+        page = await self._ensure_browser()
+        try:
+            await page.hover(selector, timeout=self.timeout)
+            await page.wait_for_timeout(300)
+            return BrowserAction(
+                success=True,
+                observation=f"Hovered over '{selector}'",
+                new_html=await page.content(),
+            )
+        except Exception as e:
+            return BrowserAction(success=False, observation=f"Hover failed on '{selector}': {e}")
+
+    async def press_key(self, key: str, selector: str | None = None) -> BrowserAction:
+        page = await self._ensure_browser()
+        try:
+            if selector:
+                await page.press(selector, key)
+            else:
+                await page.keyboard.press(key)
+            await page.wait_for_timeout(200)
+            return BrowserAction(
+                success=True,
+                observation=f"Pressed key '{key}'" + (f" on '{selector}'" if selector else ""),
+                new_url=page.url,
+                new_html=await page.content(),
+            )
+        except Exception as e:
+            return BrowserAction(success=False, observation=f"Key press failed: {e}")
+
+    async def switch_tab(self, index: int = -1) -> BrowserAction:
+        """Switch to a browser tab by index. -1 means the last/newest tab."""
+        try:
+            if self._context is None:
+                return BrowserAction(success=False, observation="No browser context available")
+            pages = self._context.pages
+            if not pages:
+                return BrowserAction(success=False, observation="No tabs available")
+            target_index = index if index >= 0 else len(pages) + index
+            if target_index < 0 or target_index >= len(pages):
+                return BrowserAction(
+                    success=False,
+                    observation=f"Tab index {index} out of range (have {len(pages)} tabs)",
+                )
+            self._page = pages[target_index]
+            await self._page.bring_to_front()
+            return BrowserAction(
+                success=True,
+                observation=f"Switched to tab {target_index} ({self._page.url}). {len(pages)} tab(s) open.",
+                new_url=self._page.url,
+                new_html=await self._page.content(),
+            )
+        except Exception as e:
+            return BrowserAction(success=False, observation=f"Tab switch failed: {e}")
+
     async def get_current_html(self) -> str:
         page = await self._ensure_browser()
         return await page.content()
