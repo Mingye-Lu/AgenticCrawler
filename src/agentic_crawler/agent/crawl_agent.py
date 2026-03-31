@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -48,6 +50,7 @@ class CrawlAgent:
         self.console = console or Console()
         self.actions = get_action_registry()
         self.tool_schemas = get_tool_schemas()
+        self._child_agents: dict[str, CrawlAgent] = {}
         self._text_only_count = 0
         self._text_only_retries = 0
         self._thinking_started = False
@@ -170,7 +173,29 @@ class CrawlAgent:
                 await self.router.close()
 
     async def fork(self, sub_goal: str, url: str | None = None) -> str:
-        raise NotImplementedError
+        if not self.manager.can_fork(self.agent_id):
+            return "Cannot fork: fork limits exceeded (max_concurrent_per_parent, max_depth, or max_total)"
+
+        child_id = f"fork-{uuid.uuid4().hex[:8]}"
+        child_state = self.state.fork(sub_goal=sub_goal, url=url)
+        child_state.max_steps = self.settings.fork_child_max_steps
+
+        child_agent = CrawlAgent(
+            agent_id=child_id,
+            state=child_state,
+            settings=self.settings,
+            provider=self.provider,
+            manager=self.manager,
+            router=None,
+            is_root=False,
+            console=self.console,
+        )
+
+        task = asyncio.create_task(child_agent.run())
+        self.manager.register_child(child_id, self.agent_id, task)
+        self._child_agents[child_id] = child_agent
+
+        return child_id
 
     def _on_thinking(self, chunk: str) -> None:
         if not self._thinking_started:
@@ -195,6 +220,22 @@ class CrawlAgent:
             self.console.print(
                 f"  {step_label} [dim]{ts}[/dim] [bold green]Done:[/bold green] {summary}"
             )
+            return
+
+        if name == "fork":
+            sub_goal = params.get("sub_goal", "")
+            url = params.get("url")
+            child_id = await self.fork(sub_goal, url)
+            if child_id.startswith("Cannot fork"):
+                observation = child_id
+                success = False
+            else:
+                observation = f"Forked subagent {child_id} for: {sub_goal}"
+                success = True
+            self.state.add_step(
+                name, params, observation, success=success, tool_call_id=tool_call_id
+            )
+            self.console.print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
             return
 
         action = self.actions.get(name)

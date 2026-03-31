@@ -262,4 +262,22 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                 "required": ["summary"],
             },
         },
+        {
+            "name": "fork",
+            "description": "Spawn a parallel subagent on a duplicated browser tab. The subagent gets a copy of your action history and works independently on the sub_goal. Use this when you need to explore multiple pages or approaches simultaneously. Results from subagents will be merged into your data when they complete.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sub_goal": {
+                        "type": "string",
+                        "description": "The goal for the subagent to accomplish",
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "Optional URL for the subagent to start from. If omitted, starts from your current page.",
+                    },
+                },
+                "required": ["sub_goal"],
+            },
+        },
     ]
