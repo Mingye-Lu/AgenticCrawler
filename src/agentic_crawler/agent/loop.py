@@ -15,7 +15,7 @@ from agentic_crawler.config import Settings
 from agentic_crawler.fetcher.router import FetcherRouter
 from agentic_crawler.llm.base import LLMProvider
 from agentic_crawler.llm.registry import get_provider
-from agentic_crawler.output.writer import write_output
+from agentic_crawler.output.writer import format_text, write_output
 from agentic_crawler.parser.html_parser import page_content_to_text, parse_html
 
 logger = structlog.get_logger()
@@ -128,7 +128,11 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                     f"[bold green]Done![/bold green] Extracted {len(state.extracted_data)} item(s)"
                 )
             )
-            write_output(state.extracted_data, settings.output_format, settings.output_file)
+            # Always show readable text summary on console
+            console.print(format_text(state.extracted_data, summary=state.done_reason))
+            # Write to file if requested (JSON/CSV preserved for files)
+            if settings.output_file:
+                write_output(state.extracted_data, settings.output_format, settings.output_file)
         else:
             console.print(
                 Panel(

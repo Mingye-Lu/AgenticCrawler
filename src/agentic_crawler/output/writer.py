@@ -74,8 +74,94 @@ def _write_csv(data: list[Any], file_path: str | None) -> None:
 
 
 def _write_stdout(data: list[Any]) -> None:
-    for item in data:
-        if isinstance(item, (dict, list)):
-            console.print_json(json.dumps(item, default=str))
-        else:
-            console.print(str(item))
+    console.print(format_text(data))
+
+
+def format_text(data: list[Any], summary: str | None = None) -> str:
+    """Render extracted data as readable markdown text, not raw JSON."""
+    if not data:
+        return "No data extracted."
+
+    parts: list[str] = []
+
+    if summary:
+        parts.append(summary)
+        parts.append("")
+
+    # Check if all items are dicts with the same keys -> render as table
+    if all(isinstance(item, dict) for item in data):
+        parts.append(_dicts_to_table(data))
+    elif all(isinstance(item, (str, int, float)) for item in data):
+        # Simple scalar list -> bullet list
+        for item in data:
+            parts.append(f"- {item}")
+    else:
+        # Mixed types -> render each item
+        for item in data:
+            if isinstance(item, dict):
+                parts.append(_dict_to_keyvalue(item))
+                parts.append("")
+            elif isinstance(item, list):
+                parts.append(_dicts_to_table(item) if item and isinstance(item[0], dict) else str(item))
+            else:
+                parts.append(f"- {item}")
+
+    return "\n".join(parts)
+
+
+def _dicts_to_table(rows: list[dict[str, Any]]) -> str:
+    """Render a list of dicts as a markdown table."""
+    if not rows:
+        return ""
+
+    # Collect all keys in order
+    keys: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for k in row:
+            if k not in seen:
+                keys.append(k)
+                seen.add(k)
+
+    # Build table
+    lines: list[str] = []
+    header = "| " + " | ".join(keys) + " |"
+    separator = "| " + " | ".join("---" for _ in keys) + " |"
+    lines.append(header)
+    lines.append(separator)
+
+    for row in rows:
+        cells = []
+        for k in keys:
+            val = row.get(k, "")
+            cell = _flatten_value(val)
+            cells.append(cell)
+        lines.append("| " + " | ".join(cells) + " |")
+
+    return "\n".join(lines)
+
+
+def _dict_to_keyvalue(d: dict[str, Any]) -> str:
+    """Render a single dict as key: value lines."""
+    lines: list[str] = []
+    for k, v in d.items():
+        lines.append(f"**{k}**: {_flatten_value(v)}")
+    return "\n".join(lines)
+
+
+def _flatten_value(val: Any) -> str:
+    """Flatten a value to a readable string, handling nested structures."""
+    if isinstance(val, dict):
+        # Render nested dict inline
+        parts = [f"{k}: {_flatten_value(v)}" for k, v in val.items()]
+        return ", ".join(parts)
+    elif isinstance(val, list):
+        if all(isinstance(item, dict) for item in val):
+            # Nested list of dicts -> comma-separated summaries
+            summaries = []
+            for item in val:
+                summary = ", ".join(f"{k}: {v}" for k, v in item.items())
+                summaries.append(summary)
+            return "; ".join(summaries)
+        return ", ".join(str(item) for item in val)
+    return str(val)
