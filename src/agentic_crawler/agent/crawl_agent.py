@@ -16,6 +16,7 @@ from agentic_crawler.agent.prompt_builder import build_messages, build_plan_mess
 from agentic_crawler.agent.state import AgentState, StepRecord
 from agentic_crawler.agent.tools import get_action_registry, get_tool_schemas
 from agentic_crawler.config import Settings
+from agentic_crawler.fetcher.browser_fetcher import BrowserFetcher
 from agentic_crawler.fetcher.router import FetcherRouter
 from agentic_crawler.llm.base import LLMProvider
 from agentic_crawler.output.writer import format_text, write_output
@@ -37,6 +38,7 @@ class CrawlAgent:
         provider: LLMProvider,
         manager: AgentManager,
         router: FetcherRouter | None = None,
+        owns_router: bool | None = None,
         is_root: bool = True,
         console: Console | None = None,
     ) -> None:
@@ -54,7 +56,7 @@ class CrawlAgent:
         self._text_only_count = 0
         self._text_only_retries = 0
         self._thinking_started = False
-        self._owns_router = router is None
+        self._owns_router = owns_router if owns_router is not None else (router is None)
 
         # Compute output prefix based on agent type
         if is_root:
@@ -204,8 +206,34 @@ class CrawlAgent:
             return "Cannot fork: fork limits exceeded (max_concurrent_per_parent, max_depth, or max_total)"
 
         child_id = f"fork-{uuid.uuid4().hex[:8]}"
-        child_state = self.state.fork(sub_goal=sub_goal, url=url)
+        target_url = url or self.state.current_url
+        child_state = self.state.fork(sub_goal=sub_goal, url=target_url)
         child_state.max_steps = self.settings.fork_child_max_steps
+
+        child_router: FetcherRouter | None = None
+        parent_context = None
+        if self.router is not None and hasattr(self.router, "browser"):
+            parent_context = getattr(self.router.browser, "_context", None)
+
+        if parent_context is not None:
+            child_browser = BrowserFetcher(
+                headless=self.settings.headless,
+                timeout=self.settings.browser_timeout,
+                context=parent_context,
+            )
+            await child_browser._ensure_browser()
+            if target_url and child_browser.page is not None:
+                try:
+                    await child_browser.page.goto(target_url, wait_until="domcontentloaded")
+                except Exception:
+                    pass
+
+            child_router = FetcherRouter(
+                headless=self.settings.headless,
+                browser_timeout=self.settings.browser_timeout,
+                browser_fetcher=child_browser,
+            )
+            child_router.escalate_to_browser()
 
         child_agent = CrawlAgent(
             agent_id=child_id,
@@ -213,7 +241,8 @@ class CrawlAgent:
             settings=self.settings,
             provider=self.provider,
             manager=self.manager,
-            router=None,
+            router=child_router,
+            owns_router=True,
             is_root=False,
             console=self.console,
         )
