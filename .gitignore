@@ -13,4 +13,4 @@ venv/
 .ruff_cache/
 .mypy_cache/
 *.log
-.claude/
+.*/

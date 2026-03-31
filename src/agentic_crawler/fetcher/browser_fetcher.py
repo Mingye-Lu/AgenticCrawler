@@ -82,8 +82,8 @@ class BrowserFetcher:
     async def submit_form(self, selector: str = "form") -> BrowserAction:
         page = await self._ensure_browser()
         try:
-            await page.evaluate(f'document.querySelector("{selector}").submit()')
-            await page.wait_for_load_state("domcontentloaded")
+            async with page.expect_navigation(wait_until="domcontentloaded"):
+                await page.evaluate(f'document.querySelector("{selector}").submit()')
             return BrowserAction(
                 success=True,
                 observation=f"Submitted form '{selector}'. Now on {page.url}",
