@@ -352,3 +352,159 @@ async def test_done_implicitly_waits_for_children() -> None:
     assert len(children) == 1
     child_info = children[0]
     assert child_info.status == "done"
+
+
+# ── _merge_child_results tests (Task 8) ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_child_extracted_data_merges_to_parent() -> None:
+    manager = _make_manager()
+    provider = MockLLMProvider([])
+
+    root_state = AgentState(goal="root")
+    root_agent = CrawlAgent(
+        agent_id="root-merge-1",
+        state=root_state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    manager.register_root("root-merge-1")
+
+    child_state = AgentState(goal="child task")
+    child_state.extracted_data = [{"item": "data"}]
+    child_agent = CrawlAgent(
+        agent_id="child-1",
+        state=child_state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    root_agent._child_agents["child-1"] = child_agent
+    manager.register_child("child-1", "root-merge-1", None)
+
+    n = root_agent._merge_child_results("child-1", child_agent)
+    assert n == 1
+    assert root_state.extracted_data == [{"item": "data"}]
+    merge_steps = [s for s in root_state.history if s.action == "__child_merge__"]
+    assert len(merge_steps) == 1
+    assert "child task" in merge_steps[0].observation
+
+
+@pytest.mark.asyncio
+async def test_multiple_children_data_merges() -> None:
+    manager = _make_manager()
+    provider = MockLLMProvider([])
+
+    root_state = AgentState(goal="root")
+    root_agent = CrawlAgent(
+        agent_id="root-merge-2",
+        state=root_state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    manager.register_root("root-merge-2")
+
+    for i in range(2):
+        cid = f"child-{i}"
+        cs = AgentState(goal=f"child {i}")
+        cs.extracted_data = [{"item": f"data-{i}"}]
+        ca = CrawlAgent(
+            agent_id=cid,
+            state=cs,
+            settings=Settings(fork_wait_timeout=5),
+            provider=provider,
+            manager=manager,
+            router=MockFetcherRouter(),
+            is_root=False,
+        )
+        root_agent._child_agents[cid] = ca
+        manager.register_child(cid, "root-merge-2", None)
+        root_agent._merge_child_results(cid, ca)
+
+    assert len(root_state.extracted_data) == 2
+    assert root_state.extracted_data[0] == {"item": "data-0"}
+    assert root_state.extracted_data[1] == {"item": "data-1"}
+
+
+@pytest.mark.asyncio
+async def test_merge_preserves_parent_data() -> None:
+    manager = _make_manager()
+    provider = MockLLMProvider([])
+
+    root_state = AgentState(goal="root")
+    root_state.extracted_data = [{"existing": "parent-data"}]
+    root_agent = CrawlAgent(
+        agent_id="root-merge-3",
+        state=root_state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    manager.register_root("root-merge-3")
+
+    child_state = AgentState(goal="child task")
+    child_state.extracted_data = [{"child": "child-data"}]
+    child_agent = CrawlAgent(
+        agent_id="child-p",
+        state=child_state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    root_agent._child_agents["child-p"] = child_agent
+    manager.register_child("child-p", "root-merge-3", None)
+
+    root_agent._merge_child_results("child-p", child_agent)
+    assert len(root_state.extracted_data) == 2
+    assert root_state.extracted_data[0] == {"existing": "parent-data"}
+    assert root_state.extracted_data[1] == {"child": "child-data"}
+
+
+@pytest.mark.asyncio
+async def test_merge_with_no_child_data_returns_zero() -> None:
+    manager = _make_manager()
+    provider = MockLLMProvider([])
+
+    root_state = AgentState(goal="root")
+    root_agent = CrawlAgent(
+        agent_id="root-merge-4",
+        state=root_state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    manager.register_root("root-merge-4")
+
+    child_state = AgentState(goal="empty child")
+    child_agent = CrawlAgent(
+        agent_id="child-empty",
+        state=child_state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    root_agent._child_agents["child-empty"] = child_agent
+    manager.register_child("child-empty", "root-merge-4", None)
+
+    n = root_agent._merge_child_results("child-empty", child_agent)
+    assert n == 0
+    assert root_state.extracted_data == []
+    merge_steps = [s for s in root_state.history if s.action == "__child_merge__"]
+    assert len(merge_steps) == 0
