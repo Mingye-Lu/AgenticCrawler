@@ -55,12 +55,25 @@ Each turn, you will see:
 - The original goal
 
 Choose your next action wisely to make progress toward the goal.
+
+## Parallel Exploration (fork)
+- Use the `fork` tool to spawn a subagent on a separate browser tab when you need to explore multiple pages simultaneously.
+- Each subagent gets a copy of your history and works independently.
+- You can fork multiple subagents at once (up to the configured limit).
+- After forking, you continue working — subagents run in parallel.
+- Use `wait_for_subagents` to pause and collect results from all active subagents.
+- When you call `done`, the system automatically waits for any active subagents and merges their data.
+- Subagents can also fork their own subagents (up to the configured depth limit).
 """
 
 HISTORY_WINDOW = 15  # Max recent steps to include
 
 
-def build_messages(state: AgentState, provider: str = "claude") -> list[dict[str, Any]]:
+def build_messages(
+    state: AgentState,
+    provider: str = "claude",
+    active_children: list[dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     """Build the message list for the LLM from current agent state."""
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -91,6 +104,10 @@ def build_messages(state: AgentState, provider: str = "claude") -> list[dict[str
             page_msg += (
                 f"\n\n## Data Extracted So Far\n{len(state.extracted_data)} item(s) collected."
             )
+        if active_children:
+            page_msg += f"\n\n## Active Subagents ({len(active_children)})\n"
+            for child in active_children:
+                page_msg += f"- [{child['id']}] working on: {child['sub_goal']}\n"
         page_msg += "\n\nWhat is your next action?"
 
         if is_claude:

@@ -105,7 +105,17 @@ class CrawlAgent:
                     break
 
                 self._thinking_started = False
-                messages = build_messages(self.state, provider=self.settings.llm_provider)
+                active_children_info = [
+                    {"id": child_id, "sub_goal": child_agent.state.goal}
+                    for child_id, child_agent in self._child_agents.items()
+                    if self.manager._agents.get(child_id)
+                    and self.manager._agents[child_id].status == "active"
+                ]
+                messages = build_messages(
+                    self.state,
+                    provider=self.settings.llm_provider,
+                    active_children=active_children_info if active_children_info else None,
+                )
                 response = await self.provider.complete(
                     messages=messages,
                     tools=self.tool_schemas,
