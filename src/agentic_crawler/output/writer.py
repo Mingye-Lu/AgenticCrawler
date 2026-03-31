@@ -3,36 +3,44 @@ from __future__ import annotations
 import csv
 import io
 import json
-import sys
 from typing import Any
 
 from rich.console import Console
 from rich.syntax import Syntax
 
-console = Console()
+_default_console = Console()
 
 
-def write_output(data: list[Any], fmt: str = "json", file_path: str | None = None) -> None:
+def _get_console(console: Console | None) -> Console:
+    """Return injected console or module-level fallback."""
+    return console if console is not None else _default_console
+
+
+def write_output(
+    data: list[Any], fmt: str = "json", file_path: str | None = None, console: Console | None = None
+) -> None:
     """Write extracted data in the requested format."""
     if fmt == "json":
-        _write_json(data, file_path)
+        _write_json(data, file_path, console)
     elif fmt == "csv":
-        _write_csv(data, file_path)
+        _write_csv(data, file_path, console)
     else:
-        _write_stdout(data)
+        _write_stdout(data, console)
 
 
-def _write_json(data: list[Any], file_path: str | None) -> None:
+def _write_json(data: list[Any], file_path: str | None, console: Console | None = None) -> None:
+    con = _get_console(console)
     text = json.dumps(data, indent=2, ensure_ascii=False, default=str)
     if file_path:
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(text)
-        console.print(f"[green]Output written to {file_path}[/green]")
+        con.print(f"[green]Output written to {file_path}[/green]")
     else:
-        console.print(Syntax(text, "json", theme="monokai"))
+        con.print(Syntax(text, "json", theme="monokai"))
 
 
-def _write_csv(data: list[Any], file_path: str | None) -> None:
+def _write_csv(data: list[Any], file_path: str | None, console: Console | None = None) -> None:
+    con = _get_console(console)
     if not data:
         return
 
@@ -47,7 +55,7 @@ def _write_csv(data: list[Any], file_path: str | None) -> None:
             rows.append({"value": item})
 
     if not rows:
-        console.print("[yellow]No tabular data to write as CSV[/yellow]")
+        con.print("[yellow]No tabular data to write as CSV[/yellow]")
         return
 
     # Collect all keys
@@ -66,15 +74,16 @@ def _write_csv(data: list[Any], file_path: str | None) -> None:
         writer.writerows(rows)
 
         if not file_path:
-            console.print(output.getvalue())
+            con.print(output.getvalue())
         else:
-            console.print(f"[green]CSV written to {file_path}[/green]")
+            con.print(f"[green]CSV written to {file_path}[/green]")
     finally:
         output.close()
 
 
-def _write_stdout(data: list[Any]) -> None:
-    console.print(format_text(data))
+def _write_stdout(data: list[Any], console: Console | None = None) -> None:
+    con = _get_console(console)
+    con.print(format_text(data))
 
 
 def format_text(data: list[Any], summary: str | None = None) -> str:
@@ -102,7 +111,9 @@ def format_text(data: list[Any], summary: str | None = None) -> str:
                 parts.append(_dict_to_keyvalue(item))
                 parts.append("")
             elif isinstance(item, list):
-                parts.append(_dicts_to_table(item) if item and isinstance(item[0], dict) else str(item))
+                parts.append(
+                    _dicts_to_table(item) if item and isinstance(item[0], dict) else str(item)
+                )
             else:
                 parts.append(f"- {item}")
 

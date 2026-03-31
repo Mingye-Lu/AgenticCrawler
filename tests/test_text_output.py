@@ -2,6 +2,7 @@
 Tests for the agent's final text output rendering.
 The final agent response should be parsed markdown text, not free-form JSON.
 """
+
 from __future__ import annotations
 
 from io import StringIO
@@ -87,3 +88,43 @@ class TestWriteOutputStdout:
         assert "Widget A" in captured
         # Should not be a raw JSON dump
         assert captured.strip()[0] not in ("[", "{")
+
+
+class TestInjectedConsole:
+    """write_output should accept an injected console parameter."""
+
+    def test_injected_console_receives_json_output(self) -> None:
+        """When console is injected, JSON output goes to it, not module-level."""
+        from rich.console import Console
+
+        buf = StringIO()
+        injected = Console(file=buf, force_terminal=False)
+        data = [{"name": "Widget", "price": "$10"}]
+        write_output(data, fmt="json", console=injected)
+        output = buf.getvalue()
+        assert "Widget" in output
+        assert "$10" in output
+
+    def test_injected_console_receives_csv_output(self) -> None:
+        """When console is injected, CSV output goes to it."""
+        from rich.console import Console
+
+        buf = StringIO()
+        injected = Console(file=buf, force_terminal=False)
+        data = [{"name": "Widget", "price": "$10"}]
+        write_output(data, fmt="csv", console=injected)
+        output = buf.getvalue()
+        assert "Widget" in output
+        assert "$10" in output
+
+    def test_injected_console_receives_stdout_output(self) -> None:
+        """When console is injected, stdout format output goes to it."""
+        from rich.console import Console
+
+        buf = StringIO()
+        injected = Console(file=buf, force_terminal=False)
+        data = [{"name": "Widget", "price": "$10"}]
+        write_output(data, fmt="stdout", console=injected)
+        output = buf.getvalue()
+        assert "Widget" in output
+        assert "$10" in output
