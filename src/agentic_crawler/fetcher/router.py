@@ -23,7 +23,8 @@ class FetcherRouter:
     def __init__(self, headless: bool = True, browser_timeout: int = 30000) -> None:
         self.http = HttpFetcher()
         self.browser = BrowserFetcher(headless=headless, timeout=browser_timeout)
-        self._using_browser = False
+        # When headless=False the user explicitly wants a visible browser for all actions
+        self._using_browser = not headless
         self._last_url: str | None = None
 
     @property

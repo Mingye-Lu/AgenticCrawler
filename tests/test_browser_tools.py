@@ -158,6 +158,15 @@ async def test_navigate_action(local_server: str, router: FetcherRouter) -> None
 
 
 @pytest.mark.asyncio
+async def test_navigate_uses_browser_when_not_headless(local_server: str, router: FetcherRouter) -> None:
+    """When headless=False the browser must be launched even for plain navigate."""
+    action = NavigateAction()
+    await action.execute(router, {"url": local_server})
+    # The browser page should have been created (not just HTTP)
+    assert router.browser.page is not None
+
+
+@pytest.mark.asyncio
 async def test_navigate_no_url(router: FetcherRouter) -> None:
     action = NavigateAction()
     result = await action.execute(router, {})
