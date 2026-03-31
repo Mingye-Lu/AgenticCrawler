@@ -80,6 +80,7 @@ class CrawlAgent:
             self.router = FetcherRouter(
                 headless=self.settings.headless,
                 browser_timeout=self.settings.browser_timeout,
+                workspace_dir=self.settings.workspace_dir,
             )
 
         self.display.print_panel(self.agent_id, self.agent_id, "[bold]Executing...[/bold]", "green")
@@ -231,6 +232,7 @@ class CrawlAgent:
                 headless=self.settings.headless,
                 browser_timeout=self.settings.browser_timeout,
                 browser_fetcher=child_browser,
+                workspace_dir=self.settings.workspace_dir,
             )
             child_router.escalate_to_browser()
 

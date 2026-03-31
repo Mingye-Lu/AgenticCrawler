@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from agentic_crawler.fetcher.browser_fetcher import BrowserFetcher
 from agentic_crawler.fetcher.http_fetcher import HttpFetcher
 from agentic_crawler.fetcher.base import FetchResult
@@ -26,9 +28,11 @@ class FetcherRouter:
         headless: bool = True,
         browser_timeout: int = 30000,
         browser_fetcher: BrowserFetcher | None = None,
+        workspace_dir: str = "workspace",
     ) -> None:
         self.http = HttpFetcher()
         self.browser = browser_fetcher or BrowserFetcher(headless=headless, timeout=browser_timeout)
+        self.workspace_dir = Path(workspace_dir).resolve()
         # When headless=False the user explicitly wants a visible browser for all actions
         self._using_browser = not headless
         self._last_url: str | None = None

@@ -36,6 +36,7 @@ def run(
     max_steps: Optional[int] = typer.Option(None, "--max-steps", help="Max agent steps"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path"),
     output_format: Optional[str] = typer.Option(None, "--format", "-f", help="json, csv, stdout"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace directory for saved files"),
     headless: bool = typer.Option(True, "--headless/--no-headless", help="Browser headless mode"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging"),
 ) -> None:
@@ -56,6 +57,8 @@ def run(
         overrides["output_file"] = output
     if output_format:
         overrides["output_format"] = output_format
+    if workspace:
+        overrides["workspace_dir"] = workspace
 
     settings = get_settings(**overrides)
 

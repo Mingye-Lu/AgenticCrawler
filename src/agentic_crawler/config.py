@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # Output
     output_format: str = Field(default="json", description="Output format: json, csv, stdout")
     output_file: str | None = Field(default=None, description="Output file path")
+    workspace_dir: str = Field(default="workspace", description="Directory for saved files")
 
     # Fork limits
     max_concurrent_per_parent: int = Field(

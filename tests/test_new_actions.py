@@ -5,6 +5,7 @@ from agentic_crawler.actions.go_back import GoBackAction
 from agentic_crawler.actions.hover import HoverAction
 from agentic_crawler.actions.press_key import PressKeyAction
 from agentic_crawler.actions.select_option import SelectOptionAction
+from agentic_crawler.actions.save_file import SaveFileAction
 from agentic_crawler.actions.switch_tab import SwitchTabAction
 from agentic_crawler.agent.tools import get_action_registry, get_tool_schemas
 
@@ -27,8 +28,8 @@ def test_new_tool_schemas_present() -> None:
 def test_total_tool_count() -> None:
     schemas = get_tool_schemas()
     assert (
-        len(schemas) == 17
-    )  # 7 original + 6 new + done + fork + wait_for_subagents + list_resources
+        len(schemas) == 18
+    )  # 7 original + 6 new + done + fork + wait_for_subagents + list_resources + save_file
 
 
 @pytest.mark.asyncio
@@ -83,3 +84,65 @@ def test_schema_required_fields() -> None:
     assert "selector" in by_name["hover"]["parameters"]["required"]
     assert "key" in by_name["press_key"]["parameters"]["required"]
     assert by_name["go_back"]["parameters"]["properties"] == {}
+    assert "url" in by_name["save_file"]["parameters"]["required"]
+
+
+def test_save_file_in_registry() -> None:
+    registry = get_action_registry()
+    assert "save_file" in registry
+
+
+def test_save_file_schema_present() -> None:
+    schemas = get_tool_schemas()
+    names = {s["name"] for s in schemas}
+    assert "save_file" in names
+
+
+@pytest.mark.asyncio
+async def test_save_file_requires_url() -> None:
+    action = SaveFileAction()
+    result = await action.execute(router=None, params={})  # type: ignore[arg-type]
+    assert not result.success
+    assert "url" in result.observation.lower()
+
+
+@pytest.mark.asyncio
+async def test_save_file_path_traversal(tmp_path: object) -> None:
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    workspace = Path(str(tmp_path)) / "ws"
+    workspace.mkdir()
+
+    router = MagicMock()
+    router.workspace_dir = workspace
+
+    action = SaveFileAction()
+    result = await action.execute(router, params={"url": "http://x.com/f.txt", "subdir": "../../etc"})
+    assert not result.success
+    assert "traversal" in result.observation.lower()
+
+
+@pytest.mark.asyncio
+async def test_save_file_downloads_and_writes(tmp_path: object) -> None:
+    from pathlib import Path
+    from unittest.mock import AsyncMock, MagicMock
+
+    workspace = Path(str(tmp_path)) / "ws"
+    workspace.mkdir()
+
+    mock_response = MagicMock()
+    mock_response.content = b"hello world"
+    mock_response.raise_for_status = MagicMock()
+
+    router = MagicMock()
+    router.workspace_dir = workspace
+    router.http.client.get = AsyncMock(return_value=mock_response)
+
+    action = SaveFileAction()
+    result = await action.execute(router, params={"url": "http://example.com/data/report.pdf"})
+    assert result.success
+    saved = workspace / "report.pdf"
+    assert saved.exists()
+    assert saved.read_bytes() == b"hello world"
+    assert "11 bytes" in result.observation

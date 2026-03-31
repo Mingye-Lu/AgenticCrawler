@@ -11,6 +11,7 @@ from agentic_crawler.actions.go_back import GoBackAction
 from agentic_crawler.actions.hover import HoverAction
 from agentic_crawler.actions.list_resources import ListResourcesAction
 from agentic_crawler.actions.navigate import NavigateAction
+from agentic_crawler.actions.save_file import SaveFileAction
 from agentic_crawler.actions.press_key import PressKeyAction
 from agentic_crawler.actions.screenshot import ScreenshotAction
 from agentic_crawler.actions.scroll import ScrollAction
@@ -35,6 +36,7 @@ def get_action_registry() -> dict[str, Action]:
         PressKeyAction(),
         SwitchTabAction(),
         ListResourcesAction(),
+        SaveFileAction(),
     ]
     return {a.name: a for a in actions}
 
@@ -265,6 +267,28 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         "description": "Regex to filter by resource URL (e.g. '\\.js$', 'cdn\\.example\\.com'). Case-insensitive.",
                     },
                 },
+            },
+        },
+        {
+            "name": "save_file",
+            "description": "Download a resource from a URL and save it to the workspace directory. Use this to save files, images, PDFs, or any other resources to disk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL of the resource to download and save",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Optional filename to save as. If omitted, derived from the URL.",
+                    },
+                    "subdir": {
+                        "type": "string",
+                        "description": "Optional subdirectory within the workspace (e.g. 'images', 'data').",
+                    },
+                },
+                "required": ["url"],
             },
         },
         {
