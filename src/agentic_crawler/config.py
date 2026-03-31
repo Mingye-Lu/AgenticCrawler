@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     output_format: str = Field(default="json", description="Output format: json, csv, stdout")
     output_file: str | None = Field(default=None, description="Output file path")
 
+    # Fork limits
+    max_concurrent_per_parent: int = Field(
+        default=5, description="Max concurrent subagents per parent"
+    )
+    max_fork_depth: int = Field(default=3, description="Max fork recursion depth")
+    max_total_agents: int = Field(default=10, description="Max total agents in fork tree")
+    fork_child_max_steps: int = Field(default=15, description="Max steps for forked child agents")
+    fork_wait_timeout: int = Field(
+        default=60, description="Seconds to wait for children at done time"
+    )
+
 
 def get_settings(**overrides: object) -> Settings:
     return Settings(**overrides)  # type: ignore[arg-type]
