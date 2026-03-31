@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from typing import Any
 
@@ -51,10 +50,7 @@ class ClaudeProvider:
 
         async with self.client.messages.stream(**kwargs) as stream:
             async for event in stream:
-                if (
-                    event.type == "content_block_delta"
-                    and event.delta.type == "thinking_delta"
-                ):
+                if event.type == "content_block_delta" and event.delta.type == "thinking_delta":
                     chunk = event.delta.thinking
                     thinking_parts.append(chunk)
                     if on_thinking:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 
 def validate_extracted_data(data: Any, schema: dict[str, Any] | None = None) -> Any:

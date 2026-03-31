@@ -9,7 +9,7 @@ from typing import Any
 import structlog
 from rich.markdown import Markdown
 
-from agentic_crawler.agent.display import AgentDisplay
+from agentic_crawler.agent.display import AgentDisplay, ConsoleDisplay, LiveDashboard
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.prompt_builder import build_messages, build_plan_messages
 from agentic_crawler.agent.state import AgentState, StepRecord
@@ -196,6 +196,22 @@ class CrawlAgent:
     async def fork(self, sub_goal: str, url: str | None = None) -> str:
         if not self.manager.can_fork(self.agent_id):
             return "Cannot fork: fork limits exceeded (max_concurrent_per_parent, max_depth, or max_total)"
+
+        if isinstance(self.display, ConsoleDisplay):
+            live = LiveDashboard(
+                console=self.display.get_console(),
+                verbose=self.display.verbose,
+            )
+            live.register_agent(
+                self.agent_id,
+                self.state.goal,
+                None,
+                self.state.max_steps,
+            )
+            live.set_thinking(self.agent_id, False)
+            live._agents[self.agent_id].current_step = self.state.step_count
+            live.start()
+            self.display = live
 
         child_id = f"fork-{uuid.uuid4().hex[:8]}"
         target_url = url or self.state.current_url
