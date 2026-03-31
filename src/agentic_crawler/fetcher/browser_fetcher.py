@@ -1,8 +1,29 @@
 from __future__ import annotations
 
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright, Playwright
+from dataclasses import dataclass, field
+
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    Response,
+    async_playwright,
+    Playwright,
+)
 
 from agentic_crawler.fetcher.base import BrowserAction, FetchResult
+
+
+@dataclass
+class ResourceEntry:
+    """A single sub-resource observed during a page load."""
+
+    url: str
+    resource_type: str  # script, stylesheet, image, font, xhr, fetch, document, …
+    status: int
+    mime_type: str
+    size: int  # body size in bytes; 0 when unavailable
+
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -27,6 +48,7 @@ class BrowserFetcher:
         self._context: BrowserContext | None = context
         self._page: Page | None = None
         self._external_context: bool = context is not None
+        self._resources: list[ResourceEntry] = []
 
     async def _ensure_browser(self) -> Page:
         if self._page is None:
@@ -49,7 +71,28 @@ class BrowserFetcher:
                 )
             self._page = await self._context.new_page()
             self._page.set_default_timeout(self.timeout)
+            self._page.on("response", self._on_response)
         return self._page
+
+    async def _on_response(self, response: Response) -> None:
+        try:
+            body = await response.body()
+            size = len(body)
+        except Exception:
+            size = 0
+        self._resources.append(
+            ResourceEntry(
+                url=response.url,
+                resource_type=response.request.resource_type,
+                status=response.status,
+                mime_type=response.headers.get("content-type", ""),
+                size=size,
+            )
+        )
+
+    @property
+    def collected_resources(self) -> list[ResourceEntry]:
+        return list(self._resources)
 
     @property
     def page(self) -> Page | None:
@@ -57,6 +100,7 @@ class BrowserFetcher:
 
     async def get(self, url: str) -> FetchResult:
         page = await self._ensure_browser()
+        self._resources.clear()
         response = await page.goto(url, wait_until="domcontentloaded")
         html = await page.content()
         return FetchResult(

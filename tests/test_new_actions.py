@@ -26,7 +26,9 @@ def test_new_tool_schemas_present() -> None:
 
 def test_total_tool_count() -> None:
     schemas = get_tool_schemas()
-    assert len(schemas) == 14  # 7 original + 6 new + done
+    assert (
+        len(schemas) == 17
+    )  # 7 original + 6 new + done + fork + wait_for_subagents + list_resources
 
 
 @pytest.mark.asyncio

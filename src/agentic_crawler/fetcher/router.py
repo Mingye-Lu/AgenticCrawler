@@ -16,6 +16,7 @@ BROWSER_ACTIONS = {
     "hover",
     "press_key",
     "switch_tab",
+    "list_resources",
 }
 
 

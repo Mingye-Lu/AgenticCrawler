@@ -9,6 +9,7 @@ from agentic_crawler.actions.extract import ExtractDataAction
 from agentic_crawler.actions.fill_form import FillFormAction
 from agentic_crawler.actions.go_back import GoBackAction
 from agentic_crawler.actions.hover import HoverAction
+from agentic_crawler.actions.list_resources import ListResourcesAction
 from agentic_crawler.actions.navigate import NavigateAction
 from agentic_crawler.actions.press_key import PressKeyAction
 from agentic_crawler.actions.screenshot import ScreenshotAction
@@ -33,6 +34,7 @@ def get_action_registry() -> dict[str, Action]:
         HoverAction(),
         PressKeyAction(),
         SwitchTabAction(),
+        ListResourcesAction(),
     ]
     return {a.name: a for a in actions}
 
@@ -244,6 +246,23 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         "type": "integer",
                         "description": "Tab index (-1 for newest, 0 for first)",
                         "default": -1,
+                    },
+                },
+            },
+        },
+        {
+            "name": "list_resources",
+            "description": "List all sub-resources (scripts, stylesheets, images, fonts, XHR, etc.) loaded by the current page. Requires browser mode. Supports optional regex filters on resource type and URL.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "type_pattern": {
+                        "type": "string",
+                        "description": "Regex to filter by resource type (e.g. 'script|stylesheet', 'image'). Case-insensitive.",
+                    },
+                    "name_pattern": {
+                        "type": "string",
+                        "description": "Regex to filter by resource URL (e.g. '\\.js$', 'cdn\\.example\\.com'). Case-insensitive.",
                     },
                 },
             },
