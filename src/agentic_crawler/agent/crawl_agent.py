@@ -68,6 +68,7 @@ class CrawlAgent:
                 self.state.goal,
                 self.settings.temperature,
                 self._on_thinking,
+                headless=self.settings.headless,
             )
             if self._thinking_started:
                 self.display.set_thinking(self.agent_id, False)
@@ -120,6 +121,7 @@ class CrawlAgent:
                     self.state,
                     provider=self.settings.llm_provider,
                     active_children=active_children_info if active_children_info else None,
+                    headless=self.settings.headless,
                 )
                 response = await self.provider.complete(
                     messages=messages,
@@ -398,8 +400,9 @@ async def _plan(
     goal: str,
     temperature: float,
     on_thinking: Any = None,
+    headless: bool = True,
 ) -> list[str]:
-    messages = build_plan_messages(goal)
+    messages = build_plan_messages(goal, headless=headless)
     response = await provider.complete(
         messages=messages, temperature=temperature, on_thinking=on_thinking
     )

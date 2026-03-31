@@ -5,8 +5,7 @@ from typing import Any
 
 from agentic_crawler.agent.state import AgentState, StepRecord
 
-_SEARCH_CONSTRAINTS = """\
-- NEVER use Google Search — it blocks automated browsers. Use Bing (bing.com/search?q=...) or DuckDuckGo (duckduckgo.com/?q=...) instead.
+_SEARCH_CONSTRAINTS_BASE = """\
 - Navigate directly to full URLs rather than filling search forms. \
 For example, use navigate(url="https://www.bing.com/search?q=my+query") instead of filling a search box.
 - Simplify search queries: remove underscores, special punctuation, and filename-style formatting. Use clean, natural keywords.
@@ -14,7 +13,19 @@ For example, use navigate(url="https://www.bing.com/search?q=my+query") instead 
 - Try multiple search engines if one fails — both Bing and DuckDuckGo are available.
 - Do NOT use filetype: operators on DuckDuckGo — include the file type as a keyword instead (e.g., "pdf" or "epub")."""
 
-SYSTEM_PROMPT = """\
+_GOOGLE_HEADLESS_WARNING = (
+    "- Google Search will likely fail in headless mode. "
+    "Prefer Bing (bing.com/search?q=...) or DuckDuckGo (duckduckgo.com/?q=...) instead."
+)
+
+
+def _search_constraints(headless: bool = True) -> str:
+    if headless:
+        return _GOOGLE_HEADLESS_WARNING + "\n" + _SEARCH_CONSTRAINTS_BASE
+    return _SEARCH_CONSTRAINTS_BASE
+
+
+_SYSTEM_PROMPT_TEMPLATE = """\
 <role>
 You are an autonomous web crawling agent. You navigate websites, interact with pages, \
 and extract structured data to accomplish a user's goal.
@@ -82,7 +93,7 @@ Choose your next action wisely to make progress toward the goal.
 - When you call `done`, the system automatically waits for any active subagents and merges their data.
 - Subagents can also fork their own subagents (up to the configured depth limit).
 </parallel-exploration>
-""".format(search_constraints=_SEARCH_CONSTRAINTS)
+"""
 
 HISTORY_WINDOW = 15  # Max recent steps to include
 HISTORY_PIN = 2  # Always keep the first N steps visible
@@ -102,10 +113,14 @@ def build_messages(
     state: AgentState,
     provider: str = "claude",
     active_children: list[dict[str, str]] | None = None,
+    headless: bool = True,
 ) -> list[dict[str, Any]]:
     """Build the message list for the LLM from current agent state."""
+    system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
+        search_constraints=_search_constraints(headless),
+    )
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
     ]
 
     # Initial user message with the goal
@@ -155,7 +170,8 @@ def build_messages(
     return messages
 
 
-def build_plan_messages(goal: str) -> list[dict[str, Any]]:
+def build_plan_messages(goal: str, headless: bool = True) -> list[dict[str, Any]]:
+    constraints = _search_constraints(headless)
     return [
         {
             "role": "system",
@@ -163,7 +179,7 @@ def build_plan_messages(goal: str) -> list[dict[str, Any]]:
                 "You are a planning agent. Given a web crawling goal, produce a concise step-by-step plan. "
                 "Each step should be a short action description. Return ONLY the plan as a numbered list, nothing else.\n\n"
                 "<constraints>\n"
-                f"{_SEARCH_CONSTRAINTS}\n"
+                f"{constraints}\n"
                 "- Prefer navigate(url=...) over click for following links.\n"
                 "</constraints>"
             ),
