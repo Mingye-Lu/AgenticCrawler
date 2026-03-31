@@ -410,7 +410,11 @@ async def test_child_extracted_data_merges_to_parent() -> None:
 
     n = root_agent._merge_child_results("child-1", child_agent)
     assert n == 1
-    assert root_state.extracted_data == [{"item": "data"}]
+    assert len(root_state.child_blocks) == 1
+    assert root_state.child_blocks[0].child_id == "child-1"
+    assert root_state.child_blocks[0].sub_goal == "child task"
+    assert root_state.child_blocks[0].items == [{"item": "data"}]
+    assert root_state.all_data == [{"item": "data"}]
     merge_steps = [s for s in root_state.history if s.action == "__child_merge__"]
     assert len(merge_steps) == 1
     assert "child task" in merge_steps[0].observation
@@ -452,9 +456,10 @@ async def test_multiple_children_data_merges() -> None:
         manager.register_child(cid, "root-merge-2", None)
         root_agent._merge_child_results(cid, ca)
 
-    assert len(root_state.extracted_data) == 2
-    assert root_state.extracted_data[0] == {"item": "data-0"}
-    assert root_state.extracted_data[1] == {"item": "data-1"}
+    assert len(root_state.child_blocks) == 2
+    assert root_state.child_blocks[0].items == [{"item": "data-0"}]
+    assert root_state.child_blocks[1].items == [{"item": "data-1"}]
+    assert root_state.all_data == [{"item": "data-0"}, {"item": "data-1"}]
 
 
 @pytest.mark.asyncio
@@ -492,9 +497,10 @@ async def test_merge_preserves_parent_data() -> None:
     manager.register_child("child-p", "root-merge-3", None)
 
     root_agent._merge_child_results("child-p", child_agent)
-    assert len(root_state.extracted_data) == 2
-    assert root_state.extracted_data[0] == {"existing": "parent-data"}
-    assert root_state.extracted_data[1] == {"child": "child-data"}
+    assert root_state.extracted_data == [{"existing": "parent-data"}]
+    assert len(root_state.child_blocks) == 1
+    assert root_state.child_blocks[0].items == [{"child": "child-data"}]
+    assert root_state.all_data == [{"existing": "parent-data"}, {"child": "child-data"}]
 
 
 @pytest.mark.asyncio

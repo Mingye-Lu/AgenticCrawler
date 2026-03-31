@@ -15,6 +15,14 @@ class StepRecord:
 
 
 @dataclass
+class ChildBlock:
+    """A block of extracted data from a single subagent."""
+    child_id: str
+    sub_goal: str
+    items: list[Any]
+
+
+@dataclass
 class AgentState:
     goal: str
     current_url: str | None = None
@@ -23,12 +31,21 @@ class AgentState:
     plan: list[str] = field(default_factory=list)
     history: list[StepRecord] = field(default_factory=list)
     extracted_data: list[Any] = field(default_factory=list)
+    child_blocks: list[ChildBlock] = field(default_factory=list)
     step_count: int = 0
     max_steps: int = 50
     errors: list[str] = field(default_factory=list)
     done: bool = False
     done_reason: str = ""
     total_tokens: int = 0
+
+    @property
+    def all_data(self) -> list[Any]:
+        """Return all extracted data (own + children) as a flat list."""
+        result = list(self.extracted_data)
+        for block in self.child_blocks:
+            result.extend(block.items)
+        return result
 
     def add_step(
         self,

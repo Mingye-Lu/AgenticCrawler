@@ -157,19 +157,26 @@ class CrawlAgent:
                     content = parse_html(self.state.current_html, self.state.current_url)
                     self.state.page_summary = page_content_to_text(content)
 
-            if self.state.extracted_data:
+            all_data = self.state.all_data
+            if all_data:
                 self.display.print_panel(
                     self.agent_id,
                     self.agent_id,
-                    f"[bold green]Done![/bold green] Extracted {len(self.state.extracted_data)} item(s)",
+                    f"[bold green]Done![/bold green] Extracted {len(all_data)} item(s)",
                     "",
                 )
                 self.display.print_final_output(
-                    Markdown(format_text(self.state.extracted_data, summary=self.state.done_reason))
+                    Markdown(
+                        format_text(
+                            self.state.extracted_data,
+                            summary=self.state.done_reason,
+                            child_blocks=self.state.child_blocks,
+                        )
+                    )
                 )
                 if self.settings.output_file:
                     write_output(
-                        self.state.extracted_data,
+                        all_data,
                         self.settings.output_format,
                         self.settings.output_file,
                         console=self.display.get_console(),
@@ -287,12 +294,16 @@ class CrawlAgent:
         return f"Waited for {len(child_tasks)} subagent(s). Collected {total_items} total item(s)."
 
     def _merge_child_results(self, child_id: str, child_agent: CrawlAgent) -> int:
-        """Merge child's extracted_data into parent. Returns number of items merged."""
+        """Merge child's extracted_data into parent as a ChildBlock. Returns number of items merged."""
+        from .state import ChildBlock
+
         items = child_agent.state.extracted_data
-        self.state.extracted_data.extend(items)
         n = len(items)
         if n > 0:
             sub_goal = child_agent.state.goal
+            self.state.child_blocks.append(
+                ChildBlock(child_id=child_id, sub_goal=sub_goal, items=items)
+            )
             obs = f"Subagent {child_id} completed: extracted {n} item(s) for '{sub_goal}'"
             self.state.history.append(
                 StepRecord(

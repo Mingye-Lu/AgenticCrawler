@@ -258,7 +258,9 @@ async def test_child_data_merges_to_parent() -> None:
         await agent.run()
 
     assert agent.state.done is True
-    assert agent.state.extracted_data == [{"title": "child-item", "price": "$10"}]
+    assert len(agent.state.child_blocks) == 1
+    assert agent.state.child_blocks[0].items == [{"title": "child-item", "price": "$10"}]
+    assert agent.state.all_data == [{"title": "child-item", "price": "$10"}]
     merge_steps = [s for s in agent.state.history if s.action == "__child_merge__"]
     assert len(merge_steps) == 1
     assert "extracted 1 item(s)" in merge_steps[0].observation

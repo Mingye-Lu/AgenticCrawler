@@ -86,26 +86,53 @@ def _write_stdout(data: list[Any], console: Console | None = None) -> None:
     con.print(format_text(data))
 
 
-def format_text(data: list[Any], summary: str | None = None) -> str:
-    """Render extracted data as readable markdown text, not raw JSON."""
-    if not data:
-        return "No data extracted."
+def format_text(
+    data: list[Any],
+    summary: str | None = None,
+    child_blocks: list[Any] | None = None,
+) -> str:
+    """Render extracted data as readable markdown text, not raw JSON.
 
+    When *child_blocks* is provided each subagent's results are rendered in
+    their own section rather than being merged into one flat list.
+    """
     parts: list[str] = []
 
     if summary:
         parts.append(summary)
         parts.append("")
 
-    # Check if all items are dicts with the same keys -> render as table
+    # Render the root agent's own data (if any)
+    if data:
+        if child_blocks:
+            parts.append("## Root agent")
+            parts.append("")
+        parts.append(_render_items(data))
+
+    # Render each child block as its own section
+    if child_blocks:
+        for block in child_blocks:
+            parts.append("")
+            parts.append(f"## {block.child_id}: {block.sub_goal}")
+            parts.append("")
+            parts.append(_render_items(block.items))
+
+    if not data and not child_blocks:
+        return "No data extracted."
+
+    return "\n".join(parts)
+
+
+def _render_items(data: list[Any]) -> str:
+    """Render a list of items as markdown (table, bullets, or mixed)."""
+    parts: list[str] = []
+
     if all(isinstance(item, dict) for item in data):
         parts.append(_dicts_to_table(data))
     elif all(isinstance(item, (str, int, float)) for item in data):
-        # Simple scalar list -> bullet list
         for item in data:
             parts.append(f"- {item}")
     else:
-        # Mixed types -> render each item
         for item in data:
             if isinstance(item, dict):
                 parts.append(_dict_to_keyvalue(item))
