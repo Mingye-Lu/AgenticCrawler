@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -74,3 +75,29 @@ class AgentState:
             else:
                 break
         return count
+
+    def fork(self, sub_goal: str, url: str | None = None) -> AgentState:
+        """Create a child state for a sub-goal with deep-copied history and plan.
+
+        Args:
+            sub_goal: The goal for the child state
+            url: Optional URL for the child state; inherits parent's current_url if not provided
+
+        Returns:
+            A new AgentState with copied history/plan and reset transient fields
+        """
+        return AgentState(
+            goal=sub_goal,
+            current_url=url if url is not None else self.current_url,
+            page_summary=None,
+            current_html=None,
+            plan=copy.deepcopy(self.plan),
+            history=copy.deepcopy(self.history),
+            extracted_data=[],
+            step_count=0,
+            max_steps=self.max_steps,
+            errors=[],
+            done=False,
+            done_reason="",
+            total_tokens=0,
+        )
