@@ -7,10 +7,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
 
+from agentic_crawler.agent.display import AgentDisplay
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.prompt_builder import build_messages, build_plan_messages
 from agentic_crawler.agent.state import AgentState, StepRecord
@@ -40,7 +39,8 @@ class CrawlAgent:
         router: FetcherRouter | None = None,
         owns_router: bool | None = None,
         is_root: bool = True,
-        console: Console | None = None,
+        *,
+        display: AgentDisplay,
     ) -> None:
         self.agent_id = agent_id
         self.state = state
@@ -49,7 +49,7 @@ class CrawlAgent:
         self.manager = manager
         self.router = router
         self.is_root = is_root
-        self.console = console or Console()
+        self.display = display
         self.actions = get_action_registry()
         self.tool_schemas = get_tool_schemas()
         self._child_agents: dict[str, CrawlAgent] = {}
@@ -58,21 +58,10 @@ class CrawlAgent:
         self._thinking_started = False
         self._owns_router = owns_router if owns_router is not None else (router is None)
 
-        # Compute output prefix based on agent type
-        if is_root:
-            self._output_prefix = "[bold dim][root][/bold dim]"
-        else:
-            short_id = agent_id[:6] if len(agent_id) >= 6 else agent_id
-            self._output_prefix = f"[bold dim][{short_id}][/bold dim]"
-
-    def _print(self, msg: str) -> None:
-        """Print with agent ID prefix for multi-agent output clarity."""
-        self.console.print(f"{self._output_prefix} {msg}")
-
     async def run(self, verbose: bool = False) -> None:
         if self.is_root:
-            self.console.print(
-                Panel("[bold]Planning...[/bold]", title=self._output_prefix, style="blue")
+            self.display.print_panel(
+                self.agent_id, self.agent_id, "[bold]Planning...[/bold]", "blue"
             )
             self.state.plan = await _plan(
                 self.provider,
@@ -81,11 +70,10 @@ class CrawlAgent:
                 self._on_thinking,
             )
             if self._thinking_started:
-                self.console.file.write("\n")
-                self.console.file.flush()
+                self.display.set_thinking(self.agent_id, False)
                 self._thinking_started = False
             for i, step in enumerate(self.state.plan, 1):
-                self._print(f"  {i}. {step}")
+                self.display.log_message(self.agent_id, f"  {i}. {step}")
             self.manager.register_root(self.agent_id)
 
         if self.router is None:
@@ -94,9 +82,7 @@ class CrawlAgent:
                 browser_timeout=self.settings.browser_timeout,
             )
 
-        self.console.print(
-            Panel("[bold]Executing...[/bold]", title=self._output_prefix, style="green")
-        )
+        self.display.print_panel(self.agent_id, self.agent_id, "[bold]Executing...[/bold]", "green")
 
         try:
             while not self.state.done and self.state.step_count < self.state.max_steps:
@@ -110,9 +96,10 @@ class CrawlAgent:
                     if self._text_only_retries < MAX_TEXT_ONLY_RETRIES:
                         self._text_only_retries += 1
                         self._text_only_count = 0
-                        self._print(
+                        self.display.log_message(
+                            self.agent_id,
                             f"  [yellow]Agent returned text without tool calls. "
-                            f"Retrying ({self._text_only_retries}/{MAX_TEXT_ONLY_RETRIES})...[/yellow]"
+                            f"Retrying ({self._text_only_retries}/{MAX_TEXT_ONLY_RETRIES})...[/yellow]",
                         )
                         continue
                     self.state.mark_done(
@@ -140,8 +127,8 @@ class CrawlAgent:
                     on_thinking=self._on_thinking,
                 )
                 if self._thinking_started:
-                    self.console.file.write("\n")
-                    self.console.file.flush()
+                    self.display.set_thinking(self.agent_id, False)
+                    self._thinking_started = False
                 self.state.total_tokens += sum(response.usage.values())
 
                 if response.has_tool_calls:
@@ -162,20 +149,22 @@ class CrawlAgent:
                         self._text_only_count += 1
                         self.state.add_text_response(response.text)
                         if verbose:
-                            self._print(f"[dim]Agent: {response.text[:200]}[/dim]")
+                            self.display.log_message(
+                                self.agent_id, f"[dim]Agent: {response.text[:200]}[/dim]"
+                            )
 
                 if self.state.current_html and self.state.current_url:
                     content = parse_html(self.state.current_html, self.state.current_url)
                     self.state.page_summary = page_content_to_text(content)
 
             if self.state.extracted_data:
-                self.console.print(
-                    Panel(
-                        f"[bold green]Done![/bold green] Extracted {len(self.state.extracted_data)} item(s)",
-                        title=self._output_prefix,
-                    )
+                self.display.print_panel(
+                    self.agent_id,
+                    self.agent_id,
+                    f"[bold green]Done![/bold green] Extracted {len(self.state.extracted_data)} item(s)",
+                    "",
                 )
-                self.console.print(
+                self.display.print_final_output(
                     Markdown(format_text(self.state.extracted_data, summary=self.state.done_reason))
                 )
                 if self.settings.output_file:
@@ -183,21 +172,24 @@ class CrawlAgent:
                         self.state.extracted_data,
                         self.settings.output_format,
                         self.settings.output_file,
+                        console=self.display.get_console(),
                     )
             else:
-                self.console.print(
-                    Panel(
-                        f"[bold yellow]Done.[/bold yellow] "
-                        f"{self.state.done_reason or 'No data extracted.'}",
-                        title=self._output_prefix,
-                    )
+                self.display.print_panel(
+                    self.agent_id,
+                    self.agent_id,
+                    f"[bold yellow]Done.[/bold yellow] "
+                    f"{self.state.done_reason or 'No data extracted.'}",
+                    "",
                 )
 
-            self._print(
-                f"Steps: {self.state.step_count} | Tokens: {self.state.total_tokens} | Errors: {len(self.state.errors)}"
+            self.display.log_message(
+                self.agent_id,
+                f"Steps: {self.state.step_count} | Tokens: {self.state.total_tokens} | Errors: {len(self.state.errors)}",
             )
         finally:
             self.manager.mark_done(self.agent_id)
+            self.display.mark_agent_done(self.agent_id)
             if self.router is not None and self._owns_router:
                 await self.router.close()
 
@@ -244,8 +236,9 @@ class CrawlAgent:
             router=child_router,
             owns_router=True,
             is_root=False,
-            console=self.console,
+            display=self.display,
         )
+        self.display.register_agent(child_id, sub_goal, self.agent_id, child_state.max_steps)
 
         task = asyncio.create_task(child_agent.run())
         self.manager.register_child(child_id, self.agent_id, task)
@@ -265,8 +258,9 @@ class CrawlAgent:
                 timeout=self.settings.fork_wait_timeout,
             )
         except asyncio.TimeoutError:
-            self._print(
-                "[yellow]Warning: fork_wait_timeout exceeded, collecting partial results[/yellow]"
+            self.display.log_message(
+                self.agent_id,
+                "[yellow]Warning: fork_wait_timeout exceeded, collecting partial results[/yellow]",
             )
 
         total_items = 0
@@ -296,10 +290,9 @@ class CrawlAgent:
 
     def _on_thinking(self, chunk: str) -> None:
         if not self._thinking_started:
-            self._print("[dim italic]  Thinking...[/dim italic]")
+            self.display.set_thinking(self.agent_id, True)
             self._thinking_started = True
-        self.console.file.write(chunk)
-        self.console.file.flush()
+        self.display.stream_thinking_chunk(self.agent_id, chunk)
 
     async def _execute_tool_call(
         self,
@@ -315,12 +308,16 @@ class CrawlAgent:
             summary = params.get("summary", "Task completed")
             child_tasks = self.manager.get_child_tasks(self.agent_id)
             if child_tasks:
-                self._print(
-                    f"  {step_label} [dim]{ts}[/dim] [dim]Waiting for {len(child_tasks)} child agent(s)...[/dim]"
+                self.display.log_message(
+                    self.agent_id,
+                    f"  {step_label} [dim]{ts}[/dim] [dim]Waiting for {len(child_tasks)} child agent(s)...[/dim]",
                 )
                 await self._wait_for_children()
             self.state.mark_done(summary)
-            self._print(f"  {step_label} [dim]{ts}[/dim] [bold green]Done:[/bold green] {summary}")
+            self.display.log_message(
+                self.agent_id,
+                f"  {step_label} [dim]{ts}[/dim] [bold green]Done:[/bold green] {summary}",
+            )
             return
 
         if name == "fork":
@@ -336,22 +333,34 @@ class CrawlAgent:
             self.state.add_step(
                 name, params, observation, success=success, tool_call_id=tool_call_id
             )
-            self._print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
+            self.display.log_message(
+                self.agent_id, f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]"
+            )
             return
 
         if name == "wait_for_subagents":
             observation = await self._wait_for_children()
             self.state.add_step(name, params, observation, success=True, tool_call_id=tool_call_id)
-            self._print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
+            self.display.log_message(
+                self.agent_id, f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]"
+            )
             return
 
         action = self.actions.get(name)
         if not action:
             self.state.add_step(name, params, f"Unknown action: {name}", success=False)
-            self._print(f"  {step_label} [dim]{ts}[/dim] [red]Unknown action: {name}[/red]")
+            self.display.log_message(
+                self.agent_id, f"  {step_label} [dim]{ts}[/dim] [red]Unknown action: {name}[/red]"
+            )
             return
 
-        self._print(f"  {step_label} [dim]{ts}[/dim] {name}({_compact_params(params)})")
+        self.display.log_step(
+            self.agent_id,
+            self.state.step_count + 1,
+            ts,
+            name,
+            _compact_params(params),
+        )
         if self.router is None:
             raise RuntimeError("Router is not initialized")
         result = await action.execute(self.router, params)
@@ -368,10 +377,7 @@ class CrawlAgent:
             self.state.extracted_data.append(result.data)
 
         status = "[green]OK[/green]" if result.success else "[red]FAIL[/red]"
-        if verbose:
-            self._print(f"    {status} {result.observation}")
-        else:
-            self._print(f"    {status}")
+        self.display.log_result(self.agent_id, status, result.observation if verbose else None)
 
 
 async def _plan(

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
 
+from rich.console import Console
+
 from agentic_crawler.agent.crawl_agent import CrawlAgent
+from agentic_crawler.agent.display import ConsoleDisplay
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.config import Settings
@@ -127,6 +131,14 @@ def _manager(settings: Settings) -> AgentManager:
     )
 
 
+def _display(agent_id: str, is_root: bool = False) -> ConsoleDisplay:
+    return ConsoleDisplay(
+        console=Console(file=io.StringIO(), force_terminal=False),
+        agent_id=agent_id,
+        is_root=is_root,
+    )
+
+
 def _root_agent(
     *,
     root_id: str,
@@ -137,6 +149,8 @@ def _root_agent(
 ) -> CrawlAgent:
     state = AgentState(goal=root_goal, max_steps=settings.max_steps)
     manager.register_root(root_id)
+    display = _display(root_id, is_root=False)
+    display.register_agent(root_id, root_goal, None, settings.max_steps)
     return CrawlAgent(
         agent_id=root_id,
         state=state,
@@ -145,6 +159,7 @@ def _root_agent(
         manager=manager,
         router=None,
         is_root=False,
+        display=display,
     )
 
 

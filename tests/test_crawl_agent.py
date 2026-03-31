@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 import uuid
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from rich.console import Console
 
+from agentic_crawler.agent.display import ConsoleDisplay
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.config import Settings
@@ -51,6 +54,14 @@ def _router() -> Any:
     return cast(Any, MockFetcherRouter())
 
 
+def _display(agent_id: str = "root-1", is_root: bool = True) -> ConsoleDisplay:
+    return ConsoleDisplay(
+        console=Console(file=io.StringIO(), force_terminal=False),
+        agent_id=agent_id,
+        is_root=is_root,
+    )
+
+
 @pytest.mark.asyncio
 async def test_crawl_agent_runs_to_completion() -> None:
     from agentic_crawler.agent.crawl_agent import CrawlAgent
@@ -78,6 +89,7 @@ async def test_crawl_agent_runs_to_completion() -> None:
         manager=_manager(),
         router=router,
         is_root=True,
+        display=_display("root-1", True),
     )
 
     await agent.run()
@@ -115,6 +127,7 @@ async def test_crawl_agent_extracts_data() -> None:
         manager=_manager(),
         router=_router(),
         is_root=True,
+        display=_display("root-2", True),
     )
 
     await agent.run()
@@ -160,6 +173,7 @@ async def test_crawl_agent_respects_max_steps() -> None:
         manager=_manager(),
         router=_router(),
         is_root=True,
+        display=_display("root-3", True),
     )
 
     await agent.run()
@@ -182,6 +196,7 @@ def test_crawl_agent_has_unique_id() -> None:
         manager=manager,
         router=router,
         is_root=True,
+        display=_display("root-unique-1", True),
     )
     agent_2 = CrawlAgent(
         agent_id=str(uuid.uuid4()),
@@ -191,6 +206,7 @@ def test_crawl_agent_has_unique_id() -> None:
         manager=manager,
         router=router,
         is_root=False,
+        display=_display("fork-unique-2", False),
     )
 
     assert agent_1.agent_id != agent_2.agent_id
@@ -224,6 +240,7 @@ async def test_crawl_agent_root_uses_fakebroswer() -> None:
             manager=manager,
             router=None,
             is_root=True,
+            display=_display("root-4", True),
         )
         await agent.run()
 
@@ -253,6 +270,7 @@ async def test_crawl_agent_child_skips_planning() -> None:
             manager=_manager(),
             router=_router(),
             is_root=False,
+            display=_display("child-1", False),
         )
         await agent.run()
 
@@ -273,8 +291,9 @@ def test_root_agent_output_prefix() -> None:
         manager=_manager(),
         router=_router(),
         is_root=True,
+        display=_display("root-1", True),
     )
-    assert "root" in agent._output_prefix
+    assert "root" in cast(ConsoleDisplay, agent.display)._prefix
 
 
 def test_child_agent_output_prefix() -> None:
@@ -291,5 +310,6 @@ def test_child_agent_output_prefix() -> None:
         manager=_manager(),
         router=_router(),
         is_root=False,
+        display=_display("fork-abc123", False),
     )
-    assert "fork-a" in agent._output_prefix
+    assert "fork-a" in cast(ConsoleDisplay, agent.display)._prefix

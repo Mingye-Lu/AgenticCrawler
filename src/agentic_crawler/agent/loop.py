@@ -4,9 +4,11 @@ import uuid
 
 from rich.console import Console
 
+from agentic_crawler.agent.display import ConsoleDisplay
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.config import Settings
+from agentic_crawler.fetcher.router import FetcherRouter  # noqa: F401
 from agentic_crawler.llm.registry import get_provider
 
 console = Console()
@@ -22,14 +24,17 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
         max_total=settings.max_total_agents,
     )
     state = AgentState(goal=goal, max_steps=settings.max_steps)
+    agent_id = str(uuid.uuid4())
+    display = ConsoleDisplay(console=console, verbose=verbose, agent_id=agent_id, is_root=True)
+    display.register_agent(agent_id, goal, None, settings.max_steps)
     agent = CrawlAgent(
-        agent_id=str(uuid.uuid4()),
+        agent_id=agent_id,
         state=state,
         settings=settings,
         provider=provider,
         manager=manager,
         is_root=True,
-        console=console,
+        display=display,
     )
     try:
         await agent.run(verbose=verbose)

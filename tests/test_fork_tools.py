@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import io
+from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
+from rich.console import Console
 
 from agentic_crawler.agent.crawl_agent import CrawlAgent
+from agentic_crawler.agent.display import ConsoleDisplay
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.agent.tools import get_tool_schemas
@@ -13,8 +17,6 @@ from agentic_crawler.config import Settings
 from agentic_crawler.fetcher.base import FetchResult
 from agentic_crawler.llm.base import LLMResponse, ToolCall
 from tests.conftest import MockLLMProvider
-
-from unittest.mock import patch
 
 
 class MockFetcherRouter:
@@ -71,6 +73,14 @@ def _done_call(summary: str = "done") -> LLMResponse:
     )
 
 
+def _display(agent_id: str, is_root: bool) -> ConsoleDisplay:
+    return ConsoleDisplay(
+        console=Console(file=io.StringIO(), force_terminal=False),
+        agent_id=agent_id,
+        is_root=is_root,
+    )
+
+
 async def _await_children(manager: AgentManager, parent_id: str) -> None:
     tasks = manager.get_child_tasks(parent_id)
     if tasks:
@@ -114,8 +124,9 @@ async def test_fork_dispatched_as_special_case() -> None:
             settings=Settings(),
             provider=provider,
             manager=manager,
-            router=MockFetcherRouter(),
+            router=cast(Any, MockFetcherRouter()),
             is_root=True,
+            display=_display("root-fork-1", True),
         )
         await agent.run()
         await _await_children(manager, "root-fork-1")
@@ -141,8 +152,9 @@ async def test_fork_returns_observation_to_parent() -> None:
             settings=Settings(),
             provider=provider,
             manager=manager,
-            router=MockFetcherRouter(),
+            router=cast(Any, MockFetcherRouter()),
             is_root=True,
+            display=_display("root-fork-2", True),
         )
         await agent.run()
         await _await_children(manager, "root-fork-2")
@@ -166,8 +178,9 @@ async def test_fork_at_limit_returns_error_observation() -> None:
         settings=Settings(),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=True,
+        display=_display("root-fork-3", True),
     )
     await agent.run()
 
@@ -198,8 +211,9 @@ async def test_fork_with_url_navigates_child() -> None:
             settings=Settings(),
             provider=provider,
             manager=manager,
-            router=MockFetcherRouter(),
+            router=cast(Any, MockFetcherRouter()),
             is_root=True,
+            display=_display("root-fork-4", True),
         )
         await agent.run()
         await _await_children(manager, "root-fork-4")
@@ -242,8 +256,9 @@ async def test_fork_alongside_other_tool_calls() -> None:
             settings=Settings(),
             provider=provider,
             manager=manager,
-            router=MockFetcherRouter(),
+            router=cast(Any, MockFetcherRouter()),
             is_root=True,
+            display=_display("root-fork-5", True),
         )
         await agent.run()
         await _await_children(manager, "root-fork-5")
@@ -283,8 +298,9 @@ async def test_wait_with_no_children_returns_immediately() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("root-wait-1", False),
     )
     manager.register_root("root-wait-1")
 
@@ -309,8 +325,9 @@ async def test_wait_dispatched_records_step() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("root-wait-2", False),
     )
     manager.register_root("root-wait-2")
     await agent.run()
@@ -340,8 +357,9 @@ async def test_done_implicitly_waits_for_children() -> None:
             settings=Settings(fork_wait_timeout=10),
             provider=provider,
             manager=manager,
-            router=MockFetcherRouter(),
+            router=cast(Any, MockFetcherRouter()),
             is_root=False,
+            display=_display("root-wait-3", False),
         )
         manager.register_root("root-wait-3")
         await agent.run()
@@ -369,8 +387,9 @@ async def test_child_extracted_data_merges_to_parent() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("root-merge-1", False),
     )
     manager.register_root("root-merge-1")
 
@@ -382,8 +401,9 @@ async def test_child_extracted_data_merges_to_parent() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("child-1", False),
     )
     root_agent._child_agents["child-1"] = child_agent
     manager.register_child("child-1", "root-merge-1", None)
@@ -408,8 +428,9 @@ async def test_multiple_children_data_merges() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("root-merge-2", False),
     )
     manager.register_root("root-merge-2")
 
@@ -423,8 +444,9 @@ async def test_multiple_children_data_merges() -> None:
             settings=Settings(fork_wait_timeout=5),
             provider=provider,
             manager=manager,
-            router=MockFetcherRouter(),
+            router=cast(Any, MockFetcherRouter()),
             is_root=False,
+            display=_display(cid, False),
         )
         root_agent._child_agents[cid] = ca
         manager.register_child(cid, "root-merge-2", None)
@@ -448,8 +470,9 @@ async def test_merge_preserves_parent_data() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("root-merge-3", False),
     )
     manager.register_root("root-merge-3")
 
@@ -461,8 +484,9 @@ async def test_merge_preserves_parent_data() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("child-p", False),
     )
     root_agent._child_agents["child-p"] = child_agent
     manager.register_child("child-p", "root-merge-3", None)
@@ -485,8 +509,9 @@ async def test_merge_with_no_child_data_returns_zero() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("root-merge-4", False),
     )
     manager.register_root("root-merge-4")
 
@@ -497,8 +522,9 @@ async def test_merge_with_no_child_data_returns_zero() -> None:
         settings=Settings(fork_wait_timeout=5),
         provider=provider,
         manager=manager,
-        router=MockFetcherRouter(),
+        router=cast(Any, MockFetcherRouter()),
         is_root=False,
+        display=_display("child-empty", False),
     )
     root_agent._child_agents["child-empty"] = child_agent
     manager.register_child("child-empty", "root-merge-4", None)
