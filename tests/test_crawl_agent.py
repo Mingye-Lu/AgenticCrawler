@@ -257,3 +257,39 @@ async def test_crawl_agent_child_skips_planning() -> None:
         await agent.run()
 
     mock_plan.assert_not_awaited()
+
+
+def test_root_agent_output_prefix() -> None:
+    """Root agent has [root] prefix."""
+    from agentic_crawler.agent.crawl_agent import CrawlAgent
+
+    provider = MockLLMProvider([])
+    state = AgentState(goal="test")
+    agent = CrawlAgent(
+        agent_id="root-1",
+        state=state,
+        settings=Settings(max_steps=5),
+        provider=provider,
+        manager=_manager(),
+        router=_router(),
+        is_root=True,
+    )
+    assert "root" in agent._output_prefix
+
+
+def test_child_agent_output_prefix() -> None:
+    """Child agent has [fork-XXXXXX] prefix derived from agent_id."""
+    from agentic_crawler.agent.crawl_agent import CrawlAgent
+
+    provider = MockLLMProvider([])
+    state = AgentState(goal="child test")
+    agent = CrawlAgent(
+        agent_id="fork-abc123",
+        state=state,
+        settings=Settings(max_steps=5),
+        provider=provider,
+        manager=_manager(),
+        router=_router(),
+        is_root=False,
+    )
+    assert "fork-a" in agent._output_prefix

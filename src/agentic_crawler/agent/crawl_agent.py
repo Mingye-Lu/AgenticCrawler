@@ -56,9 +56,22 @@ class CrawlAgent:
         self._thinking_started = False
         self._owns_router = router is None
 
+        # Compute output prefix based on agent type
+        if is_root:
+            self._output_prefix = "[bold dim][root][/bold dim]"
+        else:
+            short_id = agent_id[:6] if len(agent_id) >= 6 else agent_id
+            self._output_prefix = f"[bold dim][{short_id}][/bold dim]"
+
+    def _print(self, msg: str) -> None:
+        """Print with agent ID prefix for multi-agent output clarity."""
+        self.console.print(f"{self._output_prefix} {msg}")
+
     async def run(self, verbose: bool = False) -> None:
         if self.is_root:
-            self.console.print(Panel("[bold]Planning...[/bold]", style="blue"))
+            self.console.print(
+                Panel("[bold]Planning...[/bold]", title=self._output_prefix, style="blue")
+            )
             self.state.plan = await _plan(
                 self.provider,
                 self.state.goal,
@@ -70,7 +83,7 @@ class CrawlAgent:
                 self.console.file.flush()
                 self._thinking_started = False
             for i, step in enumerate(self.state.plan, 1):
-                self.console.print(f"  {i}. {step}")
+                self._print(f"  {i}. {step}")
             self.manager.register_root(self.agent_id)
 
         if self.router is None:
@@ -79,7 +92,9 @@ class CrawlAgent:
                 browser_timeout=self.settings.browser_timeout,
             )
 
-        self.console.print(Panel("[bold]Executing...[/bold]", style="green"))
+        self.console.print(
+            Panel("[bold]Executing...[/bold]", title=self._output_prefix, style="green")
+        )
 
         try:
             while not self.state.done and self.state.step_count < self.state.max_steps:
@@ -93,7 +108,7 @@ class CrawlAgent:
                     if self._text_only_retries < MAX_TEXT_ONLY_RETRIES:
                         self._text_only_retries += 1
                         self._text_only_count = 0
-                        self.console.print(
+                        self._print(
                             f"  [yellow]Agent returned text without tool calls. "
                             f"Retrying ({self._text_only_retries}/{MAX_TEXT_ONLY_RETRIES})...[/yellow]"
                         )
@@ -145,7 +160,7 @@ class CrawlAgent:
                         self._text_only_count += 1
                         self.state.add_text_response(response.text)
                         if verbose:
-                            self.console.print(f"[dim]Agent: {response.text[:200]}[/dim]")
+                            self._print(f"[dim]Agent: {response.text[:200]}[/dim]")
 
                 if self.state.current_html and self.state.current_url:
                     content = parse_html(self.state.current_html, self.state.current_url)
@@ -154,7 +169,8 @@ class CrawlAgent:
             if self.state.extracted_data:
                 self.console.print(
                     Panel(
-                        f"[bold green]Done![/bold green] Extracted {len(self.state.extracted_data)} item(s)"
+                        f"[bold green]Done![/bold green] Extracted {len(self.state.extracted_data)} item(s)",
+                        title=self._output_prefix,
                     )
                 )
                 self.console.print(
@@ -170,11 +186,12 @@ class CrawlAgent:
                 self.console.print(
                     Panel(
                         f"[bold yellow]Done.[/bold yellow] "
-                        f"{self.state.done_reason or 'No data extracted.'}"
+                        f"{self.state.done_reason or 'No data extracted.'}",
+                        title=self._output_prefix,
                     )
                 )
 
-            self.console.print(
+            self._print(
                 f"Steps: {self.state.step_count} | Tokens: {self.state.total_tokens} | Errors: {len(self.state.errors)}"
             )
         finally:
@@ -219,7 +236,7 @@ class CrawlAgent:
                 timeout=self.settings.fork_wait_timeout,
             )
         except asyncio.TimeoutError:
-            self.console.print(
+            self._print(
                 "[yellow]Warning: fork_wait_timeout exceeded, collecting partial results[/yellow]"
             )
 
@@ -250,7 +267,7 @@ class CrawlAgent:
 
     def _on_thinking(self, chunk: str) -> None:
         if not self._thinking_started:
-            self.console.print("[dim italic]  Thinking...[/dim italic]")
+            self._print("[dim italic]  Thinking...[/dim italic]")
             self._thinking_started = True
         self.console.file.write(chunk)
         self.console.file.flush()
@@ -269,14 +286,12 @@ class CrawlAgent:
             summary = params.get("summary", "Task completed")
             child_tasks = self.manager.get_child_tasks(self.agent_id)
             if child_tasks:
-                self.console.print(
+                self._print(
                     f"  {step_label} [dim]{ts}[/dim] [dim]Waiting for {len(child_tasks)} child agent(s)...[/dim]"
                 )
                 await self._wait_for_children()
             self.state.mark_done(summary)
-            self.console.print(
-                f"  {step_label} [dim]{ts}[/dim] [bold green]Done:[/bold green] {summary}"
-            )
+            self._print(f"  {step_label} [dim]{ts}[/dim] [bold green]Done:[/bold green] {summary}")
             return
 
         if name == "fork":
@@ -292,22 +307,22 @@ class CrawlAgent:
             self.state.add_step(
                 name, params, observation, success=success, tool_call_id=tool_call_id
             )
-            self.console.print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
+            self._print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
             return
 
         if name == "wait_for_subagents":
             observation = await self._wait_for_children()
             self.state.add_step(name, params, observation, success=True, tool_call_id=tool_call_id)
-            self.console.print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
+            self._print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
             return
 
         action = self.actions.get(name)
         if not action:
             self.state.add_step(name, params, f"Unknown action: {name}", success=False)
-            self.console.print(f"  {step_label} [dim]{ts}[/dim] [red]Unknown action: {name}[/red]")
+            self._print(f"  {step_label} [dim]{ts}[/dim] [red]Unknown action: {name}[/red]")
             return
 
-        self.console.print(f"  {step_label} [dim]{ts}[/dim] {name}({_compact_params(params)})")
+        self._print(f"  {step_label} [dim]{ts}[/dim] {name}({_compact_params(params)})")
         if self.router is None:
             raise RuntimeError("Router is not initialized")
         result = await action.execute(self.router, params)
@@ -325,9 +340,9 @@ class CrawlAgent:
 
         status = "[green]OK[/green]" if result.success else "[red]FAIL[/red]"
         if verbose:
-            self.console.print(f"    {status} {result.observation}")
+            self._print(f"    {status} {result.observation}")
         else:
-            self.console.print(f"    {status}")
+            self._print(f"    {status}")
 
 
 async def _plan(
