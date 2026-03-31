@@ -13,7 +13,7 @@ from rich.panel import Panel
 
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.prompt_builder import build_messages, build_plan_messages
-from agentic_crawler.agent.state import AgentState
+from agentic_crawler.agent.state import AgentState, StepRecord
 from agentic_crawler.agent.tools import get_action_registry, get_tool_schemas
 from agentic_crawler.config import Settings
 from agentic_crawler.fetcher.router import FetcherRouter
@@ -197,6 +197,47 @@ class CrawlAgent:
 
         return child_id
 
+    async def _wait_for_children(self) -> str:
+        """Wait for all active child agents and merge their data. Returns summary observation."""
+        child_tasks = self.manager.get_child_tasks(self.agent_id)
+        if not child_tasks:
+            return "No active subagents"
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*child_tasks, return_exceptions=True),
+                timeout=self.settings.fork_wait_timeout,
+            )
+        except asyncio.TimeoutError:
+            self.console.print(
+                "[yellow]Warning: fork_wait_timeout exceeded, collecting partial results[/yellow]"
+            )
+
+        total_items = 0
+        for child_id, child_agent in list(self._child_agents.items()):
+            if self.manager._agents.get(child_id, None) is not None:
+                total_items += self._merge_child_results(child_id, child_agent)
+
+        return f"Waited for {len(child_tasks)} subagent(s). Collected {total_items} total item(s)."
+
+    def _merge_child_results(self, child_id: str, child_agent: CrawlAgent) -> int:
+        """Merge child's extracted_data into parent. Returns number of items merged."""
+        items = child_agent.state.extracted_data
+        self.state.extracted_data.extend(items)
+        n = len(items)
+        if n > 0:
+            sub_goal = child_agent.state.goal
+            obs = f"Subagent {child_id} completed: extracted {n} item(s) for '{sub_goal}'"
+            self.state.history.append(
+                StepRecord(
+                    action="__child_merge__",
+                    params={"child_id": child_id},
+                    observation=obs,
+                    success=True,
+                )
+            )
+        return n
+
     def _on_thinking(self, chunk: str) -> None:
         if not self._thinking_started:
             self.console.print("[dim italic]  Thinking...[/dim italic]")
@@ -216,6 +257,12 @@ class CrawlAgent:
 
         if name == "done":
             summary = params.get("summary", "Task completed")
+            child_tasks = self.manager.get_child_tasks(self.agent_id)
+            if child_tasks:
+                self.console.print(
+                    f"  {step_label} [dim]{ts}[/dim] [dim]Waiting for {len(child_tasks)} child agent(s)...[/dim]"
+                )
+                await self._wait_for_children()
             self.state.mark_done(summary)
             self.console.print(
                 f"  {step_label} [dim]{ts}[/dim] [bold green]Done:[/bold green] {summary}"
@@ -235,6 +282,12 @@ class CrawlAgent:
             self.state.add_step(
                 name, params, observation, success=success, tool_call_id=tool_call_id
             )
+            self.console.print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
+            return
+
+        if name == "wait_for_subagents":
+            observation = await self._wait_for_children()
+            self.state.add_step(name, params, observation, success=True, tool_call_id=tool_call_id)
             self.console.print(f"  {step_label} [dim]{ts}[/dim] [cyan]{observation}[/cyan]")
             return
 

@@ -280,4 +280,9 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                 "required": ["sub_goal"],
             },
         },
+        {
+            "name": "wait_for_subagents",
+            "description": "Wait for all active subagents to complete and collect their results. Call this when you need subagent results before deciding your next action. If no subagents are active, returns immediately.",
+            "parameters": {"type": "object", "properties": {}},
+        },
     ]

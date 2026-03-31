@@ -254,3 +254,101 @@ async def test_fork_alongside_other_tool_calls() -> None:
 
     assert state.done is True
     assert state.done_reason == "all done"
+
+
+# ── wait_for_subagents schema + dispatch tests (Task 7) ─────────────
+
+
+def test_wait_tool_schema_registered() -> None:
+    schemas = get_tool_schemas()
+    names = {s["name"] for s in schemas}
+    assert "wait_for_subagents" in names
+
+
+def test_wait_tool_schema_has_empty_params() -> None:
+    schemas = get_tool_schemas()
+    wait_schema = next(s for s in schemas if s["name"] == "wait_for_subagents")
+    assert wait_schema["parameters"]["properties"] == {}
+
+
+@pytest.mark.asyncio
+async def test_wait_with_no_children_returns_immediately() -> None:
+    manager = _make_manager()
+    state = AgentState(goal="test wait no children", max_steps=5)
+    provider = MockLLMProvider([])
+
+    agent = CrawlAgent(
+        agent_id="root-wait-1",
+        state=state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    manager.register_root("root-wait-1")
+
+    result = await agent._wait_for_children()
+    assert result == "No active subagents"
+
+
+@pytest.mark.asyncio
+async def test_wait_dispatched_records_step() -> None:
+    provider = MockLLMProvider(
+        responses=[
+            LLMResponse(tool_calls=[ToolCall(id="w1", name="wait_for_subagents", arguments={})]),
+            _done_call(),
+        ]
+    )
+    manager = _make_manager()
+    state = AgentState(goal="test wait dispatch", max_steps=5)
+
+    agent = CrawlAgent(
+        agent_id="root-wait-2",
+        state=state,
+        settings=Settings(fork_wait_timeout=5),
+        provider=provider,
+        manager=manager,
+        router=MockFetcherRouter(),
+        is_root=False,
+    )
+    manager.register_root("root-wait-2")
+    await agent.run()
+
+    wait_steps = [s for s in state.history if s.action == "wait_for_subagents"]
+    assert len(wait_steps) == 1
+    assert "No active subagents" in wait_steps[0].observation
+    assert wait_steps[0].success is True
+
+
+@pytest.mark.asyncio
+async def test_done_implicitly_waits_for_children() -> None:
+    provider = MockLLMProvider(
+        responses=[
+            _fork_call("child task"),
+            _done_call("parent done"),
+        ]
+    )
+    manager = _make_manager()
+    state = AgentState(goal="test done waits", max_steps=10)
+
+    with patch("agentic_crawler.agent.crawl_agent.FetcherRouter") as router_cls:
+        router_cls.return_value = MockFetcherRouter()
+        agent = CrawlAgent(
+            agent_id="root-wait-3",
+            state=state,
+            settings=Settings(fork_wait_timeout=10),
+            provider=provider,
+            manager=manager,
+            router=MockFetcherRouter(),
+            is_root=False,
+        )
+        manager.register_root("root-wait-3")
+        await agent.run()
+
+    assert state.done is True
+    assert state.done_reason == "parent done"
+    children = manager.get_children("root-wait-3")
+    assert len(children) == 1
+    child_info = children[0]
+    assert child_info.status == "done"
