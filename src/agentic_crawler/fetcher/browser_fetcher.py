@@ -12,30 +12,41 @@ _USER_AGENT = (
 
 
 class BrowserFetcher:
-    def __init__(self, headless: bool = True, timeout: int = 30000) -> None:
+    def __init__(
+        self,
+        headless: bool = True,
+        timeout: int = 30000,
+        context: BrowserContext | None = None,
+        browser: Browser | None = None,
+        playwright_instance: Playwright | None = None,
+    ) -> None:
         self.headless = headless
         self.timeout = timeout
-        self._playwright: Playwright | None = None
-        self._browser: Browser | None = None
-        self._context: BrowserContext | None = None
+        self._playwright: Playwright | None = playwright_instance
+        self._browser: Browser | None = browser
+        self._context: BrowserContext | None = context
         self._page: Page | None = None
+        self._external_context: bool = context is not None
 
     async def _ensure_browser(self) -> Page:
         if self._page is None:
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=self.headless,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                ],
-            )
-            self._context = await self._browser.new_context(
-                user_agent=_USER_AGENT,
-                locale="en-US",
-                timezone_id="America/New_York",
-            )
+            if self._context is None:
+                if self._playwright is None:
+                    self._playwright = await async_playwright().start()
+                if self._browser is None:
+                    self._browser = await self._playwright.chromium.launch(
+                        headless=self.headless,
+                        args=[
+                            "--disable-blink-features=AutomationControlled",
+                            "--no-first-run",
+                            "--no-default-browser-check",
+                        ],
+                    )
+                self._context = await self._browser.new_context(
+                    user_agent=_USER_AGENT,
+                    locale="en-US",
+                    timezone_id="America/New_York",
+                )
             self._page = await self._context.new_page()
             self._page.set_default_timeout(self.timeout)
         return self._page
@@ -246,12 +257,13 @@ class BrowserFetcher:
     async def close(self) -> None:
         if self._page:
             await self._page.close()
-        if self._context:
-            await self._context.close()
-        if self._browser:
-            await self._browser.close()
-        if self._playwright:
-            await self._playwright.stop()
+        if not self._external_context:
+            if self._context:
+                await self._context.close()
+            if self._browser:
+                await self._browser.close()
+            if self._playwright:
+                await self._playwright.stop()
         self._page = None
         self._context = None
         self._browser = None
