@@ -6,6 +6,7 @@ from typing import Any
 
 import structlog
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 
 from agentic_crawler.agent.prompt_builder import build_messages, build_plan_messages
@@ -129,7 +130,7 @@ async def run_agent(goal: str, settings: Settings, verbose: bool = False) -> Non
                 )
             )
             # Always show readable text summary on console
-            console.print(format_text(state.extracted_data, summary=state.done_reason))
+            console.print(Markdown(format_text(state.extracted_data, summary=state.done_reason)))
             # Write to file if requested (JSON/CSV preserved for files)
             if settings.output_file:
                 write_output(state.extracted_data, settings.output_format, settings.output_file)
