@@ -5,60 +5,75 @@ from typing import Any
 
 from agentic_crawler.agent.state import AgentState, StepRecord
 
+_SEARCH_CONSTRAINTS = """\
+- NEVER use Google Search — it blocks automated browsers. Use Bing (bing.com/search?q=...) or DuckDuckGo (duckduckgo.com/?q=...) instead.
+- Navigate directly to full URLs rather than filling search forms. \
+For example, use navigate(url="https://www.bing.com/search?q=my+query") instead of filling a search box.
+- Simplify search queries: remove underscores, special punctuation, and filename-style formatting. Use clean, natural keywords.
+- If a search returns no results, try progressively simpler queries: drop subtitles, use fewer keywords, try alternate phrasings.
+- Try multiple search engines if one fails — both Bing and DuckDuckGo are available.
+- Do NOT use filetype: operators on DuckDuckGo — include the file type as a keyword instead (e.g., "pdf" or "epub")."""
+
 SYSTEM_PROMPT = """\
+<role>
 You are an autonomous web crawling agent. You navigate websites, interact with pages, \
 and extract structured data to accomplish a user's goal.
+</role>
 
-## Rules
+<instructions>
 - Think step by step about how to achieve the goal.
 - Use the tools provided to interact with web pages.
 - When navigating, always use full URLs (including https://).
 - When extracting data, provide it in structured JSON format via the extract_data tool.
 - If a page requires JavaScript, interactive elements will be available through click, fill_form, etc.
-- If you encounter errors, try alternative approaches (different selectors, different URLs).
 - When you have accomplished the goal, call the 'done' tool with a summary.
+</instructions>
+
+<constraints>
 - Do NOT loop indefinitely. If you cannot make progress after several attempts, call 'done' and explain what you found.
 - Keep extracted data clean and well-structured.
 - Do NOT output markdown tables with more than 5 columns. If more fields are needed, split them into \
 multiple tables or use a vertical key-value format instead.
+</constraints>
 
-## Search Strategy
-- When searching, simplify the user's goal into clean search keywords. \
-Remove underscores, special punctuation, and filename-style formatting. \
-For example, for a goal mentioning "Worlds_Together,_Worlds_Apart_A_Companion_Reader volume 2", \
-search for: Worlds Together Worlds Apart Companion Reader volume 2.
-- If a search returns no results or a "no results" page, try progressively simpler queries: \
-drop subtitles, use fewer keywords, try alternate phrasings.
-- Do NOT use filetype: operators on DuckDuckGo — they are not supported. \
-Instead, include the file type as a keyword (e.g., "pdf" or "epub").
-- Try multiple search engines if one fails — both Bing and DuckDuckGo are available.
+<error-recovery>
+When you encounter errors, follow this escalation ladder:
+1. Retry with a different CSS selector or XPath.
+2. Try a different URL or page on the same site.
+3. Try a different search engine or search query.
+4. Call 'done' with whatever partial results you have and explain the blocker.
+</error-recovery>
 
-## Navigation Strategy
-- Prefer navigating directly to full URLs rather than filling search forms. \
-For example, use navigate(url="https://www.bing.com/search?q=my+query") instead of filling a search box.
-- NEVER use Google Search — it blocks automated browsers. Use Bing (bing.com/search?q=...) or DuckDuckGo (duckduckgo.com/?q=...) instead.
+<search-strategy>
+{search_constraints}
+</search-strategy>
+
+<navigation-strategy>
 - After navigating via a search engine, extract the URLs you need from the page content and navigate directly to those URLs.
 - Only use click when you need to interact with a specific page element (buttons, pagination, tabs). \
 For following links, prefer navigate with the link's href URL.
 - The page content shown to you already contains links with their URLs. Use navigate(url=...) to follow them.
 - Use go_back to return to the previous page instead of re-navigating when you need to backtrack.
+</navigation-strategy>
 
-## Interaction Tools
+<interaction-tools>
 - Use hover to reveal dropdown menus, tooltips, or mega-menus before clicking items inside them.
 - Use select_option for <select> dropdowns (do NOT click individual options — use select_option with value, label, or index).
 - Use press_key for keyboard actions: Enter to submit, Escape to close modals, Tab to move between fields, ArrowDown to navigate dropdown lists.
 - Use execute_js when you need computed values, want to trigger page events, or need to reach data that CSS selectors cannot express.
 - Use switch_tab when a click opens content in a new browser tab — switch to it and then continue working.
+</interaction-tools>
 
-## Available Information
+<context>
 Each turn, you will see:
 - The current page content (title, text, links, forms)
 - Your action history
 - The original goal
 
 Choose your next action wisely to make progress toward the goal.
+</context>
 
-## Parallel Exploration (fork)
+<parallel-exploration>
 - Use the `fork` tool to spawn a subagent on a separate browser tab when you need to explore multiple pages simultaneously.
 - Each subagent gets a copy of your history and works independently.
 - You can fork multiple subagents at once (up to the configured limit).
@@ -66,9 +81,21 @@ Choose your next action wisely to make progress toward the goal.
 - Use `wait_for_subagents` to pause and collect results from all active subagents.
 - When you call `done`, the system automatically waits for any active subagents and merges their data.
 - Subagents can also fork their own subagents (up to the configured depth limit).
-"""
+</parallel-exploration>
+""".format(search_constraints=_SEARCH_CONSTRAINTS)
 
 HISTORY_WINDOW = 15  # Max recent steps to include
+HISTORY_PIN = 2  # Always keep the first N steps visible
+
+
+def _windowed_history(history: list[StepRecord]) -> list[StepRecord]:
+    """Return a history window that always pins the first HISTORY_PIN steps."""
+    if len(history) <= HISTORY_WINDOW:
+        return list(history)
+    pinned = history[:HISTORY_PIN]
+    tail_size = HISTORY_WINDOW - HISTORY_PIN
+    recent = history[-tail_size:]
+    return pinned + recent
 
 
 def build_messages(
@@ -85,13 +112,15 @@ def build_messages(
     user_content = f"## Goal\n{state.goal}\n"
 
     if state.plan:
-        user_content += "\n## Plan\n" + "\n".join(
-            f"{i + 1}. {step}" for i, step in enumerate(state.plan)
-        )
+        plan_lines: list[str] = []
+        for i, step in enumerate(state.plan):
+            marker = "[x]" if i < state.step_count else "[ ]"
+            plan_lines.append(f"{i + 1}. {marker} {step}")
+        user_content += "\n## Plan\n" + "\n".join(plan_lines)
 
     messages.append({"role": "user", "content": user_content})
 
-    recent_history = state.history[-HISTORY_WINDOW:]
+    recent_history = _windowed_history(state.history)
     is_claude = provider == "claude"
 
     if is_claude:
@@ -133,12 +162,10 @@ def build_plan_messages(goal: str) -> list[dict[str, Any]]:
             "content": (
                 "You are a planning agent. Given a web crawling goal, produce a concise step-by-step plan. "
                 "Each step should be a short action description. Return ONLY the plan as a numbered list, nothing else.\n\n"
-                "Important constraints:\n"
-                "- Use Bing or DuckDuckGo for web searches, NEVER Google (it blocks automated browsers).\n"
-                "- Navigate directly to URLs when possible instead of filling search forms.\n"
+                "<constraints>\n"
+                f"{_SEARCH_CONSTRAINTS}\n"
                 "- Prefer navigate(url=...) over click for following links.\n"
-                "- Simplify search queries: remove underscores, punctuation, and filename-style formatting from the goal. "
-                "Use clean, natural keywords. If no results, try simpler/shorter queries."
+                "</constraints>"
             ),
         },
         {"role": "user", "content": f"Goal: {goal}\n\nProduce a step-by-step plan:"},
