@@ -8,7 +8,7 @@ from unittest.mock import patch
 from rich.console import Console
 
 from agentic_crawler.agent.crawl_agent import CrawlAgent
-from agentic_crawler.agent.display import ConsoleDisplay, LiveDashboard
+from agentic_crawler.agent.display import LiveDashboard
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.config import Settings
@@ -102,11 +102,9 @@ def _manager(settings: Settings) -> AgentManager:
     )
 
 
-def _display(agent_id: str) -> ConsoleDisplay:
-    return ConsoleDisplay(
+def _display(agent_id: str) -> LiveDashboard:
+    return LiveDashboard(
         console=Console(file=io.StringIO(), force_terminal=False),
-        agent_id=agent_id,
-        is_root=False,
     )
 
 
@@ -120,6 +118,8 @@ def _agent(
 ) -> CrawlAgent:
     state = AgentState(goal=root_goal, max_steps=settings.max_steps)
     manager.register_root(root_id)
+    display = _display(root_id)
+    display.register_agent(root_id, root_goal, None, settings.max_steps)
     return CrawlAgent(
         agent_id=root_id,
         state=state,
@@ -128,13 +128,13 @@ def _agent(
         manager=manager,
         router=None,
         is_root=False,
-        display=_display(root_id),
+        display=display,
     )
 
 
-async def test_first_fork_swaps_display_and_replays_root_step_count() -> None:
-    root_goal = "root display swap"
-    child_goal = "child display swap"
+async def test_display_is_live_dashboard_from_start() -> None:
+    root_goal = "root display check"
+    child_goal = "child display check"
     provider = GoalDispatchProvider({})
     settings = _settings()
     manager = _manager(settings)
@@ -149,15 +149,13 @@ async def test_first_fork_swaps_display_and_replays_root_step_count() -> None:
             manager=manager,
         )
 
-        agent.state.step_count = 3
-        assert isinstance(agent.display, ConsoleDisplay)
+        assert isinstance(agent.display, LiveDashboard)
+        assert "root-disp-step" in agent.display._agents
 
         child_id = await agent.fork(child_goal)
 
         assert child_id.startswith("fork-")
         assert isinstance(agent.display, LiveDashboard)
-        assert "root-disp-step" in agent.display._agents
-        assert agent.display._agents["root-disp-step"].current_step == 3
 
         await asyncio.gather(*manager.get_child_tasks("root-disp-step"), return_exceptions=True)
 

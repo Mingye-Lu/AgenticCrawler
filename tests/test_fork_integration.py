@@ -9,7 +9,7 @@ from unittest.mock import patch
 from rich.console import Console
 
 from agentic_crawler.agent.crawl_agent import CrawlAgent
-from agentic_crawler.agent.display import ConsoleDisplay
+from agentic_crawler.agent.display import LiveDashboard
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.config import Settings
@@ -131,12 +131,12 @@ def _manager(settings: Settings) -> AgentManager:
     )
 
 
-def _display(agent_id: str, is_root: bool = False) -> ConsoleDisplay:
-    return ConsoleDisplay(
+def _display(agent_id: str, is_root: bool = False) -> LiveDashboard:
+    dash = LiveDashboard(
         console=Console(file=io.StringIO(), force_terminal=False),
-        agent_id=agent_id,
-        is_root=is_root,
     )
+    dash.register_agent(agent_id, "test", None if is_root else "root", 50)
+    return dash
 
 
 def _root_agent(

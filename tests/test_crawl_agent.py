@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from rich.console import Console
 
-from agentic_crawler.agent.display import ConsoleDisplay
+from agentic_crawler.agent.display import LiveDashboard
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.config import Settings
@@ -54,12 +54,12 @@ def _router() -> Any:
     return cast(Any, MockFetcherRouter())
 
 
-def _display(agent_id: str = "root-1", is_root: bool = True) -> ConsoleDisplay:
-    return ConsoleDisplay(
+def _display(agent_id: str = "root-1", is_root: bool = True) -> LiveDashboard:
+    dash = LiveDashboard(
         console=Console(file=io.StringIO(), force_terminal=False),
-        agent_id=agent_id,
-        is_root=is_root,
     )
+    dash.register_agent(agent_id, "test", None if is_root else "root", 50)
+    return dash
 
 
 @pytest.mark.asyncio
@@ -277,12 +277,13 @@ async def test_crawl_agent_child_skips_planning() -> None:
     mock_plan.assert_not_awaited()
 
 
-def test_root_agent_output_prefix() -> None:
-    """Root agent has [root] prefix."""
+def test_root_agent_registered_in_dashboard() -> None:
+    """Root agent is registered in the LiveDashboard."""
     from agentic_crawler.agent.crawl_agent import CrawlAgent
 
     provider = MockLLMProvider([])
     state = AgentState(goal="test")
+    display = _display("root-1", True)
     agent = CrawlAgent(
         agent_id="root-1",
         state=state,
@@ -291,25 +292,7 @@ def test_root_agent_output_prefix() -> None:
         manager=_manager(),
         router=_router(),
         is_root=True,
-        display=_display("root-1", True),
+        display=display,
     )
-    assert "root" in cast(ConsoleDisplay, agent.display)._prefix
-
-
-def test_child_agent_output_prefix() -> None:
-    """Child agent has [fork-XXXXXX] prefix derived from agent_id."""
-    from agentic_crawler.agent.crawl_agent import CrawlAgent
-
-    provider = MockLLMProvider([])
-    state = AgentState(goal="child test")
-    agent = CrawlAgent(
-        agent_id="fork-abc123",
-        state=state,
-        settings=Settings(max_steps=5),
-        provider=provider,
-        manager=_manager(),
-        router=_router(),
-        is_root=False,
-        display=_display("fork-abc123", False),
-    )
-    assert "fork-a" in cast(ConsoleDisplay, agent.display)._prefix
+    assert isinstance(agent.display, LiveDashboard)
+    assert "root-1" in agent.display._agents

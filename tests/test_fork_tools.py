@@ -9,7 +9,7 @@ import pytest
 from rich.console import Console
 
 from agentic_crawler.agent.crawl_agent import CrawlAgent
-from agentic_crawler.agent.display import ConsoleDisplay
+from agentic_crawler.agent.display import LiveDashboard
 from agentic_crawler.agent.manager import AgentManager
 from agentic_crawler.agent.state import AgentState
 from agentic_crawler.agent.tools import get_tool_schemas
@@ -73,12 +73,12 @@ def _done_call(summary: str = "done") -> LLMResponse:
     )
 
 
-def _display(agent_id: str, is_root: bool) -> ConsoleDisplay:
-    return ConsoleDisplay(
+def _display(agent_id: str, is_root: bool) -> LiveDashboard:
+    dash = LiveDashboard(
         console=Console(file=io.StringIO(), force_terminal=False),
-        agent_id=agent_id,
-        is_root=is_root,
     )
+    dash.register_agent(agent_id, "test", None if is_root else "root", 50)
+    return dash
 
 
 async def _await_children(manager: AgentManager, parent_id: str) -> None:
