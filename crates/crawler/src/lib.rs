@@ -1,5 +1,9 @@
 use runtime::PermissionMode;
 
+pub mod playwright;
+
+pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError};
+
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {
     pub name: &'static str,
