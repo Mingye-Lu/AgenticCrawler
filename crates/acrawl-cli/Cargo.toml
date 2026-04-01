@@ -1,0 +1,15 @@
+[package]
+name = "acrawl-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "acrawl"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true
