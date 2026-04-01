@@ -30,37 +30,33 @@ cp .env.example .env
 # Or authenticate via OAuth to use Codex models (no API key needed)
 agentic-crawler login
 
-# Run
-agentic-crawler run "scrape all book titles and prices from books.toscrape.com"
+# Launch the interactive REPL
+agentic-crawler
+# 🕷️ > scrape all book titles and prices from books.toscrape.com
 ```
 
 ## Usage
 
+Running `agentic-crawler` with no arguments launches an interactive REPL. Type a goal in plain English and the agent will plan and execute a multi-step crawl. Press **Ctrl+D** to exit.
+
 ```
-agentic-crawler <command> [OPTIONS] [ARGS]
+agentic-crawler [OPTIONS]
 ```
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `run`   | Run the crawler with a natural language goal |
+| *(default)* | Launch the interactive REPL — type goals, get results |
 | `login` | Authenticate with OpenAI via OAuth (for Codex models) |
 
-### `agentic-crawler run`
-
-```
-agentic-crawler run [OPTIONS] GOAL
-```
+### Options
 
 | Option | Description |
 |--------|-------------|
-| `GOAL` | What you want the crawler to do, in natural language (required) |
 | `-p, --provider` | LLM provider: `claude` (default), `openai`, or `codex` |
 | `-m, --model` | Model name override |
 | `--max-steps` | Maximum agent loop iterations (default: 50) |
-| `-o, --output` | Output file path |
-| `-f, --format` | Output format: `json`, `csv`, `stdout` |
 | `-w, --workspace` | Directory for saved files (default: `workspace`) |
 | `--no-headless` | Show the browser window |
 | `-v, --verbose` | Verbose logging |
@@ -68,25 +64,25 @@ agentic-crawler run [OPTIONS] GOAL
 ### Examples
 
 ```bash
-# Extract product data to a file
-agentic-crawler run "find all products on example-shop.com and extract name, price, and rating" \
-  -o products.json
+# Start the REPL with default settings
+agentic-crawler
 
-# Use OpenAI instead of Claude
-agentic-crawler run "summarize the top 5 Hacker News stories" -p openai
+# Start with OpenAI provider
+agentic-crawler -p openai
 
-# Use Codex (requires `agentic-crawler login` first)
-agentic-crawler run "summarize the top 5 Hacker News stories" -p codex
+# Start with Codex (requires `agentic-crawler login` first)
+agentic-crawler -p codex
 
-# Watch the browser in action
-agentic-crawler run "log into example.com with user demo/demo and download my profile info" \
-  --no-headless
+# Show the browser window during crawls
+agentic-crawler --no-headless
 
-# Output as CSV
-agentic-crawler run "get the schedule from example.com/events" -f csv -o events.csv
-
-# Download images to a workspace directory
-agentic-crawler run "download all product images from example-shop.com" -w ./downloads
+# REPL session example:
+# 🕷️ > find all products on example-shop.com and extract name, price, and rating
+# ... agent runs ...
+# 🕷️ > summarize the top 5 Hacker News stories
+# ... agent runs ...
+# 🕷️ > Ctrl+D
+# Goodbye!
 ```
 
 ## Configuration
@@ -153,8 +149,15 @@ Fork limits are configurable to prevent runaway agents — see the configuration
 
 ```
 src/agentic_crawler/
-├── cli.py                 CLI entry point
+├── __main__.py            Entry point (argparse + REPL launch)
 ├── config.py              Settings (pydantic-settings)
+├── tui/
+│   ├── repl.py            prompt-toolkit REPL loop
+│   ├── display.py         ReplDisplay — interleaved multi-agent output
+│   ├── renderer.py        Streaming markdown renderer
+│   ├── tool_display.py    Box-drawing tool call formatter
+│   ├── session_store.py   Session persistence (JSON)
+│   └── permissions.py     3-tier permission model
 ├── agent/
 │   ├── crawl_agent.py     CrawlAgent class (plan, loop, fork handling)
 │   ├── display.py         AgentDisplay protocol + LiveDashboard (Rich TUI)
