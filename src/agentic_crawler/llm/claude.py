@@ -21,6 +21,7 @@ class ClaudeProvider:
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
         on_thinking: Callable[[str], None] | None = None,
+        on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         # Separate system message from conversation
         system_text = ""
@@ -55,6 +56,9 @@ class ClaudeProvider:
                     thinking_parts.append(chunk)
                     if on_thinking:
                         on_thinking(chunk)
+                elif event.type == "text":
+                    if on_text_delta:
+                        on_text_delta(event.text)
 
             final = await stream.get_final_message()
 

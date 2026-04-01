@@ -69,12 +69,17 @@ class OpenAIProvider:
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
         on_thinking: Callable[[str], None] | None = None,
+        on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         await self._refresh_oauth_if_needed()
 
         if self._use_oauth:
-            return await self._complete_codex_api(messages, tools, temperature, on_thinking)
-        return await self._complete_chat_api(messages, tools, temperature, on_thinking)
+            return await self._complete_codex_api(
+                messages, tools, temperature, on_thinking, on_text_delta
+            )
+        return await self._complete_chat_api(
+            messages, tools, temperature, on_thinking, on_text_delta
+        )
 
     async def _complete_chat_api(
         self,
@@ -82,6 +87,7 @@ class OpenAIProvider:
         tools: list[dict[str, Any]] | None,
         temperature: float,
         on_thinking: Callable[[str], None] | None = None,
+        on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -117,9 +123,10 @@ class OpenAIProvider:
                 if on_thinking:
                     on_thinking(reasoning)
 
-            # Text content
             if delta.content:
                 text_parts.append(delta.content)
+                if on_text_delta:
+                    on_text_delta(delta.content)
 
             # Tool call deltas
             if delta.tool_calls:
@@ -128,7 +135,9 @@ class OpenAIProvider:
                     if idx not in tool_call_buffers:
                         tool_call_buffers[idx] = {
                             "id": tc_delta.id or "",
-                            "name": tc_delta.function.name if tc_delta.function and tc_delta.function.name else "",
+                            "name": tc_delta.function.name
+                            if tc_delta.function and tc_delta.function.name
+                            else "",
                             "arguments": "",
                         }
                     buf = tool_call_buffers[idx]
@@ -170,6 +179,7 @@ class OpenAIProvider:
         tools: list[dict[str, Any]] | None,
         temperature: float,
         on_thinking: Callable[[str], None] | None = None,
+        on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         """Route through chatgpt.com/backend-api/codex/responses.
 
@@ -263,7 +273,10 @@ class OpenAIProvider:
                 event_type = event.get("type", "")
 
                 if event_type == "response.output_text.delta":
-                    current_text += event.get("delta", "")
+                    delta_text = event.get("delta", "")
+                    current_text += delta_text
+                    if on_text_delta:
+                        on_text_delta(delta_text)
                 elif event_type == "response.output_text.done":
                     if current_text:
                         text_parts.append(current_text)

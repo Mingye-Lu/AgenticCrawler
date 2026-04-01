@@ -25,6 +25,7 @@ class MockLLMProvider:
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
         on_thinking: Callable[[str], None] | None = None,
+        on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         self.messages_log.append(messages)
         if self.call_count < len(self.responses):
@@ -33,10 +34,16 @@ class MockLLMProvider:
             # Fire the thinking callback if the response has thinking
             if on_thinking and response.thinking:
                 on_thinking(response.thinking)
+            if on_text_delta and response.text:
+                on_text_delta(response.text)
             return response
         # Default: signal done
         return LLMResponse(
-            tool_calls=[ToolCall(id="done_1", name="done", arguments={"summary": "No more scripted responses"})],
+            tool_calls=[
+                ToolCall(
+                    id="done_1", name="done", arguments={"summary": "No more scripted responses"}
+                )
+            ],
         )
 
     async def close(self) -> None:

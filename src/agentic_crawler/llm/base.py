@@ -32,6 +32,7 @@ class LLMProvider(Protocol):
         tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
         on_thinking: Callable[[str], None] | None = None,
+        on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse: ...
 
     async def close(self) -> None: ...
