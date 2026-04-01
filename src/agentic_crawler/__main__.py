@@ -1,5 +1,9 @@
 """Allow running as `python -m agentic_crawler`."""
 
-from agentic_crawler.cli import app
 
-app()
+def main() -> None:
+    print("REPL not yet implemented")
+
+
+if __name__ == "__main__":
+    main()
