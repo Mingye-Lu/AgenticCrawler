@@ -13,7 +13,7 @@ use api::{
     StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
-use crawler::{execute_tool, mvp_tool_specs};
+use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
 use runtime::{
     clear_oauth_credentials, generate_pkce_pair, generate_state, load_system_prompt,
     parse_oauth_callback_request_target, save_oauth_credentials, ApiClient, ApiRequest,
@@ -1338,6 +1338,7 @@ struct CliToolExecutor {
     renderer: TerminalRenderer,
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
+    agent: CrawlerAgent,
 }
 impl CliToolExecutor {
     fn new(allowed_tools: Option<AllowedToolSet>, emit_output: bool) -> Self {
@@ -1345,6 +1346,7 @@ impl CliToolExecutor {
             renderer: TerminalRenderer::new(),
             emit_output,
             allowed_tools,
+            agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools()),
         }
     }
 }
@@ -1359,9 +1361,7 @@ impl ToolExecutor for CliToolExecutor {
                 "tool `{tool_name}` is not enabled by the current --allowedTools setting"
             )));
         }
-        let value = serde_json::from_str(input)
-            .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
-        match execute_tool(tool_name, &value) {
+        match self.agent.execute(tool_name, input) {
             Ok(output) => {
                 if self.emit_output {
                     let markdown = format_tool_result(tool_name, &output, false);
@@ -1373,14 +1373,15 @@ impl ToolExecutor for CliToolExecutor {
             }
             Err(error) => {
                 if self.emit_output {
-                    let markdown = format_tool_result(tool_name, &error, true);
+                    let rendered_error = error.to_string();
+                    let markdown = format_tool_result(tool_name, &rendered_error, true);
                     self.renderer
                         .stream_markdown(&markdown, &mut io::stdout())
                         .map_err(|stream_error: io::Error| {
                             ToolError::new(stream_error.to_string())
                         })?;
                 }
-                Err(ToolError::new(error))
+                Err(error)
             }
         }
     }

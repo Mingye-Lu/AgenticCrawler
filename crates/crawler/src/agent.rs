@@ -64,7 +64,7 @@ pub trait CrawlAgent {
 }
 
 pub struct CrawlerAgent {
-    _browser: Option<BrowserContext>,
+    browser: Option<BrowserContext>,
     registry: ToolRegistry,
     max_steps: usize,
 }
@@ -73,7 +73,16 @@ impl CrawlerAgent {
     #[must_use]
     pub fn new(browser: BrowserContext, registry: ToolRegistry) -> Self {
         Self {
-            _browser: Some(browser),
+            browser: Some(browser),
+            registry,
+            max_steps: DEFAULT_MAX_STEPS,
+        }
+    }
+
+    #[must_use]
+    pub fn new_lazy(registry: ToolRegistry) -> Self {
+        Self {
+            browser: None,
             registry,
             max_steps: DEFAULT_MAX_STEPS,
         }
@@ -82,7 +91,7 @@ impl CrawlerAgent {
     #[cfg(test)]
     fn new_for_testing(registry: ToolRegistry) -> Self {
         Self {
-            _browser: None,
+            browser: None,
             registry,
             max_steps: DEFAULT_MAX_STEPS,
         }
@@ -113,6 +122,29 @@ impl CrawlerAgent {
 
         Ok(build_crawl_result(&summary))
     }
+
+    fn ensure_browser(&mut self) -> Result<(), ToolError> {
+        if self.browser.is_some() {
+            return Ok(());
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| ToolError::new(format!("failed to create async runtime: {error}")))?;
+        let bridge = runtime
+            .block_on(crate::PlaywrightBridge::new())
+            .map_err(|error| ToolError::new(error.to_string()))?;
+        self.browser = Some(BrowserContext::new(bridge));
+        Ok(())
+    }
+
+    fn supports_async(tool_name: &str) -> bool {
+        matches!(
+            tool_name,
+            "navigate" | "click" | "fill_form" | "extract_data" | "screenshot" | "go_back"
+        )
+    }
 }
 
 impl ToolExecutor for CrawlerAgent {
@@ -122,12 +154,37 @@ impl ToolExecutor for CrawlerAgent {
 
         if let Some(handler) = self.registry.get(tool_name) {
             match handler(&input_value) {
-                Ok(result) => Ok(result.to_string()),
-                Err(e) => Err(ToolError::new(e.to_string())),
+                Ok(result) => return Ok(result.to_string()),
+                Err(error)
+                    if error
+                        .to_string()
+                        .contains("requires async execution via execute_async") => {}
+                Err(error) => return Err(ToolError::new(error.to_string())),
             }
-        } else {
-            Err(ToolError::new(format!("unknown tool: `{tool_name}`")))
         }
+
+        if Self::supports_async(tool_name) {
+            self.ensure_browser()?;
+            let browser = self
+                .browser
+                .as_mut()
+                .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| {
+                    ToolError::new(format!("failed to create async runtime: {error}"))
+                })?;
+            let result = runtime
+                .block_on(
+                    self.registry
+                        .execute_async(tool_name, &input_value, browser),
+                )
+                .map_err(|error| ToolError::new(error.to_string()))?;
+            return Ok(result.to_string());
+        }
+
+        Err(ToolError::new(format!("unknown tool: `{tool_name}`")))
     }
 }
 
