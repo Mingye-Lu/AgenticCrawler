@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
+use crate::fetcher::FetchRouter;
 use crate::CrawlError;
 
 #[derive(Debug)]
@@ -35,16 +36,18 @@ fn truncate_html(html: &str, max_chars: usize) -> String {
 
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let params = parse_input(input)?;
-    let page_info = browser
-        .bridge_mut()
-        .navigate(&params.url)
+
+    let router = FetchRouter::new().map_err(|e| CrawlError::new(e.to_string()))?;
+    let page = router
+        .fetch(&params.url, Some(browser))
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;
 
     Ok(serde_json::json!({
-        "title": page_info.title,
-        "url": params.url,
-        "html_summary": truncate_html(&page_info.html, 2000)
+        "title": page.title.unwrap_or_default(),
+        "url": page.url,
+        "text": truncate_html(&page.text, 4000),
+        "html_summary": truncate_html(&page.html, 2000)
     }))
 }
 

@@ -3,6 +3,7 @@ use serde_json::json;
 
 pub mod agent;
 pub mod browser;
+pub mod fetcher;
 pub mod output;
 pub mod playwright;
 pub mod prompt;
@@ -12,6 +13,7 @@ pub mod tools;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
+pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError};
 pub use state::CrawlState;
