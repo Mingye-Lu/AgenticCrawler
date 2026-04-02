@@ -941,10 +941,12 @@ fn default_oauth_config() -> OAuthConfig {
 }
 
 fn open_browser(url: &str) -> io::Result<()> {
+    let escaped;
     let commands = if cfg!(target_os = "macos") {
         vec![("open", vec![url])]
     } else if cfg!(target_os = "windows") {
-        vec![("cmd", vec!["/C", "start", "", url])]
+        escaped = url.replace('&', "^&");
+        vec![("cmd", vec!["/C", "start", "", &escaped])]
     } else {
         vec![("xdg-open", vec![url])]
     };
@@ -1100,13 +1102,34 @@ impl AnthropicRuntimeClient {
 }
 
 fn resolve_cli_auth_source() -> Result<AuthSource, Box<dyn std::error::Error>> {
-    Ok(resolve_startup_auth_source(|| {
-        let cwd = env::current_dir().map_err(api::ApiError::from)?;
-        let config = ConfigLoader::default_for(&cwd).load().map_err(|error| {
-            api::ApiError::Auth(format!("failed to load runtime OAuth config: {error}"))
-        })?;
-        Ok(config.oauth().cloned())
-    })?)
+    match resolve_startup_auth_source(load_oauth_config_from_cwd) {
+        Ok(auth) => Ok(auth),
+        Err(api::ApiError::MissingApiKey | api::ApiError::ExpiredOAuthToken) => {
+            interactive_login_prompt()?;
+            Ok(resolve_startup_auth_source(load_oauth_config_from_cwd)?)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn load_oauth_config_from_cwd() -> Result<Option<OAuthConfig>, api::ApiError> {
+    let cwd = env::current_dir().map_err(api::ApiError::from)?;
+    let config = ConfigLoader::default_for(&cwd).load().map_err(|error| {
+        api::ApiError::Auth(format!("failed to load runtime OAuth config: {error}"))
+    })?;
+    Ok(config.oauth().cloned())
+}
+
+fn interactive_login_prompt() -> Result<(), Box<dyn std::error::Error>> {
+    eprint!("No API credentials found. Log in via OAuth? [Y/n] ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    let answer = answer.trim();
+    if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
+        return Err("authentication required — set ANTHROPIC_API_KEY or run `acrawl login`".into());
+    }
+    run_login()
 }
 
 impl ApiClient for AnthropicRuntimeClient {
