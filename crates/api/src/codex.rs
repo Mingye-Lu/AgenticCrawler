@@ -224,10 +224,6 @@ fn build_codex_request(request: &MessageRequest, model: &str) -> Value {
         "include": ["reasoning.encrypted_content"],
     });
 
-    if request.max_tokens > 0 {
-        body["max_output_tokens"] = Value::Number(request.max_tokens.into());
-    }
-
     if let Some(tools) = &request.tools {
         body["tools"] = Value::Array(tools.iter().map(convert_codex_tool).collect());
     }
@@ -1084,7 +1080,7 @@ mod tests {
         assert_eq!(body["store"], false);
         assert_eq!(body["parallel_tool_calls"], true);
         assert_eq!(body["tool_choice"], "auto");
-        assert_eq!(body["max_output_tokens"], 512);
+        assert!(body.get("max_output_tokens").is_none());
 
         assert_eq!(input.len(), 2);
         assert_eq!(input[0]["type"], "message");
