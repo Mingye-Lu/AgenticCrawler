@@ -104,6 +104,7 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         formatted_summary,
         compacted_session: Session {
             version: session.version,
+            model: session.model.clone(),
             messages: compacted_messages,
         },
         removed_message_count: removed.len(),
@@ -392,6 +393,7 @@ mod tests {
     fn leaves_small_sessions_unchanged() {
         let session = Session {
             version: 1,
+            model: None,
             messages: vec![ConversationMessage::user_text("hello")],
         };
 
@@ -406,6 +408,7 @@ mod tests {
     fn compacts_older_messages_into_a_system_summary() {
         let session = Session {
             version: 1,
+            model: None,
             messages: vec![
                 ConversationMessage::user_text("one ".repeat(200)),
                 ConversationMessage::assistant(vec![ContentBlock::Text {

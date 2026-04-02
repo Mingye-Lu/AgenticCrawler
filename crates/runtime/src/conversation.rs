@@ -887,6 +887,7 @@ mod tests {
 
         let session = Session {
             version: 1,
+            model: None,
             messages: vec![
                 crate::session::ConversationMessage::user_text("one"),
                 crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {

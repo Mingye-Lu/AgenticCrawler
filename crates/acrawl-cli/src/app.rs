@@ -552,15 +552,20 @@ impl LiveCli {
         let handle = resolve_session_reference(&session_ref)?;
         let session = Session::load_from_path(&handle.path)?;
         let message_count = session.messages.len();
+        let model = session
+            .model
+            .clone()
+            .unwrap_or_else(|| self.model.clone());
         self.runtime = build_runtime(
             session,
-            self.model.clone(),
+            model.clone(),
             self.system_prompt.clone(),
             true,
             true,
             self.allowed_tools.clone(),
             self.permission_mode,
         )?;
+        self.model = model;
         self.session = handle;
         println!(
             "{}",
@@ -617,15 +622,20 @@ impl LiveCli {
                 let handle = resolve_session_reference(target)?;
                 let session = Session::load_from_path(&handle.path)?;
                 let message_count = session.messages.len();
+                let model = session
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| self.model.clone());
                 self.runtime = build_runtime(
                     session,
-                    self.model.clone(),
+                    model.clone(),
                     self.system_prompt.clone(),
                     true,
                     true,
                     self.allowed_tools.clone(),
                     self.permission_mode,
                 )?;
+                self.model = model;
                 self.session = handle;
                 println!("Session switched\n  Active session   {}\n  File             {}\n  Messages         {}", self.session.id, self.session.path.display(), message_count);
                 Ok(true)
@@ -861,7 +871,7 @@ pub(crate) fn run_resume_command(
             Ok(ResumeCommandOutcome {
                 session: session.clone(),
                 message: Some(format_status_report(
-                    "restored-session",
+                    session.model.as_deref().unwrap_or("unknown"),
                     StatusUsage {
                         message_count: session.messages.len(),
                         turns: tracker.turns(),
@@ -1068,7 +1078,7 @@ fn build_runtime_feature_config(
 }
 
 fn build_runtime(
-    session: Session,
+    mut session: Session,
     model: String,
     system_prompt: Vec<String>,
     enable_tools: bool,
@@ -1076,6 +1086,7 @@ fn build_runtime(
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, Box<dyn std::error::Error>> {
+    session.model = Some(model.clone());
     Ok(ConversationRuntime::new_with_features(
         session,
         LlmRuntimeClient::new(model, enable_tools, emit_output, allowed_tools.clone())?,

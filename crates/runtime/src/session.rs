@@ -42,6 +42,7 @@ pub struct ConversationMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub version: u32,
+    pub model: Option<String>,
     pub messages: Vec<ConversationMessage>,
 }
 
@@ -81,6 +82,7 @@ impl Session {
     pub fn new() -> Self {
         Self {
             version: 1,
+            model: None,
             messages: Vec::new(),
         }
     }
@@ -102,6 +104,9 @@ impl Session {
             "version".to_string(),
             JsonValue::Number(i64::from(self.version)),
         );
+        if let Some(model) = &self.model {
+            object.insert("model".to_string(), JsonValue::String(model.clone()));
+        }
         object.insert(
             "messages".to_string(),
             JsonValue::Array(
@@ -124,6 +129,10 @@ impl Session {
             .ok_or_else(|| SessionError::Format("missing version".to_string()))?;
         let version = u32::try_from(version)
             .map_err(|_| SessionError::Format("version out of range".to_string()))?;
+        let model = object
+            .get("model")
+            .and_then(JsonValue::as_str)
+            .map(ToOwned::to_owned);
         let messages = object
             .get("messages")
             .and_then(JsonValue::as_array)
@@ -131,7 +140,11 @@ impl Session {
             .iter()
             .map(ConversationMessage::from_json)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self { version, messages })
+        Ok(Self {
+            version,
+            model,
+            messages,
+        })
     }
 }
 
