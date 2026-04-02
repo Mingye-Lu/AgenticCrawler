@@ -200,7 +200,6 @@ impl OAuthTokenExchangeRequest {
             ("redirect_uri", self.redirect_uri.clone()),
             ("client_id", self.client_id.clone()),
             ("code_verifier", self.code_verifier.clone()),
-            ("state", self.state.clone()),
         ])
     }
 }
@@ -295,7 +294,7 @@ pub fn parse_oauth_callback_request_target(target: &str) -> Result<OAuthCallback
     let (path, query) = target
         .split_once('?')
         .map_or((target, ""), |(path, query)| (path, query));
-    if path != "/callback" {
+    if path != "/callback" && path != "/auth/callback" {
         return Err(format!("unexpected callback path: {path}"));
     }
     parse_oauth_callback_query(query)
@@ -592,6 +591,10 @@ mod tests {
             .expect("parse callback target");
         assert_eq!(params.code.as_deref(), Some("abc"));
         assert_eq!(params.state.as_deref(), Some("xyz"));
+        let params = parse_oauth_callback_request_target("/auth/callback?code=def&state=s2")
+            .expect("parse codex callback target");
+        assert_eq!(params.code.as_deref(), Some("def"));
+        assert_eq!(params.state.as_deref(), Some("s2"));
         assert!(parse_oauth_callback_request_target("/wrong?code=abc").is_err());
     }
 }
