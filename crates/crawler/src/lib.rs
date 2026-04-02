@@ -26,6 +26,7 @@ pub struct ToolSpec {
 
 /// Returns the built-in tool specifications.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn mvp_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {

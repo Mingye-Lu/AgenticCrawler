@@ -22,9 +22,9 @@ pub enum OutputError {
 impl std::fmt::Display for OutputError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            OutputError::IoError(msg) => write!(f, "I/O error: {}", msg),
-            OutputError::CsvError(msg) => write!(f, "CSV error: {}", msg),
-            OutputError::InvalidDataFormat(msg) => write!(f, "Invalid data format: {}", msg),
+            OutputError::IoError(msg) => write!(f, "I/O error: {msg}"),
+            OutputError::CsvError(msg) => write!(f, "CSV error: {msg}"),
+            OutputError::InvalidDataFormat(msg) => write!(f, "Invalid data format: {msg}"),
         }
     }
 }
@@ -57,13 +57,13 @@ pub fn write_output(
 /// Write data as pretty-printed JSON.
 fn write_json(data: &Value, writer: &mut dyn Write) -> Result<(), OutputError> {
     let json_str = serde_json::to_string_pretty(data)
-        .map_err(|e| OutputError::IoError(format!("JSON serialization failed: {}", e)))?;
+        .map_err(|e| OutputError::IoError(format!("JSON serialization failed: {e}")))?;
     writer
         .write_all(json_str.as_bytes())
-        .map_err(|e| OutputError::IoError(format!("Failed to write JSON: {}", e)))?;
+        .map_err(|e| OutputError::IoError(format!("Failed to write JSON: {e}")))?;
     writer
         .write_all(b"\n")
-        .map_err(|e| OutputError::IoError(format!("Failed to write newline: {}", e)))?;
+        .map_err(|e| OutputError::IoError(format!("Failed to write newline: {e}")))?;
     Ok(())
 }
 
@@ -99,24 +99,24 @@ fn write_csv(data: &Value, writer: &mut dyn Write) -> Result<(), OutputError> {
     // Write header
     csv_writer
         .write_record(&fieldnames)
-        .map_err(|e| OutputError::CsvError(format!("Failed to write CSV header: {}", e)))?;
+        .map_err(|e| OutputError::CsvError(format!("Failed to write CSV header: {e}")))?;
 
     // Write rows
     for row in rows {
         if let Value::Object(map) = row {
             let record: Vec<String> = fieldnames
                 .iter()
-                .map(|key| map.get(key).map(|v| value_to_string(v)).unwrap_or_default())
+                .map(|key| map.get(key).map(value_to_string).unwrap_or_default())
                 .collect();
             csv_writer
                 .write_record(&record)
-                .map_err(|e| OutputError::CsvError(format!("Failed to write CSV row: {}", e)))?;
+                .map_err(|e| OutputError::CsvError(format!("Failed to write CSV row: {e}")))?;
         }
     }
 
     csv_writer
         .flush()
-        .map_err(|e| OutputError::CsvError(format!("Failed to flush CSV writer: {}", e)))?;
+        .map_err(|e| OutputError::CsvError(format!("Failed to flush CSV writer: {e}")))?;
 
     Ok(())
 }
@@ -128,10 +128,10 @@ fn write_text(data: &Value, writer: &mut dyn Write) -> Result<(), OutputError> {
     let text = format_text(data);
     writer
         .write_all(text.as_bytes())
-        .map_err(|e| OutputError::IoError(format!("Failed to write text: {}", e)))?;
+        .map_err(|e| OutputError::IoError(format!("Failed to write text: {e}")))?;
     writer
         .write_all(b"\n")
-        .map_err(|e| OutputError::IoError(format!("Failed to write newline: {}", e)))?;
+        .map_err(|e| OutputError::IoError(format!("Failed to write newline: {e}")))?;
     Ok(())
 }
 
@@ -140,7 +140,7 @@ fn extract_rows(data: &Value) -> Result<Vec<Value>, OutputError> {
     match data {
         Value::Array(arr) => {
             // If array contains objects, use them directly
-            if arr.iter().all(|v| v.is_object()) {
+            if arr.iter().all(serde_json::Value::is_object) {
                 Ok(arr.clone())
             } else if arr.is_empty() {
                 Ok(Vec::new())
@@ -169,7 +169,7 @@ fn value_to_string(val: &Value) -> String {
         Value::Array(arr) => {
             // For arrays, join elements with semicolon
             arr.iter()
-                .map(|v| value_to_string(v))
+                .map(value_to_string)
                 .collect::<Vec<_>>()
                 .join("; ")
         }
@@ -189,7 +189,7 @@ fn format_text(data: &Value) -> String {
         Value::Array(arr) => {
             if arr.is_empty() {
                 "No data extracted.".to_string()
-            } else if arr.iter().all(|v| v.is_object()) {
+            } else if arr.iter().all(serde_json::Value::is_object) {
                 // Array of objects: render as table-like format
                 render_items_as_text(arr)
             } else {
@@ -450,9 +450,9 @@ mod tests {
     fn test_value_to_string_array() {
         let val = json!(["a", "b", "c"]);
         let result = value_to_string(&val);
-        assert!(result.contains("a"));
-        assert!(result.contains("b"));
-        assert!(result.contains("c"));
+        assert!(result.contains('a'));
+        assert!(result.contains('b'));
+        assert!(result.contains('c'));
     }
 
     #[test]

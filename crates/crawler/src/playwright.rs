@@ -11,6 +11,7 @@ use tokio::time::timeout;
 const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[allow(clippy::needless_raw_string_hashes)]
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"
 const readline = require('node:readline');
 
@@ -73,6 +74,48 @@ async function bootstrap() {
       await browser.close().catch(() => {});
       process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { closed: true } }) + '\n');
       process.exit(0);
+    }
+
+    if (command.action === 'click') {
+      try {
+        await page.click(command.selector, { timeout: 5000 });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { clicked: true } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'click_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'fill') {
+      try {
+        await page.fill(command.selector, command.value);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'fill_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'screenshot') {
+      try {
+        const buffer = await page.screenshot({ type: 'png' });
+        const base64Data = buffer.toString('base64');
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { screenshot_base64: base64Data, size_bytes: buffer.length } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'screenshot_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'go_back') {
+      try {
+        await page.goBack({ waitUntil: 'domcontentloaded' });
+        const url = page.url();
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'go_back_failed', message: String(error) } }) + '\n');
+      }
+      continue;
     }
 
     if (command.action === 'scroll') {
@@ -313,14 +356,13 @@ impl PlaywrightBridge {
             stdout: BufReader::new(stdout),
         };
 
-        match timeout(launch_timeout, bridge.read_bootstrap_message()).await {
-            Ok(result) => result?,
-            Err(_) => {
-                bridge.force_kill_child().await?;
-                return Err(PlaywrightBridgeError::LaunchTimeout {
-                    timeout: launch_timeout,
-                });
-            }
+        if let Ok(result) = timeout(launch_timeout, bridge.read_bootstrap_message()).await {
+            result?;
+        } else {
+            bridge.force_kill_child().await?;
+            return Err(PlaywrightBridgeError::LaunchTimeout {
+                timeout: launch_timeout,
+            });
         }
 
         Ok(bridge)
@@ -359,17 +401,14 @@ impl PlaywrightBridge {
             })
             .await;
 
-        match timeout(DEFAULT_SHUTDOWN_TIMEOUT, self.child.wait()).await {
-            Ok(wait_result) => {
-                let _status = wait_result?;
-                Ok(())
-            }
-            Err(_) => {
-                self.force_kill_child().await?;
-                Err(PlaywrightBridgeError::ShutdownTimeout {
-                    timeout: DEFAULT_SHUTDOWN_TIMEOUT,
-                })
-            }
+        if let Ok(wait_result) = timeout(DEFAULT_SHUTDOWN_TIMEOUT, self.child.wait()).await {
+            let _status = wait_result?;
+            Ok(())
+        } else {
+            self.force_kill_child().await?;
+            Err(PlaywrightBridgeError::ShutdownTimeout {
+                timeout: DEFAULT_SHUTDOWN_TIMEOUT,
+            })
         }
     }
 
@@ -497,6 +536,56 @@ impl PlaywrightBridge {
             .and_then(|v| v.as_str())
             .unwrap_or(path)
             .to_string())
+    }
+
+    pub async fn click(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "click",
+            "selector": selector,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn fill(&mut self, selector: &str, value: &str) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "fill",
+            "selector": selector,
+            "value": value,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn screenshot(&mut self) -> Result<(String, usize), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({ "action": "screenshot" });
+        let result = self.send_raw_command(&cmd).await?;
+        let base64_data = result
+            .get("screenshot_base64")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                PlaywrightBridgeError::Protocol(
+                    "screenshot response missing base64 data".to_string(),
+                )
+            })?
+            .to_string();
+        #[allow(clippy::cast_possible_truncation)]
+        let size_bytes = result
+            .get("size_bytes")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        Ok((base64_data, size_bytes))
+    }
+
+    pub async fn go_back(&mut self) -> Result<String, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({ "action": "go_back" });
+        let result = self.send_raw_command(&cmd).await?;
+        let url = result
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        Ok(url)
     }
 
     async fn read_bootstrap_message(&mut self) -> Result<(), PlaywrightBridgeError> {

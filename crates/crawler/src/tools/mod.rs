@@ -1,26 +1,9 @@
-pub mod click {
-    pub fn stub() {}
-}
-
-pub mod extract_data {
-    pub fn stub() {}
-}
-
-pub mod fill_form {
-    pub fn stub() {}
-}
-
-pub mod go_back {
-    pub fn stub() {}
-}
-
-pub mod navigate {
-    pub fn stub() {}
-}
-
-pub mod screenshot {
-    pub fn stub() {}
-}
+pub mod click;
+pub mod extract_data;
+pub mod fill_form;
+pub mod go_back;
+pub mod navigate;
+pub mod screenshot;
 
 pub mod execute_js;
 pub mod hover;
