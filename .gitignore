@@ -22,3 +22,5 @@ Thumbs.db
 
 # Workspace (for file downloads)
 workspace/
+
+.*/
