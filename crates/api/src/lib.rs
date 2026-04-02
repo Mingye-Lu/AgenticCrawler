@@ -1,6 +1,7 @@
 mod client;
 pub mod codex;
 mod error;
+pub mod openai;
 mod sse;
 mod types;
 
@@ -15,6 +16,7 @@ pub use codex::{
     OPENAI_TOKEN_URL,
 };
 pub use error::ApiError;
+pub use openai::{OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
 pub use sse::{parse_frame, SseParser};
 pub use types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
