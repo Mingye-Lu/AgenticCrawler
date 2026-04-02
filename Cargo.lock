@@ -144,6 +144,7 @@ name = "crawler"
 version = "0.1.0"
 dependencies = [
  "csv",
+ "reqwest",
  "runtime",
  "serde",
  "serde_json",

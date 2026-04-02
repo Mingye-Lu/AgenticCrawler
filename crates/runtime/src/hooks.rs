@@ -292,7 +292,9 @@ impl CommandWithStdin {
 
 #[cfg(test)]
 mod tests {
-    use super::{HookRunResult, HookRunner};
+    #[cfg(unix)]
+    use super::HookRunResult;
+    use super::HookRunner;
     use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
 
     #[test]
