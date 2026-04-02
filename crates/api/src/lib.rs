@@ -11,9 +11,9 @@ pub use client::{
 };
 pub use codex::{
     codex_oauth_config, codex_redirect_uri, login as codex_login, logout as codex_logout,
-    read_codex_model, resolve_codex_auth, save_codex_credentials, CodexLoginRequest,
-    CODEX_CALLBACK_PORT, CODEX_SCOPES, DEFAULT_CODEX_MODEL, OPENAI_AUTH_URL, OPENAI_CLIENT_ID,
-    OPENAI_TOKEN_URL,
+    read_codex_model, read_codex_responses_url, resolve_codex_auth, save_codex_credentials,
+    CodexClient, CodexLoginRequest, CodexMessageStream, CODEX_CALLBACK_PORT, CODEX_SCOPES,
+    DEFAULT_CODEX_MODEL, OPENAI_AUTH_URL, OPENAI_CLIENT_ID, OPENAI_TOKEN_URL,
 };
 pub use error::ApiError;
 pub use openai::{OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
