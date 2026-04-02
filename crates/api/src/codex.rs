@@ -1,8 +1,8 @@
-//! Codex provider — OpenAI Chat Completions with OAuth PKCE authentication.
+//! Codex provider — `OpenAI` Chat Completions with OAuth PKCE authentication.
 //!
 //! [`resolve_codex_auth`] tries sources in order: stored OAuth credentials,
 //! then `OPENAI_API_KEY`. Both produce [`AuthSource::BearerToken`] because
-//! OpenAI uses `Authorization: Bearer <token>` for all auth methods.
+//! `OpenAI` uses `Authorization: Bearer <token>` for all auth methods.
 
 use runtime::{
     clear_oauth_credentials, generate_pkce_pair, generate_state, load_oauth_credentials,
