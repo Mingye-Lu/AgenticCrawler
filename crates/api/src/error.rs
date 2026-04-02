@@ -81,20 +81,14 @@ impl Display for ApiError {
                 ..
             } => match (error_type, message) {
                 (Some(error_type), Some(message)) => {
-                    write!(
-                        f,
-                        "anthropic api returned {status} ({error_type}): {message}"
-                    )
+                    write!(f, "api returned {status} ({error_type}): {message}")
                 }
-                _ => write!(f, "anthropic api returned {status}: {body}"),
+                _ => write!(f, "api returned {status}: {body}"),
             },
             Self::RetriesExhausted {
                 attempts,
                 last_error,
-            } => write!(
-                f,
-                "anthropic api failed after {attempts} attempts: {last_error}"
-            ),
+            } => write!(f, "api failed after {attempts} attempts: {last_error}"),
             Self::InvalidSseFrame(message) => write!(f, "invalid sse frame: {message}"),
             Self::BackoffOverflow {
                 attempt,
