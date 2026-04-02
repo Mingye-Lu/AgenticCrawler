@@ -5,11 +5,12 @@ pub mod agent;
 pub mod browser;
 pub mod output;
 pub mod playwright;
+pub mod prompt;
 pub mod state;
 pub mod tool_registry;
 pub mod tools;
 
-pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult};
+pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
 pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError};
