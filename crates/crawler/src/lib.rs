@@ -11,7 +11,7 @@ pub mod tools;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult};
 pub use browser::BrowserContext;
-pub use output::OutputFormat;
+pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError};
 pub use state::CrawlState;
 pub use tool_registry::{ToolHandler, ToolRegistry};
