@@ -171,6 +171,12 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         argument_hint: Some("[list|switch <session-id>]"),
         resume_supported: false,
     },
+    SlashCommandSpec {
+        name: "auth",
+        summary: "Authenticate interactively with a provider",
+        argument_hint: Some("[anthropic|openai|codex]"),
+        resume_supported: false,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,6 +227,9 @@ pub enum SlashCommand {
     Session {
         action: Option<String>,
         target: Option<String>,
+    },
+    Auth {
+        provider: Option<String>,
     },
     Unknown(String),
 }
@@ -282,6 +291,9 @@ impl SlashCommand {
             "session" => Self::Session {
                 action: parts.next().map(ToOwned::to_owned),
                 target: parts.next().map(ToOwned::to_owned),
+            },
+            "auth" => Self::Auth {
+                provider: parts.next().map(ToOwned::to_owned),
             },
             other => Self::Unknown(other.to_string()),
         })
@@ -383,6 +395,7 @@ pub fn handle_slash_command(
         | SlashCommand::Version
         | SlashCommand::Export { .. }
         | SlashCommand::Session { .. }
+        | SlashCommand::Auth { .. }
         | SlashCommand::Unknown(_) => None,
     }
 }
@@ -396,6 +409,7 @@ mod tests {
     use runtime::{CompactionConfig, ContentBlock, ConversationMessage, MessageRole, Session};
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn parses_supported_slash_commands() {
         assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));
         assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));
@@ -492,6 +506,16 @@ mod tests {
                 target: Some("abc123".to_string())
             })
         );
+        assert_eq!(
+            SlashCommand::parse("/auth"),
+            Some(SlashCommand::Auth { provider: None })
+        );
+        assert_eq!(
+            SlashCommand::parse("/auth openai"),
+            Some(SlashCommand::Auth {
+                provider: Some("openai".to_string())
+            })
+        );
     }
 
     #[test]
@@ -520,7 +544,8 @@ mod tests {
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));
         assert!(help.contains("/session [list|switch <session-id>]"));
-        assert_eq!(slash_command_specs().len(), 22);
+        assert!(help.contains("/auth [anthropic|openai|codex]"));
+        assert_eq!(slash_command_specs().len(), 23);
         assert_eq!(resume_supported_slash_commands().len(), 11);
     }
 
@@ -617,6 +642,9 @@ mod tests {
         );
         assert!(
             handle_slash_command("/session list", &session, CompactionConfig::default()).is_none()
+        );
+        assert!(
+            handle_slash_command("/auth openai", &session, CompactionConfig::default()).is_none()
         );
     }
 }

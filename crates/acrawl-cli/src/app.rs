@@ -8,10 +8,10 @@ use std::process::Command;
 
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
-    resolve_startup_auth_source, AnthropicClient, AuthSource, ContentBlockDelta, InputContentBlock,
-    InputMessage, MessageRequest, MessageResponse, OpenAiClient, OpenAiMessageStream,
-    OutputContentBlock, StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition,
-    ToolResultContentBlock,
+    resolve_startup_auth_source, AnthropicClient, AuthSource, CodexClient, CodexMessageStream,
+    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
+    OpenAiClient, OpenAiMessageStream, OutputContentBlock, StreamEvent as ApiStreamEvent,
+    ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
@@ -53,14 +53,16 @@ enum Provider {
 }
 
 fn provider_for_model(model: &str) -> Provider {
-    if model.starts_with("gpt-")
+    // Check for "codex" anywhere in the model name first — models like
+    // "gpt-5.3-codex" need Codex OAuth routing even though they start with "gpt-".
+    if model.contains("codex") {
+        Provider::Codex
+    } else if model.starts_with("gpt-")
         || model.starts_with("o1")
         || model.starts_with("o3")
         || model.starts_with("o4")
     {
         Provider::OpenAi
-    } else if model.starts_with("codex") {
-        Provider::Codex
     } else {
         Provider::Anthropic
     }
@@ -394,6 +396,10 @@ impl LiveCli {
             SlashCommand::Session { action, target } => {
                 self.handle_session_command(action.as_deref(), target.as_deref())?
             }
+            SlashCommand::Auth { provider } => {
+                self.run_auth(provider.as_deref())?;
+                false
+            }
             SlashCommand::Unknown(name) => {
                 eprintln!("unknown slash command: /{name}");
                 false
@@ -629,6 +635,26 @@ impl LiveCli {
                 Ok(false)
             }
         }
+    }
+
+    fn run_auth(&mut self, provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+        let target = match provider {
+            Some(p) => parse_provider_arg(p)?,
+            None => prompt_provider_choice()?,
+        };
+        run_auth_for_provider(target)?;
+        let session = self.runtime.session().clone();
+        self.runtime = build_runtime(
+            session,
+            self.model.clone(),
+            self.system_prompt.clone(),
+            true,
+            true,
+            self.allowed_tools.clone(),
+            self.permission_mode,
+        )?;
+        println!("Auth\n  Provider         {}\n  Result           authenticated", provider_label(target));
+        Ok(())
     }
 
     fn compact(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -891,6 +917,7 @@ pub(crate) fn run_resume_command(
         | SlashCommand::Model { .. }
         | SlashCommand::Permissions { .. }
         | SlashCommand::Session { .. }
+        | SlashCommand::Auth { .. }
         | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),
     }
 }
@@ -1114,6 +1141,7 @@ pub(crate) struct LlmRuntimeClient {
 enum LlmProvider {
     Anthropic(AnthropicClient),
     OpenAi(OpenAiClient),
+    Codex(CodexClient),
 }
 
 impl LlmRuntimeClient {
@@ -1136,7 +1164,7 @@ impl LlmRuntimeClient {
             }
             Provider::Codex => {
                 let auth = resolve_codex_auth_interactive()?;
-                LlmProvider::OpenAi(OpenAiClient::with_auth(auth).with_model(&model))
+                LlmProvider::Codex(CodexClient::new(auth, &model))
             }
         };
         Ok(Self {
@@ -1168,9 +1196,12 @@ fn resolve_openai_auth() -> Result<AuthSource, Box<dyn std::error::Error>> {
         }
     }
     interactive_login_prompt(Provider::OpenAi)?;
-    let key = env::var("OPENAI_API_KEY")
-        .map_err(|_| "OPENAI_API_KEY still not set after login prompt")?;
-    Ok(AuthSource::BearerToken(key))
+    if let Ok(key) = env::var("OPENAI_API_KEY") {
+        if !key.is_empty() {
+            return Ok(AuthSource::BearerToken(key));
+        }
+    }
+    Err("OPENAI_API_KEY still not set after login prompt".into())
 }
 
 fn resolve_codex_auth_interactive() -> Result<AuthSource, Box<dyn std::error::Error>> {
@@ -1187,6 +1218,62 @@ fn load_oauth_config_from_cwd() -> Result<Option<OAuthConfig>, api::ApiError> {
         api::ApiError::Auth(format!("failed to load runtime OAuth config: {error}"))
     })?;
     Ok(config.oauth().cloned())
+}
+
+fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
+    match value.to_ascii_lowercase().as_str() {
+        "anthropic" | "claude" => Ok(Provider::Anthropic),
+        "openai" | "gpt" => Ok(Provider::OpenAi),
+        "codex" => Ok(Provider::Codex),
+        other => Err(format!(
+            "unknown provider '{other}'. Use anthropic, openai, or codex."
+        )
+        .into()),
+    }
+}
+
+fn prompt_provider_choice() -> Result<Provider, Box<dyn std::error::Error>> {
+    eprintln!("Select a provider to authenticate:");
+    eprintln!("  1) Anthropic (OAuth)");
+    eprintln!("  2) OpenAI   (API key)");
+    eprintln!("  3) Codex    (OAuth)");
+    eprint!("Choice [1/2/3]: ");
+    io::stderr().flush()?;
+    let mut choice = String::new();
+    io::stdin().read_line(&mut choice)?;
+    match choice.trim() {
+        "1" | "anthropic" => Ok(Provider::Anthropic),
+        "2" | "openai" => Ok(Provider::OpenAi),
+        "3" | "codex" => Ok(Provider::Codex),
+        other => Err(format!("invalid choice '{other}'").into()),
+    }
+}
+
+fn provider_label(provider: Provider) -> &'static str {
+    match provider {
+        Provider::Anthropic => "anthropic",
+        Provider::OpenAi => "openai",
+        Provider::Codex => "codex",
+    }
+}
+
+fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
+    match provider {
+        Provider::Anthropic => run_login(),
+        Provider::OpenAi => {
+            eprint!("Paste your OpenAI API key (sk-...): ");
+            io::stderr().flush()?;
+            let mut key = String::new();
+            io::stdin().read_line(&mut key)?;
+            let key = key.trim().to_string();
+            if key.is_empty() {
+                return Err("OPENAI_API_KEY is required for OpenAI models".into());
+            }
+            env::set_var("OPENAI_API_KEY", &key);
+            Ok(())
+        }
+        Provider::Codex => run_codex_login(),
+    }
 }
 
 fn interactive_login_prompt(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
@@ -1280,6 +1367,13 @@ impl ApiClient for LlmRuntimeClient {
                         .await
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
                     UnifiedStream::OpenAi(s)
+                }
+                LlmProvider::Codex(client) => {
+                    let s = client
+                        .stream_message(&message_request)
+                        .await
+                        .map_err(|error| RuntimeError::new(error.to_string()))?;
+                    UnifiedStream::Codex(s)
                 }
             };
 
@@ -1377,8 +1471,7 @@ impl ApiClient for LlmRuntimeClient {
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
                     response_to_events(response, out)
                 }
-                LlmProvider::OpenAi(_) => {
-                    // OpenAI streaming always produces events; non-streaming fallback not needed
+                LlmProvider::OpenAi(_) | LlmProvider::Codex(_) => {
                     Ok(events)
                 }
             }
@@ -1389,6 +1482,7 @@ impl ApiClient for LlmRuntimeClient {
 enum UnifiedStream {
     Anthropic(api::MessageStream),
     OpenAi(OpenAiMessageStream),
+    Codex(CodexMessageStream),
 }
 
 impl UnifiedStream {
@@ -1396,6 +1490,7 @@ impl UnifiedStream {
         match self {
             Self::Anthropic(s) => s.next_event().await,
             Self::OpenAi(s) => s.next_event().await,
+            Self::Codex(s) => s.next_event().await,
         }
     }
 }
