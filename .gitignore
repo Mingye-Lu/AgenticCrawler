@@ -1,18 +1,24 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-.eggs/
-*.egg
-.env
-.venv/
-venv/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-*.log
-.*/
-workspace/
+# Rust
 target/
+Cargo.lock
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Workspace (for file downloads)
+workspace/
