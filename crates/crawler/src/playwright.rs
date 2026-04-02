@@ -75,6 +75,103 @@ async function bootstrap() {
       process.exit(0);
     }
 
+    if (command.action === 'scroll') {
+      try {
+        const dir = command.direction === 'up' ? -1 : 1;
+        const px = (command.pixels || 500) * dir;
+        await page.evaluate((y) => window.scrollBy(0, y), px);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { scrolled: true } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'scroll_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'wait_for_selector') {
+      try {
+        const timeout = command.timeout_ms || 5000;
+        await page.waitForSelector(command.selector, { timeout });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { found: true } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { found: false } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'select_option') {
+      try {
+        await page.selectOption(command.selector, command.value);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'select_option_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'evaluate') {
+      try {
+        const result = await page.evaluate(command.script);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { value: result } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'evaluate_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'hover') {
+      try {
+        await page.hover(command.selector);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'hover_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'press_key') {
+      try {
+        await page.keyboard.press(command.key);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'press_key_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'list_resources') {
+      try {
+        const resources = await page.evaluate(() => {
+          const links = Array.from(document.querySelectorAll('a[href]')).map(a => ({ href: a.href, text: a.textContent.trim() }));
+          const images = Array.from(document.querySelectorAll('img')).map(img => ({ src: img.src, alt: img.alt }));
+          const forms = Array.from(document.querySelectorAll('form')).map(f => ({ action: f.action, method: f.method, id: f.id }));
+          return { links, images, forms };
+        });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: resources }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'list_resources_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'save_file') {
+      try {
+        const fs = require('node:fs');
+        const nodePath = require('node:path');
+        const resp = await page.evaluate(async (url) => {
+          const r = await fetch(url);
+          const buf = await r.arrayBuffer();
+          return Array.from(new Uint8Array(buf));
+        }, command.url);
+        const dir = nodePath.dirname(command.path);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(command.path, Buffer.from(resp));
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { path: command.path } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'save_file_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
     process.stdout.write(JSON.stringify({
       event: 'bridge_response',
       ok: false,
@@ -276,6 +373,132 @@ impl PlaywrightBridge {
         }
     }
 
+    pub async fn send_raw_command(
+        &mut self,
+        command: &serde_json::Value,
+    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+        let payload = serde_json::to_string(command)?;
+        self.stdin.write_all(payload.as_bytes()).await?;
+        self.stdin.write_all(b"\n").await?;
+        self.stdin.flush().await?;
+
+        let line = self.read_bridge_line().await?;
+        let response: GenericBridgeResponseMessage = serde_json::from_str(&line)?;
+        if response.event != "bridge_response" {
+            return Err(PlaywrightBridgeError::Protocol(format!(
+                "expected bridge_response event, got {}",
+                response.event
+            )));
+        }
+        if response.ok {
+            return Ok(response.result.unwrap_or(serde_json::Value::Null));
+        }
+        let error = response.error.ok_or_else(|| {
+            PlaywrightBridgeError::Protocol("response missing error payload".to_string())
+        })?;
+        Err(PlaywrightBridgeError::Protocol(format!(
+            "{}: {}",
+            error.kind, error.message
+        )))
+    }
+
+    pub async fn scroll(
+        &mut self,
+        direction: &str,
+        pixels: i64,
+    ) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "scroll",
+            "direction": direction,
+            "pixels": pixels,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn wait_for_selector(
+        &mut self,
+        selector: &str,
+        timeout_ms: u64,
+    ) -> Result<bool, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "wait_for_selector",
+            "selector": selector,
+            "timeout_ms": timeout_ms,
+        });
+        let result = self.send_raw_command(&cmd).await?;
+        Ok(result
+            .get("found")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
+    }
+
+    pub async fn select_option(
+        &mut self,
+        selector: &str,
+        value: &str,
+    ) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "select_option",
+            "selector": selector,
+            "value": value,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn evaluate(
+        &mut self,
+        script: &str,
+    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "evaluate",
+            "script": script,
+        });
+        self.send_raw_command(&cmd).await
+    }
+
+    pub async fn hover(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "hover",
+            "selector": selector,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn press_key(&mut self, key: &str) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "press_key",
+            "key": key,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn list_resources(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({ "action": "list_resources" });
+        self.send_raw_command(&cmd).await
+    }
+
+    pub async fn save_file(
+        &mut self,
+        url: &str,
+        path: &str,
+    ) -> Result<String, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "save_file",
+            "url": url,
+            "path": path,
+        });
+        let result = self.send_raw_command(&cmd).await?;
+        Ok(result
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(path)
+            .to_string())
+    }
+
     async fn read_bootstrap_message(&mut self) -> Result<(), PlaywrightBridgeError> {
         let line = self.read_bridge_line().await?;
         let message: BridgeBootstrapMessage = serde_json::from_str(&line)?;
@@ -364,6 +587,17 @@ struct BridgeResponseMessage {
     ok: bool,
     #[serde(default)]
     result: Option<PageInfo>,
+    #[serde(default)]
+    error: Option<BridgeErrorPayload>,
+}
+
+/// Generic bridge response that deserializes `result` as arbitrary JSON.
+#[derive(Debug, Deserialize)]
+struct GenericBridgeResponseMessage {
+    event: String,
+    ok: bool,
+    #[serde(default)]
+    result: Option<serde_json::Value>,
     #[serde(default)]
     error: Option<BridgeErrorPayload>,
 }
