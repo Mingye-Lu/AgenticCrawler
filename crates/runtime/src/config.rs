@@ -423,7 +423,7 @@ fn read_optional_json_object(
 
     let parsed = match JsonValue::parse(&contents) {
         Ok(parsed) => parsed,
-        Err(error) if is_legacy_config => return Ok(None),
+        Err(_error) if is_legacy_config => return Ok(None),
         Err(error) => return Err(ConfigError::Parse(format!("{}: {error}", path.display()))),
     };
     let Some(object) = parsed.as_object() else {
@@ -481,9 +481,9 @@ fn parse_optional_hooks_config(root: &JsonValue) -> Result<RuntimeHookConfig, Co
     };
     let hooks = expect_object(hooks_value, "merged settings.hooks")?;
     Ok(RuntimeHookConfig {
-        pre_tool_use: optional_string_array(hooks, "PreToolUse", "merged settings.hooks")?
+        pre_tool_use: optional_hook_command_array(hooks, "PreToolUse", "merged settings.hooks")?
             .unwrap_or_default(),
-        post_tool_use: optional_string_array(hooks, "PostToolUse", "merged settings.hooks")?
+        post_tool_use: optional_hook_command_array(hooks, "PostToolUse", "merged settings.hooks")?
             .unwrap_or_default(),
     })
 }
@@ -748,6 +748,53 @@ fn optional_string_array(
     }
 }
 
+/// Hook lists may be plain command strings or Claude Code-style objects (`command`, nested `hooks`).
+fn optional_hook_command_array(
+    object: &BTreeMap<String, JsonValue>,
+    key: &str,
+    context: &str,
+) -> Result<Option<Vec<String>>, ConfigError> {
+    match object.get(key) {
+        Some(value) => {
+            let Some(array) = value.as_array() else {
+                return Err(ConfigError::Parse(format!(
+                    "{context}: field {key} must be an array"
+                )));
+            };
+            let mut out = Vec::new();
+            for item in array {
+                collect_hook_commands(item, &mut out);
+            }
+            Ok(Some(out))
+        }
+        None => Ok(None),
+    }
+}
+
+fn collect_hook_commands(value: &JsonValue, out: &mut Vec<String>) {
+    if let Some(text) = value.as_str() {
+        out.push(text.to_string());
+        return;
+    }
+    let Some(obj) = value.as_object() else {
+        return;
+    };
+    let is_command_hook = obj
+        .get("type")
+        .and_then(JsonValue::as_str)
+        .is_none_or(|t| t == "command");
+    if let Some(cmd) = obj.get("command").and_then(JsonValue::as_str) {
+        if is_command_hook {
+            out.push(cmd.to_string());
+        }
+    }
+    if let Some(hooks) = obj.get("hooks").and_then(JsonValue::as_array) {
+        for h in hooks {
+            collect_hook_commands(h, out);
+        }
+    }
+}
+
 fn optional_string_map(
     object: &BTreeMap<String, JsonValue>,
     key: &str,
@@ -904,6 +951,30 @@ mod tests {
         assert_eq!(loaded.hooks().post_tool_use(), &["project".to_string()]);
         assert!(loaded.mcp().get("home").is_some());
         assert!(loaded.mcp().get("project").is_some());
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn loads_hook_commands_from_claude_style_objects() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".claude");
+        fs::create_dir_all(cwd.join(".claude")).expect("project config dir");
+        fs::create_dir_all(&home).expect("home config dir");
+
+        fs::write(
+            cwd.join(".claude").join("settings.json"),
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/bin/pre"}]}],"PostToolUse":["shell-p"]}}"#,
+        )
+        .expect("write project settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+
+        assert_eq!(loaded.hooks().pre_tool_use(), &["/bin/pre".to_string()]);
+        assert_eq!(loaded.hooks().post_tool_use(), &["shell-p".to_string()]);
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }

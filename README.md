@@ -87,6 +87,8 @@ All settings come from environment variables or `.env`:
 |--------------------|----------------------|------------------------------------|
 | `ANTHROPIC_API_KEY`| —                    | Required for Claude                |
 | `OPENAI_API_KEY`   | —                    | Required for OpenAI                |
+| `OPENAI_BASE_URL`  | `https://api.openai.com` | OpenAI-compatible API origin when using OpenAI |
+| `LLM_PROVIDER`     | —                    | `claude` / `openai` / `codex`; unset = Claude path |
 | `CLAUDE_MODEL`     | `claude-sonnet-4-6`  | Claude model                       |
 | `OPENAI_MODEL`     | `gpt-4o`             | OpenAI model                       |
 | `CODEX_MODEL`      | `codex-mini-latest`  | Codex model (requires `acrawl login`) |

@@ -1,17 +1,18 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::Command;
+use std::sync::mpsc;
 
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
     resolve_startup_auth_source, AnthropicClient, AuthSource, CodexClient, CodexMessageStream,
     ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
     OpenAiClient, OpenAiMessageStream, OutputContentBlock, StreamEvent as ApiStreamEvent,
-    ToolChoice, ToolDefinition, ToolResultContentBlock,
+    ToolChoice, ToolDefinition, ToolResultContentBlock, DEFAULT_CODEX_MODEL, DEFAULT_OPENAI_MODEL,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
@@ -20,7 +21,8 @@ use runtime::{
     parse_oauth_callback_request_target, save_oauth_credentials, ApiClient, ApiRequest,
     AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage, ConversationRuntime,
     MessageRole, OAuthAuthorizationRequest, OAuthConfig, OAuthTokenExchangeRequest, PermissionMode,
-    PermissionPolicy, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
+    PermissionPolicy, PermissionPromptDecision, PermissionPrompter, PermissionRequest, RuntimeError,
+    Session, TokenUsage, ToolError, ToolExecutor,
 };
 use serde_json::json;
 
@@ -39,6 +41,7 @@ use crate::session_mgr::{
     create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
 };
 use crate::tui::tool_panel::{format_tool_call_start, format_tool_result};
+use crate::tui::ReplTuiEvent;
 
 pub(crate) type AllowedToolSet = BTreeSet<String>;
 
@@ -93,6 +96,32 @@ pub(crate) fn resolve_model_alias(model: &str) -> &str {
     }
 }
 
+fn trimmed_env_var(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Default model when `--model` is omitted: `LLM_PROVIDER` + `*_MODEL` (see `.env.example`).
+pub(crate) fn initial_model_from_env() -> String {
+    let provider = env::var("LLM_PROVIDER")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+
+    match provider.as_str() {
+        "openai" => trimmed_env_var("OPENAI_MODEL")
+            .map(|m| resolve_model_alias(&m).to_string())
+            .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string()),
+        "codex" => trimmed_env_var("CODEX_MODEL").unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string()),
+        "claude" | "anthropic" | "" => trimmed_env_var("CLAUDE_MODEL")
+            .map(|m| resolve_model_alias(&m).to_string())
+            .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+        _ => DEFAULT_MODEL.to_string(),
+    }
+}
+
 pub(crate) fn default_permission_mode() -> PermissionMode {
     env::var("ACRAWL_PERMISSION_MODE")
         .ok()
@@ -117,7 +146,7 @@ pub(crate) fn filter_tool_specs(allowed_tools: Option<&AllowedToolSet>) -> Vec<c
         .collect()
 }
 
-fn slash_command_completion_candidates() -> Vec<String> {
+pub(crate) fn slash_command_completion_candidates() -> Vec<String> {
     slash_command_specs()
         .iter()
         .map(|spec| format!("/{}", spec.name))
@@ -125,6 +154,19 @@ fn slash_command_completion_candidates() -> Vec<String> {
 }
 
 pub(crate) fn run_repl(
+    model: String,
+    allowed_tools: Option<AllowedToolSet>,
+    permission_mode: PermissionMode,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let classic = env::var("ACRAWL_CLASSIC_REPL").is_ok() || !io::stdout().is_terminal();
+    if classic {
+        run_repl_classic(model, allowed_tools, permission_mode)
+    } else {
+        crate::tui::run_repl_ratatui(model, allowed_tools, permission_mode)
+    }
+}
+
+fn run_repl_classic(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
@@ -171,6 +213,7 @@ pub(crate) struct LiveCli {
     system_prompt: Vec<String>,
     runtime: ConversationRuntime<LlmRuntimeClient, CliToolExecutor>,
     session: SessionHandle,
+    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
 }
 
 impl LiveCli {
@@ -190,6 +233,7 @@ impl LiveCli {
             true,
             allowed_tools.clone(),
             permission_mode,
+            None,
         )?;
         let cli = Self {
             model,
@@ -198,9 +242,95 @@ impl LiveCli {
             system_prompt,
             runtime,
             session,
+            ui_tx: None,
         };
         cli.persist_session()?;
         Ok(cli)
+    }
+
+    pub(crate) fn new_with_ui_tx(
+        model: String,
+        enable_tools: bool,
+        allowed_tools: Option<AllowedToolSet>,
+        permission_mode: PermissionMode,
+        ui_tx: mpsc::Sender<ReplTuiEvent>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let system_prompt = build_system_prompt()?;
+        let session = create_managed_session_handle()?;
+        let runtime = build_runtime(
+            Session::new(),
+            model.clone(),
+            system_prompt.clone(),
+            enable_tools,
+            false,
+            allowed_tools.clone(),
+            permission_mode,
+            Some(ui_tx.clone()),
+        )?;
+        let cli = Self {
+            model,
+            allowed_tools,
+            permission_mode,
+            system_prompt,
+            runtime,
+            session,
+            ui_tx: Some(ui_tx),
+        };
+        cli.persist_session()?;
+        Ok(cli)
+    }
+
+    pub(crate) fn session_id(&self) -> &str {
+        self.session.id.as_str()
+    }
+
+    fn ui_sender(&self) -> Option<mpsc::Sender<ReplTuiEvent>> {
+        self.ui_tx.clone()
+    }
+
+    /// Plain-text welcome lines for the Ratatui transcript (no ANSI art colors).
+    pub(crate) fn startup_banner_plain(&self) -> String {
+        let cwd = env::current_dir().map_or_else(
+            |_| "<unknown>".to_string(),
+            |path| path.display().to_string(),
+        );
+        format!(
+            "Welcome to acrawl\nModel: {}\nPermissions: {}\nDirectory: {}\nSession: {}\n\nType /help for commands.",
+            self.model,
+            self.permission_mode.as_str(),
+            cwd,
+            self.session.id,
+        )
+    }
+
+    pub(crate) fn run_turn_tui(
+        &mut self,
+        input: &str,
+        mut permission_prompter: ChannelPermissionPrompter,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(tx) = &self.ui_tx {
+            let _ = tx.send(ReplTuiEvent::TurnStarting);
+        }
+        let result = self.runtime.run_turn(input, Some(&mut permission_prompter));
+        let finish: Result<(), String> = match &result {
+            Ok(summary) => {
+                if let Some(ev) = summary.auto_compaction {
+                    let msg = format_auto_compaction_notice(ev.removed_message_count);
+                    if let Some(tx) = &self.ui_tx {
+                        let _ = tx.send(ReplTuiEvent::SystemMessage(msg));
+                    }
+                }
+                self.persist_session().map_err(|e| e.to_string())
+            }
+            Err(e) => Err(e.to_string()),
+        };
+        if let Some(tx) = &self.ui_tx {
+            let _ = tx.send(ReplTuiEvent::TurnFinished(finish.clone()));
+        }
+        match result {
+            Ok(_) => finish.map_err(|e| e.into()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn startup_banner(&self) -> String {
@@ -287,6 +417,7 @@ impl LiveCli {
             false,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
         let summary = runtime.run_turn(input, Some(&mut permission_prompter))?;
@@ -467,6 +598,7 @@ impl LiveCli {
             true,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         self.model.clone_from(&model);
         println!(
@@ -505,6 +637,7 @@ impl LiveCli {
             true,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         println!(
             "{}",
@@ -529,6 +662,7 @@ impl LiveCli {
             true,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         println!("Session cleared\n  Mode             fresh session\n  Preserved model  {}\n  Permission mode  {}\n  Session          {}", self.model, self.permission_mode.as_str(), self.session.id);
         Ok(true)
@@ -564,6 +698,7 @@ impl LiveCli {
             true,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         self.model = model;
         self.session = handle;
@@ -634,6 +769,7 @@ impl LiveCli {
                     true,
                     self.allowed_tools.clone(),
                     self.permission_mode,
+                    self.ui_sender(),
                 )?;
                 self.model = model;
                 self.session = handle;
@@ -662,6 +798,7 @@ impl LiveCli {
             true,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         println!("Auth\n  Provider         {}\n  Result           authenticated", provider_label(target));
         Ok(())
@@ -680,6 +817,7 @@ impl LiveCli {
             true,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         self.persist_session()?;
         println!("{}", format_compact_report(removed, kept, skipped));
@@ -700,6 +838,7 @@ impl LiveCli {
             false,
             self.allowed_tools.clone(),
             self.permission_mode,
+            self.ui_sender(),
         )?;
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
         let summary = runtime.run_turn(prompt, Some(&mut permission_prompter))?;
@@ -1085,16 +1224,46 @@ fn build_runtime(
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
+    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, Box<dyn std::error::Error>> {
     session.model = Some(model.clone());
     Ok(ConversationRuntime::new_with_features(
         session,
-        LlmRuntimeClient::new(model, enable_tools, emit_output, allowed_tools.clone())?,
-        CliToolExecutor::new(allowed_tools, emit_output),
+        LlmRuntimeClient::new(
+            model,
+            enable_tools,
+            emit_output,
+            allowed_tools.clone(),
+            ui_tx.clone(),
+        )?,
+        CliToolExecutor::new(allowed_tools, emit_output, ui_tx),
         permission_policy(permission_mode),
         system_prompt,
         &build_runtime_feature_config()?,
     ))
+}
+
+pub(crate) struct ChannelPermissionPrompter {
+    ui_tx: mpsc::Sender<ReplTuiEvent>,
+}
+
+impl ChannelPermissionPrompter {
+    pub(crate) fn new(ui_tx: mpsc::Sender<ReplTuiEvent>) -> Self {
+        Self { ui_tx }
+    }
+}
+
+impl PermissionPrompter for ChannelPermissionPrompter {
+    fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
+        let (tx, rx) = mpsc::channel();
+        let _ = self.ui_tx.send(ReplTuiEvent::PermissionNeeded {
+            request: request.clone(),
+            respond: tx,
+        });
+        rx.recv().unwrap_or(PermissionPromptDecision::Deny {
+            reason: "permission UI closed".into(),
+        })
+    }
 }
 
 struct CliPermissionPrompter {
@@ -1147,6 +1316,7 @@ pub(crate) struct LlmRuntimeClient {
     enable_tools: bool,
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
+    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
 }
 
 enum LlmProvider {
@@ -1161,6 +1331,7 @@ impl LlmRuntimeClient {
         enable_tools: bool,
         emit_output: bool,
         allowed_tools: Option<AllowedToolSet>,
+        ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let provider = match provider_for_model(&model) {
             Provider::Anthropic => {
@@ -1185,7 +1356,14 @@ impl LlmRuntimeClient {
             enable_tools,
             emit_output,
             allowed_tools,
+            ui_tx,
         })
+    }
+
+    fn send_ui_stream(&self, chunk: impl Into<String>) {
+        if let Some(tx) = &self.ui_tx {
+            let _ = tx.send(ReplTuiEvent::StreamAnsi(chunk.into()));
+        }
     }
 }
 
@@ -1396,7 +1574,14 @@ impl ApiClient for LlmRuntimeClient {
                 match event {
                     ApiStreamEvent::MessageStart(start) => {
                         for block in start.message.content {
-                            push_output_block(block, out, &mut events, &mut pending_tool, true)?;
+                            push_output_block(
+                                block,
+                                out,
+                                &mut events,
+                                &mut pending_tool,
+                                true,
+                                self.ui_tx.as_ref(),
+                            )?;
                         }
                     }
                     ApiStreamEvent::ContentBlockStart(start) => {
@@ -1406,6 +1591,7 @@ impl ApiClient for LlmRuntimeClient {
                             &mut events,
                             &mut pending_tool,
                             true,
+                            self.ui_tx.as_ref(),
                         )?;
                     }
                     ApiStreamEvent::ContentBlockDelta(delta) => match delta.delta {
@@ -1415,6 +1601,7 @@ impl ApiClient for LlmRuntimeClient {
                                     write!(out, "{rendered}")
                                         .and_then(|()| out.flush())
                                         .map_err(|error| RuntimeError::new(error.to_string()))?;
+                                    self.send_ui_stream(rendered);
                                 }
                                 events.push(AssistantEvent::TextDelta(text));
                             }
@@ -1430,11 +1617,14 @@ impl ApiClient for LlmRuntimeClient {
                             write!(out, "{rendered}")
                                 .and_then(|()| out.flush())
                                 .map_err(|error| RuntimeError::new(error.to_string()))?;
+                            self.send_ui_stream(rendered);
                         }
                         if let Some((id, name, input)) = pending_tool.take() {
-                            writeln!(out, "\n{}", format_tool_call_start(&name, &input))
+                            let tool_banner = format_tool_call_start(&name, &input);
+                            writeln!(out, "\n{tool_banner}")
                                 .and_then(|()| out.flush())
                                 .map_err(|error| RuntimeError::new(error.to_string()))?;
+                            self.send_ui_stream(format!("\n{tool_banner}"));
                             events.push(AssistantEvent::ToolUse { id, name, input });
                         }
                     }
@@ -1452,6 +1642,7 @@ impl ApiClient for LlmRuntimeClient {
                             write!(out, "{rendered}")
                                 .and_then(|()| out.flush())
                                 .map_err(|error| RuntimeError::new(error.to_string()))?;
+                            self.send_ui_stream(rendered);
                         }
                         events.push(AssistantEvent::MessageStop);
                     }
@@ -1480,7 +1671,7 @@ impl ApiClient for LlmRuntimeClient {
                         })
                         .await
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    response_to_events(response, out)
+                    response_to_events(response, out, self.ui_tx.as_ref())
                 }
                 LlmProvider::OpenAi(_) | LlmProvider::Codex(_) => {
                     Ok(events)
@@ -1601,6 +1792,7 @@ pub(crate) fn push_output_block(
     events: &mut Vec<AssistantEvent>,
     pending_tool: &mut Option<(String, String, String)>,
     streaming_tool_input: bool,
+    ui_tx: Option<&mpsc::Sender<ReplTuiEvent>>,
 ) -> Result<(), RuntimeError> {
     match block {
         OutputContentBlock::Text { text } => {
@@ -1609,6 +1801,9 @@ pub(crate) fn push_output_block(
                 write!(out, "{rendered}")
                     .and_then(|()| out.flush())
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
+                if let Some(tx) = ui_tx {
+                    let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
+                }
                 events.push(AssistantEvent::TextDelta(text));
             }
         }
@@ -1630,11 +1825,12 @@ pub(crate) fn push_output_block(
 pub(crate) fn response_to_events(
     response: MessageResponse,
     out: &mut (impl Write + ?Sized),
+    ui_tx: Option<&mpsc::Sender<ReplTuiEvent>>,
 ) -> Result<Vec<AssistantEvent>, RuntimeError> {
     let mut events = Vec::new();
     let mut pending_tool = None;
     for block in response.content {
-        push_output_block(block, out, &mut events, &mut pending_tool, false)?;
+        push_output_block(block, out, &mut events, &mut pending_tool, false, ui_tx)?;
         if let Some((id, name, input)) = pending_tool.take() {
             events.push(AssistantEvent::ToolUse { id, name, input });
         }
@@ -1654,14 +1850,20 @@ struct CliToolExecutor {
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
     agent: CrawlerAgent,
+    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
 }
 impl CliToolExecutor {
-    fn new(allowed_tools: Option<AllowedToolSet>, emit_output: bool) -> Self {
+    fn new(
+        allowed_tools: Option<AllowedToolSet>,
+        emit_output: bool,
+        ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
+    ) -> Self {
         Self {
             renderer: TerminalRenderer::new(),
             emit_output,
             allowed_tools,
             agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools()),
+            ui_tx,
         }
     }
 }
@@ -1683,6 +1885,14 @@ impl ToolExecutor for CliToolExecutor {
                     self.renderer
                         .stream_markdown(&markdown, &mut io::stdout())
                         .map_err(|error: io::Error| ToolError::new(error.to_string()))?;
+                } else if let Some(tx) = &self.ui_tx {
+                    let markdown = format_tool_result(tool_name, &output, false);
+                    let mut buf = Vec::<u8>::new();
+                    self.renderer
+                        .stream_markdown(&markdown, &mut buf)
+                        .map_err(|error: io::Error| ToolError::new(error.to_string()))?;
+                    let rendered = String::from_utf8_lossy(&buf).into_owned();
+                    let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
                 }
                 Ok(output)
             }
@@ -1695,6 +1905,17 @@ impl ToolExecutor for CliToolExecutor {
                         .map_err(|stream_error: io::Error| {
                             ToolError::new(stream_error.to_string())
                         })?;
+                } else if let Some(tx) = &self.ui_tx {
+                    let rendered_error = error.to_string();
+                    let markdown = format_tool_result(tool_name, &rendered_error, true);
+                    let mut buf = Vec::<u8>::new();
+                    self.renderer
+                        .stream_markdown(&markdown, &mut buf)
+                        .map_err(|stream_error: io::Error| {
+                            ToolError::new(stream_error.to_string())
+                        })?;
+                    let rendered = String::from_utf8_lossy(&buf).into_owned();
+                    let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
                 }
                 Err(error)
             }
@@ -1823,6 +2044,7 @@ mod tests {
             &mut events,
             &mut pending_tool,
             false,
+            None,
         )
         .expect("text block should render");
         let rendered = String::from_utf8(out).expect("utf8");
@@ -1845,6 +2067,7 @@ mod tests {
             &mut events,
             &mut pending_tool,
             true,
+            None,
         )
         .expect("tool block should accumulate");
         assert!(events.is_empty());
@@ -1879,6 +2102,7 @@ mod tests {
                 request_id: None,
             },
             &mut out,
+            None,
         )
         .expect("response conversion should succeed");
         assert!(
@@ -1911,6 +2135,7 @@ mod tests {
                 request_id: None,
             },
             &mut out,
+            None,
         )
         .expect("response conversion should succeed");
         assert!(

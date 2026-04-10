@@ -16,12 +16,15 @@ use crawler::mvp_tool_specs;
 use runtime::{load_system_prompt, PermissionMode, Session};
 
 use app::{
-    default_permission_mode, permission_mode_from_label, resolve_model_alias, run_init, run_login,
-    run_logout, run_repl, run_resume_command, AllowedToolSet, LiveCli, DEFAULT_MODEL,
+    default_permission_mode, initial_model_from_env, permission_mode_from_label, resolve_model_alias,
+    run_init, run_login, run_logout, run_repl, run_resume_command, AllowedToolSet, LiveCli,
 };
 use format::{normalize_permission_mode, render_version_report, DEFAULT_DATE, VERSION};
 
 fn main() {
+    // Load `.env` from the current working directory (ignore if missing).
+    let _ = dotenvy::dotenv();
+
     if let Err(error) = run() {
         eprintln!("error: {error}\n\nRun `acrawl --help` for usage.");
         std::process::exit(1);
@@ -109,7 +112,7 @@ impl CliOutputFormat {
 
 #[allow(clippy::too_many_lines)]
 fn parse_args(args: &[String]) -> Result<CliAction, String> {
-    let mut model = DEFAULT_MODEL.to_string();
+    let mut model = initial_model_from_env();
     let mut output_format = CliOutputFormat::Text;
     let mut permission_mode = default_permission_mode();
     let mut wants_version = false;
@@ -494,38 +497,79 @@ fn print_help() {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use super::*;
+    use crate::app::DEFAULT_MODEL;
     use runtime::PermissionMode;
+
+    static MODEL_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn model_env_mutex() -> std::sync::MutexGuard<'static, ()> {
+        MODEL_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("model env mutex")
+    }
+
+    /// `parse_args` reads model defaults from env; isolate tests from the outer environment.
+    fn with_clean_model_env(f: impl FnOnce()) {
+        let _guard = model_env_mutex();
+        const KEYS: &[&str] = &[
+            "LLM_PROVIDER",
+            "OPENAI_MODEL",
+            "CLAUDE_MODEL",
+            "CODEX_MODEL",
+        ];
+        let saved: Vec<(&str, Option<String>)> = KEYS
+            .iter()
+            .map(|k| (*k, env::var(k).ok()))
+            .collect();
+        for k in KEYS {
+            env::remove_var(k);
+        }
+        f();
+        for (k, v) in saved {
+            match v {
+                Some(val) => env::set_var(k, val),
+                None => env::remove_var(k),
+            }
+        }
+    }
 
     #[test]
     fn defaults_to_repl_when_no_args() {
-        assert_eq!(
-            parse_args(&[]).expect("args should parse"),
-            CliAction::Repl {
-                model: DEFAULT_MODEL.to_string(),
-                allowed_tools: None,
-                permission_mode: PermissionMode::DangerFullAccess,
-            }
-        );
+        with_clean_model_env(|| {
+            assert_eq!(
+                parse_args(&[]).expect("args should parse"),
+                CliAction::Repl {
+                    model: DEFAULT_MODEL.to_string(),
+                    allowed_tools: None,
+                    permission_mode: PermissionMode::DangerFullAccess,
+                }
+            );
+        });
     }
 
     #[test]
     fn parses_prompt_subcommand() {
-        let args = vec![
-            "prompt".to_string(),
-            "hello".to_string(),
-            "world".to_string(),
-        ];
-        assert_eq!(
-            parse_args(&args).expect("args should parse"),
-            CliAction::Prompt {
-                prompt: "hello world".to_string(),
-                model: DEFAULT_MODEL.to_string(),
-                output_format: CliOutputFormat::Text,
-                allowed_tools: None,
-                permission_mode: PermissionMode::DangerFullAccess,
-            }
-        );
+        with_clean_model_env(|| {
+            let args = vec![
+                "prompt".to_string(),
+                "hello".to_string(),
+                "world".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("args should parse"),
+                CliAction::Prompt {
+                    prompt: "hello world".to_string(),
+                    model: DEFAULT_MODEL.to_string(),
+                    output_format: CliOutputFormat::Text,
+                    allowed_tools: None,
+                    permission_mode: PermissionMode::DangerFullAccess,
+                }
+            );
+        });
     }
 
     #[test]
@@ -583,15 +627,27 @@ mod tests {
 
     #[test]
     fn parses_permission_mode_flag() {
-        let args = vec!["--permission-mode=read-only".to_string()];
-        assert_eq!(
-            parse_args(&args).expect("args should parse"),
-            CliAction::Repl {
-                model: DEFAULT_MODEL.to_string(),
-                allowed_tools: None,
-                permission_mode: PermissionMode::ReadOnly,
-            }
-        );
+        with_clean_model_env(|| {
+            let args = vec!["--permission-mode=read-only".to_string()];
+            assert_eq!(
+                parse_args(&args).expect("args should parse"),
+                CliAction::Repl {
+                    model: DEFAULT_MODEL.to_string(),
+                    allowed_tools: None,
+                    permission_mode: PermissionMode::ReadOnly,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn env_openai_model_only_when_llm_provider_openai() {
+        with_clean_model_env(|| {
+            env::set_var("OPENAI_MODEL", "gpt-5");
+            assert_eq!(initial_model_from_env(), DEFAULT_MODEL.to_string());
+            env::set_var("LLM_PROVIDER", "openai");
+            assert_eq!(initial_model_from_env(), "gpt-5");
+        });
     }
 
     #[test]

@@ -85,7 +85,9 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
-    /// Read `OPENAI_API_KEY` (required) and `OPENAI_BASE_URL` (optional) from env.
+    /// Read `OPENAI_API_KEY` (required) from env.
+    ///
+    /// Optional `OPENAI_BASE_URL` (default `https://api.openai.com`); `/v1/chat/completions` is appended.
     pub fn from_env() -> Result<Self, ApiError> {
         let api_key = match std::env::var("OPENAI_API_KEY") {
             Ok(key) if !key.is_empty() => key,
@@ -191,7 +193,11 @@ impl OpenAiClient {
 
 #[must_use]
 fn read_openai_base_url() -> String {
-    std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| DEFAULT_OPENAI_BASE_URL.to_string())
+    std::env::var("OPENAI_BASE_URL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string())
 }
 
 /// Streaming response that yields [`StreamEvent`] values from `OpenAI` SSE chunks.
