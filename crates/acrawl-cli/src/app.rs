@@ -1259,6 +1259,79 @@ fn wait_for_oauth_callback(
     Ok(callback)
 }
 
+#[allow(dead_code)]
+pub(crate) fn wait_for_oauth_callback_cancellable(
+    port: u16,
+    cancel_rx: mpsc::Receiver<()>,
+) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error + Send>> {
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "OAuth callback timed out after 5 minutes",
+            )));
+        }
+        if cancel_rx.try_recv().is_ok() {
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "OAuth cancelled by user",
+            )));
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let mut buffer = [0_u8; 4096];
+                let bytes_read = stream
+                    .read(&mut buffer)
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+                let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+                let request_line = request.lines().next().ok_or_else(|| {
+                    Box::new(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "missing callback request line",
+                    )) as Box<dyn std::error::Error + Send>
+                })?;
+                let target = request_line.split_whitespace().nth(1).ok_or_else(|| {
+                    Box::new(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "missing callback request target",
+                    )) as Box<dyn std::error::Error + Send>
+                })?;
+                let callback =
+                    parse_oauth_callback_request_target(target).map_err(|error| {
+                        Box::new(io::Error::new(io::ErrorKind::InvalidData, error))
+                            as Box<dyn std::error::Error + Send>
+                    })?;
+                let body = if callback.error.is_some() {
+                    "OAuth login failed. You can close this window."
+                } else {
+                    "OAuth login succeeded. You can close this window."
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\n\
+                     content-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+                return Ok(callback);
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(Box::new(e) as Box<dyn std::error::Error + Send>),
+        }
+    }
+}
+
 fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     Ok(load_system_prompt(
         env::current_dir()?,
@@ -2205,6 +2278,45 @@ mod tests {
         .expect("response conversion should succeed");
         assert!(
             matches!(&events[0], AssistantEvent::ToolUse { name, input, .. } if name == "read_file" && input == "{\"path\":\"rust/Cargo.toml\"}")
+        );
+    }
+
+    #[test]
+    fn cancellable_callback_stops_on_cancel() {
+        let (cancel_tx, cancel_rx) = mpsc::channel();
+        cancel_tx.send(()).expect("send cancel signal");
+
+        let handle = std::thread::spawn(move || {
+            wait_for_oauth_callback_cancellable(0, cancel_rx)
+        });
+
+        let result = handle.join().expect("thread should not panic");
+        let err = result.expect_err("should return error on cancel");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cancelled") || msg.contains("Interrupted"),
+            "expected cancellation error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn cancellable_callback_returns_on_cancel_while_listening() {
+        let (cancel_tx, cancel_rx) = mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            wait_for_oauth_callback_cancellable(0, cancel_rx)
+        });
+
+        // Give the listener time to start polling
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        cancel_tx.send(()).expect("send cancel signal");
+
+        let result = handle.join().expect("thread should not panic");
+        let err = result.expect_err("should return error on cancel");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cancelled") || msg.contains("Interrupted"),
+            "expected cancellation error, got: {msg}"
         );
     }
 }
