@@ -59,7 +59,6 @@ struct SlashOverlayItem {
 
 #[derive(Debug, Clone)]
 struct SlashOverlay {
-    trigger_prefix: String,
     items: Vec<SlashOverlayItem>,
     selected: usize,
 }
@@ -647,7 +646,6 @@ impl ReplTuiState {
             .map_or(0, |overlay| overlay.selected.min(candidates.len() - 1));
 
         self.slash_overlay = Some(SlashOverlay {
-            trigger_prefix: trimmed.to_string(),
             items: candidates,
             selected,
         });
@@ -1403,10 +1401,10 @@ fn run_loop(
                             continue;
                         }
 
-                        if let Some(overlay) = &state.slash_overlay {
-                            let trimmed = state.input.trim();
-                            if trimmed == overlay.trigger_prefix {
-                                if let Some(selected) = state.selected_slash_command() {
+                        if state.slash_overlay.is_some() {
+                            let trimmed = state.input.trim().to_string();
+                            if let Some(selected) = state.selected_slash_command() {
+                                if selected != trimmed {
                                     state.input = selected;
                                     state.input.push(' ');
                                     state.input_scroll_offset = usize::MAX;
