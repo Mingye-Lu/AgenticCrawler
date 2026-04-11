@@ -168,7 +168,7 @@ fn parse_report_rows(report: &str) -> Vec<(String, String)> {
                 if section.is_empty() {
                     rows.push((key.to_string(), value.to_string()));
                 } else {
-                    rows.push((format!("{section}/{key}"), value.to_string()));
+                    rows.push((format!("{section} · {key}"), value.to_string()));
                 }
             }
         }
