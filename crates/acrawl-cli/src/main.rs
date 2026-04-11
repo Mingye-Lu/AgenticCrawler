@@ -25,6 +25,17 @@ fn main() {
     // Load `.env` from the current working directory (ignore if missing).
     let _ = dotenvy::dotenv();
 
+    let default_panic = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        );
+        default_panic(info);
+    }));
+
     if let Err(error) = run() {
         eprintln!("error: {error}\n\nRun `acrawl --help` for usage.");
         std::process::exit(1);

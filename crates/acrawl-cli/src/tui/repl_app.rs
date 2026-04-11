@@ -1,6 +1,6 @@
-//! Ratatui REPL: header (model / session / cwd), transcript (top-anchored, wrapped), status, input.
-//! Slash commands suspend the alternate screen and use the classic stdout path.
+//! Ratatui REPL with a welcome screen, sticky-bottom chat transcript, slash overlay, and floating input.
 
+use std::cmp::min;
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -8,60 +8,185 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use ansi_to_tui::IntoText as _;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Layout, Margin};
-use ratatui::style::{Color, Style};
+use commands::{slash_command_specs, SlashCommand};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::execute;
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
+    Block, Borders, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
 };
 use ratatui::DefaultTerminal;
-use runtime::{PermissionMode, PermissionPromptDecision, PermissionRequest};
+use runtime::{
+    format_usd, pricing_for_model, PermissionMode, PermissionPromptDecision, PermissionRequest,
+};
 
 use crate::app::{
-    slash_command_completion_candidates, ChannelPermissionPrompter, LiveCli, AllowedToolSet,
+    slash_command_completion_candidates, AllowedToolSet, ChannelPermissionPrompter, LiveCli,
 };
+use crate::format::{render_repl_help, VERSION};
 use crate::tui::ReplTuiEvent;
-use commands::SlashCommand;
 
-/// One logical transcript row before width-aware wrapping for the List.
+const MAX_INPUT_LINES: usize = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppUiState {
+    WelcomeMode,
+    ChatMode,
+}
+
 #[derive(Clone)]
 enum TranscriptEntry {
     System(String),
     User(String),
     Stream(Line<'static>),
+    SystemCard {
+        title: String,
+        rows: Vec<(String, String)>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct SlashOverlayItem {
+    command: String,
+    summary: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct SlashOverlay {
+    trigger_prefix: String,
+    items: Vec<SlashOverlayItem>,
+    selected: usize,
+}
+
+#[derive(Debug, Clone)]
+struct HeaderSnapshot {
+    model: String,
+    permission_mode: PermissionMode,
+    session_id: String,
+    cost_text: String,
+    context_text: String,
+}
+
+fn format_compact_tokens(tokens: u32) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}m", f64::from(tokens) / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k", f64::from(tokens) / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
+}
+
+fn build_header_snapshot(cli: &LiveCli) -> HeaderSnapshot {
+    let usage = cli.cumulative_usage();
+    let pricing = pricing_for_model(cli.model_name());
+    let estimate = pricing.map_or_else(
+        || usage.estimate_cost_usd(),
+        |model_pricing| usage.estimate_cost_usd_with_pricing(model_pricing),
+    );
+    HeaderSnapshot {
+        model: cli.model_name().to_string(),
+        permission_mode: cli.permission_mode(),
+        session_id: cli.session_id().to_string(),
+        cost_text: format_usd(estimate.total_cost_usd()),
+        context_text: format!("{} ctx", format_compact_tokens(usage.total_tokens())),
+    }
+}
+
+fn permission_badge(mode: PermissionMode) -> (String, Style) {
+    match mode {
+        PermissionMode::ReadOnly => (
+            "[ LOCK Read-Only ]".to_string(),
+            Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+        ),
+        PermissionMode::WorkspaceWrite => (
+            "[ WRITE Workspace ]".to_string(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ),
+        PermissionMode::DangerFullAccess | PermissionMode::Prompt | PermissionMode::Allow => (
+            "[ ! FULL ACCESS ]".to_string(),
+            Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD),
+        ),
+    }
+}
+
+fn wrap_plain_text(input: &str, width: u16) -> Vec<String> {
+    let w = usize::from(width.max(8));
+    textwrap::wrap(input, w)
+        .into_iter()
+        .map(|line| line.into_owned())
+        .collect()
+}
+
+fn parse_report_rows(report: &str) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    let mut section = String::new();
+    for line in report.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !line.starts_with("  ") {
+            section = line.trim().to_string();
+            continue;
+        }
+        let trimmed = line.trim();
+        let bytes = trimmed.as_bytes();
+        let mut split = None;
+        let mut run = 0usize;
+        for (idx, b) in bytes.iter().enumerate() {
+            if *b == b' ' {
+                run += 1;
+                if run >= 2 {
+                    split = Some(idx + 1 - run);
+                    break;
+                }
+            } else {
+                run = 0;
+            }
+        }
+        if let Some(idx) = split {
+            let key = trimmed[..idx].trim();
+            let value = trimmed[idx..].trim();
+            if !key.is_empty() && !value.is_empty() {
+                if section.is_empty() {
+                    rows.push((key.to_string(), value.to_string()));
+                } else {
+                    rows.push((format!("{section}/{key}"), value.to_string()));
+                }
+            }
+        }
+    }
+    if rows.is_empty() {
+        let compact = report.lines().take(10).collect::<Vec<_>>().join(" ");
+        rows.push(("detail".to_string(), compact));
+    }
+    rows
 }
 
 fn build_wrapped_list(entries: &[TranscriptEntry], width: u16) -> Vec<ListItem<'static>> {
-    let w = usize::from(width.max(8));
     let mut out = Vec::new();
     let system_style = Style::default().fg(Color::DarkGray).italic();
-    let you_style = Style::default().fg(Color::Cyan).bold();
+    let user_prefix_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
-    for e in entries {
-        match e {
-            TranscriptEntry::System(s) => {
-                if s.is_empty() {
-                    continue;
-                }
-                for line in textwrap::wrap(s.as_str(), w) {
-                    out.push(ListItem::new(Line::from(vec![Span::styled(
-                        line.into_owned(),
-                        system_style,
-                    )])));
+    for entry in entries {
+        match entry {
+            TranscriptEntry::System(text) => {
+                for row in wrap_plain_text(text, width) {
+                    out.push(ListItem::new(Line::from(Span::styled(row, system_style))));
                 }
             }
-            TranscriptEntry::User(s) => {
-                let full = format!("You {s}");
-                let rows: Vec<String> = textwrap::wrap(&full, w)
-                    .into_iter()
-                    .map(|c| c.into_owned())
-                    .collect();
-                for (i, row) in rows.into_iter().enumerate() {
-                    if i == 0 && row.starts_with("You ") {
-                        let rest = row.get(4..).unwrap_or("").to_string();
+            TranscriptEntry::User(text) => {
+                let prefixed = format!("  You {text}");
+                let rows = wrap_plain_text(&prefixed, width);
+                for (idx, row) in rows.into_iter().enumerate() {
+                    if idx == 0 && row.trim_start().starts_with("You ") {
+                        let trimmed = row.trim_start();
+                        let rest = trimmed.get(4..).unwrap_or("").to_string();
                         out.push(ListItem::new(Line::from(vec![
-                            Span::styled("You ", you_style),
+                            Span::raw("  "),
+                            Span::styled("You ", user_prefix_style),
                             Span::raw(rest),
                         ])));
                     } else {
@@ -70,18 +195,67 @@ fn build_wrapped_list(entries: &[TranscriptEntry], width: u16) -> Vec<ListItem<'
                 }
             }
             TranscriptEntry::Stream(line) => {
-                let s = line.to_string();
+                let as_text = line.to_string();
                 let style = line.style;
-                for cow in textwrap::wrap(&s, w) {
-                    out.push(ListItem::new(Line::from(Span::styled(
-                        cow.into_owned(),
-                        style,
-                    ))));
+                for row in wrap_plain_text(&as_text, width) {
+                    out.push(ListItem::new(Line::from(Span::styled(row, style))));
                 }
+            }
+            TranscriptEntry::SystemCard { title, rows } => {
+                let border_style = Style::default().fg(Color::Yellow);
+                let key_style = Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD);
+                out.push(ListItem::new(Line::from(Span::styled(
+                    format!("┌─ {title} "),
+                    border_style,
+                ))));
+                for (key, value) in rows {
+                    let key_width = usize::from(width.max(24)).saturating_sub(8).min(30);
+                    let value_width = usize::from(width.max(24))
+                        .saturating_sub(key_width)
+                        .saturating_sub(7)
+                        .max(8);
+                    let wrapped = textwrap::wrap(value, value_width);
+                    for (idx, line) in wrapped.into_iter().enumerate() {
+                        if idx == 0 {
+                            out.push(ListItem::new(Line::from(vec![
+                                Span::styled("│ ", border_style),
+                                Span::styled(format!("{key:width$}", width = key_width), key_style),
+                                Span::raw(" "),
+                                Span::raw(line.into_owned()),
+                            ])));
+                        } else {
+                            out.push(ListItem::new(Line::from(vec![
+                                Span::styled("│ ", border_style),
+                                Span::raw(" ".repeat(key_width)),
+                                Span::raw(" "),
+                                Span::raw(line.into_owned()),
+                            ])));
+                        }
+                    }
+                }
+                out.push(ListItem::new(Line::from(Span::styled("└────────────────", border_style))));
             }
         }
     }
     out
+}
+
+fn rect_contains_mouse(r: Rect, col: u16, row: u16) -> bool {
+    if r.width == 0 || r.height == 0 {
+        return false;
+    }
+    col >= r.x
+        && col < r.x.saturating_add(r.width)
+        && row >= r.y
+        && row < r.y.saturating_add(r.height)
+}
+
+struct MouseCaptureGuard;
+
+impl Drop for MouseCaptureGuard {
+    fn drop(&mut self) {
+        let _ = execute!(io::stdout(), event::DisableMouseCapture);
+    }
 }
 
 enum WorkerMsg {
@@ -90,24 +264,34 @@ enum WorkerMsg {
 }
 
 struct ReplTuiState {
+    ui_state: AppUiState,
     entries: Vec<TranscriptEntry>,
     list_state: ListState,
+    follow_bottom: bool,
+    last_transcript_rect: Rect,
+    last_wrapped_len: usize,
+    last_view_height: usize,
     input: String,
     status_line: String,
     busy: bool,
     pending_permission: Option<(PermissionRequest, Sender<PermissionPromptDecision>)>,
     exit: bool,
     persist_on_exit: bool,
-    /// Caret visibility; toggled on a wall-clock deadline (not frame count).
     cursor_on: bool,
     cursor_blink_deadline: Instant,
+    slash_overlay: Option<SlashOverlay>,
 }
 
 impl ReplTuiState {
     fn new() -> Self {
         Self {
+            ui_state: AppUiState::WelcomeMode,
             entries: Vec::new(),
             list_state: ListState::default(),
+            follow_bottom: true,
+            last_transcript_rect: Rect::default(),
+            last_wrapped_len: 0,
+            last_view_height: 0,
             input: String::new(),
             status_line: String::new(),
             busy: false,
@@ -116,6 +300,7 @@ impl ReplTuiState {
             persist_on_exit: true,
             cursor_on: true,
             cursor_blink_deadline: Instant::now() + Duration::from_millis(530),
+            slash_overlay: None,
         }
     }
 
@@ -131,40 +316,144 @@ impl ReplTuiState {
         self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
     }
 
+    fn input_lines(&self) -> Vec<String> {
+        let mut lines = self
+            .input
+            .split('\n')
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines
+    }
+
+    fn visible_input_lines(&self) -> Vec<String> {
+        let lines = self.input_lines();
+        let count = min(lines.len(), MAX_INPUT_LINES);
+        let skip_count = lines.len().saturating_sub(count);
+        lines.into_iter().skip(skip_count).collect()
+    }
+
+    fn input_height(&self) -> u16 {
+        let lines = self.input_lines().len().clamp(1, MAX_INPUT_LINES);
+        u16::try_from(lines + 2).unwrap_or(3)
+    }
+
     fn push_user_line(&mut self, text: &str) {
+        self.ui_state = AppUiState::ChatMode;
         self.entries
             .push(TranscriptEntry::User(text.trim().to_string()));
+        self.follow_bottom = true;
     }
 
     fn push_stream_ansi(&mut self, ansi: &str) {
         let Ok(text) = ansi.as_bytes().into_text() else {
             return;
         };
-        for ln in text.lines {
-            self.entries.push(TranscriptEntry::Stream(ln));
+        if !text.lines.is_empty() {
+            self.ui_state = AppUiState::ChatMode;
+        }
+        for line in text.lines {
+            self.entries.push(TranscriptEntry::Stream(line));
         }
     }
 
     fn push_system(&mut self, msg: &str) {
+        self.ui_state = AppUiState::ChatMode;
         for row in msg.lines() {
             if row.is_empty() {
                 self.entries.push(TranscriptEntry::System(" ".to_string()));
             } else {
-                self.entries
-                    .push(TranscriptEntry::System(row.to_string()));
+                self.entries.push(TranscriptEntry::System(row.to_string()));
             }
         }
+        self.follow_bottom = true;
+    }
+
+    fn push_system_card(&mut self, title: impl Into<String>, report: &str) {
+        self.ui_state = AppUiState::ChatMode;
+        self.entries.push(TranscriptEntry::SystemCard {
+            title: title.into(),
+            rows: parse_report_rows(report),
+        });
+        self.follow_bottom = true;
+    }
+
+    fn refresh_slash_overlay(&mut self) {
+        let trimmed = self.input.trim();
+        if !trimmed.starts_with('/') || trimmed.contains(char::is_whitespace) {
+            self.slash_overlay = None;
+            return;
+        }
+
+        let candidates = slash_command_specs()
+            .iter()
+            .map(|spec| SlashOverlayItem {
+                command: format!("/{}", spec.name),
+                summary: spec.summary,
+            })
+            .filter(|item| item.command.starts_with(trimmed))
+            .collect::<Vec<_>>();
+
+        if candidates.is_empty() {
+            self.slash_overlay = None;
+            return;
+        }
+
+        let selected = self
+            .slash_overlay
+            .as_ref()
+            .map_or(0, |overlay| overlay.selected.min(candidates.len() - 1));
+
+        self.slash_overlay = Some(SlashOverlay {
+            trigger_prefix: trimmed.to_string(),
+            items: candidates,
+            selected,
+        });
+    }
+
+    fn selected_slash_command(&self) -> Option<String> {
+        self.slash_overlay.as_ref().and_then(|overlay| {
+            overlay
+                .items
+                .get(overlay.selected)
+                .map(|item| item.command.clone())
+        })
+    }
+
+    fn clamp_scroll_offset(&mut self) {
+        let max_offset = self
+            .last_wrapped_len
+            .saturating_sub(self.last_view_height.max(1));
+        if self.list_state.offset() > max_offset {
+            *self.list_state.offset_mut() = max_offset;
+        }
+        self.follow_bottom = self.list_state.offset() >= max_offset;
+    }
+
+    fn scroll_to_bottom(&mut self) {
+        let max_offset = self
+            .last_wrapped_len
+            .saturating_sub(self.last_view_height.max(1));
+        *self.list_state.offset_mut() = max_offset;
     }
 
     fn drain_events(&mut self, rx: &Receiver<ReplTuiEvent>) {
+        let mut had_new_rows = false;
         while let Ok(ev) = rx.try_recv() {
             match ev {
-                ReplTuiEvent::StreamAnsi(s) => self.push_stream_ansi(&s),
+                ReplTuiEvent::StreamAnsi(s) => {
+                    had_new_rows = true;
+                    self.push_stream_ansi(&s);
+                }
                 ReplTuiEvent::TurnStarting => {
                     self.busy = true;
-                    // ASCII only: emoji width on ConPTY misaligns the rest of the status row (looks
-                    // like an extra letter before "Ready").
                     self.status_line = "Thinking...".to_string();
+                    had_new_rows = true;
+                    self.entries.push(TranscriptEntry::System(
+                        "· Thinking about next move...".to_string(),
+                    ));
                 }
                 ReplTuiEvent::TurnFinished(result) => {
                     self.busy = false;
@@ -175,44 +464,21 @@ impl ReplTuiState {
                     if let Err(e) = result {
                         self.push_system(&format!("Error: {e}"));
                     }
+                    had_new_rows = true;
                 }
                 ReplTuiEvent::PermissionNeeded { request, respond } => {
                     self.pending_permission = Some((request, respond));
                 }
-                ReplTuiEvent::SystemMessage(s) => self.push_system(&s),
+                ReplTuiEvent::SystemMessage(s) => {
+                    had_new_rows = true;
+                    self.push_system(&s);
+                }
             }
         }
+        if had_new_rows {
+            self.follow_bottom = true;
+        }
     }
-}
-
-fn header_lines(model: &str, perm: PermissionMode, session_id: &str, cwd: &str) -> Vec<Line<'static>> {
-    let model = model.to_string();
-    let session_id = session_id.to_string();
-    let cwd = cwd.to_string();
-    vec![
-        Line::from(vec![
-            Span::styled(
-                " acrawl ",
-                Style::default()
-                    .fg(Color::Rgb(46, 160, 67))
-                    .bold()
-                    .bg(Color::Rgb(24, 24, 24)),
-            ),
-            Span::raw(" "),
-            Span::styled(model, Style::default().fg(Color::LightCyan)),
-        ]),
-        Line::from(vec![
-            Span::styled(" session ", Style::default().fg(Color::DarkGray)),
-            Span::raw(session_id),
-            Span::raw("  "),
-            Span::styled(" perm ", Style::default().fg(Color::DarkGray)),
-            Span::styled(perm.as_str(), Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![
-            Span::styled(" cwd ", Style::default().fg(Color::DarkGray)),
-            Span::raw(cwd),
-        ]),
-    ]
 }
 
 fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionRequest) {
@@ -223,8 +489,8 @@ fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionReq
     });
     frame.render_widget(Clear, block_area);
     let block = Block::default()
-        .title(" Permission required ")
-        .title_style(Style::default().fg(Color::Yellow).bold())
+        .title(" Permission Required ")
+        .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(200, 120, 40)));
     let inner = block.inner(block_area);
@@ -241,7 +507,10 @@ fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionReq
         ]),
         Line::from(vec![
             Span::styled("Required mode: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(request.required_mode.as_str(), Style::default().fg(Color::LightRed)),
+            Span::styled(
+                request.required_mode.as_str(),
+                Style::default().fg(Color::LightRed),
+            ),
         ]),
         Line::from(""),
         Line::from(Span::styled(
@@ -250,20 +519,363 @@ fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionReq
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("y", Style::default().fg(Color::Green).bold()),
+            Span::styled("y", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
             Span::raw(" allow   "),
-            Span::styled("n", Style::default().fg(Color::Red).bold()),
+            Span::styled("n", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
             Span::raw(" deny"),
         ]),
     ]);
-    let p = Paragraph::new(text).wrap(Wrap { trim: true });
-    frame.render_widget(p, inner);
+    let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, inner);
 }
 
 fn suspend_for_stdout(terminal: &mut DefaultTerminal, f: impl FnOnce()) -> io::Result<()> {
     ratatui::try_restore()?;
     f();
     *terminal = ratatui::try_init()?;
+    let _ = execute!(io::stdout(), event::EnableMouseCapture);
+    Ok(())
+}
+
+fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapshot) {
+    let (perm_text, perm_style) = permission_badge(header.permission_mode);
+    let mut spans = vec![
+        Span::styled(" ACrawl ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(perm_text, perm_style),
+        Span::raw(format!("  model={} ", header.model)),
+    ];
+    let left_w = Line::from(spans.clone()).width();
+    let right_text = format!(
+        "session:{}  cost:{} ({})",
+        header.session_id, header.cost_text, header.context_text
+    );
+    let total_w = usize::from(area.width);
+    let right_w = right_text.chars().count();
+    let gap = total_w.saturating_sub(left_w + right_w).max(1);
+    
+    spans.push(Span::raw(" ".repeat(gap)));
+    spans.push(Span::styled(
+        right_text,
+        Style::default().fg(Color::LightBlue).add_modifier(Modifier::DIM),
+    ));
+    let line = Line::from(spans);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(Color::Rgb(14, 18, 28))),
+        area,
+    );
+}
+
+fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &ReplTuiState) {
+    let ascii = [
+        "    _                    _   _        ____                    _           ",
+        "   / \\   __ _  ___ _ __ | |_(_) ___  / ___|_ __ __ ___      _| | ___ _ __ ",
+        "  / _ \\ / _` |/ _ \\ '_ \\| __| |/ __|| |   | '__/ _` \\ \\ /\\ / / |/ _ \\ '__|",
+        " / ___ \\ (_| |  __/ | | | |_| | (__ | |___| | | (_| |\\ V  V /| |  __/ |   ",
+        "/_/   \\_\\__, |\\___|_| |_|\\__|_|\\___| \\____|_|  \\__,_| \\_/\\_/ |_|\\___|_|   ",
+        "        |___/                                                             ",
+    ];
+
+    let outer = Block::default();
+    frame.render_widget(outer, area);
+
+    let mut lines = Vec::new();
+    for row in ascii {
+        lines.push(Line::from(Span::styled(
+            row,
+            Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(""));
+    let version_str = format!("v{VERSION} · Playwright ready");
+    let max_w = ascii.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+    let pad = max_w.saturating_sub(version_str.chars().count()) / 2;
+    let version_padded = format!("{}{version_str}", " ".repeat(pad));
+    lines.push(Line::from(Span::styled(
+        version_padded,
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    let art_h = u16::try_from(lines.len()).unwrap_or(6);
+    let art_w = u16::try_from(max_w).unwrap_or(60);
+    let art_x = area.x + area.width.saturating_sub(art_w) / 2;
+    let art_y = area.y + area.height.saturating_sub(art_h + 8) / 2;
+    let art_area = Rect::new(art_x, art_y, art_w.min(area.width), art_h.min(area.height));
+    frame.render_widget(Paragraph::new(Text::from(lines)), art_area);
+
+    let input_w = area.width.saturating_sub(12).min(90).max(30);
+    let input_h = state.input_height().max(5);
+    let input_x = area.x + area.width.saturating_sub(input_w) / 2;
+    let input_y = art_y.saturating_add(art_h).saturating_add(2);
+    let input_area = Rect::new(
+        input_x,
+        input_y.min(area.y.saturating_add(area.height.saturating_sub(input_h))),
+        input_w,
+        input_h,
+    );
+    let block = Block::default()
+        .title(" Goal ")
+        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::LightBlue));
+    let inner = block.inner(input_area);
+    frame.render_widget(block, input_area);
+
+    let caret = if state.cursor_on { "|" } else { " " };
+    let is_placeholder = state.input.is_empty();
+    let mut visible = state.visible_input_lines();
+    if is_placeholder {
+        visible = vec!["What is our goal today?".to_string()];
+    }
+    let mut render_lines = Vec::new();
+    for (idx, row) in visible.into_iter().enumerate() {
+        let text_style = if is_placeholder {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
+        if idx == 0 {
+            if is_placeholder {
+                render_lines.push(Line::from(vec![
+                    Span::styled("❯ ", Style::default().fg(Color::LightCyan)),
+                    Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                    Span::styled(row, text_style),
+                ]));
+            } else {
+                render_lines.push(Line::from(vec![
+                    Span::styled("❯ ", Style::default().fg(Color::LightCyan)),
+                    Span::styled(row, text_style),
+                    Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                ]));
+            }
+        } else {
+            render_lines.push(Line::from(Span::styled(row, text_style)));
+        }
+    }
+    frame.render_widget(Paragraph::new(Text::from(render_lines)), inner);
+}
+
+fn draw_chat(
+    frame: &mut ratatui::Frame<'_>,
+    state: &mut ReplTuiState,
+    header: &HeaderSnapshot,
+) {
+    let area = frame.area();
+    let footer_h = state.input_height();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(4), Constraint::Length(footer_h)])
+        .split(area);
+    let header_area = chunks[0];
+    let main_area = chunks[1];
+    let input_area = chunks[2];
+
+    draw_header(frame, header_area, header);
+
+    let main_block = Block::default()
+        .title(" Transcript ")
+        .title_style(Style::default().fg(Color::Rgb(140, 180, 220)))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(60, 80, 100)));
+    let main_inner = main_block.inner(main_area);
+    frame.render_widget(main_block, main_area);
+
+    let wrapped = build_wrapped_list(&state.entries, main_inner.width);
+    state.last_transcript_rect = main_inner;
+    state.last_wrapped_len = wrapped.len();
+    state.last_view_height = usize::from(main_inner.height.max(1));
+    state.clamp_scroll_offset();
+    if state.follow_bottom {
+        state.scroll_to_bottom();
+    }
+
+    let list = List::new(wrapped)
+        .highlight_spacing(HighlightSpacing::Never)
+        .scroll_padding(2);
+    frame.render_stateful_widget(list, main_inner, &mut state.list_state);
+
+    let footer_block = Block::default()
+        .title(if state.busy {
+            " Running "
+        } else if state.status_line.is_empty() {
+            " Ready "
+        } else {
+            " Status "
+        })
+        .title_style(Style::default().fg(Color::DarkGray))
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let footer_inner = footer_block.inner(input_area);
+    frame.render_widget(footer_block, input_area);
+
+    let caret = if state.busy {
+        " "
+    } else if state.cursor_on {
+        "|"
+    } else {
+        " "
+    };
+    let mut lines = Vec::new();
+    for (idx, row) in state.visible_input_lines().into_iter().enumerate() {
+        if idx == 0 {
+            lines.push(Line::from(vec![
+                Span::styled("❯ ", Style::default().fg(Color::LightCyan)),
+                Span::raw(row),
+                Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            ]));
+        } else {
+            lines.push(Line::from(Span::raw(row)));
+        }
+    }
+    frame.render_widget(Paragraph::new(Text::from(lines)), footer_inner);
+
+    if let Some(overlay) = &state.slash_overlay {
+        let max_h = min(overlay.items.len(), 7);
+        let overlay_h = u16::try_from(max_h + 2).unwrap_or(4);
+        let overlay_w = min(main_area.width.saturating_sub(2), 70).max(30);
+        let overlay_x = input_area.x + 2;
+        let overlay_y = input_area.y.saturating_sub(overlay_h).max(main_area.y + 1);
+        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_w, overlay_h);
+        frame.render_widget(Clear, overlay_area);
+        let block = Block::default()
+            .title(" Slash Commands ")
+            .title_style(Style::default().fg(Color::LightCyan))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(70, 120, 150)));
+        let inner = block.inner(overlay_area);
+        frame.render_widget(block, overlay_area);
+        let items = overlay
+            .items
+            .iter()
+            .take(max_h)
+            .map(|item| {
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{:<14}", item.command),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(item.summary),
+                ]))
+            })
+            .collect::<Vec<_>>();
+        let mut list_state = ListState::default();
+        list_state.select(Some(overlay.selected.min(max_h.saturating_sub(1))));
+        let list = List::new(items)
+            .highlight_style(Style::default().bg(Color::Rgb(30, 44, 56)))
+            .highlight_symbol("▶ ");
+        frame.render_stateful_widget(list, inner, &mut list_state);
+    }
+}
+
+fn handle_slash_command_tui(
+    terminal: &mut DefaultTerminal,
+    state: &mut ReplTuiState,
+    cli: &Arc<Mutex<LiveCli>>,
+    cmd: SlashCommand,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        SlashCommand::Help => {
+            state.push_system_card("Slash Help", &render_repl_help());
+        }
+        SlashCommand::Status => {
+            let report = cli.lock().expect("cli lock").status_report()?;
+            state.push_system_card("Status", &report);
+        }
+        SlashCommand::Cost => {
+            let report = cli.lock().expect("cli lock").cost_report();
+            state.push_system_card("Cost", &report);
+        }
+        SlashCommand::Model { model } => {
+            let mut g = cli.lock().expect("cli lock");
+            let result = g.model_command(model)?;
+            if result.persist_after {
+                g.persist_session()?;
+            }
+            state.push_system_card("Model", &result.message);
+        }
+        SlashCommand::Permissions { mode } => {
+            let mut g = cli.lock().expect("cli lock");
+            let result = g.permissions_command(mode)?;
+            if result.persist_after {
+                g.persist_session()?;
+            }
+            state.push_system_card("Permissions", &result.message);
+        }
+        SlashCommand::Compact => {
+            let mut g = cli.lock().expect("cli lock");
+            let result = g.compact_command()?;
+            if result.persist_after {
+                g.persist_session()?;
+            }
+            state.push_system_card("Compact", &result.message);
+        }
+        SlashCommand::Clear { confirm } => {
+            let mut g = cli.lock().expect("cli lock");
+            let result = g.clear_session_command(confirm)?;
+            if result.persist_after {
+                g.persist_session()?;
+            }
+            state.push_system_card("Session", &result.message);
+        }
+        SlashCommand::Resume { session_path } => {
+            let mut g = cli.lock().expect("cli lock");
+            let result = g.resume_session_command(session_path)?;
+            if result.persist_after {
+                g.persist_session()?;
+            }
+            state.push_system_card("Session", &result.message);
+        }
+        SlashCommand::Config { section } => {
+            let report = LiveCli::config_report(section.as_deref())?;
+            state.push_system_card("Config", &report);
+        }
+        SlashCommand::Memory => {
+            let report = LiveCli::memory_report()?;
+            state.push_system_card("Memory", &report);
+        }
+        SlashCommand::Diff => {
+            let report = LiveCli::diff_report()?;
+            state.push_system("Diff");
+            state.push_system(&report);
+        }
+        SlashCommand::Version => {
+            let report = LiveCli::version_report();
+            state.push_system_card("Version", &report);
+        }
+        SlashCommand::Export { path } => {
+            let report = cli
+                .lock()
+                .expect("cli lock")
+                .export_session_report(path.as_deref())?;
+            state.push_system_card("Export", &report);
+        }
+        SlashCommand::Session { action, target } => {
+            let mut g = cli.lock().expect("cli lock");
+            let result = g.session_command(action.as_deref(), target.as_deref())?;
+            if result.persist_after {
+                g.persist_session()?;
+            }
+            state.push_system_card("Session", &result.message);
+        }
+        SlashCommand::Teleport { target } => {
+            let report = cli.lock().expect("cli lock").teleport_report(target.as_deref())?;
+            state.push_system("Teleport");
+            state.push_system(&report);
+        }
+        SlashCommand::DebugToolCall => {
+            let report = cli.lock().expect("cli lock").debug_tool_call_report()?;
+            state.push_system("Debug Tool Call");
+            state.push_system(&report);
+        }
+        other => {
+            suspend_for_stdout(terminal, || {
+                let mut g = cli.lock().expect("cli lock");
+                let _ = g.handle_repl_command(other);
+            })?;
+            state.push_system("(slash command executed in classic output mode)");
+        }
+    }
     Ok(())
 }
 
@@ -277,22 +889,22 @@ pub fn run_repl_ratatui(
     let (work_tx, work_rx) = mpsc::channel::<WorkerMsg>();
 
     let cli = Arc::new(Mutex::new(LiveCli::new_with_ui_tx(
-        model.clone(),
+        model,
         true,
         allowed_tools,
         permission_mode,
         ui_tx.clone(),
     )?));
 
-    let cli_w = Arc::clone(&cli);
-    let ui_tx_w = ui_tx.clone();
+    let cli_worker = Arc::clone(&cli);
+    let ui_tx_worker = ui_tx.clone();
     thread::spawn(move || {
         while let Ok(msg) = work_rx.recv() {
             match msg {
                 WorkerMsg::RunTurn(line) => {
-                    let mut g = cli_w.lock().expect("cli lock");
-                    let perm = ChannelPermissionPrompter::new(ui_tx_w.clone());
-                    let _ = g.run_turn_tui(&line, perm);
+                    let mut g = cli_worker.lock().expect("cli lock");
+                    let prompter = ChannelPermissionPrompter::new(ui_tx_worker.clone());
+                    let _ = g.run_turn_tui(&line, prompter);
                 }
                 WorkerMsg::Shutdown => break,
             }
@@ -301,34 +913,22 @@ pub fn run_repl_ratatui(
 
     let mut terminal = ratatui::init();
     let work_shutdown = work_tx.clone();
-    let result = run_loop(
-        &mut terminal,
-        &ui_rx,
-        work_tx,
-        cli,
-        model,
-        permission_mode,
-    );
+    let result = run_loop(&mut terminal, &ui_rx, work_tx, cli);
     let _ = work_shutdown.send(WorkerMsg::Shutdown);
     ratatui::restore();
     result
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_loop(
     terminal: &mut DefaultTerminal,
     ui_rx: &Receiver<ReplTuiEvent>,
     work_tx: Sender<WorkerMsg>,
     cli: Arc<Mutex<LiveCli>>,
-    model: String,
-    permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let _ = execute!(io::stdout(), event::EnableMouseCapture);
+    let _mouse_guard = MouseCaptureGuard;
+
     let mut state = ReplTuiState::new();
-    {
-        let g = cli.lock().expect("cli lock");
-        let banner = g.startup_banner_plain();
-        state.push_system(&banner);
-    }
 
     loop {
         state.drain_events(ui_rx);
@@ -341,98 +941,53 @@ fn run_loop(
             break;
         }
 
-        let g = cli.lock().expect("cli lock");
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".into());
-        let session_id = g.session_id().to_string();
-        let hdr = header_lines(&model, permission_mode, &session_id, &cwd);
-        drop(g);
-
+        let header = {
+            let g = cli.lock().expect("cli lock");
+            build_header_snapshot(&g)
+        };
         state.tick_input_caret();
+        state.refresh_slash_overlay();
 
         terminal.draw(|frame| {
-            let area = frame.area();
-            let chunks = Layout::default()
-                .direction(ratatui::layout::Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Min(4),
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                ])
-                .split(area);
-            let header_a = chunks[0];
-            let main_a = chunks[1];
-            let status_a = chunks[2];
-            let input_a = chunks[3];
-
-            let header_block = Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(Color::DarkGray));
-            let header_inner = header_block.inner(header_a);
-            frame.render_widget(header_block, header_a);
-            let header_par = Paragraph::new(Text::from(hdr));
-            frame.render_widget(header_par, header_inner);
-
-            let main_block = Block::default()
-                .title(" Transcript ")
-                .title_style(Style::default().fg(Color::Rgb(140, 180, 220)))
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(60, 80, 100)));
-            let main_inner = main_block.inner(main_a);
-            frame.render_widget(main_block, main_a);
-
-            let wrapped = build_wrapped_list(&state.entries, main_inner.width);
-            // Always anchor the transcript to the first wrapped row (no follow-bottom / wheel offset).
-            state.list_state.select(None);
-
-            let list = List::new(wrapped)
-                .highlight_spacing(HighlightSpacing::Never)
-                .scroll_padding(2);
-            frame.render_stateful_widget(list, main_inner, &mut state.list_state);
-
-            frame.render_widget(Clear, status_a);
-            let status = Paragraph::new(Line::from(vec![Span::styled(
-                if state.status_line.is_empty() {
-                    "Ready — type a goal or /help"
-                } else {
-                    state.status_line.as_str()
-                },
-                Style::default().fg(Color::Rgb(180, 190, 200)),
-            )]))
-            .style(Style::default().bg(Color::Rgb(30, 30, 34)));
-            frame.render_widget(status, status_a);
-
-            let input_block = Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(Color::DarkGray));
-            let input_inner = input_block.inner(input_a);
-            frame.render_widget(input_block, input_a);
-            // ASCII prompt, default no-wrap Paragraph: avoids ConPTY width bugs with emoji/wrap.
-            let caret = if state.busy {
-                " "
-            } else if state.cursor_on {
-                "|"
-            } else {
-                " "
-            };
-            let input_line = Line::from(vec![
-                Span::styled("> ", Style::default().fg(Color::DarkGray)),
-                Span::raw(state.input.clone()),
-                Span::styled(caret, Style::default().fg(Color::Rgb(220, 220, 230)).bold()),
-            ]);
-            frame.render_widget(Paragraph::new(input_line), input_inner);
-
+            match state.ui_state {
+                AppUiState::WelcomeMode => draw_welcome(frame, frame.area(), &state),
+                AppUiState::ChatMode => draw_chat(frame, &mut state, &header),
+            }
             if let Some((ref req, _)) = state.pending_permission {
                 draw_permission_modal(frame, req);
             }
         })?;
 
-        if event::poll(Duration::from_millis(50))? {
-            let ev = event::read()?;
-            match ev {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
+        if !event::poll(Duration::from_millis(50))? {
+            continue;
+        }
+
+        let ev = event::read()?;
+        match ev {
+            Event::Mouse(me) => {
+                if state.busy
+                    || state.ui_state != AppUiState::ChatMode
+                    || !rect_contains_mouse(state.last_transcript_rect, me.column, me.row)
+                {
+                    continue;
+                }
+                let max_off = state
+                    .last_wrapped_len
+                    .saturating_sub(state.last_view_height.max(1));
+                let cur = state.list_state.offset();
+                match me.kind {
+                    MouseEventKind::ScrollUp => {
+                        *state.list_state.offset_mut() = cur.saturating_sub(3);
+                        state.follow_bottom = false;
+                    }
+                    MouseEventKind::ScrollDown => {
+                        *state.list_state.offset_mut() = (cur.saturating_add(3)).min(max_off);
+                        state.follow_bottom = state.list_state.offset() >= max_off;
+                    }
+                    _ => {}
+                }
+            }
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if let Some((req, respond)) = state.pending_permission.take() {
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -453,29 +1008,72 @@ fn run_loop(
                     continue;
                 }
 
-                match key.code {
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if state.busy {
-                            continue;
-                        }
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if state.busy {
+                        continue;
+                    }
+                    state.exit = true;
+                    state.persist_on_exit = true;
+                    continue;
+                }
+
+                if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if state.busy {
+                        continue;
+                    }
+                    if state.input.is_empty() {
                         state.exit = true;
                         state.persist_on_exit = true;
                     }
-                    KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    continue;
+                }
+
+                if key.code == KeyCode::Up && state.slash_overlay.is_some() {
+                    if let Some(overlay) = state.slash_overlay.as_mut() {
+                        if overlay.selected > 0 {
+                            overlay.selected -= 1;
+                        }
+                    }
+                    continue;
+                }
+
+                if key.code == KeyCode::Down && state.slash_overlay.is_some() {
+                    if let Some(overlay) = state.slash_overlay.as_mut() {
+                        overlay.selected = min(overlay.selected + 1, overlay.items.len() - 1);
+                    }
+                    continue;
+                }
+
+                match key.code {
+                    KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                         if state.busy {
                             continue;
                         }
-                        if state.input.is_empty() {
-                            state.exit = true;
-                            state.persist_on_exit = true;
-                        }
+                        state.input.push('\n');
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
                         if state.busy {
                             continue;
                         }
+
+                        if let Some(overlay) = &state.slash_overlay {
+                            let trimmed = state.input.trim();
+                            if trimmed == overlay.trigger_prefix {
+                                if let Some(selected) = state.selected_slash_command() {
+                                    state.input = selected;
+                                    state.input.push(' ');
+                                    state.wake_input_caret();
+                                    state.refresh_slash_overlay();
+                                    continue;
+                                }
+                            }
+                        }
+
                         let line = std::mem::take(&mut state.input);
                         let trimmed = line.trim().to_string();
+                        state.refresh_slash_overlay();
                         if trimmed.is_empty() {
                             state.wake_input_caret();
                             continue;
@@ -486,11 +1084,7 @@ fn run_loop(
                             continue;
                         }
                         if let Some(cmd) = SlashCommand::parse(&trimmed) {
-                            suspend_for_stdout(terminal, || {
-                                let mut g = cli.lock().expect("cli lock");
-                                let _ = g.handle_repl_command(cmd);
-                            })?;
-                            state.push_system("(slash command — see output above)");
+                            handle_slash_command_tui(terminal, &mut state, &cli, cmd)?;
                             state.wake_input_caret();
                             continue;
                         }
@@ -498,38 +1092,72 @@ fn run_loop(
                         work_tx.send(WorkerMsg::RunTurn(trimmed))?;
                         state.wake_input_caret();
                     }
+                    KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if state.busy {
+                            continue;
+                        }
+                        state.input.push('\n');
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
                     KeyCode::Char(c) => {
                         if state.busy {
                             continue;
                         }
                         state.input.push(c);
                         state.wake_input_caret();
+                        state.refresh_slash_overlay();
                     }
                     KeyCode::Backspace => {
                         if state.input.pop().is_some() {
                             state.wake_input_caret();
+                            state.refresh_slash_overlay();
                         }
                     }
                     KeyCode::Tab => {
-                        if state.busy || !state.input.starts_with('/') {
+                        if state.busy || !state.input.trim_start().starts_with('/') {
                             continue;
                         }
-                        let prefix = state.input.clone();
-                        let candidates = slash_command_completion_candidates();
-                        let matches: Vec<_> = candidates
-                            .into_iter()
-                            .filter(|c| c.starts_with(&prefix))
-                            .collect();
-                        if matches.len() == 1 {
-                            state.input = matches[0].clone();
+                        if let Some(selected) = state.selected_slash_command() {
+                            state.input = selected;
+                            state.input.push(' ');
                             state.wake_input_caret();
+                            state.refresh_slash_overlay();
+                        } else {
+                            let prefix = state.input.clone();
+                            let candidates = slash_command_completion_candidates();
+                            let matches: Vec<_> = candidates
+                                .into_iter()
+                                .filter(|candidate| candidate.starts_with(&prefix))
+                                .collect();
+                            if matches.len() == 1 {
+                                state.input = matches[0].clone();
+                                state.input.push(' ');
+                                state.wake_input_caret();
+                                state.refresh_slash_overlay();
+                            }
                         }
+                    }
+                    KeyCode::Esc => {
+                        state.slash_overlay = None;
+                    }
+                    KeyCode::PageUp => {
+                        let cur = state.list_state.offset();
+                        *state.list_state.offset_mut() = cur.saturating_sub(10);
+                        state.follow_bottom = false;
+                    }
+                    KeyCode::PageDown => {
+                        let max_off = state
+                            .last_wrapped_len
+                            .saturating_sub(state.last_view_height.max(1));
+                        let cur = state.list_state.offset();
+                        *state.list_state.offset_mut() = (cur.saturating_add(10)).min(max_off);
+                        state.follow_bottom = state.list_state.offset() >= max_off;
                     }
                     _ => {}
                 }
-                }
-                _ => {}
             }
+            _ => {}
         }
     }
 

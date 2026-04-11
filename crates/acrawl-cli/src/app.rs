@@ -216,6 +216,12 @@ pub(crate) struct LiveCli {
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandUiResult {
+    pub(crate) message: String,
+    pub(crate) persist_after: bool,
+}
+
 impl LiveCli {
     pub(crate) fn new(
         model: String,
@@ -282,6 +288,30 @@ impl LiveCli {
 
     pub(crate) fn session_id(&self) -> &str {
         self.session.id.as_str()
+    }
+
+    pub(crate) fn session_snapshot(&self) -> Session {
+        self.runtime.session().clone()
+    }
+
+    pub(crate) fn model_name(&self) -> &str {
+        &self.model
+    }
+
+    pub(crate) fn permission_mode(&self) -> PermissionMode {
+        self.permission_mode
+    }
+
+    pub(crate) fn cumulative_usage(&self) -> TokenUsage {
+        self.runtime.usage().cumulative_usage()
+    }
+
+    pub(crate) fn latest_usage(&self) -> TokenUsage {
+        self.runtime.usage().current_turn_usage()
+    }
+
+    pub(crate) fn estimated_tokens(&self) -> usize {
+        self.runtime.estimated_tokens()
     }
 
     fn ui_sender(&self) -> Option<mpsc::Sender<ReplTuiEvent>> {
@@ -457,7 +487,7 @@ impl LiveCli {
                 false
             }
             SlashCommand::Status => {
-                self.print_status();
+                println!("{}", self.status_report()?);
                 false
             }
             SlashCommand::Bughunter { scope } => {
@@ -481,31 +511,48 @@ impl LiveCli {
                 false
             }
             SlashCommand::Teleport { target } => {
-                self.run_teleport(target.as_deref())?;
+                println!("{}", self.teleport_report(target.as_deref())?);
                 false
             }
             SlashCommand::DebugToolCall => {
-                self.run_debug_tool_call()?;
+                println!("{}", self.debug_tool_call_report()?);
                 false
             }
             SlashCommand::Compact => {
-                self.compact()?;
-                false
+                let result = self.compact_command()?;
+                println!("{}", result.message);
+                result.persist_after
             }
-            SlashCommand::Model { model } => self.set_model(model)?,
-            SlashCommand::Permissions { mode } => self.set_permissions(mode)?,
-            SlashCommand::Clear { confirm } => self.clear_session(confirm)?,
+            SlashCommand::Model { model } => {
+                let result = self.model_command(model)?;
+                println!("{}", result.message);
+                result.persist_after
+            }
+            SlashCommand::Permissions { mode } => {
+                let result = self.permissions_command(mode)?;
+                println!("{}", result.message);
+                result.persist_after
+            }
+            SlashCommand::Clear { confirm } => {
+                let result = self.clear_session_command(confirm)?;
+                println!("{}", result.message);
+                result.persist_after
+            }
             SlashCommand::Cost => {
-                self.print_cost();
+                println!("{}", self.cost_report());
                 false
             }
-            SlashCommand::Resume { session_path } => self.resume_session(session_path)?,
+            SlashCommand::Resume { session_path } => {
+                let result = self.resume_session_command(session_path)?;
+                println!("{}", result.message);
+                result.persist_after
+            }
             SlashCommand::Config { section } => {
-                Self::print_config(section.as_deref())?;
+                println!("{}", Self::config_report(section.as_deref())?);
                 false
             }
             SlashCommand::Memory => {
-                Self::print_memory()?;
+                println!("{}", Self::memory_report()?);
                 false
             }
             SlashCommand::Init => {
@@ -513,19 +560,21 @@ impl LiveCli {
                 false
             }
             SlashCommand::Diff => {
-                Self::print_diff()?;
+                println!("{}", Self::diff_report()?);
                 false
             }
             SlashCommand::Version => {
-                Self::print_version();
+                println!("{}", Self::version_report());
                 false
             }
             SlashCommand::Export { path } => {
-                self.export_session(path.as_deref())?;
+                println!("{}", self.export_session_report(path.as_deref())?);
                 false
             }
             SlashCommand::Session { action, target } => {
-                self.handle_session_command(action.as_deref(), target.as_deref())?
+                let result = self.session_command(action.as_deref(), target.as_deref())?;
+                println!("{}", result.message);
+                result.persist_after
             }
             SlashCommand::Auth { provider } => {
                 self.run_auth(provider.as_deref())?;
@@ -543,49 +592,47 @@ impl LiveCli {
         Ok(())
     }
 
-    fn print_status(&self) {
+    pub(crate) fn status_report(&self) -> Result<String, Box<dyn std::error::Error>> {
         let cumulative = self.runtime.usage().cumulative_usage();
         let latest = self.runtime.usage().current_turn_usage();
-        println!(
-            "{}",
-            format_status_report(
-                &self.model,
-                StatusUsage {
-                    message_count: self.runtime.session().messages.len(),
-                    turns: self.runtime.usage().turns(),
-                    latest,
-                    cumulative,
-                    estimated_tokens: self.runtime.estimated_tokens(),
-                },
-                self.permission_mode.as_str(),
-                &status_context(Some(&self.session.path)).expect("status context should load"),
-            )
-        );
+        Ok(format_status_report(
+            &self.model,
+            StatusUsage {
+                message_count: self.runtime.session().messages.len(),
+                turns: self.runtime.usage().turns(),
+                latest,
+                cumulative,
+                estimated_tokens: self.runtime.estimated_tokens(),
+            },
+            self.permission_mode.as_str(),
+            &status_context(Some(&self.session.path))?,
+        ))
     }
 
-    fn set_model(&mut self, model: Option<String>) -> Result<bool, Box<dyn std::error::Error>> {
+    pub(crate) fn model_command(
+        &mut self,
+        model: Option<String>,
+    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
         let Some(model) = model else {
-            println!(
-                "{}",
-                format_model_report(
+            return Ok(CommandUiResult {
+                message: format_model_report(
                     &self.model,
                     self.runtime.session().messages.len(),
-                    self.runtime.usage().turns()
-                )
-            );
-            return Ok(false);
+                    self.runtime.usage().turns(),
+                ),
+                persist_after: false,
+            });
         };
         let model = resolve_model_alias(&model).to_string();
         if model == self.model {
-            println!(
-                "{}",
-                format_model_report(
+            return Ok(CommandUiResult {
+                message: format_model_report(
                     &self.model,
                     self.runtime.session().messages.len(),
-                    self.runtime.usage().turns()
-                )
-            );
-            return Ok(false);
+                    self.runtime.usage().turns(),
+                ),
+                persist_after: false,
+            });
         }
         let previous = self.model.clone();
         let session = self.runtime.session().clone();
@@ -601,30 +648,30 @@ impl LiveCli {
             self.ui_sender(),
         )?;
         self.model.clone_from(&model);
-        println!(
-            "{}",
-            format_model_switch_report(&previous, &model, message_count)
-        );
-        Ok(true)
+        Ok(CommandUiResult {
+            message: format_model_switch_report(&previous, &model, message_count),
+            persist_after: true,
+        })
     }
 
-    fn set_permissions(
+    pub(crate) fn permissions_command(
         &mut self,
         mode: Option<String>,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
         let Some(mode) = mode else {
-            println!(
-                "{}",
-                format_permissions_report(self.permission_mode.as_str())
-            );
-            return Ok(false);
+            return Ok(CommandUiResult {
+                message: format_permissions_report(self.permission_mode.as_str()),
+                persist_after: false,
+            });
         };
         let normalized = normalize_permission_mode(&mode).ok_or_else(|| {
             format!("unsupported permission mode '{mode}'. Use read-only, workspace-write, or danger-full-access.")
         })?;
         if normalized == self.permission_mode.as_str() {
-            println!("{}", format_permissions_report(normalized));
-            return Ok(false);
+            return Ok(CommandUiResult {
+                message: format_permissions_report(normalized),
+                persist_after: false,
+            });
         }
         let previous = self.permission_mode.as_str().to_string();
         let session = self.runtime.session().clone();
@@ -639,19 +686,23 @@ impl LiveCli {
             self.permission_mode,
             self.ui_sender(),
         )?;
-        println!(
-            "{}",
-            format_permissions_switch_report(&previous, normalized)
-        );
-        Ok(true)
+        Ok(CommandUiResult {
+            message: format_permissions_switch_report(&previous, normalized),
+            persist_after: true,
+        })
     }
 
-    fn clear_session(&mut self, confirm: bool) -> Result<bool, Box<dyn std::error::Error>> {
+    pub(crate) fn clear_session_command(
+        &mut self,
+        confirm: bool,
+    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
         if !confirm {
-            println!(
-                "clear: confirmation required; run /clear --confirm to start a fresh session."
-            );
-            return Ok(false);
+            return Ok(CommandUiResult {
+                message:
+                    "clear: confirmation required; run /clear --confirm to start a fresh session."
+                        .to_string(),
+                persist_after: false,
+            });
         }
         self.session = create_managed_session_handle()?;
         self.runtime = build_runtime(
@@ -664,24 +715,30 @@ impl LiveCli {
             self.permission_mode,
             self.ui_sender(),
         )?;
-        println!("Session cleared\n  Mode             fresh session\n  Preserved model  {}\n  Permission mode  {}\n  Session          {}", self.model, self.permission_mode.as_str(), self.session.id);
-        Ok(true)
+        Ok(CommandUiResult {
+            message: format!(
+                "Session cleared\n  Mode             fresh session\n  Preserved model  {}\n  Permission mode  {}\n  Session          {}",
+                self.model,
+                self.permission_mode.as_str(),
+                self.session.id
+            ),
+            persist_after: true,
+        })
     }
 
-    fn print_cost(&self) {
-        println!(
-            "{}",
-            format_cost_report(self.runtime.usage().cumulative_usage())
-        );
+    pub(crate) fn cost_report(&self) -> String {
+        format_cost_report(self.runtime.usage().cumulative_usage())
     }
 
-    fn resume_session(
+    pub(crate) fn resume_session_command(
         &mut self,
         session_path: Option<String>,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
         let Some(session_ref) = session_path else {
-            println!("Usage: /resume <session-path>");
-            return Ok(false);
+            return Ok(CommandUiResult {
+                message: "Usage: /resume <session-path>".to_string(),
+                persist_after: false,
+            });
         };
         let handle = resolve_session_reference(&session_ref)?;
         let session = Session::load_from_path(&handle.path)?;
@@ -702,57 +759,60 @@ impl LiveCli {
         )?;
         self.model = model;
         self.session = handle;
-        println!(
-            "{}",
-            format_resume_report(
+        Ok(CommandUiResult {
+            message: format_resume_report(
                 &self.session.path.display().to_string(),
                 message_count,
-                self.runtime.usage().turns()
-            )
-        );
-        Ok(true)
+                self.runtime.usage().turns(),
+            ),
+            persist_after: true,
+        })
     }
 
-    fn print_config(section: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", render_config_report(section)?);
-        Ok(())
+    pub(crate) fn config_report(
+        section: Option<&str>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        render_config_report(section)
     }
-    fn print_memory() -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", render_memory_report()?);
-        Ok(())
+    pub(crate) fn memory_report() -> Result<String, Box<dyn std::error::Error>> {
+        render_memory_report()
     }
-    fn print_diff() -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", render_diff_report()?);
-        Ok(())
+    pub(crate) fn diff_report() -> Result<String, Box<dyn std::error::Error>> {
+        render_diff_report()
     }
-    fn print_version() {
-        println!("{}", render_version_report());
+    pub(crate) fn version_report() -> String {
+        render_version_report()
     }
 
-    fn export_session(
+    pub(crate) fn export_session_report(
         &self,
         requested_path: Option<&str>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let export_path = resolve_export_path(requested_path, self.runtime.session())?;
         fs::write(&export_path, render_export_text(self.runtime.session()))?;
-        println!("Export\n  Result           wrote transcript\n  File             {}\n  Messages         {}", export_path.display(), self.runtime.session().messages.len());
-        Ok(())
+        Ok(format!(
+            "Export\n  Result           wrote transcript\n  File             {}\n  Messages         {}",
+            export_path.display(),
+            self.runtime.session().messages.len()
+        ))
     }
 
-    fn handle_session_command(
+    pub(crate) fn session_command(
         &mut self,
         action: Option<&str>,
         target: Option<&str>,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
         match action {
-            None | Some("list") => {
-                println!("{}", render_session_list(&self.session.id)?);
-                Ok(false)
-            }
+            None | Some("list") => Ok(CommandUiResult {
+                message: render_session_list(&self.session.id)?,
+                persist_after: false,
+            }),
             Some("switch") => {
                 let Some(target) = target else {
-                    println!("Usage: /session switch <session-id>");
-                    return Ok(false);
+                    return Ok(CommandUiResult {
+                        message: "Usage: /session switch <session-id>".to_string(),
+                        persist_after: false,
+                    });
                 };
                 let handle = resolve_session_reference(target)?;
                 let session = Session::load_from_path(&handle.path)?;
@@ -773,13 +833,22 @@ impl LiveCli {
                 )?;
                 self.model = model;
                 self.session = handle;
-                println!("Session switched\n  Active session   {}\n  File             {}\n  Messages         {}", self.session.id, self.session.path.display(), message_count);
-                Ok(true)
+                Ok(CommandUiResult {
+                    message: format!(
+                        "Session switched\n  Active session   {}\n  File             {}\n  Messages         {}",
+                        self.session.id,
+                        self.session.path.display(),
+                        message_count
+                    ),
+                    persist_after: true,
+                })
             }
-            Some(other) => {
-                println!("Unknown /session action '{other}'. Use /session list or /session switch <session-id>.");
-                Ok(false)
-            }
+            Some(other) => Ok(CommandUiResult {
+                message: format!(
+                    "Unknown /session action '{other}'. Use /session list or /session switch <session-id>."
+                ),
+                persist_after: false,
+            }),
         }
     }
 
@@ -804,7 +873,7 @@ impl LiveCli {
         Ok(())
     }
 
-    fn compact(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn compact_command(&mut self) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
         let result = self.runtime.compact(CompactionConfig::default());
         let removed = result.removed_message_count;
         let kept = result.compacted_session.messages.len();
@@ -820,8 +889,10 @@ impl LiveCli {
             self.ui_sender(),
         )?;
         self.persist_session()?;
-        println!("{}", format_compact_report(removed, kept, skipped));
-        Ok(())
+        Ok(CommandUiResult {
+            message: format_compact_report(removed, kept, skipped),
+            persist_after: false,
+        })
     }
 
     fn run_internal_prompt_text(
@@ -860,18 +931,18 @@ impl LiveCli {
     }
 
     #[allow(clippy::unused_self)]
-    fn run_teleport(&self, target: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn teleport_report(
+        &self,
+        target: Option<&str>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let Some(target) = target.map(str::trim).filter(|value| !value.is_empty()) else {
-            println!("Usage: /teleport <symbol-or-path>");
-            return Ok(());
+            return Ok("Usage: /teleport <symbol-or-path>".to_string());
         };
-        println!("{}", render_teleport_report(target)?);
-        Ok(())
+        render_teleport_report(target)
     }
 
-    fn run_debug_tool_call(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{}", render_last_tool_debug_report(self.runtime.session())?);
-        Ok(())
+    pub(crate) fn debug_tool_call_report(&self) -> Result<String, Box<dyn std::error::Error>> {
+        render_last_tool_debug_report(self.runtime.session())
     }
 
     fn run_commit(&mut self) -> Result<(), Box<dyn std::error::Error>> {
