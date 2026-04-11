@@ -16,6 +16,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
+    Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 use ratatui::DefaultTerminal;
 use runtime::{
@@ -271,6 +272,8 @@ struct ReplTuiState {
     last_transcript_rect: Rect,
     last_wrapped_len: usize,
     last_view_height: usize,
+    last_input_rect: Rect,
+    input_scroll_offset: usize,
     input: String,
     status_line: String,
     busy: bool,
@@ -292,6 +295,8 @@ impl ReplTuiState {
             last_transcript_rect: Rect::default(),
             last_wrapped_len: 0,
             last_view_height: 0,
+            last_input_rect: Rect::default(),
+            input_scroll_offset: 0,
             input: String::new(),
             status_line: String::new(),
             busy: false,
@@ -316,28 +321,91 @@ impl ReplTuiState {
         self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
     }
 
-    fn input_lines(&self) -> Vec<String> {
-        let mut lines = self
-            .input
-            .split('\n')
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        if lines.is_empty() {
-            lines.push(String::new());
+    fn calculate_input_dimensions(&mut self, width: u16) -> (u16, Vec<Line<'static>>, usize) {
+        let is_placeholder = self.input.is_empty();
+        let mut lines_data = self.input.split('\n').map(ToOwned::to_owned).collect::<Vec<_>>();
+        if lines_data.is_empty() {
+            lines_data.push(String::new());
         }
-        lines
-    }
-
-    fn visible_input_lines(&self) -> Vec<String> {
-        let lines = self.input_lines();
-        let count = min(lines.len(), MAX_INPUT_LINES);
-        let skip_count = lines.len().saturating_sub(count);
-        lines.into_iter().skip(skip_count).collect()
-    }
-
-    fn input_height(&self) -> u16 {
-        let lines = self.input_lines().len().clamp(1, MAX_INPUT_LINES);
-        u16::try_from(lines + 2).unwrap_or(3)
+        let logical_lines = if is_placeholder { vec!["What is our goal today?".to_string()] } else { lines_data };
+        
+        let safe_width = width.saturating_sub(5).max(5) as usize;
+        let mut visual_lines = Vec::new(); 
+        
+        for (logical_idx, line) in logical_lines.into_iter().enumerate() {
+            let offset = if logical_idx == 0 { 2 } else { 0 };
+            let first_line_width = safe_width.saturating_sub(offset);
+            
+            if line.is_empty() {
+                visual_lines.push((logical_idx == 0, String::new()));
+                continue;
+            }
+            
+            let mut current = String::new();
+            let mut w = 0;
+            let mut is_first_chunk = true;
+            let mut pushed_last = false;
+            
+            for c in line.chars() {
+                current.push(c);
+                w += 1;
+                let target = if is_first_chunk { first_line_width } else { safe_width };
+                if w >= target {
+                    visual_lines.push((logical_idx == 0 && is_first_chunk, current));
+                    current = String::new();
+                    w = 0;
+                    is_first_chunk = false;
+                    pushed_last = true;
+                } else {
+                    pushed_last = false;
+                }
+            }
+            if !current.is_empty() || pushed_last {
+                visual_lines.push((logical_idx == 0 && is_first_chunk, current));
+            }
+        }
+        
+        let max_text_lines = MAX_INPUT_LINES; 
+        let total_visual = visual_lines.len();
+        let max_scroll = total_visual.saturating_sub(max_text_lines);
+        self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
+        
+        let skip = self.input_scroll_offset;
+        let sliced = visual_lines.into_iter().skip(skip).take(max_text_lines).collect::<Vec<_>>();
+        let total_sliced = sliced.len();
+        
+        let caret = if self.cursor_on && !self.busy { "|" } else { " " };
+        let text_style = if is_placeholder { Style::default().fg(Color::DarkGray) } else { Style::default() };
+        
+        let mut render_lines = Vec::new();
+        render_lines.push(Line::from(""));
+        
+        for (i, (has_prompt, row)) in sliced.into_iter().enumerate() {
+            let is_last = i == total_sliced.saturating_sub(1);
+            let mut spans = Vec::new();
+            
+            if has_prompt {
+                spans.push(Span::styled("❯ ", Style::default().fg(Color::LightCyan)));
+            } else if skip > 0 && i == 0 {
+                // If skipped first line with prompt, no visual space pad needed per standard terminal behavior
+            }
+            
+            if is_last && is_placeholder {
+                spans.push(Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(row, text_style));
+            } else {
+                spans.push(Span::styled(row, text_style));
+                if is_last && !is_placeholder {
+                    spans.push(Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                }
+            }
+            render_lines.push(Line::from(spans));
+        }
+        
+        render_lines.push(Line::from(""));
+        
+        let box_height = (total_sliced as u16) + 4; 
+        (box_height, render_lines, max_scroll)
     }
 
     fn push_user_line(&mut self, text: &str) {
@@ -566,7 +634,7 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapsh
     );
 }
 
-fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &ReplTuiState) {
+fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiState) {
     let ascii = [
         "  █████╗  ██████╗██████╗  █████╗ ██╗    ██╗██╗",
         " ██╔══██╗██╔════╝██╔══██╗██╔══██╗██║    ██║██║",
@@ -604,7 +672,9 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &ReplTuiState
     frame.render_widget(Paragraph::new(Text::from(lines)), art_area);
 
     let input_w = area.width.saturating_sub(12).min(90).max(30);
-    let input_h = state.input_height().max(5);
+    let (box_height, render_lines, max_scroll) = state.calculate_input_dimensions(input_w);
+    let input_h = box_height;
+    
     let input_x = area.x + area.width.saturating_sub(input_w) / 2;
     let input_y = art_y.saturating_add(art_h).saturating_add(2);
     let input_area = Rect::new(
@@ -618,42 +688,28 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &ReplTuiState
         .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::LightBlue));
+        .border_style(Style::default().fg(Color::LightBlue))
+        .padding(ratatui::widgets::Padding::symmetric(1, 0));
     let inner = block.inner(input_area);
+    state.last_input_rect = inner;
     frame.render_widget(block, input_area);
 
-    let caret = if state.cursor_on { "|" } else { " " };
-    let is_placeholder = state.input.is_empty();
-    let mut visible = state.visible_input_lines();
-    if is_placeholder {
-        visible = vec!["What is our goal today?".to_string()];
-    }
-    let mut render_lines = Vec::new();
-    for (idx, row) in visible.into_iter().enumerate() {
-        let text_style = if is_placeholder {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
-        if idx == 0 {
-            if is_placeholder {
-                render_lines.push(Line::from(vec![
-                    Span::styled("❯ ", Style::default().fg(Color::LightCyan)),
-                    Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    Span::styled(row, text_style),
-                ]));
-            } else {
-                render_lines.push(Line::from(vec![
-                    Span::styled("❯ ", Style::default().fg(Color::LightCyan)),
-                    Span::styled(row, text_style),
-                    Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                ]));
-            }
-        } else {
-            render_lines.push(Line::from(Span::styled(row, text_style)));
-        }
-    }
     frame.render_widget(Paragraph::new(Text::from(render_lines)), inner);
+    if max_scroll > 0 {
+        let scrollbar = Scrollbar::default()
+            .orientation(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some(" "))
+            .thumb_symbol("▐")
+            .style(Style::default().fg(Color::LightBlue));
+        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(state.input_scroll_offset);
+        frame.render_stateful_widget(
+            scrollbar,
+            inner.inner(Margin { vertical: 0, horizontal: 0 }),
+            &mut scrollbar_state,
+        );
+    }
 }
 
 fn draw_chat(
@@ -662,7 +718,7 @@ fn draw_chat(
     header: &HeaderSnapshot,
 ) {
     let area = frame.area();
-    let footer_h = state.input_height();
+    let (footer_h, render_lines, max_scroll) = state.calculate_input_dimensions(area.width);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(4), Constraint::Length(footer_h)])
@@ -705,30 +761,28 @@ fn draw_chat(
         })
         .title_style(Style::default().fg(Color::DarkGray))
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(Color::DarkGray))
+        .padding(ratatui::widgets::Padding::symmetric(1, 0));
     let footer_inner = footer_block.inner(input_area);
+    state.last_input_rect = footer_inner;
     frame.render_widget(footer_block, input_area);
 
-    let caret = if state.busy {
-        " "
-    } else if state.cursor_on {
-        "|"
-    } else {
-        " "
-    };
-    let mut lines = Vec::new();
-    for (idx, row) in state.visible_input_lines().into_iter().enumerate() {
-        if idx == 0 {
-            lines.push(Line::from(vec![
-                Span::styled("❯ ", Style::default().fg(Color::LightCyan)),
-                Span::raw(row),
-                Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-            ]));
-        } else {
-            lines.push(Line::from(Span::raw(row)));
-        }
+    frame.render_widget(Paragraph::new(Text::from(render_lines)), footer_inner);
+    if max_scroll > 0 {
+        let scrollbar = Scrollbar::default()
+            .orientation(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some(" "))
+            .thumb_symbol("▐")
+            .style(Style::default().fg(Color::DarkGray));
+        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(state.input_scroll_offset);
+        frame.render_stateful_widget(
+            scrollbar,
+            footer_inner.inner(Margin { vertical: 0, horizontal: 0 }),
+            &mut scrollbar_state,
+        );
     }
-    frame.render_widget(Paragraph::new(Text::from(lines)), footer_inner);
 
     if let Some(overlay) = &state.slash_overlay {
         let max_h = min(overlay.items.len(), 7);
@@ -950,7 +1004,7 @@ fn run_loop(
 
         terminal.draw(|frame| {
             match state.ui_state {
-                AppUiState::WelcomeMode => draw_welcome(frame, frame.area(), &state),
+                AppUiState::WelcomeMode => draw_welcome(frame, frame.area(), &mut state),
                 AppUiState::ChatMode => draw_chat(frame, &mut state, &header),
             }
             if let Some((ref req, _)) = state.pending_permission {
@@ -965,26 +1019,38 @@ fn run_loop(
         let ev = event::read()?;
         match ev {
             Event::Mouse(me) => {
-                if state.busy
-                    || state.ui_state != AppUiState::ChatMode
-                    || !rect_contains_mouse(state.last_transcript_rect, me.column, me.row)
-                {
+                if state.busy {
                     continue;
                 }
-                let max_off = state
-                    .last_wrapped_len
-                    .saturating_sub(state.last_view_height.max(1));
-                let cur = state.list_state.offset();
-                match me.kind {
-                    MouseEventKind::ScrollUp => {
-                        *state.list_state.offset_mut() = cur.saturating_sub(3);
-                        state.follow_bottom = false;
+                let in_transcript = rect_contains_mouse(state.last_transcript_rect, me.column, me.row);
+                let in_input = rect_contains_mouse(state.last_input_rect, me.column, me.row);
+
+                if state.ui_state == AppUiState::ChatMode && in_transcript {
+                    let max_off = state
+                        .last_wrapped_len
+                        .saturating_sub(state.last_view_height.max(1));
+                    let cur = state.list_state.offset();
+                    match me.kind {
+                        MouseEventKind::ScrollUp => {
+                            *state.list_state.offset_mut() = cur.saturating_sub(3);
+                            state.follow_bottom = false;
+                        }
+                        MouseEventKind::ScrollDown => {
+                            *state.list_state.offset_mut() = (cur.saturating_add(3)).min(max_off);
+                            state.follow_bottom = state.list_state.offset() >= max_off;
+                        }
+                        _ => {}
                     }
-                    MouseEventKind::ScrollDown => {
-                        *state.list_state.offset_mut() = (cur.saturating_add(3)).min(max_off);
-                        state.follow_bottom = state.list_state.offset() >= max_off;
+                } else if in_input || state.ui_state == AppUiState::WelcomeMode {
+                    match me.kind {
+                        MouseEventKind::ScrollUp => {
+                            state.input_scroll_offset = state.input_scroll_offset.saturating_sub(1);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            state.input_scroll_offset = state.input_scroll_offset.saturating_add(1);
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -1050,6 +1116,7 @@ fn run_loop(
                             continue;
                         }
                         state.input.push('\n');
+                        state.input_scroll_offset = usize::MAX;
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
@@ -1064,6 +1131,7 @@ fn run_loop(
                                 if let Some(selected) = state.selected_slash_command() {
                                     state.input = selected;
                                     state.input.push(' ');
+                                    state.input_scroll_offset = usize::MAX;
                                     state.wake_input_caret();
                                     state.refresh_slash_overlay();
                                     continue;
@@ -1072,6 +1140,7 @@ fn run_loop(
                         }
 
                         let line = std::mem::take(&mut state.input);
+                        state.input_scroll_offset = 0;
                         let trimmed = line.trim().to_string();
                         state.refresh_slash_overlay();
                         if trimmed.is_empty() {
@@ -1097,6 +1166,7 @@ fn run_loop(
                             continue;
                         }
                         state.input.push('\n');
+                        state.input_scroll_offset = usize::MAX;
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
@@ -1105,11 +1175,13 @@ fn run_loop(
                             continue;
                         }
                         state.input.push(c);
+                        state.input_scroll_offset = usize::MAX;
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Backspace => {
                         if state.input.pop().is_some() {
+                            state.input_scroll_offset = usize::MAX;
                             state.wake_input_caret();
                             state.refresh_slash_overlay();
                         }
@@ -1121,6 +1193,7 @@ fn run_loop(
                         if let Some(selected) = state.selected_slash_command() {
                             state.input = selected;
                             state.input.push(' ');
+                            state.input_scroll_offset = usize::MAX;
                             state.wake_input_caret();
                             state.refresh_slash_overlay();
                         } else {
@@ -1133,6 +1206,7 @@ fn run_loop(
                             if matches.len() == 1 {
                                 state.input = matches[0].clone();
                                 state.input.push(' ');
+                                state.input_scroll_offset = usize::MAX;
                                 state.wake_input_caret();
                                 state.refresh_slash_overlay();
                             }
