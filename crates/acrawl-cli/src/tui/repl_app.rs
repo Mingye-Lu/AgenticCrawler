@@ -796,6 +796,18 @@ impl ReplTuiState {
                     had_new_rows = true;
                     self.push_system(&s);
                 }
+                ReplTuiEvent::AuthOAuthComplete { provider, result } => {
+                    let msg = match result {
+                        Ok(()) => format!("OAuth login succeeded for {provider}"),
+                        Err(e) => format!("OAuth login failed for {provider}: {e}"),
+                    };
+                    self.push_system(&msg);
+                    had_new_rows = true;
+                }
+                ReplTuiEvent::AuthOAuthProgress { message } => {
+                    self.push_system(&message);
+                    had_new_rows = true;
+                }
             }
         }
         if had_new_rows {

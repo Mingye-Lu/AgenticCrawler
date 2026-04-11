@@ -21,8 +21,8 @@ use runtime::{
     parse_oauth_callback_request_target, save_oauth_credentials, ApiClient, ApiRequest,
     AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage, ConversationRuntime,
     MessageRole, OAuthAuthorizationRequest, OAuthConfig, OAuthTokenExchangeRequest, PermissionMode,
-    PermissionPolicy, PermissionPromptDecision, PermissionPrompter, PermissionRequest, RuntimeError,
-    Session, TokenUsage, ToolError, ToolExecutor,
+    PermissionPolicy, PermissionPromptDecision, PermissionPrompter, PermissionRequest,
+    RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
 };
 use serde_json::json;
 
@@ -49,7 +49,7 @@ pub(crate) const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Provider {
+pub(crate) enum Provider {
     Anthropic,
     OpenAi,
     Codex,
@@ -114,7 +114,9 @@ pub(crate) fn initial_model_from_env() -> String {
         "openai" => trimmed_env_var("OPENAI_MODEL")
             .map(|m| resolve_model_alias(&m).to_string())
             .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string()),
-        "codex" => trimmed_env_var("CODEX_MODEL").unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string()),
+        "codex" => {
+            trimmed_env_var("CODEX_MODEL").unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string())
+        }
         "claude" | "anthropic" | "" => trimmed_env_var("CLAUDE_MODEL")
             .map(|m| resolve_model_alias(&m).to_string())
             .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
@@ -290,8 +292,6 @@ impl LiveCli {
         self.session.id.as_str()
     }
 
-
-
     pub(crate) fn model_name(&self) -> &str {
         &self.model
     }
@@ -304,13 +304,9 @@ impl LiveCli {
         self.runtime.usage().cumulative_usage()
     }
 
-
-
     fn ui_sender(&self) -> Option<mpsc::Sender<ReplTuiEvent>> {
         self.ui_tx.clone()
     }
-
-
 
     pub(crate) fn run_turn_tui(
         &mut self,
@@ -732,10 +728,7 @@ impl LiveCli {
         let handle = resolve_session_reference(&session_ref)?;
         let session = Session::load_from_path(&handle.path)?;
         let message_count = session.messages.len();
-        let model = session
-            .model
-            .clone()
-            .unwrap_or_else(|| self.model.clone());
+        let model = session.model.clone().unwrap_or_else(|| self.model.clone());
         self.runtime = build_runtime(
             session,
             model.clone(),
@@ -858,11 +851,16 @@ impl LiveCli {
             self.permission_mode,
             self.ui_sender(),
         )?;
-        println!("Auth\n  Provider         {}\n  Result           authenticated", provider_label(target));
+        println!(
+            "Auth\n  Provider         {}\n  Result           authenticated",
+            provider_label(target)
+        );
         Ok(())
     }
 
-    pub(crate) fn compact_command(&mut self) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
+    pub(crate) fn compact_command(
+        &mut self,
+    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
         let result = self.runtime.compact(CompactionConfig::default());
         let removed = result.removed_message_count;
         let kept = result.compacted_session.messages.len();
@@ -1209,7 +1207,7 @@ fn default_oauth_config() -> OAuthConfig {
     }
 }
 
-fn open_browser(url: &str) -> io::Result<()> {
+pub(crate) fn open_browser(url: &str) -> io::Result<()> {
     let escaped;
     let commands = if cfg!(target_os = "macos") {
         vec![("open", vec![url])]
@@ -1472,15 +1470,14 @@ fn load_oauth_config_from_cwd() -> Result<Option<OAuthConfig>, api::ApiError> {
     Ok(config.oauth().cloned())
 }
 
-fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
+pub(crate) fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
     match value.to_ascii_lowercase().as_str() {
         "anthropic" | "claude" => Ok(Provider::Anthropic),
         "openai" | "gpt" => Ok(Provider::OpenAi),
         "codex" => Ok(Provider::Codex),
-        other => Err(format!(
-            "unknown provider '{other}'. Use anthropic, openai, or codex."
-        )
-        .into()),
+        other => {
+            Err(format!("unknown provider '{other}'. Use anthropic, openai, or codex.").into())
+        }
     }
 }
 
@@ -1501,7 +1498,7 @@ fn prompt_provider_choice() -> Result<Provider, Box<dyn std::error::Error>> {
     }
 }
 
-fn provider_label(provider: Provider) -> &'static str {
+pub(crate) fn provider_label(provider: Provider) -> &'static str {
     match provider {
         Provider::Anthropic => "anthropic",
         Provider::OpenAi => "openai",
@@ -1738,9 +1735,7 @@ impl ApiClient for LlmRuntimeClient {
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
                     response_to_events(response, out, self.ui_tx.as_ref())
                 }
-                LlmProvider::OpenAi(_) | LlmProvider::Codex(_) => {
-                    Ok(events)
-                }
+                LlmProvider::OpenAi(_) | LlmProvider::Codex(_) => Ok(events),
             }
         })
     }
@@ -1981,11 +1976,9 @@ impl ToolExecutor for CliToolExecutor {
                     let rendered_error = error.to_string();
                     let markdown = format_tool_result(tool_name, &rendered_error, true);
                     let mut buf = Vec::<u8>::new();
-                    self.renderer
-                        .stream_markdown(&markdown, &mut buf)
-                        .map_err(|stream_error: io::Error| {
-                            ToolError::new(stream_error.to_string())
-                        })?;
+                    self.renderer.stream_markdown(&markdown, &mut buf).map_err(
+                        |stream_error: io::Error| ToolError::new(stream_error.to_string()),
+                    )?;
                     let rendered = String::from_utf8_lossy(&buf).into_owned();
                     let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
                 }

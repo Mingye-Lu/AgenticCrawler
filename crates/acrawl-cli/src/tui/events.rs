@@ -19,4 +19,37 @@ pub enum ReplTuiEvent {
         input: String,
     },
     SystemMessage(String),
+    /// OAuth flow finished (success or error).
+    AuthOAuthComplete {
+        provider: String,
+        result: Result<(), String>,
+    },
+    /// Status update from OAuth thread (e.g., "Listening on port 4545...").
+    AuthOAuthProgress {
+        message: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_event_variants_constructible() {
+        // Verify AuthOAuthComplete can be constructed
+        let _complete_ok = ReplTuiEvent::AuthOAuthComplete {
+            provider: "anthropic".to_string(),
+            result: Ok(()),
+        };
+
+        let _complete_err = ReplTuiEvent::AuthOAuthComplete {
+            provider: "openai".to_string(),
+            result: Err("auth failed".to_string()),
+        };
+
+        // Verify AuthOAuthProgress can be constructed
+        let _progress = ReplTuiEvent::AuthOAuthProgress {
+            message: "Listening on port 4545...".to_string(),
+        };
+    }
 }
