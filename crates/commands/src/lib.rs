@@ -177,6 +177,12 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         argument_hint: Some("[anthropic|openai|codex]"),
         resume_supported: false,
     },
+    SlashCommandSpec {
+        name: "exit",
+        summary: "Exit the REPL and save the session",
+        argument_hint: None,
+        resume_supported: false,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
