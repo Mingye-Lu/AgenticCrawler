@@ -4,6 +4,7 @@
     clippy::map_unwrap_or
 )]
 pub mod events;
+pub mod modal;
 pub mod repl_app;
 pub mod tool_panel;
 
