@@ -290,9 +290,7 @@ impl LiveCli {
         self.session.id.as_str()
     }
 
-    pub(crate) fn session_snapshot(&self) -> Session {
-        self.runtime.session().clone()
-    }
+
 
     pub(crate) fn model_name(&self) -> &str {
         &self.model
@@ -306,32 +304,13 @@ impl LiveCli {
         self.runtime.usage().cumulative_usage()
     }
 
-    pub(crate) fn latest_usage(&self) -> TokenUsage {
-        self.runtime.usage().current_turn_usage()
-    }
 
-    pub(crate) fn estimated_tokens(&self) -> usize {
-        self.runtime.estimated_tokens()
-    }
 
     fn ui_sender(&self) -> Option<mpsc::Sender<ReplTuiEvent>> {
         self.ui_tx.clone()
     }
 
-    /// Plain-text welcome lines for the Ratatui transcript (no ANSI art colors).
-    pub(crate) fn startup_banner_plain(&self) -> String {
-        let cwd = env::current_dir().map_or_else(
-            |_| "<unknown>".to_string(),
-            |path| path.display().to_string(),
-        );
-        format!(
-            "Welcome to acrawl\nModel: {}\nPermissions: {}\nDirectory: {}\nSession: {}\n\nType /help for commands.",
-            self.model,
-            self.permission_mode.as_str(),
-            cwd,
-            self.session.id,
-        )
-    }
+
 
     pub(crate) fn run_turn_tui(
         &mut self,
