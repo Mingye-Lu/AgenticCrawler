@@ -668,10 +668,10 @@ mod tests {
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         let error = super::read_api_key().expect_err("missing key should error");
         assert!(matches!(error, crate::error::ApiError::MissingApiKey));
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
     }
 
     #[test]
@@ -680,11 +680,11 @@ mod tests {
         std::env::set_var("ANTHROPIC_AUTH_TOKEN", "");
         std::env::remove_var("ANTHROPIC_API_KEY");
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         let error = super::read_api_key().expect_err("empty key should error");
         assert!(matches!(error, crate::error::ApiError::MissingApiKey));
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
     }
 
     #[test]
@@ -736,7 +736,7 @@ mod tests {
     fn auth_source_from_saved_oauth_when_env_absent() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
         save_oauth_credentials(&runtime::OAuthTokenSet {
@@ -751,7 +751,7 @@ mod tests {
         assert_eq!(auth.bearer_token(), Some("saved-access-token"));
 
         clear_oauth_credentials().expect("clear credentials");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup temp dir");
     }
 
@@ -775,7 +775,7 @@ mod tests {
     fn resolve_saved_oauth_token_refreshes_expired_credentials() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
         save_oauth_credentials(&runtime::OAuthTokenSet {
@@ -799,7 +799,7 @@ mod tests {
         assert_eq!(stored.access_token, "refreshed-token");
 
         clear_oauth_credentials().expect("clear credentials");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup temp dir");
     }
 
@@ -807,7 +807,7 @@ mod tests {
     fn resolve_startup_auth_source_uses_saved_oauth_without_loading_config() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
         save_oauth_credentials(&runtime::OAuthTokenSet {
@@ -823,7 +823,7 @@ mod tests {
         assert_eq!(auth.bearer_token(), Some("saved-access-token"));
 
         clear_oauth_credentials().expect("clear credentials");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup temp dir");
     }
 
@@ -831,7 +831,7 @@ mod tests {
     fn resolve_startup_auth_source_errors_when_refreshable_token_lacks_config() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
         save_oauth_credentials(&runtime::OAuthTokenSet {
@@ -855,7 +855,7 @@ mod tests {
         assert_eq!(stored.refresh_token.as_deref(), Some("refresh-token"));
 
         clear_oauth_credentials().expect("clear credentials");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup temp dir");
     }
 
@@ -863,7 +863,7 @@ mod tests {
     fn resolve_saved_oauth_token_preserves_refresh_token_when_refresh_response_omits_it() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
         std::env::remove_var("ANTHROPIC_API_KEY");
         save_oauth_credentials(&runtime::OAuthTokenSet {
@@ -888,7 +888,7 @@ mod tests {
         assert_eq!(stored.refresh_token.as_deref(), Some("refresh-token"));
 
         clear_oauth_credentials().expect("clear credentials");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup temp dir");
     }
 

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::json::JsonValue;
 use crate::sandbox::{FilesystemIsolationMode, SandboxConfig};
 
-pub const CLAUDE_CODE_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
+pub const ACRAWL_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigSource {
@@ -174,22 +174,22 @@ impl ConfigLoader {
     #[must_use]
     pub fn default_for(cwd: impl Into<PathBuf>) -> Self {
         let cwd = cwd.into();
-        let config_home = std::env::var_os("CLAUDE_CONFIG_HOME")
+        let config_home = std::env::var_os("ACRAWL_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| {
                 std::env::var_os("HOME")
                     .or_else(|| std::env::var_os("USERPROFILE"))
-                    .map(|home| PathBuf::from(home).join(".claude"))
+                    .map(|home| PathBuf::from(home).join(".acrawl"))
             })
-            .unwrap_or_else(|| PathBuf::from(".claude"));
+            .unwrap_or_else(|| PathBuf::from(".acrawl"));
         Self { cwd, config_home }
     }
 
     #[must_use]
     pub fn discover(&self) -> Vec<ConfigEntry> {
         let user_legacy_path = self.config_home.parent().map_or_else(
-            || PathBuf::from(".claude.json"),
-            |parent| parent.join(".claude.json"),
+            || PathBuf::from(".acrawl.json"),
+            |parent| parent.join(".acrawl.json"),
         );
         vec![
             ConfigEntry {
@@ -202,15 +202,15 @@ impl ConfigLoader {
             },
             ConfigEntry {
                 source: ConfigSource::Project,
-                path: self.cwd.join(".claude.json"),
+                path: self.cwd.join(".acrawl.json"),
             },
             ConfigEntry {
                 source: ConfigSource::Project,
-                path: self.cwd.join(".claude").join("settings.json"),
+                path: self.cwd.join(".acrawl").join("settings.json"),
             },
             ConfigEntry {
                 source: ConfigSource::Local,
-                path: self.cwd.join(".claude").join("settings.local.json"),
+                path: self.cwd.join(".acrawl").join("settings.local.json"),
             },
         ]
     }
@@ -410,7 +410,7 @@ impl McpServerConfig {
 fn read_optional_json_object(
     path: &Path,
 ) -> Result<Option<BTreeMap<String, JsonValue>>, ConfigError> {
-    let is_legacy_config = path.file_name().and_then(|name| name.to_str()) == Some(".claude.json");
+    let is_legacy_config = path.file_name().and_then(|name| name.to_str()) == Some(".acrawl.json");
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -748,7 +748,7 @@ fn optional_string_array(
     }
 }
 
-/// Hook lists may be plain command strings or Claude Code-style objects (`command`, nested `hooks`).
+/// Hook lists may be plain command strings or nested objects (`command`, nested `hooks`).
 fn optional_hook_command_array(
     object: &BTreeMap<String, JsonValue>,
     key: &str,
@@ -845,7 +845,7 @@ fn deep_merge_objects(
 mod tests {
     use super::{
         ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ResolvedPermissionMode,
-        CLAUDE_CODE_SETTINGS_SCHEMA_NAME,
+        ACRAWL_SETTINGS_SCHEMA_NAME,
     };
     use crate::json::JsonValue;
     use crate::sandbox::FilesystemIsolationMode;
@@ -864,7 +864,7 @@ mod tests {
     fn rejects_non_object_settings_files() {
         let root = temp_dir();
         let cwd = root.join("project");
-        let home = root.join("home").join(".claude");
+        let home = root.join("home").join(".acrawl");
         fs::create_dir_all(&home).expect("home config dir");
         fs::create_dir_all(&cwd).expect("project dir");
         fs::write(home.join("settings.json"), "[]").expect("write bad settings");
@@ -880,15 +880,15 @@ mod tests {
     }
 
     #[test]
-    fn loads_and_merges_claude_code_config_files_by_precedence() {
+    fn loads_and_merges_config_files_by_precedence() {
         let root = temp_dir();
         let cwd = root.join("project");
-        let home = root.join("home").join(".claude");
-        fs::create_dir_all(cwd.join(".claude")).expect("project config dir");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(cwd.join(".acrawl")).expect("project config dir");
         fs::create_dir_all(&home).expect("home config dir");
 
         fs::write(
-            home.parent().expect("home parent").join(".claude.json"),
+            home.parent().expect("home parent").join(".acrawl.json"),
             r#"{"model":"haiku","env":{"A":"1"},"mcpServers":{"home":{"command":"uvx","args":["home"]}}}"#,
         )
         .expect("write user compat config");
@@ -898,17 +898,17 @@ mod tests {
         )
         .expect("write user settings");
         fs::write(
-            cwd.join(".claude.json"),
+            cwd.join(".acrawl.json"),
             r#"{"model":"project-compat","env":{"B":"2"}}"#,
         )
         .expect("write project compat config");
         fs::write(
-            cwd.join(".claude").join("settings.json"),
+            cwd.join(".acrawl").join("settings.json"),
             r#"{"env":{"C":"3"},"hooks":{"PostToolUse":["project"]},"mcpServers":{"project":{"command":"uvx","args":["project"]}}}"#,
         )
         .expect("write project settings");
         fs::write(
-            cwd.join(".claude").join("settings.local.json"),
+            cwd.join(".acrawl").join("settings.local.json"),
             r#"{"model":"opus","permissionMode":"acceptEdits"}"#,
         )
         .expect("write local settings");
@@ -917,7 +917,7 @@ mod tests {
             .load()
             .expect("config should load");
 
-        assert_eq!(CLAUDE_CODE_SETTINGS_SCHEMA_NAME, "SettingsSchema");
+        assert_eq!(ACRAWL_SETTINGS_SCHEMA_NAME, "SettingsSchema");
         assert_eq!(loaded.loaded_entries().len(), 5);
         assert_eq!(loaded.loaded_entries()[0].source, ConfigSource::User);
         assert_eq!(
@@ -956,15 +956,15 @@ mod tests {
     }
 
     #[test]
-    fn loads_hook_commands_from_claude_style_objects() {
+    fn loads_hook_commands_from_nested_objects() {
         let root = temp_dir();
         let cwd = root.join("project");
-        let home = root.join("home").join(".claude");
-        fs::create_dir_all(cwd.join(".claude")).expect("project config dir");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(cwd.join(".acrawl")).expect("project config dir");
         fs::create_dir_all(&home).expect("home config dir");
 
         fs::write(
-            cwd.join(".claude").join("settings.json"),
+            cwd.join(".acrawl").join("settings.json"),
             r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/bin/pre"}]}],"PostToolUse":["shell-p"]}}"#,
         )
         .expect("write project settings");
@@ -983,12 +983,12 @@ mod tests {
     fn parses_sandbox_config() {
         let root = temp_dir();
         let cwd = root.join("project");
-        let home = root.join("home").join(".claude");
-        fs::create_dir_all(cwd.join(".claude")).expect("project config dir");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(cwd.join(".acrawl")).expect("project config dir");
         fs::create_dir_all(&home).expect("home config dir");
 
         fs::write(
-            cwd.join(".claude").join("settings.local.json"),
+            cwd.join(".acrawl").join("settings.local.json"),
             r#"{
               "sandbox": {
                 "enabled": true,
@@ -1021,8 +1021,8 @@ mod tests {
     fn parses_typed_mcp_and_oauth_config() {
         let root = temp_dir();
         let cwd = root.join("project");
-        let home = root.join("home").join(".claude");
-        fs::create_dir_all(cwd.join(".claude")).expect("project config dir");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(cwd.join(".acrawl")).expect("project config dir");
         fs::create_dir_all(&home).expect("home config dir");
 
         fs::write(
@@ -1059,7 +1059,7 @@ mod tests {
         )
         .expect("write user settings");
         fs::write(
-            cwd.join(".claude").join("settings.local.json"),
+            cwd.join(".acrawl").join("settings.local.json"),
             r#"{
               "mcpServers": {
                 "remote-server": {
@@ -1112,7 +1112,7 @@ mod tests {
     fn rejects_invalid_mcp_server_shapes() {
         let root = temp_dir();
         let cwd = root.join("project");
-        let home = root.join("home").join(".claude");
+        let home = root.join("home").join(".acrawl");
         fs::create_dir_all(&home).expect("home config dir");
         fs::create_dir_all(&cwd).expect("project dir");
         fs::write(

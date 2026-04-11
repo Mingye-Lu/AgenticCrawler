@@ -1425,7 +1425,7 @@ mod tests {
     fn resolve_codex_auth_uses_stored_oauth_token() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
@@ -1442,7 +1442,7 @@ mod tests {
         assert_eq!(auth.bearer_token(), Some("codex-oauth-token"));
 
         clear_oauth_credentials().expect("clear");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup");
     }
 
@@ -1450,7 +1450,7 @@ mod tests {
     fn resolve_codex_auth_skips_expired_oauth_falls_back_to_api_key() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::set_var("OPENAI_API_KEY", "sk-fallback-key");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
@@ -1468,7 +1468,7 @@ mod tests {
 
         clear_oauth_credentials().expect("clear");
         std::env::remove_var("OPENAI_API_KEY");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup");
     }
 
@@ -1476,7 +1476,7 @@ mod tests {
     fn resolve_codex_auth_uses_api_key_when_no_oauth_stored() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::set_var("OPENAI_API_KEY", "sk-test-key");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
@@ -1485,7 +1485,7 @@ mod tests {
         assert_eq!(auth.bearer_token(), Some("sk-test-key"));
 
         std::env::remove_var("OPENAI_API_KEY");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).ok();
     }
 
@@ -1493,7 +1493,7 @@ mod tests {
     fn resolve_codex_auth_errors_when_no_credentials() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
@@ -1501,7 +1501,7 @@ mod tests {
         let error = resolve_codex_auth().expect_err("should error without credentials");
         assert!(matches!(error, ApiError::Auth(ref msg) if msg.contains("acrawl login")));
 
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).ok();
     }
 
@@ -1509,7 +1509,7 @@ mod tests {
     fn logout_clears_stored_credentials() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
 
@@ -1526,7 +1526,7 @@ mod tests {
         let loaded = load_oauth_credentials().expect("load after logout");
         assert!(loaded.is_none());
 
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup");
     }
 
@@ -1534,7 +1534,7 @@ mod tests {
     fn save_codex_credentials_persists_token_set() {
         let _guard = env_lock();
         let config_home = temp_config_home();
-        std::env::set_var("CLAUDE_CONFIG_HOME", &config_home);
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
 
@@ -1557,7 +1557,7 @@ mod tests {
         );
 
         clear_oauth_credentials().expect("clear");
-        std::env::remove_var("CLAUDE_CONFIG_HOME");
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup");
     }
 }

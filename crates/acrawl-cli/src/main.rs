@@ -845,8 +845,8 @@ mod tests {
 
     #[test]
     fn init_template_mentions_detected_rust_workspace() {
-        let rendered = crate::init::render_init_claude_md(std::path::Path::new("."));
-        assert!(rendered.contains("# CLAUDE.md"));
+        let rendered = crate::init::render_init_agents_md(std::path::Path::new("."));
+        assert!(rendered.contains("# AGENTS.md"));
         assert!(rendered.contains("cargo clippy --workspace --all-targets -- -D warnings"));
     }
 }

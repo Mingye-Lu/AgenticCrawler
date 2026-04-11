@@ -303,7 +303,7 @@ pub(crate) fn render_memory_report() -> Result<String, Box<dyn std::error::Error
     if project_context.instruction_files.is_empty() {
         lines.push("Discovered files".to_string());
         lines.push(
-            "  No CLAUDE instruction files discovered in the current directory ancestry."
+            "  No agent instruction files discovered in the current directory ancestry."
                 .to_string(),
         );
     } else {
@@ -326,7 +326,7 @@ pub(crate) fn render_memory_report() -> Result<String, Box<dyn std::error::Error
     Ok(lines.join("\n"))
 }
 
-pub(crate) fn init_claude_md() -> Result<String, Box<dyn std::error::Error>> {
+pub(crate) fn init_agents_md() -> Result<String, Box<dyn std::error::Error>> {
     let cwd = env::current_dir()?;
     Ok(initialize_repo(&cwd)?.render())
 }

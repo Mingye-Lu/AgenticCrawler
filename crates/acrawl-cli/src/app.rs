@@ -30,7 +30,7 @@ use crate::format::{
     command_exists, format_auto_compaction_notice, format_compact_report, format_cost_report,
     format_model_report, format_model_switch_report, format_permissions_report,
     format_permissions_switch_report, format_resume_report, format_status_report, git_output,
-    git_status_ok, init_claude_md, normalize_permission_mode, parse_titled_body,
+    git_status_ok, init_agents_md, normalize_permission_mode, parse_titled_body,
     recent_user_context, render_config_report, render_diff_report, render_export_text,
     render_last_tool_debug_report, render_memory_report, render_repl_help, render_teleport_report,
     render_version_report, resolve_export_path, sanitize_generated_message, status_context,
@@ -1090,7 +1090,7 @@ pub(crate) fn run_resume_command(
         }),
         SlashCommand::Init => Ok(ResumeCommandOutcome {
             session: session.clone(),
-            message: Some(init_claude_md()?),
+            message: Some(init_agents_md()?),
         }),
         SlashCommand::Diff => Ok(ResumeCommandOutcome {
             session: session.clone(),
@@ -1177,7 +1177,7 @@ pub(crate) fn run_logout() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub(crate) fn run_init() -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", init_claude_md()?);
+    println!("{}", init_agents_md()?);
     Ok(())
 }
 

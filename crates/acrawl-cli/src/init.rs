@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const STARTER_CLAUDE_JSON: &str = concat!(
+const STARTER_ACRAWL_JSON: &str = concat!(
     "{\n",
     "  \"permissions\": {\n",
     "    \"defaultMode\": \"dontAsk\"\n",
@@ -9,7 +9,7 @@ const STARTER_CLAUDE_JSON: &str = concat!(
     "}\n",
 );
 const GITIGNORE_COMMENT: &str = "# AgenticCrawler local artifacts";
-const GITIGNORE_ENTRIES: [&str; 2] = [".claude/settings.local.json", ".acrawl/sessions/"];
+const GITIGNORE_ENTRIES: [&str; 2] = [".acrawl/settings.local.json", ".acrawl/sessions/"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InitStatus {
@@ -80,16 +80,16 @@ struct RepoDetection {
 pub(crate) fn initialize_repo(cwd: &Path) -> Result<InitReport, Box<dyn std::error::Error>> {
     let mut artifacts = Vec::new();
 
-    let claude_dir = cwd.join(".claude");
+    let acrawl_dir = cwd.join(".acrawl");
     artifacts.push(InitArtifact {
-        name: ".claude/",
-        status: ensure_dir(&claude_dir)?,
+        name: ".acrawl/",
+        status: ensure_dir(&acrawl_dir)?,
     });
 
-    let claude_json = cwd.join(".claude.json");
+    let acrawl_json = cwd.join(".acrawl.json");
     artifacts.push(InitArtifact {
-        name: ".claude.json",
-        status: write_file_if_missing(&claude_json, STARTER_CLAUDE_JSON)?,
+        name: ".acrawl.json",
+        status: write_file_if_missing(&acrawl_json, STARTER_ACRAWL_JSON)?,
     });
 
     let gitignore = cwd.join(".gitignore");
@@ -98,11 +98,11 @@ pub(crate) fn initialize_repo(cwd: &Path) -> Result<InitReport, Box<dyn std::err
         status: ensure_gitignore_entries(&gitignore)?,
     });
 
-    let claude_md = cwd.join("CLAUDE.md");
-    let content = render_init_claude_md(cwd);
+    let agents_md = cwd.join("AGENTS.md");
+    let content = render_init_agents_md(cwd);
     artifacts.push(InitArtifact {
-        name: "CLAUDE.md",
-        status: write_file_if_missing(&claude_md, &content)?,
+        name: "AGENTS.md",
+        status: write_file_if_missing(&agents_md, &content)?,
     });
 
     Ok(InitReport {
@@ -159,10 +159,10 @@ fn ensure_gitignore_entries(path: &Path) -> Result<InitStatus, std::io::Error> {
     Ok(InitStatus::Updated)
 }
 
-pub(crate) fn render_init_claude_md(cwd: &Path) -> String {
+pub(crate) fn render_init_agents_md(cwd: &Path) -> String {
     let detection = detect_repo(cwd);
     let mut lines = vec![
-        "# CLAUDE.md".to_string(),
+        "# AGENTS.md".to_string(),
         String::new(),
         "This file provides guidance to AgenticCrawler when working with code in this repository."
             .to_string(),
@@ -210,8 +210,8 @@ pub(crate) fn render_init_claude_md(cwd: &Path) -> String {
 
     lines.push("## Working agreement".to_string());
     lines.push("- Prefer small, reviewable changes and keep generated bootstrap files aligned with actual repo workflows.".to_string());
-    lines.push("- Keep shared defaults in `.claude.json`; reserve `.claude/settings.local.json` for machine-local overrides.".to_string());
-    lines.push("- Do not overwrite existing `CLAUDE.md` content automatically; update it intentionally when repo workflows change.".to_string());
+    lines.push("- Keep shared defaults in `.acrawl.json`; reserve `.acrawl/settings.local.json` for machine-local overrides.".to_string());
+    lines.push("- Do not overwrite existing `AGENTS.md` content automatically; update it intentionally when repo workflows change.".to_string());
     lines.push(String::new());
 
     lines.join("\n")
@@ -334,7 +334,7 @@ fn framework_notes(detection: &RepoDetection) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{initialize_repo, render_init_claude_md};
+    use super::{initialize_repo, render_init_agents_md};
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -355,15 +355,15 @@ mod tests {
 
         let report = initialize_repo(&root).expect("init should succeed");
         let rendered = report.render();
-        assert!(rendered.contains(".claude/         created"));
-        assert!(rendered.contains(".claude.json     created"));
+        assert!(rendered.contains(".acrawl/         created"));
+        assert!(rendered.contains(".acrawl.json     created"));
         assert!(rendered.contains(".gitignore       created"));
-        assert!(rendered.contains("CLAUDE.md        created"));
-        assert!(root.join(".claude").is_dir());
-        assert!(root.join(".claude.json").is_file());
-        assert!(root.join("CLAUDE.md").is_file());
+        assert!(rendered.contains("AGENTS.md        created"));
+        assert!(root.join(".acrawl").is_dir());
+        assert!(root.join(".acrawl.json").is_file());
+        assert!(root.join("AGENTS.md").is_file());
         assert_eq!(
-            fs::read_to_string(root.join(".claude.json")).expect("read claude json"),
+            fs::read_to_string(root.join(".acrawl.json")).expect("read acrawl json"),
             concat!(
                 "{\n",
                 "  \"permissions\": {\n",
@@ -373,11 +373,11 @@ mod tests {
             )
         );
         let gitignore = fs::read_to_string(root.join(".gitignore")).expect("read gitignore");
-        assert!(gitignore.contains(".claude/settings.local.json"));
+        assert!(gitignore.contains(".acrawl/settings.local.json"));
         assert!(gitignore.contains(".acrawl/sessions/"));
-        let claude_md = fs::read_to_string(root.join("CLAUDE.md")).expect("read claude md");
-        assert!(claude_md.contains("Languages: Rust."));
-        assert!(claude_md.contains("cargo clippy --workspace --all-targets -- -D warnings"));
+        let agents_md = fs::read_to_string(root.join("AGENTS.md")).expect("read agents md");
+        assert!(agents_md.contains("Languages: Rust."));
+        assert!(agents_md.contains("cargo clippy --workspace --all-targets -- -D warnings"));
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
@@ -386,26 +386,26 @@ mod tests {
     fn initialize_repo_is_idempotent_and_preserves_existing_files() {
         let root = temp_dir();
         fs::create_dir_all(&root).expect("create root");
-        fs::write(root.join("CLAUDE.md"), "custom guidance\n").expect("write existing claude md");
-        fs::write(root.join(".gitignore"), ".claude/settings.local.json\n")
+        fs::write(root.join("AGENTS.md"), "custom guidance\n").expect("write existing agents md");
+        fs::write(root.join(".gitignore"), ".acrawl/settings.local.json\n")
             .expect("write gitignore");
 
         let first = initialize_repo(&root).expect("first init should succeed");
         assert!(first
             .render()
-            .contains("CLAUDE.md        skipped (already exists)"));
+            .contains("AGENTS.md        skipped (already exists)"));
         let second = initialize_repo(&root).expect("second init should succeed");
         let second_rendered = second.render();
-        assert!(second_rendered.contains(".claude/         skipped (already exists)"));
-        assert!(second_rendered.contains(".claude.json     skipped (already exists)"));
+        assert!(second_rendered.contains(".acrawl/         skipped (already exists)"));
+        assert!(second_rendered.contains(".acrawl.json     skipped (already exists)"));
         assert!(second_rendered.contains(".gitignore       skipped (already exists)"));
-        assert!(second_rendered.contains("CLAUDE.md        skipped (already exists)"));
+        assert!(second_rendered.contains("AGENTS.md        skipped (already exists)"));
         assert_eq!(
-            fs::read_to_string(root.join("CLAUDE.md")).expect("read existing claude md"),
+            fs::read_to_string(root.join("AGENTS.md")).expect("read existing agents md"),
             "custom guidance\n"
         );
         let gitignore = fs::read_to_string(root.join(".gitignore")).expect("read gitignore");
-        assert_eq!(gitignore.matches(".claude/settings.local.json").count(), 1);
+        assert_eq!(gitignore.matches(".acrawl/settings.local.json").count(), 1);
         assert_eq!(gitignore.matches(".acrawl/sessions/").count(), 1);
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
@@ -423,7 +423,7 @@ mod tests {
         )
         .expect("write package json");
 
-        let rendered = render_init_claude_md(Path::new(&root));
+        let rendered = render_init_agents_md(Path::new(&root));
         assert!(rendered.contains("Languages: Python, TypeScript."));
         assert!(rendered.contains("Frameworks/tooling markers: Next.js, React."));
         assert!(rendered.contains("pyproject.toml"));
