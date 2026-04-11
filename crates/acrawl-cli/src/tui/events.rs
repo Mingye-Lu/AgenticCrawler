@@ -13,5 +13,10 @@ pub enum ReplTuiEvent {
         request: PermissionRequest,
         respond: Sender<PermissionPromptDecision>,
     },
+    /// Notification that the AI has started executing a specific tool.
+    ToolStarting {
+        name: String,
+        input: String,
+    },
     SystemMessage(String),
 }

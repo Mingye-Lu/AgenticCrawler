@@ -266,7 +266,36 @@ impl TerminalRenderer {
             );
         }
 
-        output.trim_end().to_string()
+        output.to_string()
+    }
+
+    #[must_use]
+    pub fn render_markdown_fragment(&self, markdown: &str) -> String {
+        let mut output = String::new();
+        let mut state = RenderState::default();
+        let mut code_language = String::new();
+        let mut code_buffer = String::new();
+        let mut in_code_block = false;
+
+        for event in Parser::new_ext(markdown, Options::all()) {
+            match event {
+                // For fragments, we don't want the mandatory document-level spacing
+                Event::End(TagEnd::Paragraph) => {}
+                Event::End(TagEnd::Heading(..)) => {
+                    state.heading_level = None;
+                }
+                _ => self.render_event(
+                    event,
+                    &mut state,
+                    &mut output,
+                    &mut code_buffer,
+                    &mut code_language,
+                    &mut in_code_block,
+                ),
+            }
+        }
+
+        output
     }
 
     #[must_use]
@@ -639,10 +668,12 @@ fn find_stream_safe_boundary(markdown: &str) -> Option<usize> {
     let mut in_fence = false;
     let mut last_boundary = None;
 
-    for (offset, line) in markdown.split_inclusive('\n').scan(0usize, |cursor, line| {
+    // We yield at certain safe points to reduce perceived latency
+    // Lines are safest, but for typewriter feel, word endings are better.
+    for (offset, line) in markdown.split_inclusive(|c| c == '\n' || c == ' ').scan(0usize, |cursor, part| {
         let start = *cursor;
-        *cursor += line.len();
-        Some((start, line))
+        *cursor += part.len();
+        Some((start, part))
     }) {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
@@ -657,8 +688,10 @@ fn find_stream_safe_boundary(markdown: &str) -> Option<usize> {
             continue;
         }
 
-        if trimmed.is_empty() {
-            last_boundary = Some(offset + line.len());
+        // Reverted to newline-only boundary for stability. 
+        // Real-time responsiveness will be handled by raw token streaming.
+        if line.ends_with('\n') {
+             last_boundary = Some(offset + line.len());
         }
     }
 
@@ -669,7 +702,7 @@ fn visible_width(input: &str) -> usize {
     strip_ansi(input).chars().count()
 }
 
-fn strip_ansi(input: &str) -> String {
+pub fn strip_ansi(input: &str) -> String {
     let mut output = String::new();
     let mut chars = input.chars().peekable();
 

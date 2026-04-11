@@ -1,23 +1,25 @@
 //! Ratatui REPL with a welcome screen, sticky-bottom chat transcript, slash overlay, and floating input.
 
 use std::cmp::min;
+use std::collections::VecDeque;
 use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ansi_to_tui::IntoText as _;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::execute;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
     Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
+use ansi_to_tui::IntoText;
+use crate::render::TerminalRenderer;
 use ratatui::DefaultTerminal;
 use runtime::{
     format_usd, pricing_for_model, PermissionMode, PermissionPromptDecision, PermissionRequest,
@@ -40,6 +42,7 @@ enum AppUiState {
 #[derive(Clone)]
 enum TranscriptEntry {
     System(String),
+    Status(String),
     User(String),
     Stream(Line<'static>),
     SystemCard {
@@ -68,6 +71,18 @@ struct HeaderSnapshot {
     session_id: String,
     cost_text: String,
     context_text: String,
+}
+
+impl Default for HeaderSnapshot {
+    fn default() -> Self {
+        Self {
+            model: "--".to_string(),
+            permission_mode: PermissionMode::ReadOnly,
+            session_id: "--".to_string(),
+            cost_text: "--".to_string(),
+            context_text: "--".to_string(),
+        }
+    }
 }
 
 fn format_compact_tokens(tokens: u32) -> String {
@@ -166,8 +181,67 @@ fn parse_report_rows(report: &str) -> Vec<(String, String)> {
     rows
 }
 
-fn build_wrapped_list(entries: &[TranscriptEntry], width: u16) -> Vec<ListItem<'static>> {
+/// Simple ANSI-aware line wrapping for Ratatui Lines.
+fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
+    let mut result = Vec::new();
+    let mut current_line_spans = Vec::new();
+    let mut current_width = 0;
+    
+    let target_width = usize::from(width.max(10));
+
+    for span in line.spans {
+        let span_width = span.width();
+        
+        if current_width + span_width <= target_width {
+            current_width += span_width;
+            current_line_spans.push(span);
+        } else {
+            // Need to split the span
+            let mut remaining_text = span.content.to_string();
+            let style = span.style;
+            
+            while !remaining_text.is_empty() {
+                let available = target_width.saturating_sub(current_width);
+                if available == 0 {
+                    result.push(Line::from(std::mem::take(&mut current_line_spans)));
+                    current_width = 0;
+                    continue;
+                }
+                
+                // Find how many chars of remaining_text fit in 'available' width
+                // Simplified: assuming each char is 1 width for now (AgenticCrawler mostly uses ASCII/Simple UTF8 here)
+                let split_idx = remaining_text.chars().take(available).map(|c| c.len_utf8()).sum::<usize>();
+                let head = remaining_text[..split_idx].to_string();
+                remaining_text = remaining_text[split_idx..].to_string();
+                
+                current_line_spans.push(Span::styled(head, style));
+                current_width += available; // Or actual width if using unicode_width
+                
+                if current_width >= target_width {
+                    result.push(Line::from(std::mem::take(&mut current_line_spans)));
+                    current_width = 0;
+                }
+            }
+        }
+    }
+    
+    if !current_line_spans.is_empty() {
+        result.push(Line::from(current_line_spans));
+    }
+    
+    result
+}
+
+
+fn build_wrapped_list(
+    entries: &[TranscriptEntry],
+    width: u16,
+    live: Option<&str>,
+) -> Vec<ListItem<'static>> {
     let mut out = Vec::new();
+    // Restore the top padding margin
+    out.push(ListItem::new(Line::from(" ")));
+    
     let system_style = Style::default().fg(Color::DarkGray).italic();
     let user_prefix_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
 
@@ -181,18 +255,26 @@ fn build_wrapped_list(entries: &[TranscriptEntry], width: u16) -> Vec<ListItem<'
             TranscriptEntry::User(text) => {
                 let prefixed = format!("  You {text}");
                 let rows = wrap_plain_text(&prefixed, width);
+                let user_bg = Color::Rgb(35, 45, 60); // Subtle blue-gray background
                 for (idx, row) in rows.into_iter().enumerate() {
-                    if idx == 0 && row.trim_start().starts_with("You ") {
+                    let line = if idx == 0 && row.trim_start().starts_with("You ") {
                         let trimmed = row.trim_start();
                         let rest = trimmed.get(4..).unwrap_or("").to_string();
-                        out.push(ListItem::new(Line::from(vec![
+                        Line::from(vec![
                             Span::raw("  "),
                             Span::styled("You ", user_prefix_style),
                             Span::raw(rest),
-                        ])));
+                        ])
                     } else {
-                        out.push(ListItem::new(Line::from(Span::raw(row))));
-                    }
+                        Line::from(Span::raw(row))
+                    };
+                    out.push(ListItem::new(line).bg(user_bg));
+                }
+            }
+            TranscriptEntry::Status(text) => {
+                let status_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
+                for row in wrap_plain_text(text, width) {
+                    out.push(ListItem::new(Line::from(Span::styled(row, status_style))));
                 }
             }
             TranscriptEntry::Stream(line) => {
@@ -237,6 +319,38 @@ fn build_wrapped_list(entries: &[TranscriptEntry], width: u16) -> Vec<ListItem<'
                 out.push(ListItem::new(Line::from(Span::styled("└────────────────", border_style))));
             }
         }
+        
+        // Add a blank separator line ONLY after User messages or Cards to separate blocks
+        match entry {
+            TranscriptEntry::User(_) | TranscriptEntry::SystemCard { .. } => {
+                out.push(ListItem::new(Line::from(" ")));
+            }
+            _ => {}
+        }
+    }
+
+    // Live typewriter line shown at the bottom during streaming
+    if let Some(text) = live {
+        if !text.is_empty() {
+            // Render the live fragment using the Markdown renderer to maintain high-fidelity formatting (bold, etc.)
+            let renderer = TerminalRenderer::new();
+            let rendered_ansi = renderer.render_markdown_fragment(text);
+            
+            if let Ok(ansi_text) = rendered_ansi.as_bytes().into_text() {
+                // Wrap each rendered line to the available width to prevent overflow
+                for line in ansi_text {
+                    for wrapped_line in wrap_ansi_line(line, width) {
+                        out.push(ListItem::new(wrapped_line));
+                    }
+                }
+            } else {
+                // Fallback to plain text if ANSI conversion fails
+                let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
+                for row in wrap_plain_text(text, width) {
+                    out.push(ListItem::new(Line::from(Span::styled(row, live_style))));
+                }
+            }
+        }
     }
     out
 }
@@ -279,10 +393,19 @@ struct ReplTuiState {
     busy: bool,
     pending_permission: Option<(PermissionRequest, Sender<PermissionPromptDecision>)>,
     exit: bool,
+    current_tool: Option<String>,
+    status_entry_index: Option<usize>,
     persist_on_exit: bool,
     cursor_on: bool,
     cursor_blink_deadline: Instant,
     slash_overlay: Option<SlashOverlay>,
+    cached_header: HeaderSnapshot,
+    spinner_tick: u8,
+    spinner_deadline: Instant,
+    /// Queue of plain-text chars waiting to be revealed by the typewriter.
+    typewriter_chars: VecDeque<char>,
+    /// The current line being built char-by-char (shown as live line).
+    typewriter_live: String,
 }
 
 impl ReplTuiState {
@@ -302,19 +425,72 @@ impl ReplTuiState {
             busy: false,
             pending_permission: None,
             exit: false,
-            persist_on_exit: true,
+            persist_on_exit: false,
+            current_tool: None,
+            status_entry_index: None,
             cursor_on: true,
             cursor_blink_deadline: Instant::now() + Duration::from_millis(530),
             slash_overlay: None,
+            cached_header: HeaderSnapshot::default(),
+            spinner_tick: 0,
+            spinner_deadline: Instant::now() + Duration::from_millis(120),
+            typewriter_chars: VecDeque::new(),
+            typewriter_live: String::new(),
         }
     }
 
     fn tick_input_caret(&mut self) {
-        if Instant::now() >= self.cursor_blink_deadline {
+        let now = Instant::now();
+        if now >= self.cursor_blink_deadline {
             self.cursor_on = !self.cursor_on;
-            self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
+            self.cursor_blink_deadline = now + Duration::from_millis(530);
+        }
+        if now >= self.spinner_deadline {
+            self.spinner_tick = self.spinner_tick.wrapping_add(1);
+            self.spinner_deadline = now + Duration::from_millis(120);
         }
     }
+
+    /// Returns the spinner frame matching the current tick.
+    fn spinner_char(&self) -> char {
+        const FRAMES: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+        FRAMES[usize::from(self.spinner_tick) % FRAMES.len()]
+    }
+
+    /// Context-aware placeholder shown when the input box is empty.
+    fn input_placeholder(&self) -> &'static str {
+        if self.pending_permission.is_some() {
+            "Waiting for your authorization  (y / n / Esc)…"
+        } else if self.busy {
+            "AgenticCrawler is working…  (you can queue your next prompt)"
+        } else if self.ui_state == AppUiState::WelcomeMode {
+            "What is our goal today?"
+        } else {
+            "Any follow-up instructions?"
+        }
+    }
+
+    /// Advance the typewriter: reveal `chars_per_tick` chars from the queue.
+    fn tick_typewriter(&mut self, chars_per_tick: usize) {
+        let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
+        for _ in 0..chars_per_tick {
+            match self.typewriter_chars.pop_front() {
+                None => break,
+                Some('\n') => {
+                    let line = std::mem::take(&mut self.typewriter_live);
+                    self.entries.push(TranscriptEntry::Stream(
+                        Line::from(Span::styled(line, live_style)),
+                    ));
+                    self.follow_bottom = true;
+                }
+                Some(c) => {
+                    self.typewriter_live.push(c);
+                    self.follow_bottom = true;
+                }
+            }
+        }
+    }
+
 
     fn wake_input_caret(&mut self) {
         self.cursor_on = true;
@@ -323,11 +499,12 @@ impl ReplTuiState {
 
     fn calculate_input_dimensions(&mut self, width: u16) -> (u16, Vec<Line<'static>>, usize) {
         let is_placeholder = self.input.is_empty();
+        let placeholder_text = self.input_placeholder();
         let mut lines_data = self.input.split('\n').map(ToOwned::to_owned).collect::<Vec<_>>();
         if lines_data.is_empty() {
             lines_data.push(String::new());
         }
-        let logical_lines = if is_placeholder { vec!["What is our goal today?".to_string()] } else { lines_data };
+        let logical_lines = if is_placeholder { vec![placeholder_text.to_owned()] } else { lines_data };
         
         let safe_width = width.saturating_sub(5).max(5) as usize;
         let mut visual_lines = Vec::new(); 
@@ -374,8 +551,14 @@ impl ReplTuiState {
         let sliced = visual_lines.into_iter().skip(skip).take(max_text_lines).collect::<Vec<_>>();
         let total_sliced = sliced.len();
         
-        let caret = if self.cursor_on && !self.busy { "|" } else { " " };
-        let text_style = if is_placeholder { Style::default().fg(Color::DarkGray) } else { Style::default() };
+        let caret = if self.cursor_on { "|" } else { " " };
+        let text_style = if is_placeholder { 
+            Style::default().fg(Color::DarkGray) 
+        } else if self.busy {
+            Style::default().fg(Color::Rgb(100, 100, 100)) // Dimmed text during AI turn
+        } else { 
+            Style::default() 
+        };
         
         let mut render_lines = Vec::new();
         render_lines.push(Line::from(""));
@@ -415,17 +598,6 @@ impl ReplTuiState {
         self.follow_bottom = true;
     }
 
-    fn push_stream_ansi(&mut self, ansi: &str) {
-        let Ok(text) = ansi.as_bytes().into_text() else {
-            return;
-        };
-        if !text.lines.is_empty() {
-            self.ui_state = AppUiState::ChatMode;
-        }
-        for line in text.lines {
-            self.entries.push(TranscriptEntry::Stream(line));
-        }
-    }
 
     fn push_system(&mut self, msg: &str) {
         self.ui_state = AppUiState::ChatMode;
@@ -512,23 +684,60 @@ impl ReplTuiState {
         while let Ok(ev) = rx.try_recv() {
             match ev {
                 ReplTuiEvent::StreamAnsi(s) => {
-                    had_new_rows = true;
-                    self.push_stream_ansi(&s);
+                    // Enqueue raw chars for typewriter reveal.
+                    for c in s.chars() {
+                        self.typewriter_chars.push_back(c);
+                    }
                 }
                 ReplTuiEvent::TurnStarting => {
                     self.busy = true;
+                    self.current_tool = None;
                     self.status_line = "Thinking...".to_string();
                     had_new_rows = true;
-                    self.entries.push(TranscriptEntry::System(
+                    self.status_entry_index = Some(self.entries.len());
+                    self.entries.push(TranscriptEntry::Status(
                         "· Thinking about next move...".to_string(),
                     ));
                 }
+                ReplTuiEvent::ToolStarting { name, input } => {
+                    self.current_tool = Some(name.clone());
+                    let truncated_input = if input.len() > 30 {
+                        format!("{}...", &input[..27])
+                    } else {
+                        input.clone()
+                    };
+                    self.status_line = format!("Executing {name}({truncated_input})...");
+                    if let Some(idx) = self.status_entry_index {
+                        if let Some(TranscriptEntry::Status(s)) = self.entries.get_mut(idx) {
+                            *s = format!("· Executing {name}({truncated_input})...");
+                        }
+                    }
+                }
                 ReplTuiEvent::TurnFinished(result) => {
                     self.busy = false;
+                    self.current_tool = None;
                     self.status_line = match &result {
                         Ok(()) => "Ready".to_string(),
                         Err(e) => format!("Error: {e}"),
                     };
+                    
+                    // Flush any remaining characters in the typewriter and clear status
+                    if !self.typewriter_chars.is_empty() {
+                        let count = self.typewriter_chars.len();
+                        self.tick_typewriter(count);
+                    }
+                    if !self.typewriter_live.is_empty() {
+                        let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
+                        let line = std::mem::take(&mut self.typewriter_live);
+                        self.entries.push(TranscriptEntry::Stream(Line::from(Span::styled(line, live_style))));
+                    }
+                    
+                    // Remove status line on finish
+                    if let Some(idx) = self.status_entry_index.take() {
+                        if idx < self.entries.len() && matches!(self.entries[idx], TranscriptEntry::Status(_)) {
+                            self.entries.remove(idx);
+                        }
+                    }
                     if let Err(e) = result {
                         self.push_system(&format!("Error: {e}"));
                     }
@@ -719,25 +928,39 @@ fn draw_chat(
 ) {
     let area = frame.area();
     let (footer_h, render_lines, max_scroll) = state.calculate_input_dimensions(area.width);
+
+    // Layout: 1-row header | transcript | 1-row spacer | input footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(4), Constraint::Length(footer_h)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(4),
+            Constraint::Length(1),
+            Constraint::Length(footer_h),
+        ])
         .split(area);
     let header_area = chunks[0];
-    let main_area = chunks[1];
-    let input_area = chunks[2];
+    let main_area   = chunks[1];
+    // chunks[2] is the spacer gap - intentionally left empty for breathing room
+    let input_area  = chunks[3];
 
     draw_header(frame, header_area, header);
 
+    // --- Transcript block (rounded, matches welcome palette) ---
+    let transcript_border_color = if state.busy {
+        Color::Rgb(40, 80, 110)
+    } else {
+        Color::Rgb(50, 65, 90)
+    };
     let main_block = Block::default()
-        .title(" Transcript ")
-        .title_style(Style::default().fg(Color::Rgb(140, 180, 220)))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(60, 80, 100)));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(transcript_border_color));
     let main_inner = main_block.inner(main_area);
     frame.render_widget(main_block, main_area);
 
-    let wrapped = build_wrapped_list(&state.entries, main_inner.width);
+    let live_line = if state.typewriter_live.is_empty() { None } else { Some(state.typewriter_live.as_str()) };
+    let wrapped = build_wrapped_list(&state.entries, main_inner.width, live_line);
     state.last_transcript_rect = main_inner;
     state.last_wrapped_len = wrapped.len();
     state.last_view_height = usize::from(main_inner.height.max(1));
@@ -751,17 +974,64 @@ fn draw_chat(
         .scroll_padding(2);
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
 
+    // Busy indicator overlay at bottom-right of transcript
+    if state.busy {
+        let spinner = state.spinner_char();
+        let label = format!(" {spinner} Generating… ");
+        let lw = u16::try_from(label.chars().count()).unwrap_or(14);
+        if main_inner.width > lw + 2 {
+            let ind_area = Rect::new(
+                main_inner.x + main_inner.width - lw,
+                main_inner.y + main_inner.height.saturating_sub(1),
+                lw,
+                1,
+            );
+            frame.render_widget(
+                Paragraph::new(label).style(
+                    Style::default()
+                        .fg(Color::LightCyan)
+                        .add_modifier(Modifier::DIM),
+                ),
+                ind_area,
+            );
+        }
+    }
+
+    // --- Footer / input block (rounded) ---
+    let footer_title = if let Some(ref tool) = state.current_tool {
+        let s = state.spinner_char();
+        format!(" {s} Executing {tool} ")
+    } else if state.busy {
+        let s = state.spinner_char();
+        format!(" {s} Thinking ")
+    } else if state.pending_permission.is_some() {
+        " ⚠ Permission ".to_string()
+    } else {
+        " Input ".to_string()
+    };
+
+    let footer_title_style = if state.busy {
+        Style::default().fg(Color::LightCyan)
+    } else if state.pending_permission.is_some() {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Rgb(100, 140, 180))
+    };
+
+    let footer_border_color = if state.busy {
+        Color::Rgb(30, 70, 100)
+    } else if state.pending_permission.is_some() {
+        Color::Rgb(120, 90, 30)
+    } else {
+        Color::Rgb(50, 70, 100)
+    };
+
     let footer_block = Block::default()
-        .title(if state.busy {
-            " Running "
-        } else if state.status_line.is_empty() {
-            " Ready "
-        } else {
-            " Status "
-        })
-        .title_style(Style::default().fg(Color::DarkGray))
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .title(footer_title)
+        .title_style(footer_title_style)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(footer_border_color))
         .padding(ratatui::widgets::Padding::symmetric(1, 0));
     let footer_inner = footer_block.inner(input_area);
     state.last_input_rect = footer_inner;
@@ -775,7 +1045,7 @@ fn draw_chat(
             .end_symbol(None)
             .track_symbol(Some(" "))
             .thumb_symbol("▐")
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(Color::Rgb(60, 90, 120)));
         let mut scrollbar_state = ScrollbarState::new(max_scroll).position(state.input_scroll_offset);
         frame.render_stateful_widget(
             scrollbar,
@@ -796,6 +1066,7 @@ fn draw_chat(
             .title(" Slash Commands ")
             .title_style(Style::default().fg(Color::LightCyan))
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Rgb(70, 120, 150)));
         let inner = block.inner(overlay_area);
         frame.render_widget(block, overlay_area);
@@ -995,12 +1266,12 @@ fn run_loop(
             break;
         }
 
-        let header = {
-            let g = cli.lock().expect("cli lock");
-            build_header_snapshot(&g)
-        };
+        if let Ok(g) = cli.try_lock() {
+            state.cached_header = build_header_snapshot(&g);
+        }
         state.tick_input_caret();
         state.refresh_slash_overlay();
+        let header = state.cached_header.clone();
 
         terminal.draw(|frame| {
             match state.ui_state {
@@ -1012,7 +1283,16 @@ fn run_loop(
             }
         })?;
 
-        if !event::poll(Duration::from_millis(50))? {
+        // Advance typewriter: dynamic speed to catch up if buffer accumulates
+        if !state.typewriter_chars.is_empty() {
+            let q_len = state.typewriter_chars.len();
+            let count = if q_len > 100 { 8 } else if q_len > 30 { 4 } else { 2 };
+            state.tick_typewriter(count); 
+        }
+
+        // Shorter poll when typewriter has pending chars so reveal feels smooth
+        let poll_ms = if !state.typewriter_chars.is_empty() { 16 } else { 50 };
+        if !event::poll(Duration::from_millis(poll_ms))? {
             continue;
         }
 
@@ -1112,9 +1392,6 @@ fn run_loop(
 
                 match key.code {
                     KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                        if state.busy {
-                            continue;
-                        }
                         state.input.push('\n');
                         state.input_scroll_offset = usize::MAX;
                         state.wake_input_caret();
@@ -1122,6 +1399,7 @@ fn run_loop(
                     }
                     KeyCode::Enter => {
                         if state.busy {
+                            state.push_system("Please wait for the current task to finish before submitting.");
                             continue;
                         }
 
@@ -1162,29 +1440,22 @@ fn run_loop(
                         state.wake_input_caret();
                     }
                     KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        if state.busy {
-                            continue;
-                        }
                         state.input.push('\n');
                         state.input_scroll_offset = usize::MAX;
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Char(c) => {
-                        if state.busy {
-                            continue;
-                        }
                         state.input.push(c);
                         state.input_scroll_offset = usize::MAX;
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Backspace => {
-                        if state.input.pop().is_some() {
-                            state.input_scroll_offset = usize::MAX;
-                            state.wake_input_caret();
-                            state.refresh_slash_overlay();
-                        }
+                        state.input.pop();
+                        state.input_scroll_offset = usize::MAX;
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
                     }
                     KeyCode::Tab => {
                         if state.busy || !state.input.trim_start().starts_with('/') {

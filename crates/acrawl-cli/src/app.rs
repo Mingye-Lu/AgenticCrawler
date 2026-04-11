@@ -1647,11 +1647,13 @@ impl ApiClient for LlmRuntimeClient {
                     ApiStreamEvent::ContentBlockDelta(delta) => match delta.delta {
                         ContentBlockDelta::TextDelta { text } => {
                             if !text.is_empty() {
+                                // Send raw delta to TUI immediately for zero-lag typewriter
+                                self.send_ui_stream(&text);
+
                                 if let Some(rendered) = markdown_stream.push(&renderer, &text) {
                                     write!(out, "{rendered}")
                                         .and_then(|()| out.flush())
                                         .map_err(|error| RuntimeError::new(error.to_string()))?;
-                                    self.send_ui_stream(rendered);
                                 }
                                 events.push(AssistantEvent::TextDelta(text));
                             }
@@ -1928,6 +1930,13 @@ impl ToolExecutor for CliToolExecutor {
                 "tool `{tool_name}` is not enabled by the current --allowedTools setting"
             )));
         }
+        if let Some(tx) = &self.ui_tx {
+            let _ = tx.send(ReplTuiEvent::ToolStarting {
+                name: tool_name.to_string(),
+                input: input.to_string(),
+            });
+        }
+
         match self.agent.execute(tool_name, input) {
             Ok(output) => {
                 if self.emit_output {
