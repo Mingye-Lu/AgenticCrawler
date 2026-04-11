@@ -178,6 +178,24 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: false,
     },
     SlashCommandSpec {
+        name: "headed",
+        summary: "Switch browser to headed (visible) mode",
+        argument_hint: None,
+        resume_supported: false,
+    },
+    SlashCommandSpec {
+        name: "headless",
+        summary: "Switch browser to headless mode",
+        argument_hint: None,
+        resume_supported: false,
+    },
+    SlashCommandSpec {
+        name: "no-headless",
+        summary: "Switch browser to headed (visible) mode",
+        argument_hint: None,
+        resume_supported: false,
+    },
+    SlashCommandSpec {
         name: "exit",
         summary: "Exit the REPL and save the session",
         argument_hint: None,
@@ -237,6 +255,9 @@ pub enum SlashCommand {
     Auth {
         provider: Option<String>,
     },
+    Headed,
+    Headless,
+    NoHeadless,
     Unknown(String),
 }
 
@@ -301,6 +322,9 @@ impl SlashCommand {
             "auth" => Self::Auth {
                 provider: parts.next().map(ToOwned::to_owned),
             },
+            "headed" => Self::Headed,
+            "headless" => Self::Headless,
+            "no-headless" => Self::NoHeadless,
             other => Self::Unknown(other.to_string()),
         })
     }
@@ -402,6 +426,9 @@ pub fn handle_slash_command(
         | SlashCommand::Export { .. }
         | SlashCommand::Session { .. }
         | SlashCommand::Auth { .. }
+        | SlashCommand::Headed
+        | SlashCommand::Headless
+        | SlashCommand::NoHeadless
         | SlashCommand::Unknown(_) => None,
     }
 }
@@ -522,6 +549,15 @@ mod tests {
                 provider: Some("openai".to_string())
             })
         );
+        assert_eq!(SlashCommand::parse("/headed"), Some(SlashCommand::Headed));
+        assert_eq!(
+            SlashCommand::parse("/headless"),
+            Some(SlashCommand::Headless)
+        );
+        assert_eq!(
+            SlashCommand::parse("/no-headless"),
+            Some(SlashCommand::NoHeadless)
+        );
     }
 
     #[test]
@@ -551,7 +587,10 @@ mod tests {
         assert!(help.contains("/export [file]"));
         assert!(help.contains("/session [list|switch <session-id>]"));
         assert!(help.contains("/auth [anthropic|openai|codex]"));
-        assert_eq!(slash_command_specs().len(), 23);
+        assert!(help.contains("/headed"));
+        assert!(help.contains("/headless"));
+        assert!(help.contains("/no-headless"));
+        assert_eq!(slash_command_specs().len(), 27);
         assert_eq!(resume_supported_slash_commands().len(), 11);
     }
 
@@ -652,6 +691,11 @@ mod tests {
         );
         assert!(
             handle_slash_command("/auth openai", &session, CompactionConfig::default()).is_none()
+        );
+        assert!(handle_slash_command("/headed", &session, CompactionConfig::default()).is_none());
+        assert!(handle_slash_command("/headless", &session, CompactionConfig::default()).is_none());
+        assert!(
+            handle_slash_command("/no-headless", &session, CompactionConfig::default()).is_none()
         );
     }
 }

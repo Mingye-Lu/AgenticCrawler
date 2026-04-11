@@ -861,6 +861,9 @@ mod tests {
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));
         assert!(help.contains("/session [list|switch <session-id>]"));
+        assert!(help.contains("/headed"));
+        assert!(help.contains("/headless"));
+        assert!(help.contains("/no-headless"));
         assert!(help.contains("/exit"));
     }
 

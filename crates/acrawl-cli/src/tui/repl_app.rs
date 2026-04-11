@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::render::TerminalRenderer;
+use ansi_to_tui::IntoText;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::execute;
@@ -15,11 +17,9 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, Borders, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
-    Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
+    Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
-use ansi_to_tui::IntoText;
-use crate::render::TerminalRenderer;
 use ratatui::DefaultTerminal;
 use runtime::{
     format_usd, pricing_for_model, PermissionMode, PermissionPromptDecision, PermissionRequest,
@@ -114,15 +114,21 @@ fn permission_badge(mode: PermissionMode) -> (String, Style) {
     match mode {
         PermissionMode::ReadOnly => (
             "[ LOCK Read-Only ]".to_string(),
-            Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
         ),
         PermissionMode::WorkspaceWrite => (
             "[ WRITE Workspace ]".to_string(),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ),
         PermissionMode::DangerFullAccess | PermissionMode::Prompt | PermissionMode::Allow => (
             "[ ! FULL ACCESS ]".to_string(),
-            Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::LightRed)
+                .add_modifier(Modifier::BOLD),
         ),
     }
 }
@@ -185,12 +191,12 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
     let mut result = Vec::new();
     let mut current_line_spans = Vec::new();
     let mut current_width = 0;
-    
+
     let target_width = usize::from(width.max(10));
 
     for span in line.spans {
         let span_width = span.width();
-        
+
         if current_width + span_width <= target_width {
             current_width += span_width;
             current_line_spans.push(span);
@@ -198,7 +204,7 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
             // Need to split the span
             let mut remaining_text = span.content.to_string();
             let style = span.style;
-            
+
             while !remaining_text.is_empty() {
                 let available = target_width.saturating_sub(current_width);
                 if available == 0 {
@@ -206,16 +212,20 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
                     current_width = 0;
                     continue;
                 }
-                
+
                 // Find how many chars of remaining_text fit in 'available' width
                 // Simplified: assuming each char is 1 width for now (AgenticCrawler mostly uses ASCII/Simple UTF8 here)
-                let split_idx = remaining_text.chars().take(available).map(|c| c.len_utf8()).sum::<usize>();
+                let split_idx = remaining_text
+                    .chars()
+                    .take(available)
+                    .map(|c| c.len_utf8())
+                    .sum::<usize>();
                 let head = remaining_text[..split_idx].to_string();
                 remaining_text = remaining_text[split_idx..].to_string();
-                
+
                 current_line_spans.push(Span::styled(head, style));
                 current_width += available; // Or actual width if using unicode_width
-                
+
                 if current_width >= target_width {
                     result.push(Line::from(std::mem::take(&mut current_line_spans)));
                     current_width = 0;
@@ -223,14 +233,13 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
             }
         }
     }
-    
+
     if !current_line_spans.is_empty() {
         result.push(Line::from(current_line_spans));
     }
-    
+
     result
 }
-
 
 fn build_wrapped_list(
     entries: &[TranscriptEntry],
@@ -240,9 +249,11 @@ fn build_wrapped_list(
     let mut out = Vec::new();
     // Restore the top padding margin
     out.push(ListItem::new(Line::from(" ")));
-    
+
     let system_style = Style::default().fg(Color::DarkGray).italic();
-    let user_prefix_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let user_prefix_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
 
     for entry in entries {
         match entry {
@@ -271,7 +282,9 @@ fn build_wrapped_list(
                 }
             }
             TranscriptEntry::Status(text) => {
-                let status_style = Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
+                let status_style = Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC);
                 for row in wrap_plain_text(text, width) {
                     out.push(ListItem::new(Line::from(Span::styled(row, status_style))));
                 }
@@ -285,7 +298,9 @@ fn build_wrapped_list(
             }
             TranscriptEntry::SystemCard { title, rows } => {
                 let border_style = Style::default().fg(Color::Yellow);
-                let key_style = Style::default().fg(Color::LightYellow).add_modifier(Modifier::BOLD);
+                let key_style = Style::default()
+                    .fg(Color::LightYellow)
+                    .add_modifier(Modifier::BOLD);
                 out.push(ListItem::new(Line::from(Span::styled(
                     format!("┌─ {title} "),
                     border_style,
@@ -315,10 +330,13 @@ fn build_wrapped_list(
                         }
                     }
                 }
-                out.push(ListItem::new(Line::from(Span::styled("└────────────────", border_style))));
+                out.push(ListItem::new(Line::from(Span::styled(
+                    "└────────────────",
+                    border_style,
+                ))));
             }
         }
-        
+
         // Add a blank separator line ONLY after User messages or Cards to separate blocks
         match entry {
             TranscriptEntry::User(_) | TranscriptEntry::SystemCard { .. } => {
@@ -334,7 +352,7 @@ fn build_wrapped_list(
             // Render the live fragment using the Markdown renderer to maintain high-fidelity formatting (bold, etc.)
             let renderer = TerminalRenderer::new();
             let rendered_ansi = renderer.render_markdown_fragment(text);
-            
+
             if let Ok(ansi_text) = rendered_ansi.as_bytes().into_text() {
                 // Wrap each rendered line to the available width to prevent overflow
                 for line in ansi_text {
@@ -477,9 +495,10 @@ impl ReplTuiState {
                 None => break,
                 Some('\n') => {
                     let line = std::mem::take(&mut self.typewriter_live);
-                    self.entries.push(TranscriptEntry::Stream(
-                        Line::from(Span::styled(line, live_style)),
-                    ));
+                    self.entries
+                        .push(TranscriptEntry::Stream(Line::from(Span::styled(
+                            line, live_style,
+                        ))));
                     self.follow_bottom = true;
                 }
                 Some(c) => {
@@ -490,7 +509,6 @@ impl ReplTuiState {
         }
     }
 
-
     fn wake_input_caret(&mut self) {
         self.cursor_on = true;
         self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
@@ -499,33 +517,45 @@ impl ReplTuiState {
     fn calculate_input_dimensions(&mut self, width: u16) -> (u16, Vec<Line<'static>>, usize) {
         let is_placeholder = self.input.is_empty();
         let placeholder_text = self.input_placeholder();
-        let mut lines_data = self.input.split('\n').map(ToOwned::to_owned).collect::<Vec<_>>();
+        let mut lines_data = self
+            .input
+            .split('\n')
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
         if lines_data.is_empty() {
             lines_data.push(String::new());
         }
-        let logical_lines = if is_placeholder { vec![placeholder_text.to_owned()] } else { lines_data };
-        
+        let logical_lines = if is_placeholder {
+            vec![placeholder_text.to_owned()]
+        } else {
+            lines_data
+        };
+
         let safe_width = width.saturating_sub(5).max(5) as usize;
-        let mut visual_lines = Vec::new(); 
-        
+        let mut visual_lines = Vec::new();
+
         for (logical_idx, line) in logical_lines.into_iter().enumerate() {
             let offset = if logical_idx == 0 { 2 } else { 0 };
             let first_line_width = safe_width.saturating_sub(offset);
-            
+
             if line.is_empty() {
                 visual_lines.push((logical_idx == 0, String::new()));
                 continue;
             }
-            
+
             let mut current = String::new();
             let mut w = 0;
             let mut is_first_chunk = true;
             let mut pushed_last = false;
-            
+
             for c in line.chars() {
                 current.push(c);
                 w += 1;
-                let target = if is_first_chunk { first_line_width } else { safe_width };
+                let target = if is_first_chunk {
+                    first_line_width
+                } else {
+                    safe_width
+                };
                 if w >= target {
                     visual_lines.push((logical_idx == 0 && is_first_chunk, current));
                     current = String::new();
@@ -540,53 +570,67 @@ impl ReplTuiState {
                 visual_lines.push((logical_idx == 0 && is_first_chunk, current));
             }
         }
-        
-        let max_text_lines = MAX_INPUT_LINES; 
+
+        let max_text_lines = MAX_INPUT_LINES;
         let total_visual = visual_lines.len();
         let max_scroll = total_visual.saturating_sub(max_text_lines);
         self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
-        
+
         let skip = self.input_scroll_offset;
-        let sliced = visual_lines.into_iter().skip(skip).take(max_text_lines).collect::<Vec<_>>();
+        let sliced = visual_lines
+            .into_iter()
+            .skip(skip)
+            .take(max_text_lines)
+            .collect::<Vec<_>>();
         let total_sliced = sliced.len();
-        
+
         let caret = if self.cursor_on { "|" } else { " " };
-        let text_style = if is_placeholder { 
-            Style::default().fg(Color::DarkGray) 
+        let text_style = if is_placeholder {
+            Style::default().fg(Color::DarkGray)
         } else if self.busy {
             Style::default().fg(Color::Rgb(100, 100, 100)) // Dimmed text during AI turn
-        } else { 
-            Style::default() 
+        } else {
+            Style::default()
         };
-        
+
         let mut render_lines = Vec::new();
         render_lines.push(Line::from(""));
-        
+
         for (i, (has_prompt, row)) in sliced.into_iter().enumerate() {
             let is_last = i == total_sliced.saturating_sub(1);
             let mut spans = Vec::new();
-            
+
             if has_prompt {
                 spans.push(Span::styled("❯ ", Style::default().fg(Color::LightCyan)));
             } else if skip > 0 && i == 0 {
                 // If skipped first line with prompt, no visual space pad needed per standard terminal behavior
             }
-            
+
             if is_last && is_placeholder {
-                spans.push(Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(
+                    caret,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ));
                 spans.push(Span::styled(row, text_style));
             } else {
                 spans.push(Span::styled(row, text_style));
                 if is_last && !is_placeholder {
-                    spans.push(Span::styled(caret, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)));
+                    spans.push(Span::styled(
+                        caret,
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ));
                 }
             }
             render_lines.push(Line::from(spans));
         }
-        
+
         render_lines.push(Line::from(""));
-        
-        let box_height = (total_sliced as u16) + 4; 
+
+        let box_height = (total_sliced as u16) + 4;
         (box_height, render_lines, max_scroll)
     }
 
@@ -596,7 +640,6 @@ impl ReplTuiState {
             .push(TranscriptEntry::User(text.trim().to_string()));
         self.follow_bottom = true;
     }
-
 
     fn push_system(&mut self, msg: &str) {
         self.ui_state = AppUiState::ChatMode;
@@ -718,7 +761,7 @@ impl ReplTuiState {
                         Ok(()) => "Ready".to_string(),
                         Err(e) => format!("Error: {e}"),
                     };
-                    
+
                     // Flush any remaining characters in the typewriter and clear status
                     if !self.typewriter_chars.is_empty() {
                         let count = self.typewriter_chars.len();
@@ -727,12 +770,17 @@ impl ReplTuiState {
                     if !self.typewriter_live.is_empty() {
                         let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
                         let line = std::mem::take(&mut self.typewriter_live);
-                        self.entries.push(TranscriptEntry::Stream(Line::from(Span::styled(line, live_style))));
+                        self.entries
+                            .push(TranscriptEntry::Stream(Line::from(Span::styled(
+                                line, live_style,
+                            ))));
                     }
-                    
+
                     // Remove status line on finish
                     if let Some(idx) = self.status_entry_index.take() {
-                        if idx < self.entries.len() && matches!(self.entries[idx], TranscriptEntry::Status(_)) {
+                        if idx < self.entries.len()
+                            && matches!(self.entries[idx], TranscriptEntry::Status(_))
+                        {
                             self.entries.remove(idx);
                         }
                     }
@@ -765,7 +813,11 @@ fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionReq
     frame.render_widget(Clear, block_area);
     let block = Block::default()
         .title(" Permission Required ")
-        .title_style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(200, 120, 40)));
     let inner = block.inner(block_area);
@@ -794,9 +846,17 @@ fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionReq
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("y", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "y",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" allow   "),
-            Span::styled("n", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "n",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" deny"),
         ]),
     ]);
@@ -815,7 +875,12 @@ fn suspend_for_stdout(terminal: &mut DefaultTerminal, f: impl FnOnce()) -> io::R
 fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapshot) {
     let (perm_text, perm_style) = permission_badge(header.permission_mode);
     let mut spans = vec![
-        Span::styled(" ACrawl ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " ACrawl ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw(" "),
         Span::styled(perm_text, perm_style),
         Span::raw(format!("  model={} ", header.model)),
@@ -828,11 +893,13 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapsh
     let total_w = usize::from(area.width);
     let right_w = right_text.chars().count();
     let gap = total_w.saturating_sub(left_w + right_w).max(1);
-    
+
     spans.push(Span::raw(" ".repeat(gap)));
     spans.push(Span::styled(
         right_text,
-        Style::default().fg(Color::LightBlue).add_modifier(Modifier::DIM),
+        Style::default()
+            .fg(Color::LightBlue)
+            .add_modifier(Modifier::DIM),
     ));
     let line = Line::from(spans);
     frame.render_widget(
@@ -858,7 +925,9 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     for row in ascii {
         lines.push(Line::from(Span::styled(
             row,
-            Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
         )));
     }
     lines.push(Line::from(""));
@@ -881,7 +950,7 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     let input_w = area.width.saturating_sub(12).min(90).max(30);
     let (box_height, render_lines, max_scroll) = state.calculate_input_dimensions(input_w);
     let input_h = box_height;
-    
+
     let input_x = area.x + area.width.saturating_sub(input_w) / 2;
     let input_y = art_y.saturating_add(art_h).saturating_add(2);
     let input_area = Rect::new(
@@ -892,7 +961,11 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     );
     let block = Block::default()
         .title(" Goal ")
-        .title_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::LightBlue))
@@ -910,10 +983,14 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
             .track_symbol(Some(" "))
             .thumb_symbol("▐")
             .style(Style::default().fg(Color::LightBlue));
-        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(state.input_scroll_offset);
+        let mut scrollbar_state =
+            ScrollbarState::new(max_scroll).position(state.input_scroll_offset);
         frame.render_stateful_widget(
             scrollbar,
-            inner.inner(Margin { vertical: 0, horizontal: 0 }),
+            inner.inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
             &mut scrollbar_state,
         );
     }
@@ -927,7 +1004,9 @@ fn draw_slash_overlay(
     input_area: Rect,
     bounds: Rect,
 ) {
-    let Some(overlay) = &state.slash_overlay else { return };
+    let Some(overlay) = &state.slash_overlay else {
+        return;
+    };
     let max_h = min(overlay.items.len(), 7);
     let overlay_h = u16::try_from(max_h + 2).unwrap_or(4);
     let overlay_w = min(bounds.width.saturating_sub(2), 70).max(30);
@@ -951,7 +1030,9 @@ fn draw_slash_overlay(
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{:<14}", item.command),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(item.summary),
             ]))
@@ -965,11 +1046,7 @@ fn draw_slash_overlay(
     frame.render_stateful_widget(list, inner, &mut list_state);
 }
 
-fn draw_chat(
-    frame: &mut ratatui::Frame<'_>,
-    state: &mut ReplTuiState,
-    header: &HeaderSnapshot,
-) {
+fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &HeaderSnapshot) {
     let area = frame.area();
     let (footer_h, render_lines, max_scroll) = state.calculate_input_dimensions(area.width);
 
@@ -984,9 +1061,9 @@ fn draw_chat(
         ])
         .split(area);
     let header_area = chunks[0];
-    let main_area   = chunks[1];
+    let main_area = chunks[1];
     // chunks[2] is the spacer gap - intentionally left empty for breathing room
-    let input_area  = chunks[3];
+    let input_area = chunks[3];
 
     draw_header(frame, header_area, header);
 
@@ -1003,7 +1080,11 @@ fn draw_chat(
     let main_inner = main_block.inner(main_area);
     frame.render_widget(main_block, main_area);
 
-    let live_line = if state.typewriter_live.is_empty() { None } else { Some(state.typewriter_live.as_str()) };
+    let live_line = if state.typewriter_live.is_empty() {
+        None
+    } else {
+        Some(state.typewriter_live.as_str())
+    };
     let wrapped = build_wrapped_list(&state.entries, main_inner.width, live_line);
     state.last_transcript_rect = main_inner;
     state.last_wrapped_len = wrapped.len();
@@ -1090,10 +1171,14 @@ fn draw_chat(
             .track_symbol(Some(" "))
             .thumb_symbol("▐")
             .style(Style::default().fg(Color::Rgb(60, 90, 120)));
-        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(state.input_scroll_offset);
+        let mut scrollbar_state =
+            ScrollbarState::new(max_scroll).position(state.input_scroll_offset);
         frame.render_stateful_widget(
             scrollbar,
-            footer_inner.inner(Margin { vertical: 0, horizontal: 0 }),
+            footer_inner.inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
             &mut scrollbar_state,
         );
     }
@@ -1192,7 +1277,10 @@ fn handle_slash_command_tui(
             state.push_system_card("Session", &result.message);
         }
         SlashCommand::Teleport { target } => {
-            let report = cli.lock().expect("cli lock").teleport_report(target.as_deref())?;
+            let report = cli
+                .lock()
+                .expect("cli lock")
+                .teleport_report(target.as_deref())?;
             state.push_system("Teleport");
             state.push_system(&report);
         }
@@ -1200,6 +1288,20 @@ fn handle_slash_command_tui(
             let report = cli.lock().expect("cli lock").debug_tool_call_report()?;
             state.push_system("Debug Tool Call");
             state.push_system(&report);
+        }
+        SlashCommand::Headed | SlashCommand::NoHeadless => {
+            std::env::set_var("HEADLESS", "false");
+            state.push_system_card(
+                "Browser Mode",
+                "Browser mode\n  Result           switched to headed (visible)",
+            );
+        }
+        SlashCommand::Headless => {
+            std::env::set_var("HEADLESS", "true");
+            state.push_system_card(
+                "Browser Mode",
+                "Browser mode\n  Result           switched to headless",
+            );
         }
         other => {
             suspend_for_stdout(terminal, || {
@@ -1294,12 +1396,22 @@ fn run_loop(
         // Advance typewriter: dynamic speed to catch up if buffer accumulates
         if !state.typewriter_chars.is_empty() {
             let q_len = state.typewriter_chars.len();
-            let count = if q_len > 100 { 8 } else if q_len > 30 { 4 } else { 2 };
-            state.tick_typewriter(count); 
+            let count = if q_len > 100 {
+                8
+            } else if q_len > 30 {
+                4
+            } else {
+                2
+            };
+            state.tick_typewriter(count);
         }
 
         // Shorter poll when typewriter has pending chars so reveal feels smooth
-        let poll_ms = if !state.typewriter_chars.is_empty() { 16 } else { 50 };
+        let poll_ms = if !state.typewriter_chars.is_empty() {
+            16
+        } else {
+            50
+        };
         if !event::poll(Duration::from_millis(poll_ms))? {
             continue;
         }
@@ -1310,7 +1422,8 @@ fn run_loop(
                 if state.busy {
                     continue;
                 }
-                let in_transcript = rect_contains_mouse(state.last_transcript_rect, me.column, me.row);
+                let in_transcript =
+                    rect_contains_mouse(state.last_transcript_rect, me.column, me.row);
                 let in_input = rect_contains_mouse(state.last_input_rect, me.column, me.row);
 
                 if state.ui_state == AppUiState::ChatMode && in_transcript {
@@ -1407,7 +1520,9 @@ fn run_loop(
                     }
                     KeyCode::Enter => {
                         if state.busy {
-                            state.push_system("Please wait for the current task to finish before submitting.");
+                            state.push_system(
+                                "Please wait for the current task to finish before submitting.",
+                            );
                             continue;
                         }
 

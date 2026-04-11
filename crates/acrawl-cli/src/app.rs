@@ -559,6 +559,16 @@ impl LiveCli {
                 self.run_auth(provider.as_deref())?;
                 false
             }
+            SlashCommand::Headed | SlashCommand::NoHeadless => {
+                env::set_var("HEADLESS", "false");
+                println!("Browser mode\n  Result           switched to headed (visible)");
+                false
+            }
+            SlashCommand::Headless => {
+                env::set_var("HEADLESS", "true");
+                println!("Browser mode\n  Result           switched to headless");
+                false
+            }
             SlashCommand::Unknown(name) => {
                 eprintln!("unknown slash command: /{name}");
                 false
@@ -1117,6 +1127,9 @@ pub(crate) fn run_resume_command(
         | SlashCommand::Permissions { .. }
         | SlashCommand::Session { .. }
         | SlashCommand::Auth { .. }
+        | SlashCommand::Headed
+        | SlashCommand::Headless
+        | SlashCommand::NoHeadless
         | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),
     }
 }
