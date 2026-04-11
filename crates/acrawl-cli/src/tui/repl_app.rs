@@ -29,6 +29,8 @@ use crate::app::{
     slash_command_completion_candidates, AllowedToolSet, ChannelPermissionPrompter, LiveCli,
 };
 use crate::format::{render_repl_help, VERSION};
+use crate::tui::auth_modal::{AuthModal, AuthModalStep};
+use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
 
 const MAX_INPUT_LINES: usize = 5;
@@ -409,6 +411,7 @@ struct ReplTuiState {
     status_line: String,
     busy: bool,
     pending_permission: Option<(PermissionRequest, Sender<PermissionPromptDecision>)>,
+    active_modal: Option<AuthModal>,
     exit: bool,
     current_tool: Option<String>,
     status_entry_index: Option<usize>,
@@ -441,6 +444,7 @@ impl ReplTuiState {
             status_line: String::new(),
             busy: false,
             pending_permission: None,
+            active_modal: None,
             exit: false,
             persist_on_exit: false,
             current_tool: None,
@@ -458,13 +462,21 @@ impl ReplTuiState {
 
     fn tick_input_caret(&mut self) {
         let now = Instant::now();
+        let advance_spinner = now >= self.spinner_deadline;
         if now >= self.cursor_blink_deadline {
             self.cursor_on = !self.cursor_on;
             self.cursor_blink_deadline = now + Duration::from_millis(530);
         }
-        if now >= self.spinner_deadline {
+        if advance_spinner {
             self.spinner_tick = self.spinner_tick.wrapping_add(1);
             self.spinner_deadline = now + Duration::from_millis(120);
+        }
+        if let Some(ref mut modal) = self.active_modal {
+            if let AuthModalStep::OAuthWaiting { tick, .. } = &mut modal.step {
+                if advance_spinner {
+                    *tick = tick.wrapping_add(1);
+                }
+            }
         }
     }
 
@@ -797,15 +809,24 @@ impl ReplTuiState {
                     self.push_system(&s);
                 }
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
-                    let msg = match result {
-                        Ok(()) => format!("OAuth login succeeded for {provider}"),
-                        Err(e) => format!("OAuth login failed for {provider}: {e}"),
-                    };
-                    self.push_system(&msg);
+                    if let Some(ref mut modal) = self.active_modal {
+                        modal.step = match result {
+                            Ok(()) => AuthModalStep::Success {
+                                provider: crate::app::parse_provider_arg(&provider)
+                                    .unwrap_or(crate::app::Provider::Anthropic),
+                                message: format!("Authenticated as {provider}"),
+                            },
+                            Err(e) => AuthModalStep::Error { message: e },
+                        };
+                    }
                     had_new_rows = true;
                 }
                 ReplTuiEvent::AuthOAuthProgress { message } => {
-                    self.push_system(&message);
+                    if let Some(ref mut modal) = self.active_modal {
+                        if let AuthModalStep::OAuthWaiting { status, .. } = &mut modal.step {
+                            *status = message;
+                        }
+                    }
                     had_new_rows = true;
                 }
             }
@@ -1403,6 +1424,9 @@ fn run_loop(
             if let Some((ref req, _)) = state.pending_permission {
                 draw_permission_modal(frame, req);
             }
+            if let Some(ref modal) = state.active_modal {
+                modal.draw(frame, frame.area());
+            }
         })?;
 
         // Advance typewriter: dynamic speed to catch up if buffer accumulates
@@ -1485,6 +1509,17 @@ fn run_loop(
                         }
                     }
                     continue;
+                }
+
+                if let Some(ref mut modal) = state.active_modal {
+                    match modal.handle_key(key) {
+                        ModalAction::Consumed => continue,
+                        ModalAction::Dismiss => {
+                            state.active_modal = None;
+                            continue;
+                        }
+                        ModalAction::Passthrough => {}
+                    }
                 }
 
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
