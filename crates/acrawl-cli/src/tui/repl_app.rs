@@ -917,6 +917,52 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
             &mut scrollbar_state,
         );
     }
+
+    draw_slash_overlay(frame, state, input_area, area);
+}
+
+fn draw_slash_overlay(
+    frame: &mut ratatui::Frame<'_>,
+    state: &ReplTuiState,
+    input_area: Rect,
+    bounds: Rect,
+) {
+    let Some(overlay) = &state.slash_overlay else { return };
+    let max_h = min(overlay.items.len(), 7);
+    let overlay_h = u16::try_from(max_h + 2).unwrap_or(4);
+    let overlay_w = min(bounds.width.saturating_sub(2), 70).max(30);
+    let overlay_x = input_area.x + 2;
+    let overlay_y = input_area.y.saturating_sub(overlay_h).max(bounds.y + 1);
+    let overlay_area = Rect::new(overlay_x, overlay_y, overlay_w, overlay_h);
+    frame.render_widget(Clear, overlay_area);
+    let block = Block::default()
+        .title(" Slash Commands ")
+        .title_style(Style::default().fg(Color::LightCyan))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(70, 120, 150)));
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+    let items = overlay
+        .items
+        .iter()
+        .take(max_h)
+        .map(|item| {
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{:<14}", item.command),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(item.summary),
+            ]))
+        })
+        .collect::<Vec<_>>();
+    let mut list_state = ListState::default();
+    list_state.select(Some(overlay.selected.min(max_h.saturating_sub(1))));
+    let list = List::new(items)
+        .highlight_style(Style::default().bg(Color::Rgb(30, 44, 56)))
+        .highlight_symbol("▶ ");
+    frame.render_stateful_widget(list, inner, &mut list_state);
 }
 
 fn draw_chat(
@@ -1052,43 +1098,7 @@ fn draw_chat(
         );
     }
 
-    if let Some(overlay) = &state.slash_overlay {
-        let max_h = min(overlay.items.len(), 7);
-        let overlay_h = u16::try_from(max_h + 2).unwrap_or(4);
-        let overlay_w = min(main_area.width.saturating_sub(2), 70).max(30);
-        let overlay_x = input_area.x + 2;
-        let overlay_y = input_area.y.saturating_sub(overlay_h).max(main_area.y + 1);
-        let overlay_area = Rect::new(overlay_x, overlay_y, overlay_w, overlay_h);
-        frame.render_widget(Clear, overlay_area);
-        let block = Block::default()
-            .title(" Slash Commands ")
-            .title_style(Style::default().fg(Color::LightCyan))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(70, 120, 150)));
-        let inner = block.inner(overlay_area);
-        frame.render_widget(block, overlay_area);
-        let items = overlay
-            .items
-            .iter()
-            .take(max_h)
-            .map(|item| {
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{:<14}", item.command),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(item.summary),
-                ]))
-            })
-            .collect::<Vec<_>>();
-        let mut list_state = ListState::default();
-        list_state.select(Some(overlay.selected.min(max_h.saturating_sub(1))));
-        let list = List::new(items)
-            .highlight_style(Style::default().bg(Color::Rgb(30, 44, 56)))
-            .highlight_symbol("▶ ");
-        frame.render_stateful_widget(list, inner, &mut list_state);
-    }
+    draw_slash_overlay(frame, state, input_area, main_area);
 }
 
 fn handle_slash_command_tui(
