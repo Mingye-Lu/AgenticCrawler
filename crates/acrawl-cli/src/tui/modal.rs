@@ -17,6 +17,7 @@ pub enum ModalAction {
 }
 
 /// Base trait for modal dialogs in the TUI.
+#[allow(dead_code)]
 pub trait Modal {
     /// Draw the modal content into the given frame.
     fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect);
@@ -44,6 +45,7 @@ pub trait Modal {
 ///
 /// # Returns
 /// The inner `Rect` where modal content should be drawn
+#[allow(dead_code)]
 pub fn draw_modal_frame(
     frame: &mut ratatui::Frame<'_>,
     area: Rect,

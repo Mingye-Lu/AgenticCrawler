@@ -1,3 +1,4 @@
+pub mod auth_modal;
 #[allow(
     clippy::format_push_string,
     clippy::redundant_closure_for_method_calls,
