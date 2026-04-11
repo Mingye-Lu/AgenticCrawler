@@ -30,8 +30,15 @@ try {
   process.exit(1);
 }
 
+function parseHeadless() {
+  const raw = process.env.HEADLESS;
+  if (raw === undefined) return true;
+  const v = String(raw).trim().toLowerCase();
+  return !(v === 'false' || v === '0' || v === 'no' || v === 'off');
+}
+
 async function bootstrap() {
-  const browser = await playwright.chromium.launch({ headless: true });
+  const browser = await playwright.chromium.launch({ headless: parseHeadless() });
   const page = await browser.newPage();
   process.stdout.write(JSON.stringify({ event: 'bridge_bootstrap', ok: true }) + '\n');
 

@@ -174,6 +174,20 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 permission_mode = PermissionMode::DangerFullAccess;
                 index += 1;
             }
+            "--no-headless" | "--headed" => {
+                env::set_var("HEADLESS", "false");
+                index += 1;
+            }
+            "--headless" => {
+                env::set_var("HEADLESS", "true");
+                index += 1;
+            }
+            flag if flag.starts_with("--headless=") => {
+                let value = &flag[11..];
+                let normalized = normalize_bool_flag("--headless", value)?;
+                env::set_var("HEADLESS", if normalized { "true" } else { "false" });
+                index += 1;
+            }
             "-p" => {
                 let prompt = args[index + 1..].join(" ");
                 if prompt.trim().is_empty() {
@@ -305,6 +319,16 @@ fn normalize_allowed_tools(values: &[String]) -> Result<Option<AllowedToolSet>, 
 
 fn normalize_tool_name(value: &str) -> String {
     value.trim().replace('-', "_").to_ascii_lowercase()
+}
+
+fn normalize_bool_flag(flag: &str, value: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(format!(
+            "unsupported value for {flag}: {other} (expected true/false)"
+        )),
+    }
 }
 
 fn parse_permission_mode_arg(value: &str) -> Result<PermissionMode, String> {
@@ -461,6 +485,14 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     writeln!(
         out,
         "  --dangerously-skip-permissions  Skip all permission checks"
+    )?;
+    writeln!(
+        out,
+        "  --no-headless              Launch the browser in headed (visible) mode"
+    )?;
+    writeln!(
+        out,
+        "  --headless[=BOOL]          Force headless on/off (overrides HEADLESS env)"
     )?;
     writeln!(
         out,
