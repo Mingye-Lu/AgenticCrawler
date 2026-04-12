@@ -9,7 +9,7 @@ Single binary. No Python runtime. Playwright for browser automation.
 ```bash
 cargo build --release
 
-npx playwright install chromium
+npm install          # installs Playwright and downloads Chromium automatically
 
 cp .env.example .env
 # set ANTHROPIC_API_KEY or OPENAI_API_KEY
