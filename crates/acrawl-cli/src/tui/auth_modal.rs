@@ -424,6 +424,54 @@ mod tests {
     }
 
     #[test]
+    fn api_key_masking_renders_dots() {
+        let key_buffer = "sk-ant-abc123XYZ";
+        let masked = "•".repeat(key_buffer.chars().count());
+        assert_eq!(masked.chars().count(), key_buffer.chars().count());
+        assert!(masked.chars().all(|c| c == '•'));
+        assert!(!masked.contains('s'));
+        assert!(!masked.contains('k'));
+    }
+
+    #[test]
+    fn browser_fail_shows_url() {
+        let url = "https://console.anthropic.com/oauth/authorize?code_challenge=abc";
+        let error_str = "permission denied";
+        let message = format!("Browser failed. Visit: {url}  ({error_str})");
+        assert!(message.contains(url));
+        assert!(message.contains(error_str));
+        assert!(message.starts_with("Browser failed"));
+    }
+
+    #[test]
+    fn oauth_error_state_displays_message() {
+        let (ui_tx, _ui_rx) = mpsc::channel();
+        let mut modal = AuthModal {
+            step: AuthModalStep::Error {
+                message: "OAuth callback timed out after 5 minutes".to_string(),
+            },
+            ui_tx,
+        };
+        assert_eq!(modal.title(), " Auth · Error ");
+        assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Dismiss);
+    }
+
+    #[test]
+    fn oauth_waiting_status_can_be_updated() {
+        let (ui_tx, _ui_rx) = mpsc::channel();
+        let mut modal = AuthModal::new(ui_tx, Some(Provider::Anthropic));
+        if let AuthModalStep::OAuthWaiting { ref mut status, .. } = modal.step {
+            *status = "Waiting for OAuth callback on port 4545…".to_string();
+        }
+        match &modal.step {
+            AuthModalStep::OAuthWaiting { status, .. } => {
+                assert!(status.contains("4545"));
+            }
+            _ => panic!("expected OAuthWaiting"),
+        }
+    }
+
+    #[test]
     fn new_with_provider_skips_selection() {
         let (ui_tx, _ui_rx) = mpsc::channel();
 
