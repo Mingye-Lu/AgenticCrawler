@@ -39,7 +39,10 @@ function parseHeadless() {
 
 async function bootstrap() {
   const browser = await playwright.chromium.launch({ headless: parseHeadless() });
-  const page = await browser.newPage();
+  let page = await browser.newPage();
+  const pages = [page];
+  const context = browser.contexts()[0];
+  context.on('page', (p) => { pages.push(p); });
   process.stdout.write(JSON.stringify({ event: 'bridge_bootstrap', ok: true }) + '\n');
 
   const wire = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -180,6 +183,9 @@ async function bootstrap() {
 
     if (command.action === 'press_key') {
       try {
+        if (command.selector) {
+          await page.focus(command.selector);
+        }
         await page.keyboard.press(command.key);
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true } }) + '\n');
       } catch (error) {
@@ -218,6 +224,25 @@ async function bootstrap() {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { path: command.path } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'save_file_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'switch_tab') {
+      try {
+        const idx = command.index === undefined ? -1 : command.index;
+        const targetIdx = idx === -1 ? pages.length - 1 : idx;
+        if (targetIdx < 0 || targetIdx >= pages.length) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'switch_tab_failed', message: `Invalid tab index ${idx}, have ${pages.length} tab(s)` } }) + '\n');
+        } else {
+          page = pages[targetIdx];
+          await page.bringToFront();
+          const url = page.url();
+          const title = await page.title();
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url, title, tab_count: pages.length } }) + '\n');
+        }
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'switch_tab_failed', message: String(error) } }) + '\n');
       }
       continue;
     }
@@ -513,13 +538,31 @@ impl PlaywrightBridge {
         Ok(())
     }
 
-    pub async fn press_key(&mut self, key: &str) -> Result<(), PlaywrightBridgeError> {
-        let cmd = serde_json::json!({
+    pub async fn press_key(
+        &mut self,
+        key: &str,
+        selector: Option<&str>,
+    ) -> Result<(), PlaywrightBridgeError> {
+        let mut cmd = serde_json::json!({
             "action": "press_key",
             "key": key,
         });
+        if let Some(sel) = selector {
+            cmd["selector"] = serde_json::Value::String(sel.to_string());
+        }
         self.send_raw_command(&cmd).await?;
         Ok(())
+    }
+
+    pub async fn switch_tab(
+        &mut self,
+        index: i64,
+    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "switch_tab",
+            "index": index,
+        });
+        self.send_raw_command(&cmd).await
     }
 
     pub async fn list_resources(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {

@@ -1,10 +1,14 @@
+use std::path::PathBuf;
+
 use serde_json::{json, Value};
 
+use crate::browser::BrowserContext;
 use crate::CrawlError;
 
 pub struct SaveFileInput {
     pub url: String,
     pub filename: String,
+    pub subdir: Option<String>,
 }
 
 pub fn parse_input(input: &Value) -> Result<SaveFileInput, CrawlError> {
@@ -20,17 +24,40 @@ pub fn parse_input(input: &Value) -> Result<SaveFileInput, CrawlError> {
         .unwrap_or_else(|| url.rsplit('/').next().unwrap_or("download"))
         .to_string();
 
-    Ok(SaveFileInput { url, filename })
+    let subdir = input
+        .get("subdir")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    Ok(SaveFileInput {
+        url,
+        filename,
+        subdir,
+    })
 }
 
-pub fn execute(input: &Value) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let parsed = parse_input(input)?;
+
+    let workspace = std::env::var("WORKSPACE_DIR").unwrap_or_else(|_| "workspace".to_string());
+    let mut target = PathBuf::from(&workspace);
+    if let Some(ref sub) = parsed.subdir {
+        target.push(sub);
+    }
+    target.push(&parsed.filename);
+
+    let path_str = target.to_string_lossy().to_string();
+
+    let saved_path = browser
+        .bridge_mut()
+        .save_file(&parsed.url, &path_str)
+        .await
+        .map_err(|e| CrawlError::new(e.to_string()))?;
+
     Ok(json!({
-        "tool": "save_file",
-        "url": parsed.url,
-        "filename": parsed.filename,
-        "path": format!("workspace/{}", parsed.filename),
-        "note": "bridge call required at runtime"
+        "success": true,
+        "path": saved_path,
+        "url": parsed.url
     }))
 }
 
@@ -62,9 +89,9 @@ mod tests {
     }
 
     #[test]
-    fn execute_returns_path() {
-        let input = json!({"url": "https://example.com/data.csv", "filename": "data.csv"});
-        let result = execute(&input).unwrap();
-        assert_eq!(result["path"], "workspace/data.csv");
+    fn parses_subdir() {
+        let input = json!({"url": "https://example.com/data.csv", "subdir": "exports"});
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.subdir.as_deref(), Some("exports"));
     }
 }

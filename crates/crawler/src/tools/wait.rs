@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use serde_json::{json, Value};
 
+use crate::browser::BrowserContext;
 use crate::CrawlError;
 
 pub struct WaitInput {
@@ -40,15 +43,30 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
     })
 }
 
-pub fn execute(input: &Value) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let parsed = parse_input(input)?;
-    Ok(json!({
-        "tool": "wait",
-        "selector": parsed.selector,
-        "timeout_ms": parsed.timeout_ms,
-        "found": true,
-        "note": "bridge call required at runtime"
-    }))
+
+    if let Some(ref selector) = parsed.selector {
+        let found = browser
+            .bridge_mut()
+            .wait_for_selector(selector, parsed.timeout_ms)
+            .await
+            .map_err(|e| CrawlError::new(e.to_string()))?;
+
+        Ok(json!({
+            "success": true,
+            "found": found,
+            "selector": selector,
+            "timeout_ms": parsed.timeout_ms
+        }))
+    } else {
+        tokio::time::sleep(Duration::from_millis(parsed.timeout_ms)).await;
+
+        Ok(json!({
+            "success": true,
+            "waited_ms": parsed.timeout_ms
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -85,12 +103,5 @@ mod tests {
         let parsed = parse_input(&input).unwrap();
         assert!(parsed.selector.is_none());
         assert_eq!(parsed.timeout_ms, 1000);
-    }
-
-    #[test]
-    fn execute_returns_success() {
-        let input = json!({"selector": "#main"});
-        let result = execute(&input).unwrap();
-        assert_eq!(result["found"], true);
     }
 }

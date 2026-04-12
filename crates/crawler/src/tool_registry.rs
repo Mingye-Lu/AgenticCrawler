@@ -14,6 +14,15 @@ const CORE_TOOLS: &[&str] = &[
     "extract_data",
     "screenshot",
     "go_back",
+    "scroll",
+    "wait",
+    "select_option",
+    "execute_js",
+    "hover",
+    "press_key",
+    "switch_tab",
+    "list_resources",
+    "save_file",
 ];
 
 #[derive(Default)]
@@ -81,6 +90,15 @@ impl ToolRegistry {
             "extract_data" => crate::tools::extract_data::execute(input, browser).await,
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser).await,
+            "scroll" => crate::tools::scroll::execute(input, browser).await,
+            "wait" => crate::tools::wait::execute(input, browser).await,
+            "select_option" => crate::tools::select_option::execute(input, browser).await,
+            "execute_js" => crate::tools::execute_js::execute(input, browser).await,
+            "hover" => crate::tools::hover::execute(input, browser).await,
+            "press_key" => crate::tools::press_key::execute(input, browser).await,
+            "switch_tab" => crate::tools::switch_tab::execute(input, browser).await,
+            "list_resources" => crate::tools::list_resources::execute(input, browser).await,
+            "save_file" => crate::tools::save_file::execute(input, browser).await,
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -97,9 +115,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_six() {
+    fn new_with_core_tools_registers_all_fifteen() {
         let registry = ToolRegistry::new_with_core_tools();
-        assert_eq!(registry.len(), 6);
+        assert_eq!(registry.len(), 15);
         for &name in CORE_TOOLS {
             assert!(registry.contains(name), "missing core tool: {name}");
         }

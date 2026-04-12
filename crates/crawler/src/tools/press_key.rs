@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use crate::browser::BrowserContext;
 use crate::CrawlError;
 
 pub struct PressKeyInput {
@@ -22,14 +23,18 @@ pub fn parse_input(input: &Value) -> Result<PressKeyInput, CrawlError> {
     Ok(PressKeyInput { key, selector })
 }
 
-pub fn execute(input: &Value) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let parsed = parse_input(input)?;
+
+    browser
+        .bridge_mut()
+        .press_key(&parsed.key, parsed.selector.as_deref())
+        .await
+        .map_err(|e| CrawlError::new(e.to_string()))?;
+
     Ok(json!({
-        "tool": "press_key",
-        "key": parsed.key,
-        "selector": parsed.selector,
         "success": true,
-        "note": "bridge call required at runtime"
+        "message": format!("Pressed key: {}", parsed.key)
     }))
 }
 
@@ -59,13 +64,5 @@ mod tests {
     fn fails_without_key() {
         let input = json!({"selector": "#input"});
         assert!(parse_input(&input).is_err());
-    }
-
-    #[test]
-    fn execute_returns_success() {
-        let input = json!({"key": "Tab"});
-        let result = execute(&input).unwrap();
-        assert_eq!(result["success"], true);
-        assert_eq!(result["key"], "Tab");
     }
 }

@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use crate::browser::BrowserContext;
 use crate::CrawlError;
 
 pub fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>), CrawlError> {
@@ -14,14 +15,23 @@ pub fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>), Cr
     Ok((type_pattern, name_pattern))
 }
 
-pub fn execute(input: &Value) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let (_type_pattern, _name_pattern) = parse_input(input)?;
+
+    let result = browser
+        .bridge_mut()
+        .list_resources()
+        .await
+        .map_err(|e| CrawlError::new(e.to_string()))?;
+
+    let links = result.get("links").cloned().unwrap_or_else(|| json!([]));
+    let images = result.get("images").cloned().unwrap_or_else(|| json!([]));
+    let forms = result.get("forms").cloned().unwrap_or_else(|| json!([]));
+
     Ok(json!({
-        "tool": "list_resources",
-        "links": [],
-        "images": [],
-        "forms": [],
-        "note": "bridge call required at runtime"
+        "links": links,
+        "images": images,
+        "forms": forms
     }))
 }
 
@@ -51,14 +61,5 @@ mod tests {
         let input = json!({"name_pattern": "logo"});
         let (_tp, np) = parse_input(&input).unwrap();
         assert_eq!(np.as_deref(), Some("logo"));
-    }
-
-    #[test]
-    fn execute_returns_empty_resource_lists() {
-        let input = json!({});
-        let result = execute(&input).unwrap();
-        assert!(result["links"].is_array());
-        assert!(result["images"].is_array());
-        assert!(result["forms"].is_array());
     }
 }

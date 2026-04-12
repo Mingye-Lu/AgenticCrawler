@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use crate::browser::BrowserContext;
 use crate::CrawlError;
 
 pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
@@ -24,14 +25,18 @@ pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
     Ok((direction, pixels))
 }
 
-pub fn execute(input: &Value) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let (direction, pixels) = parse_input(input)?;
+
+    browser
+        .bridge_mut()
+        .scroll(&direction, pixels)
+        .await
+        .map_err(|e| CrawlError::new(e.to_string()))?;
+
     Ok(json!({
-        "tool": "scroll",
-        "direction": direction,
-        "pixels": pixels,
-        "scrolled": true,
-        "note": "bridge call required at runtime"
+        "success": true,
+        "message": format!("Scrolled {direction} {pixels}px")
     }))
 }
 
@@ -69,13 +74,5 @@ mod tests {
     fn rejects_invalid_direction() {
         let input = json!({"direction": "left"});
         assert!(parse_input(&input).is_err());
-    }
-
-    #[test]
-    fn execute_returns_success_json() {
-        let input = json!({"direction": "down", "amount": 100});
-        let result = execute(&input).unwrap();
-        assert_eq!(result["scrolled"], true);
-        assert_eq!(result["direction"], "down");
     }
 }

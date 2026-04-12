@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use crate::browser::BrowserContext;
 use crate::CrawlError;
 
 pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
@@ -10,13 +11,20 @@ pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
         .ok_or_else(|| CrawlError::new("execute_js requires 'script' field"))
 }
 
-pub fn execute(input: &Value) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let script = parse_input(input)?;
+
+    let result = browser
+        .bridge_mut()
+        .evaluate(&script)
+        .await
+        .map_err(|e| CrawlError::new(e.to_string()))?;
+
+    let value = result.get("value").cloned().unwrap_or(Value::Null);
+
     Ok(json!({
-        "tool": "execute_js",
-        "script": script,
-        "result": null,
-        "note": "bridge call required at runtime"
+        "success": true,
+        "result": value
     }))
 }
 
@@ -43,13 +51,5 @@ mod tests {
     fn fails_with_non_string_script() {
         let input = json!({"script": 42});
         assert!(parse_input(&input).is_err());
-    }
-
-    #[test]
-    fn execute_returns_tool_name() {
-        let input = json!({"script": "return 1+1"});
-        let result = execute(&input).unwrap();
-        assert_eq!(result["tool"], "execute_js");
-        assert_eq!(result["script"], "return 1+1");
     }
 }

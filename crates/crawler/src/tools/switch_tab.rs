@@ -1,21 +1,45 @@
 use serde_json::{json, Value};
 
+use crate::browser::BrowserContext;
 use crate::CrawlError;
 
 pub fn parse_input(input: &Value) -> Result<i64, CrawlError> {
-    input
+    Ok(input
         .get("tab_index")
         .or_else(|| input.get("index"))
         .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| CrawlError::new("switch_tab requires 'tab_index' or 'index' field"))
+        .unwrap_or(-1))
 }
 
-pub fn execute(input: &Value) -> Result<Value, CrawlError> {
-    let _index = parse_input(input)?;
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+    let index = parse_input(input)?;
+
+    let result = browser
+        .bridge_mut()
+        .switch_tab(index)
+        .await
+        .map_err(|e| CrawlError::new(e.to_string()))?;
+
+    let url = result
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = result
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let tab_count = result
+        .get("tab_count")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+
     Ok(json!({
-        "tool": "switch_tab",
-        "success": false,
-        "error": "multi-tab not supported in single-page spike"
+        "success": true,
+        "url": url,
+        "title": title,
+        "tab_count": tab_count
     }))
 }
 
@@ -40,16 +64,9 @@ mod tests {
     }
 
     #[test]
-    fn fails_without_index() {
+    fn defaults_to_negative_one() {
         let input = json!({});
-        assert!(parse_input(&input).is_err());
-    }
-
-    #[test]
-    fn execute_returns_unsupported() {
-        let input = json!({"tab_index": 1});
-        let result = execute(&input).unwrap();
-        assert_eq!(result["success"], false);
-        assert!(result["error"].as_str().unwrap().contains("not supported"));
+        let idx = parse_input(&input).unwrap();
+        assert_eq!(idx, -1);
     }
 }
