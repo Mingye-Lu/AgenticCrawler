@@ -189,6 +189,14 @@ fn parse_report_rows(report: &str) -> Vec<(String, String)> {
     rows
 }
 
+fn ansi_to_lines(ansi: &str) -> Vec<Line<'static>> {
+    let fallback_style = Style::default().fg(Color::Rgb(215, 225, 235));
+    match ansi.as_bytes().into_text() {
+        Ok(text) => text.lines,
+        Err(_) => vec![Line::from(Span::styled(ansi.to_string(), fallback_style))],
+    }
+}
+
 /// Simple ANSI-aware line wrapping for Ratatui Lines.
 fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
     let mut result = Vec::new();
@@ -294,10 +302,8 @@ fn build_wrapped_list(
                 }
             }
             TranscriptEntry::Stream(line) => {
-                let as_text = line.to_string();
-                let style = line.style;
-                for row in wrap_plain_text(&as_text, width) {
-                    out.push(ListItem::new(Line::from(Span::styled(row, style))));
+                for wrapped in wrap_ansi_line(line.clone(), width) {
+                    out.push(ListItem::new(wrapped));
                 }
             }
             TranscriptEntry::SystemCard { title, rows } => {
@@ -504,16 +510,14 @@ impl ReplTuiState {
 
     /// Advance the typewriter: reveal `chars_per_tick` chars from the queue.
     fn tick_typewriter(&mut self, chars_per_tick: usize) {
-        let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
         for _ in 0..chars_per_tick {
             match self.typewriter_chars.pop_front() {
                 None => break,
                 Some('\n') => {
-                    let line = std::mem::take(&mut self.typewriter_live);
-                    self.entries
-                        .push(TranscriptEntry::Stream(Line::from(Span::styled(
-                            line, live_style,
-                        ))));
+                    let raw = std::mem::take(&mut self.typewriter_live);
+                    for styled_line in ansi_to_lines(&raw) {
+                        self.entries.push(TranscriptEntry::Stream(styled_line));
+                    }
                     self.follow_bottom = true;
                 }
                 Some(c) => {
@@ -794,12 +798,10 @@ impl ReplTuiState {
                         self.tick_typewriter(count);
                     }
                     if !self.typewriter_live.is_empty() {
-                        let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
-                        let line = std::mem::take(&mut self.typewriter_live);
-                        self.entries
-                            .push(TranscriptEntry::Stream(Line::from(Span::styled(
-                                line, live_style,
-                            ))));
+                        let raw = std::mem::take(&mut self.typewriter_live);
+                        for styled_line in ansi_to_lines(&raw) {
+                            self.entries.push(TranscriptEntry::Stream(styled_line));
+                        }
                     }
 
                     // Remove status line on finish
