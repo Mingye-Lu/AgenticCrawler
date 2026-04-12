@@ -1712,11 +1712,12 @@ fn run_loop(
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if let Some((req, respond)) = state.pending_permission.take() {
+                    #[allow(clippy::unnested_or_patterns)]
                     match key.code {
-                        KeyCode::Char('y' | 'Y') => {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
                             let _ = respond.send(PermissionPromptDecision::Allow);
                         }
-                        KeyCode::Char('n' | 'N') | KeyCode::Esc => {
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                             let _ = respond.send(PermissionPromptDecision::Deny {
                                 reason: format!(
                                     "tool '{}' denied from TUI permission dialog",
