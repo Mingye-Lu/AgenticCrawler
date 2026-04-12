@@ -956,11 +956,9 @@ impl ReplTuiState {
                     for styled_line in ansi_to_lines(&raw) {
                         self.entries.push(TranscriptEntry::Stream(styled_line));
                     }
-                    self.follow_bottom = true;
                 }
                 Some(c) => {
                     self.typewriter_live.push(c);
-                    self.follow_bottom = true;
                 }
             }
         }
@@ -1003,7 +1001,6 @@ impl ReplTuiState {
             input_summary,
             status: ToolCallStatus::Running,
         });
-        self.follow_bottom = true;
     }
 
     fn handle_tool_call_complete(&mut self, name: &str, output: String, is_error: bool) {
@@ -1022,7 +1019,6 @@ impl ReplTuiState {
             {
                 if entry_name == name {
                     *entry_status = status.clone();
-                    self.follow_bottom = true;
                     return;
                 }
             }
@@ -1036,7 +1032,6 @@ impl ReplTuiState {
         ) {
             *entry_status = status;
         }
-        self.follow_bottom = true;
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1246,7 +1241,6 @@ impl ReplTuiState {
         if self.list_state.offset() > max_offset {
             *self.list_state.offset_mut() = max_offset;
         }
-        self.follow_bottom = self.list_state.offset() >= max_offset;
     }
 
     fn scroll_to_bottom(&mut self) {
@@ -1257,7 +1251,6 @@ impl ReplTuiState {
     }
 
     fn drain_events(&mut self, rx: &Receiver<ReplTuiEvent>) {
-        let mut had_new_rows = false;
         while let Ok(ev) = rx.try_recv() {
             match ev {
                 ReplTuiEvent::StreamAnsi(s) => {
@@ -1270,7 +1263,6 @@ impl ReplTuiState {
                     self.busy = true;
                     self.current_tool = None;
                     self.status_line = "Thinking...".to_string();
-                    had_new_rows = true;
                     self.status_entry_index = Some(self.entries.len());
                     self.entries.push(TranscriptEntry::Status(
                         "· Thinking about next move...".to_string(),
@@ -1292,7 +1284,6 @@ impl ReplTuiState {
                 }
                 ReplTuiEvent::ToolCallStart { name, input } => {
                     self.handle_tool_call_start(name, &input);
-                    had_new_rows = true;
                 }
                 ReplTuiEvent::ToolCallComplete {
                     name,
@@ -1300,7 +1291,6 @@ impl ReplTuiState {
                     is_error,
                 } => {
                     self.handle_tool_call_complete(&name, output, is_error);
-                    had_new_rows = true;
                 }
                 ReplTuiEvent::TurnFinished(result) => {
                     self.busy = false;
@@ -1324,13 +1314,11 @@ impl ReplTuiState {
                     if let Err(e) = result {
                         self.push_system(&format!("Error: {e}"));
                     }
-                    had_new_rows = true;
                 }
                 ReplTuiEvent::PermissionNeeded { request, respond } => {
                     self.pending_permission = Some((request, respond));
                 }
                 ReplTuiEvent::SystemMessage(s) => {
-                    had_new_rows = true;
                     self.push_system(&s);
                 }
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
@@ -1344,7 +1332,6 @@ impl ReplTuiState {
                             Err(e) => AuthModalStep::Error { message: e },
                         };
                     }
-                    had_new_rows = true;
                 }
                 ReplTuiEvent::AuthOAuthProgress { message } => {
                     if let Some(ref mut modal) = self.active_modal {
@@ -1352,12 +1339,8 @@ impl ReplTuiState {
                             *status = message;
                         }
                     }
-                    had_new_rows = true;
                 }
             }
-        }
-        if had_new_rows {
-            self.follow_bottom = true;
         }
     }
 }
@@ -2194,9 +2177,6 @@ fn run_loop(
         let ev = event::read()?;
         match ev {
             Event::Mouse(me) => {
-                if state.busy {
-                    continue;
-                }
                 let in_transcript =
                     rect_contains_mouse(state.last_transcript_rect, me.column, me.row);
                 let in_input = rect_contains_mouse(state.last_input_rect, me.column, me.row);
