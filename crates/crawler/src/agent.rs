@@ -149,7 +149,21 @@ impl CrawlerAgent {
     fn supports_async(tool_name: &str) -> bool {
         matches!(
             tool_name,
-            "navigate" | "click" | "fill_form" | "extract_data" | "screenshot" | "go_back"
+            "navigate"
+                | "click"
+                | "fill_form"
+                | "extract_data"
+                | "screenshot"
+                | "go_back"
+                | "scroll"
+                | "wait"
+                | "select_option"
+                | "execute_js"
+                | "hover"
+                | "press_key"
+                | "switch_tab"
+                | "list_resources"
+                | "save_file"
         )
     }
 }
