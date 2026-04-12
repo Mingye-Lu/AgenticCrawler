@@ -156,8 +156,12 @@ impl CrawlerAgent {
 
 impl ToolExecutor for CrawlerAgent {
     fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
-        let input_value: Value = serde_json::from_str(input)
-            .map_err(|e| ToolError::new(format!("invalid JSON input: {e}")))?;
+        let input_value: Value = if input.is_empty() {
+            Value::Object(serde_json::Map::new())
+        } else {
+            serde_json::from_str(input)
+                .map_err(|e| ToolError::new(format!("invalid JSON input: {e}")))?
+        };
 
         if let Some(handler) = self.registry.get(tool_name) {
             match handler(&input_value) {
@@ -373,6 +377,16 @@ mod tests {
             .expect_err("should fail for invalid JSON");
 
         assert!(err.to_string().contains("invalid JSON"));
+    }
+
+    #[test]
+    fn crawler_agent_handles_empty_input_as_empty_object() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent.execute("navigate", "");
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.contains("unknown"), "expected fallback url in mock: {output}");
     }
 
     #[test]

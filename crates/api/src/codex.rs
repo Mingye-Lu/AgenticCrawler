@@ -560,6 +560,7 @@ struct CodexStreamState {
     text_block_active: bool,
     next_block_index: u32,
     active_tools: HashMap<String, u32>,
+    calls_with_deltas: std::collections::HashSet<String>,
     input_tokens: u32,
     output_tokens: u32,
 }
@@ -571,6 +572,7 @@ impl CodexStreamState {
             text_block_active: false,
             next_block_index: 0,
             active_tools: HashMap::new(),
+            calls_with_deltas: std::collections::HashSet::new(),
             input_tokens: 0,
             output_tokens: 0,
         }
@@ -601,6 +603,9 @@ impl CodexStreamState {
             "response.function_call_arguments.delta" => {
                 self.ensure_message_started(data, &mut events);
                 self.emit_function_call_delta(data, &mut events);
+            }
+            "response.function_call_arguments.done" => {
+                self.emit_function_call_arguments_done(data, &mut events);
             }
             "response.output_item.done" => {
                 self.emit_function_call_stop(data, &mut events);
@@ -714,6 +719,9 @@ impl CodexStreamState {
             let index = self.next_block_index;
             self.next_block_index += 1;
             self.active_tools.insert(call_id.to_string(), index);
+            if let Some(item_id) = item.get("id").and_then(Value::as_str) {
+                self.active_tools.insert(item_id.to_string(), index);
+            }
 
             let name = item
                 .get("name")
@@ -757,11 +765,15 @@ impl CodexStreamState {
             return;
         }
 
-        let call_id = data.get("call_id").and_then(Value::as_str).or_else(|| {
-            data.get("item")
-                .and_then(|item| item.get("call_id"))
-                .and_then(Value::as_str)
-        });
+        let call_id = data
+            .get("call_id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str))
+            .or_else(|| {
+                data.get("item")
+                    .and_then(|item| item.get("call_id"))
+                    .and_then(Value::as_str)
+            });
         let Some(call_id) = call_id.filter(|value| !value.is_empty()) else {
             return;
         };
@@ -797,10 +809,46 @@ impl CodexStreamState {
             index
         };
 
+        self.calls_with_deltas.insert(call_id.to_string());
+
         events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
             index: block_index,
             delta: ContentBlockDelta::InputJsonDelta {
                 partial_json: delta.to_string(),
+            },
+        }));
+    }
+
+    fn emit_function_call_arguments_done(
+        &mut self,
+        data: &Value,
+        events: &mut Vec<StreamEvent>,
+    ) {
+        let call_id = data
+            .get("call_id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("item_id").and_then(Value::as_str));
+        let Some(call_id) = call_id.filter(|value| !value.is_empty()) else {
+            return;
+        };
+
+        if self.calls_with_deltas.contains(call_id) {
+            return;
+        }
+
+        let arguments = data.get("arguments").and_then(Value::as_str);
+        let Some(arguments) = arguments.filter(|value| !value.is_empty()) else {
+            return;
+        };
+
+        let Some(block_index) = self.active_tools.get(call_id).copied() else {
+            return;
+        };
+
+        events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
+            index: block_index,
+            delta: ContentBlockDelta::InputJsonDelta {
+                partial_json: arguments.to_string(),
             },
         }));
     }
@@ -822,6 +870,7 @@ impl CodexStreamState {
         };
 
         if let Some(index) = self.active_tools.remove(call_id) {
+            self.calls_with_deltas.remove(call_id);
             events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
                 index,
             }));
@@ -852,6 +901,7 @@ impl CodexStreamState {
             }));
         }
         self.active_tools.clear();
+        self.calls_with_deltas.clear();
     }
 
     fn close_all_blocks(&mut self, events: &mut Vec<StreamEvent>) {
@@ -1357,6 +1407,79 @@ mod tests {
                     && event.usage.output_tokens == 4
         ));
         assert!(matches!(events[1], StreamEvent::MessageStop(_)));
+    }
+
+    #[test]
+    fn codex_function_call_deltas_use_item_id_not_call_id() {
+        let mut state = CodexStreamState::new();
+
+        state
+            .process_event(
+                "response.created",
+                &serde_json::json!({
+                    "type": "response.created",
+                    "response": {"id": "resp_3", "model": "codex-mini-latest"}
+                }),
+            )
+            .unwrap();
+
+        let events = state
+            .process_event(
+                "response.output_item.added",
+                &serde_json::json!({
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_item123",
+                        "call_id": "call_xyz",
+                        "name": "navigate",
+                        "arguments": ""
+                    }
+                }),
+            )
+            .unwrap();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::ContentBlockStart(ref cbs)
+                if matches!(&cbs.content_block, OutputContentBlock::ToolUse { name, .. } if name == "navigate")
+        )));
+
+        let events = state
+            .process_event(
+                "response.function_call_arguments.delta",
+                &serde_json::json!({
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": "fc_item123",
+                    "delta": "{\"url\":\"https://example.com\"}"
+                }),
+            )
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0],
+            StreamEvent::ContentBlockDelta(ref e)
+                if matches!(
+                    &e.delta,
+                    ContentBlockDelta::InputJsonDelta { partial_json }
+                        if partial_json == r#"{"url":"https://example.com"}"#
+                )
+        ));
+
+        let events = state
+            .process_event(
+                "response.output_item.done",
+                &serde_json::json!({
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "function_call",
+                        "call_id": "call_xyz"
+                    }
+                }),
+            )
+            .unwrap();
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::ContentBlockStop(_))));
     }
 
     #[test]

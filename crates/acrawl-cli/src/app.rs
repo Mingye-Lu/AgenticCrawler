@@ -1574,6 +1574,11 @@ impl ApiClient for LlmRuntimeClient {
                             self.send_ui_stream(rendered);
                         }
                         if let Some((id, name, input)) = pending_tool.take() {
+                            let input = if input.is_empty() {
+                                "{}".to_string()
+                            } else {
+                                input
+                            };
                             let tool_banner = format_tool_call_start(&name, &input);
                             writeln!(out, "\n{tool_banner}")
                                 .and_then(|()| out.flush())
