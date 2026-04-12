@@ -914,6 +914,7 @@ struct ReplTuiState {
     selection_end: Option<(u16, usize)>,
     /// Set when right-click requests a copy of the current selection.
     pending_copy: Option<bool>,
+    mouse_drag_occurred: bool,
     last_esc_at: Option<Instant>,
 }
 
@@ -950,6 +951,7 @@ impl ReplTuiState {
             selection_anchor: None,
             selection_end: None,
             pending_copy: None,
+            mouse_drag_occurred: false,
             last_esc_at: None,
         }
     }
@@ -2300,9 +2302,9 @@ fn run_loop(
                             let row = cur + usize::from(me.row.saturating_sub(tr.y));
                             state.selection_anchor = Some((col, row));
                             state.selection_end = Some((col, row));
+                            state.mouse_drag_occurred = false;
                         }
-                        MouseEventKind::Drag(MouseButton::Left)
-                        | MouseEventKind::Up(MouseButton::Left) => {
+                        MouseEventKind::Drag(MouseButton::Left) => {
                             let col = me
                                 .column
                                 .saturating_sub(tr.x)
@@ -2312,6 +2314,25 @@ fn run_loop(
                                     me.row.saturating_sub(tr.y).min(tr.height.saturating_sub(1)),
                                 );
                             state.selection_end = Some((col, row));
+                            state.mouse_drag_occurred = true;
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            if state.mouse_drag_occurred {
+                                let col = me
+                                    .column
+                                    .saturating_sub(tr.x)
+                                    .min(tr.width.saturating_sub(1));
+                                let row = cur
+                                    + usize::from(
+                                        me.row
+                                            .saturating_sub(tr.y)
+                                            .min(tr.height.saturating_sub(1)),
+                                    );
+                                state.selection_end = Some((col, row));
+                            } else {
+                                state.selection_anchor = None;
+                                state.selection_end = None;
+                            }
                         }
                         MouseEventKind::Down(MouseButton::Right) => {
                             if state.selection_anchor.is_some() {
