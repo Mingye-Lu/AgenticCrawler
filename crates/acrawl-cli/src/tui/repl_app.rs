@@ -41,6 +41,13 @@ enum AppUiState {
     ChatMode,
 }
 
+#[derive(Clone, Debug)]
+enum ToolCallStatus {
+    Running,
+    Success { output: String },
+    Error(String),
+}
+
 #[derive(Clone)]
 enum TranscriptEntry {
     System(String),
@@ -50,6 +57,11 @@ enum TranscriptEntry {
     SystemCard {
         title: String,
         rows: Vec<(String, String)>,
+    },
+    ToolCall {
+        name: String,
+        input_summary: String,
+        status: ToolCallStatus,
     },
 }
 
@@ -252,11 +264,71 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
     result
 }
 
+fn render_tool_call_lines(
+    name: &str,
+    input_summary: &str,
+    status: &ToolCallStatus,
+    _width: u16,
+    spinner: char,
+) -> Vec<ListItem<'static>> {
+    let mut items = Vec::new();
+    let header = match status {
+        ToolCallStatus::Running => {
+            let spinner_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM);
+            let name_style = Style::default().add_modifier(Modifier::BOLD);
+            let param_style = Style::default().add_modifier(Modifier::DIM);
+            Line::from(vec![
+                Span::styled(spinner.to_string(), spinner_style),
+                Span::styled(format!(" {name} "), name_style),
+                Span::styled(input_summary.to_string(), param_style),
+            ])
+        }
+        ToolCallStatus::Success { output } => {
+            let icon_style = Style::default().fg(Color::Green);
+            let name_style = Style::default().add_modifier(Modifier::BOLD);
+            let param_style = Style::default().add_modifier(Modifier::DIM);
+            let summary = if output.trim().is_empty() {
+                "done".to_string()
+            } else {
+                let trimmed = output.trim().replace('\n', " ");
+                if trimmed.len() > 60 {
+                    format!("{}…", &trimmed[..60])
+                } else {
+                    trimmed
+                }
+            };
+            Line::from(vec![
+                Span::styled("✓", icon_style),
+                Span::styled(format!(" {name} "), name_style),
+                Span::styled(summary, param_style),
+            ])
+        }
+        ToolCallStatus::Error(msg) => {
+            let icon_style = Style::default().fg(Color::Red);
+            let name_style = Style::default().add_modifier(Modifier::BOLD);
+            let err_style = Style::default().fg(Color::Red);
+            let truncated = if msg.len() > 120 {
+                format!("{}…", &msg[..120])
+            } else {
+                msg.clone()
+            };
+            Line::from(vec![
+                Span::styled("✗", icon_style),
+                Span::styled(format!(" {name} "), name_style),
+                Span::styled(truncated, err_style),
+            ])
+        }
+    };
+    items.push(ListItem::new(header));
+    items
+}
+
 #[allow(clippy::too_many_lines)]
 fn build_wrapped_list(
     entries: &[TranscriptEntry],
     width: u16,
     live_text: Option<&str>,
+    spinner_char: char,
 ) -> Vec<ListItem<'static>> {
     let mut out = Vec::new();
     // Restore the top padding margin
@@ -345,6 +417,15 @@ fn build_wrapped_list(
                     border_style,
                 ))));
             }
+            TranscriptEntry::ToolCall {
+                name,
+                input_summary,
+                status,
+            } => {
+                let call_items =
+                    render_tool_call_lines(name, input_summary, status, width, spinner_char);
+                out.extend(call_items);
+            }
         }
 
         // Add a blank separator line ONLY after User messages or Cards to separate blocks
@@ -424,6 +505,7 @@ struct ReplTuiState {
     exit: bool,
     current_tool: Option<String>,
     status_entry_index: Option<usize>,
+    tool_call_entry_index: Option<usize>,
     persist_on_exit: bool,
     cursor_on: bool,
     cursor_blink_deadline: Instant,
@@ -458,6 +540,7 @@ impl ReplTuiState {
             persist_on_exit: false,
             current_tool: None,
             status_entry_index: None,
+            tool_call_entry_index: None,
             cursor_on: true,
             cursor_blink_deadline: Instant::now() + Duration::from_millis(530),
             slash_overlay: None,
@@ -526,6 +609,51 @@ impl ReplTuiState {
                 }
             }
         }
+    }
+
+    fn flush_typewriter(&mut self) {
+        if !self.typewriter_chars.is_empty() {
+            let count = self.typewriter_chars.len();
+            self.tick_typewriter(count);
+        }
+        if !self.typewriter_live.is_empty() {
+            let raw = std::mem::take(&mut self.typewriter_live);
+            for styled_line in ansi_to_lines(&raw) {
+                self.entries.push(TranscriptEntry::Stream(styled_line));
+            }
+        }
+    }
+
+    fn start_tool_call_entry(&mut self, name: String, input: &str) {
+        self.flush_typewriter();
+        let compact_input = input.trim().replace('\n', " ");
+        let input_summary = if compact_input.len() > 60 {
+            format!("{}…", &compact_input[..60])
+        } else {
+            compact_input
+        };
+
+        self.ui_state = AppUiState::ChatMode;
+        self.tool_call_entry_index = Some(self.entries.len());
+        self.entries.push(TranscriptEntry::ToolCall {
+            name,
+            input_summary,
+            status: ToolCallStatus::Running,
+        });
+    }
+
+    fn complete_tool_call_entry(&mut self, output: String, is_error: bool) -> bool {
+        if let Some(idx) = self.tool_call_entry_index.take() {
+            if let Some(TranscriptEntry::ToolCall { status, .. }) = self.entries.get_mut(idx) {
+                *status = if is_error {
+                    ToolCallStatus::Error(output)
+                } else {
+                    ToolCallStatus::Success { output }
+                };
+                return true;
+            }
+        }
+        false
     }
 
     fn wake_input_caret(&mut self) {
@@ -793,16 +921,7 @@ impl ReplTuiState {
                     };
 
                     // Flush any remaining characters in the typewriter and clear status
-                    if !self.typewriter_chars.is_empty() {
-                        let count = self.typewriter_chars.len();
-                        self.tick_typewriter(count);
-                    }
-                    if !self.typewriter_live.is_empty() {
-                        let raw = std::mem::take(&mut self.typewriter_live);
-                        for styled_line in ansi_to_lines(&raw) {
-                            self.entries.push(TranscriptEntry::Stream(styled_line));
-                        }
-                    }
+                    self.flush_typewriter();
 
                     // Remove status line on finish
                     if let Some(idx) = self.status_entry_index.take() {
@@ -823,6 +942,17 @@ impl ReplTuiState {
                 ReplTuiEvent::SystemMessage(s) => {
                     had_new_rows = true;
                     self.push_system(&s);
+                }
+                ReplTuiEvent::ToolCallStart { name, input } => {
+                    self.start_tool_call_entry(name, &input);
+                    had_new_rows = true;
+                }
+                ReplTuiEvent::ToolCallComplete {
+                    name: _,
+                    output,
+                    is_error,
+                } => {
+                    had_new_rows |= self.complete_tool_call_entry(output, is_error);
                 }
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
                     if let Some(ref mut modal) = self.active_modal {
@@ -1143,7 +1273,12 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
     } else {
         Some(state.typewriter_live.as_str())
     };
-    let wrapped = build_wrapped_list(&state.entries, main_inner.width, live_line);
+    let wrapped = build_wrapped_list(
+        &state.entries,
+        main_inner.width,
+        live_line,
+        state.spinner_char(),
+    );
     state.last_transcript_rect = main_inner;
     state.last_wrapped_len = wrapped.len();
     state.last_view_height = usize::from(main_inner.height.max(1));
@@ -1969,6 +2104,8 @@ mod tests {
     use crate::app::Provider;
     use crate::tui::auth_modal::{AuthModal, AuthModalStep};
 
+    use super::{render_tool_call_lines, ToolCallStatus};
+
     #[test]
     fn auth_command_blocked_when_busy() {
         let (tx, _rx) = mpsc::channel();
@@ -1995,5 +2132,58 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn render_tool_call_running_status() {
+        let items = render_tool_call_lines("bash", "echo hello", &ToolCallStatus::Running, 80, '⠋');
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn render_tool_call_success_empty_output() {
+        let items = render_tool_call_lines(
+            "navigate",
+            "https://example.com",
+            &ToolCallStatus::Success {
+                output: String::new(),
+            },
+            80,
+            '⠋',
+        );
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn render_tool_call_success_with_output() {
+        let items = render_tool_call_lines(
+            "bash",
+            "ls -la",
+            &ToolCallStatus::Success {
+                output: "some result".to_string(),
+            },
+            80,
+            '⠋',
+        );
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn render_tool_call_error_status() {
+        let items = render_tool_call_lines(
+            "bash",
+            "bad command",
+            &ToolCallStatus::Error("timeout after 30s".to_string()),
+            80,
+            '⠋',
+        );
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn render_tool_call_input_truncation() {
+        let long_input = "a".repeat(80);
+        let items = render_tool_call_lines("bash", &long_input, &ToolCallStatus::Running, 80, '⠋');
+        assert_eq!(items.len(), 1);
     }
 }
