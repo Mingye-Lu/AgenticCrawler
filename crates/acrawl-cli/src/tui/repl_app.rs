@@ -1223,6 +1223,7 @@ fn handle_slash_command_tui(
     terminal: &mut DefaultTerminal,
     state: &mut ReplTuiState,
     cli: &Arc<Mutex<LiveCli>>,
+    ui_tx: Sender<ReplTuiEvent>,
     cmd: SlashCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
@@ -1336,6 +1337,25 @@ fn handle_slash_command_tui(
                 "Browser mode\n  Result           switched to headless",
             );
         }
+        SlashCommand::Auth { provider } => {
+            if state.busy {
+                state.push_system("Please wait for the current task to finish.");
+                return Ok(());
+            }
+            let parsed_provider = provider
+                .as_deref()
+                .and_then(|p| crate::app::parse_provider_arg(p).ok());
+            state.active_modal = Some(AuthModal::new(ui_tx.clone(), parsed_provider));
+            match parsed_provider {
+                Some(crate::app::Provider::Anthropic) => {
+                    spawn_anthropic_oauth_thread(ui_tx.clone(), &mut state.active_modal);
+                }
+                Some(crate::app::Provider::Codex) => {
+                    spawn_codex_oauth_thread(ui_tx.clone(), &mut state.active_modal);
+                }
+                _ => {}
+            }
+        }
         other => {
             suspend_for_stdout(terminal, || {
                 let mut g = cli.lock().expect("cli lock");
@@ -1345,6 +1365,198 @@ fn handle_slash_command_tui(
         }
     }
     Ok(())
+}
+
+fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
+    let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
+    if let Some(ref mut modal) = active_modal {
+        if let AuthModalStep::OAuthWaiting {
+            cancel_tx: ref mut tx,
+            ..
+        } = modal.step
+        {
+            *tx = Some(cancel_tx);
+        }
+    }
+    let ui_tx2 = ui_tx.clone();
+    thread::spawn(move || {
+        let result: Result<(), Box<dyn std::error::Error + Send>> = (|| {
+            use crate::app::{
+                default_oauth_config, open_browser, wait_for_oauth_callback_cancellable,
+            };
+            use api::{AnthropicClient, AuthSource};
+            use runtime::{
+                generate_pkce_pair, generate_state, loopback_redirect_uri, save_oauth_credentials,
+                OAuthAuthorizationRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
+            };
+
+            let oauth = default_oauth_config();
+            let callback_port = oauth.callback_port.unwrap_or(4545);
+            let redirect_uri = loopback_redirect_uri(callback_port);
+            let pkce = generate_pkce_pair()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            let state_val =
+                generate_state().map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            let authorize_url = OAuthAuthorizationRequest::from_config(
+                &oauth,
+                redirect_uri.clone(),
+                state_val.clone(),
+                &pkce,
+            )
+            .build_url();
+            let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
+                message: "Opening browser...".to_string(),
+            });
+            if let Err(err) = open_browser(&authorize_url) {
+                let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
+                    message: format!("Browser failed. Visit: {authorize_url}  ({err})"),
+                });
+            }
+            let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
+                message: format!("Waiting for OAuth callback on port {callback_port}…"),
+            });
+            let callback = wait_for_oauth_callback_cancellable(callback_port, cancel_rx)?;
+            if let Some(error) = callback.error {
+                let desc = callback.error_description.unwrap_or_default();
+                return Err(Box::new(std::io::Error::other(format!("{error}: {desc}"))) as _);
+            }
+            let code = callback.code.ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "callback missing code",
+                )) as Box<dyn std::error::Error + Send>
+            })?;
+            let returned_state = callback.state.ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "callback missing state",
+                )) as Box<dyn std::error::Error + Send>
+            })?;
+            if returned_state != state_val {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "oauth state mismatch",
+                )) as _);
+            }
+            let client =
+                AnthropicClient::from_auth(AuthSource::None).with_base_url(api::read_base_url());
+            let exchange = OAuthTokenExchangeRequest::from_config(
+                &oauth,
+                code,
+                state_val,
+                pkce.verifier,
+                redirect_uri,
+            );
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            let token_set = rt
+                .block_on(client.exchange_oauth_code(&oauth, &exchange))
+                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
+            save_oauth_credentials(&OAuthTokenSet {
+                access_token: token_set.access_token,
+                refresh_token: token_set.refresh_token,
+                expires_at: token_set.expires_at,
+                scopes: token_set.scopes,
+            })
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            Ok(())
+        })();
+        let _ = ui_tx.send(ReplTuiEvent::AuthOAuthComplete {
+            provider: "anthropic".to_string(),
+            result: result.map_err(|e| e.to_string()),
+        });
+    });
+}
+
+fn spawn_codex_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
+    let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
+    if let Some(ref mut modal) = active_modal {
+        if let AuthModalStep::OAuthWaiting {
+            cancel_tx: ref mut tx,
+            ..
+        } = modal.step
+        {
+            *tx = Some(cancel_tx);
+        }
+    }
+    let ui_tx2 = ui_tx.clone();
+    thread::spawn(move || {
+        let result: Result<(), Box<dyn std::error::Error + Send>> = (|| {
+            use crate::app::{open_browser, wait_for_oauth_callback_cancellable};
+            use api::{AnthropicClient, AuthSource};
+            use runtime::{OAuthTokenExchangeRequest, OAuthTokenSet};
+
+            let login_request = api::codex_login().map_err(|e| {
+                Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error + Send>
+            })?;
+            let port = login_request
+                .config
+                .callback_port
+                .unwrap_or(api::CODEX_CALLBACK_PORT);
+            let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
+                message: "Opening browser for Codex login...".to_string(),
+            });
+            if let Err(err) = open_browser(&login_request.authorization_url) {
+                let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
+                    message: format!(
+                        "Browser failed. Visit: {}  ({err})",
+                        login_request.authorization_url
+                    ),
+                });
+            }
+            let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
+                message: format!("Waiting for Codex OAuth callback on port {port}…"),
+            });
+            let callback = wait_for_oauth_callback_cancellable(port, cancel_rx)?;
+            if let Some(error) = callback.error {
+                let desc = callback.error_description.unwrap_or_default();
+                return Err(Box::new(std::io::Error::other(format!("{error}: {desc}"))) as _);
+            }
+            let code = callback.code.ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "callback missing code",
+                )) as Box<dyn std::error::Error + Send>
+            })?;
+            let returned_state = callback.state.ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "callback missing state",
+                )) as Box<dyn std::error::Error + Send>
+            })?;
+            if returned_state != login_request.state {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "oauth state mismatch",
+                )) as _);
+            }
+            let client = AnthropicClient::from_auth(AuthSource::None);
+            let exchange = OAuthTokenExchangeRequest::from_config(
+                &login_request.config,
+                code,
+                login_request.state,
+                login_request.pkce.verifier,
+                login_request.redirect_uri,
+            );
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            let token_set = rt
+                .block_on(client.exchange_oauth_code(&login_request.config, &exchange))
+                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
+            api::save_codex_credentials(&OAuthTokenSet {
+                access_token: token_set.access_token,
+                refresh_token: token_set.refresh_token,
+                expires_at: token_set.expires_at,
+                scopes: token_set.scopes,
+            })
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            Ok(())
+        })();
+        let _ = ui_tx.send(ReplTuiEvent::AuthOAuthComplete {
+            provider: "codex".to_string(),
+            result: result.map_err(|e| e.to_string()),
+        });
+    });
 }
 
 /// Interactive REPL using Ratatui when stdout is a TTY (unless `ACRAWL_CLASSIC_REPL` is set).
@@ -1381,7 +1593,7 @@ pub fn run_repl_ratatui(
 
     let mut terminal = ratatui::init();
     let work_shutdown = work_tx.clone();
-    let result = run_loop(&mut terminal, &ui_rx, work_tx, cli);
+    let result = run_loop(&mut terminal, &ui_rx, ui_tx, work_tx, cli);
     let _ = work_shutdown.send(WorkerMsg::Shutdown);
     ratatui::restore();
     result
@@ -1390,6 +1602,7 @@ pub fn run_repl_ratatui(
 fn run_loop(
     terminal: &mut DefaultTerminal,
     ui_rx: &Receiver<ReplTuiEvent>,
+    ui_tx: Sender<ReplTuiEvent>,
     work_tx: Sender<WorkerMsg>,
     cli: Arc<Mutex<LiveCli>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1512,7 +1725,55 @@ fn run_loop(
                 }
 
                 if let Some(ref mut modal) = state.active_modal {
-                    match modal.handle_key(key) {
+                    let api_key_to_set: Option<String> = if key.code == KeyCode::Enter {
+                        if let AuthModalStep::ApiKeyInput {
+                            provider: crate::app::Provider::OpenAi,
+                            ref key_buffer,
+                            ..
+                        } = modal.step
+                        {
+                            if !key_buffer.is_empty() {
+                                Some(key_buffer.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let action = modal.handle_key(key);
+
+                    if let Some(api_key) = api_key_to_set {
+                        if matches!(modal.step, AuthModalStep::Success { .. }) {
+                            std::env::set_var("OPENAI_API_KEY", &api_key);
+                        }
+                    }
+
+                    if let AuthModalStep::OAuthWaiting {
+                        cancel_tx: None,
+                        provider,
+                        ..
+                    } = &modal.step
+                    {
+                        let prov = *provider;
+                        match prov {
+                            crate::app::Provider::Anthropic => {
+                                spawn_anthropic_oauth_thread(
+                                    ui_tx.clone(),
+                                    &mut state.active_modal,
+                                );
+                            }
+                            crate::app::Provider::Codex => {
+                                spawn_codex_oauth_thread(ui_tx.clone(), &mut state.active_modal);
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    match action {
                         ModalAction::Consumed => continue,
                         ModalAction::Dismiss => {
                             state.active_modal = None;
@@ -1601,7 +1862,13 @@ fn run_loop(
                             continue;
                         }
                         if let Some(cmd) = SlashCommand::parse(&trimmed) {
-                            handle_slash_command_tui(terminal, &mut state, &cli, cmd)?;
+                            handle_slash_command_tui(
+                                terminal,
+                                &mut state,
+                                &cli,
+                                ui_tx.clone(),
+                                cmd,
+                            )?;
                             state.wake_input_caret();
                             continue;
                         }
@@ -1677,4 +1944,40 @@ fn run_loop(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use crate::app::Provider;
+    use crate::tui::auth_modal::{AuthModal, AuthModalStep};
+
+    #[test]
+    fn auth_command_blocked_when_busy() {
+        let (tx, _rx) = mpsc::channel();
+        let modal = AuthModal::new(tx.clone(), None);
+        assert!(matches!(modal.step, AuthModalStep::ProviderSelect { .. }));
+    }
+
+    #[test]
+    fn auth_command_with_provider_arg_skips_selection() {
+        let (tx, _rx) = mpsc::channel();
+        let modal = AuthModal::new(tx.clone(), Some(Provider::OpenAi));
+        assert!(matches!(
+            modal.step,
+            AuthModalStep::ApiKeyInput {
+                provider: Provider::OpenAi,
+                ..
+            }
+        ));
+        let modal2 = AuthModal::new(tx, Some(Provider::Anthropic));
+        assert!(matches!(
+            modal2.step,
+            AuthModalStep::OAuthWaiting {
+                provider: Provider::Anthropic,
+                ..
+            }
+        ));
+    }
 }

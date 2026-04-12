@@ -1192,7 +1192,7 @@ pub(crate) fn run_init() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn default_oauth_config() -> OAuthConfig {
+pub(crate) fn default_oauth_config() -> OAuthConfig {
     OAuthConfig {
         client_id: String::from("9d1c250a-e61b-44d9-88ed-5944d1962f5e"),
         authorize_url: String::from("https://platform.claude.com/oauth/authorize"),
