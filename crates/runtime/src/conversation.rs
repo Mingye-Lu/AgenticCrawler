@@ -554,7 +554,6 @@ mod tests {
                 current_date: "2026-03-31".to_string(),
                 git_status: None,
                 git_diff: None,
-                instruction_files: Vec::new(),
             })
             .with_os("linux", "6.8")
             .build();

@@ -18,7 +18,6 @@ pub(crate) struct StatusContext {
     pub(crate) session_path: Option<PathBuf>,
     pub(crate) loaded_config_files: usize,
     pub(crate) discovered_config_files: usize,
-    pub(crate) memory_file_count: usize,
     pub(crate) project_root: Option<PathBuf>,
     pub(crate) git_branch: Option<String>,
 }
@@ -141,14 +140,13 @@ pub(crate) fn format_status_report(
             usage.cumulative.total_tokens(),
         ),
         format!(
-            "Workspace\n  Cwd              {}\n  Project root     {}\n  Git branch       {}\n  Session          {}\n  Config files     loaded {}/{}\n  Memory files     {}",
+            "Workspace\n  Cwd              {}\n  Project root     {}\n  Git branch       {}\n  Session          {}\n  Config files     loaded {}/{}",
             context.cwd.display(),
             context.project_root.as_ref().map_or_else(|| "unknown".to_string(), |path| path.display().to_string()),
             context.git_branch.as_deref().unwrap_or("unknown"),
             context.session_path.as_ref().map_or_else(|| "live-repl".to_string(), |path| path.display().to_string()),
             context.loaded_config_files,
             context.discovered_config_files,
-            context.memory_file_count,
         ),
     ]
     .join("\n\n")
@@ -202,7 +200,6 @@ pub(crate) fn status_context(
         session_path: session_path.map(Path::to_path_buf),
         loaded_config_files: runtime_config.loaded_entries().len(),
         discovered_config_files,
-        memory_file_count: project_context.instruction_files.len(),
         project_root,
         git_branch,
     })
@@ -573,7 +570,6 @@ mod tests {
                 session_path: Some(PathBuf::from("session.json")),
                 loaded_config_files: 2,
                 discovered_config_files: 3,
-                memory_file_count: 4,
                 project_root: Some(PathBuf::from("/tmp")),
                 git_branch: Some("main".to_string()),
             },
@@ -589,7 +585,6 @@ mod tests {
         assert!(status.contains("Git branch       main"));
         assert!(status.contains("Session          session.json"));
         assert!(status.contains("Config files     loaded 2/3"));
-        assert!(status.contains("Memory files     4"));
     }
 
     #[test]

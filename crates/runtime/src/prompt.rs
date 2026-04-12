@@ -1,5 +1,3 @@
-use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -36,14 +34,6 @@ impl From<ConfigError> for PromptBuildError {
 
 pub const SYSTEM_PROMPT_DYNAMIC_BOUNDARY: &str = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 pub const FRONTIER_MODEL_NAME: &str = "Claude Opus 4.6";
-const MAX_INSTRUCTION_FILE_CHARS: usize = 4_000;
-const MAX_TOTAL_INSTRUCTION_CHARS: usize = 12_000;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ContextFile {
-    pub path: PathBuf,
-    pub content: String,
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectContext {
@@ -51,7 +41,6 @@ pub struct ProjectContext {
     pub current_date: String,
     pub git_status: Option<String>,
     pub git_diff: Option<String>,
-    pub instruction_files: Vec<ContextFile>,
 }
 
 impl ProjectContext {
@@ -60,13 +49,11 @@ impl ProjectContext {
         current_date: impl Into<String>,
     ) -> std::io::Result<Self> {
         let cwd = cwd.into();
-        let instruction_files = discover_instruction_files(&cwd)?;
         Ok(Self {
             cwd,
             current_date: current_date.into(),
             git_status: None,
             git_diff: None,
-            instruction_files,
         })
     }
 
@@ -144,9 +131,6 @@ impl SystemPromptBuilder {
         sections.push(self.environment_section());
         if let Some(project_context) = &self.project_context {
             sections.push(render_project_context(project_context));
-            if !project_context.instruction_files.is_empty() {
-                sections.push(render_instruction_files(&project_context.instruction_files));
-            }
         }
         if let Some(config) = &self.config {
             sections.push(render_config_section(config));
@@ -187,41 +171,6 @@ impl SystemPromptBuilder {
 #[must_use]
 pub fn prepend_bullets(items: Vec<String>) -> Vec<String> {
     items.into_iter().map(|item| format!(" - {item}")).collect()
-}
-
-fn discover_instruction_files(cwd: &Path) -> std::io::Result<Vec<ContextFile>> {
-    let mut directories = Vec::new();
-    let mut cursor = Some(cwd);
-    while let Some(dir) = cursor {
-        directories.push(dir.to_path_buf());
-        cursor = dir.parent();
-    }
-    directories.reverse();
-
-    let mut files = Vec::new();
-    for dir in directories {
-        for candidate in [
-            dir.join("AGENTS.md"),
-            dir.join("AGENTS.local.md"),
-            dir.join(".acrawl").join("AGENTS.md"),
-            dir.join(".acrawl").join("instructions.md"),
-        ] {
-            push_context_file(&mut files, candidate)?;
-        }
-    }
-    Ok(dedupe_instruction_files(files))
-}
-
-fn push_context_file(files: &mut Vec<ContextFile>, path: PathBuf) -> std::io::Result<()> {
-    match fs::read_to_string(&path) {
-        Ok(content) if !content.trim().is_empty() => {
-            files.push(ContextFile { path, content });
-            Ok(())
-        }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
 }
 
 fn read_git_status(cwd: &Path) -> Option<String> {
@@ -276,16 +225,10 @@ fn read_git_output(cwd: &Path, args: &[&str]) -> Option<String> {
 
 fn render_project_context(project_context: &ProjectContext) -> String {
     let mut lines = vec!["# Project context".to_string()];
-    let mut bullets = vec![
+    let bullets = vec![
         format!("Today's date is {}.", project_context.current_date),
         format!("Working directory: {}", project_context.cwd.display()),
     ];
-    if !project_context.instruction_files.is_empty() {
-        bullets.push(format!(
-            "Agent instruction files discovered: {}.",
-            project_context.instruction_files.len()
-        ));
-    }
     lines.extend(prepend_bullets(bullets));
     if let Some(status) = &project_context.git_status {
         lines.push(String::new());
@@ -298,107 +241,6 @@ fn render_project_context(project_context: &ProjectContext) -> String {
         lines.push(diff.clone());
     }
     lines.join("\n")
-}
-
-fn render_instruction_files(files: &[ContextFile]) -> String {
-    let mut sections = vec!["# Agent instructions".to_string()];
-    let mut remaining_chars = MAX_TOTAL_INSTRUCTION_CHARS;
-    for file in files {
-        if remaining_chars == 0 {
-            sections.push(
-                "_Additional instruction content omitted after reaching the prompt budget._"
-                    .to_string(),
-            );
-            break;
-        }
-
-        let raw_content = truncate_instruction_content(&file.content, remaining_chars);
-        let rendered_content = render_instruction_content(&raw_content);
-        let consumed = rendered_content.chars().count().min(remaining_chars);
-        remaining_chars = remaining_chars.saturating_sub(consumed);
-
-        sections.push(format!("## {}", describe_instruction_file(file, files)));
-        sections.push(rendered_content);
-    }
-    sections.join("\n\n")
-}
-
-fn dedupe_instruction_files(files: Vec<ContextFile>) -> Vec<ContextFile> {
-    let mut deduped = Vec::new();
-    let mut seen_hashes = Vec::new();
-
-    for file in files {
-        let normalized = normalize_instruction_content(&file.content);
-        let hash = stable_content_hash(&normalized);
-        if seen_hashes.contains(&hash) {
-            continue;
-        }
-        seen_hashes.push(hash);
-        deduped.push(file);
-    }
-
-    deduped
-}
-
-fn normalize_instruction_content(content: &str) -> String {
-    collapse_blank_lines(content).trim().to_string()
-}
-
-fn stable_content_hash(content: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    content.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn describe_instruction_file(file: &ContextFile, files: &[ContextFile]) -> String {
-    let path = display_context_path(&file.path);
-    let scope = files
-        .iter()
-        .filter_map(|candidate| candidate.path.parent())
-        .find(|parent| file.path.starts_with(parent))
-        .map_or_else(
-            || "workspace".to_string(),
-            |parent| parent.display().to_string(),
-        );
-    format!("{path} (scope: {scope})")
-}
-
-fn truncate_instruction_content(content: &str, remaining_chars: usize) -> String {
-    let hard_limit = MAX_INSTRUCTION_FILE_CHARS.min(remaining_chars);
-    let trimmed = content.trim();
-    if trimmed.chars().count() <= hard_limit {
-        return trimmed.to_string();
-    }
-
-    let mut output = trimmed.chars().take(hard_limit).collect::<String>();
-    output.push_str("\n\n[truncated]");
-    output
-}
-
-fn render_instruction_content(content: &str) -> String {
-    truncate_instruction_content(content, MAX_INSTRUCTION_FILE_CHARS)
-}
-
-fn display_context_path(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
-}
-
-fn collapse_blank_lines(content: &str) -> String {
-    let mut result = String::new();
-    let mut previous_blank = false;
-    for line in content.lines() {
-        let is_blank = line.trim().is_empty();
-        if is_blank && previous_blank {
-            continue;
-        }
-        result.push_str(line.trim_end());
-        result.push('\n');
-        previous_blank = is_blank;
-    }
-    result
 }
 
 pub fn load_system_prompt(
@@ -491,14 +333,9 @@ fn get_actions_section() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        collapse_blank_lines, display_context_path, normalize_instruction_content,
-        render_instruction_content, render_instruction_files, truncate_instruction_content,
-        ContextFile, ProjectContext, SystemPromptBuilder, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-    };
+    use super::{ProjectContext, SystemPromptBuilder, SYSTEM_PROMPT_DYNAMIC_BOUNDARY};
     use crate::config::ConfigLoader;
     use std::fs;
-    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir() -> std::path::PathBuf {
@@ -514,91 +351,6 @@ mod tests {
     }
 
     #[test]
-    fn discovers_instruction_files_from_ancestor_chain() {
-        let root = temp_dir();
-        let nested = root.join("apps").join("api");
-        fs::create_dir_all(nested.join(".acrawl")).expect("nested acrawl dir");
-        fs::write(root.join("AGENTS.md"), "root instructions").expect("write root instructions");
-        fs::write(root.join("AGENTS.local.md"), "local instructions")
-            .expect("write local instructions");
-        fs::create_dir_all(root.join("apps")).expect("apps dir");
-        fs::create_dir_all(root.join("apps").join(".acrawl")).expect("apps acrawl dir");
-        fs::write(root.join("apps").join("AGENTS.md"), "apps instructions")
-            .expect("write apps instructions");
-        fs::write(
-            root.join("apps").join(".acrawl").join("instructions.md"),
-            "apps dot acrawl instructions",
-        )
-        .expect("write apps dot acrawl instructions");
-        fs::write(nested.join(".acrawl").join("AGENTS.md"), "nested rules")
-            .expect("write nested rules");
-        fs::write(
-            nested.join(".acrawl").join("instructions.md"),
-            "nested instructions",
-        )
-        .expect("write nested instructions");
-
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
-        let contents = context
-            .instruction_files
-            .iter()
-            .map(|file| file.content.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            contents,
-            vec![
-                "root instructions",
-                "local instructions",
-                "apps instructions",
-                "apps dot acrawl instructions",
-                "nested rules",
-                "nested instructions"
-            ]
-        );
-        fs::remove_dir_all(root).expect("cleanup temp dir");
-    }
-
-    #[test]
-    fn dedupes_identical_instruction_content_across_scopes() {
-        let root = temp_dir();
-        let nested = root.join("apps").join("api");
-        fs::create_dir_all(&nested).expect("nested dir");
-        fs::write(root.join("AGENTS.md"), "same rules\n\n").expect("write root");
-        fs::write(nested.join("AGENTS.md"), "same rules\n").expect("write nested");
-
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
-        assert_eq!(context.instruction_files.len(), 1);
-        assert_eq!(
-            normalize_instruction_content(&context.instruction_files[0].content),
-            "same rules"
-        );
-        fs::remove_dir_all(root).expect("cleanup temp dir");
-    }
-
-    #[test]
-    fn truncates_large_instruction_content_for_rendering() {
-        let rendered = render_instruction_content(&"x".repeat(4500));
-        assert!(rendered.contains("[truncated]"));
-        assert!(rendered.len() < 4_100);
-    }
-
-    #[test]
-    fn normalizes_and_collapses_blank_lines() {
-        let normalized = normalize_instruction_content("line one\n\n\nline two\n");
-        assert_eq!(normalized, "line one\n\nline two");
-        assert_eq!(collapse_blank_lines("a\n\n\n\nb\n"), "a\n\nb\n");
-    }
-
-    #[test]
-    fn displays_context_paths_compactly() {
-        assert_eq!(
-            display_context_path(Path::new("/tmp/project/.acrawl/AGENTS.md")),
-            "AGENTS.md"
-        );
-    }
-
-    #[test]
     fn discover_with_git_includes_status_snapshot() {
         let root = temp_dir();
         fs::create_dir_all(&root).expect("root dir");
@@ -607,7 +359,6 @@ mod tests {
             .current_dir(&root)
             .status()
             .expect("git init should run");
-        fs::write(root.join("AGENTS.md"), "rules").expect("write instructions");
         fs::write(root.join("tracked.txt"), "hello").expect("write tracked file");
 
         let context =
@@ -615,7 +366,6 @@ mod tests {
 
         let status = context.git_status.expect("git status should be present");
         assert!(status.contains("## No commits yet on") || status.contains("## "));
-        assert!(status.contains("?? AGENTS.md"));
         assert!(status.contains("?? tracked.txt"));
         assert!(context.git_diff.is_none());
 
@@ -665,10 +415,9 @@ mod tests {
     }
 
     #[test]
-    fn load_system_prompt_reads_agent_files_and_config() {
+    fn load_system_prompt_loads_config() {
         let root = temp_dir();
         fs::create_dir_all(root.join(".acrawl")).expect("acrawl dir");
-        fs::write(root.join("AGENTS.md"), "Project rules").expect("write instructions");
         fs::write(
             root.join(".acrawl").join("settings.json"),
             r#"{"permissionMode":"acceptEdits"}"#,
@@ -701,16 +450,15 @@ mod tests {
             std::env::remove_var("ACRAWL_CONFIG_HOME");
         }
 
-        assert!(prompt.contains("Project rules"));
+        assert!(!prompt.contains("# Agent instructions"));
         assert!(prompt.contains("permissionMode"));
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
     #[test]
-    fn renders_agent_style_sections_with_project_context() {
+    fn renders_style_sections_with_project_context() {
         let root = temp_dir();
         fs::create_dir_all(root.join(".acrawl")).expect("acrawl dir");
-        fs::write(root.join("AGENTS.md"), "Project rules").expect("write AGENTS.md");
         fs::write(
             root.join(".acrawl").join("settings.json"),
             r#"{"permissionMode":"acceptEdits"}"#,
@@ -731,53 +479,10 @@ mod tests {
 
         assert!(prompt.contains("# System"));
         assert!(prompt.contains("# Project context"));
-        assert!(prompt.contains("# Agent instructions"));
-        assert!(prompt.contains("Project rules"));
+        assert!(!prompt.contains("# Agent instructions"));
         assert!(prompt.contains("permissionMode"));
         assert!(prompt.contains(SYSTEM_PROMPT_DYNAMIC_BOUNDARY));
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
-    }
-
-    #[test]
-    fn truncates_instruction_content_to_budget() {
-        let content = "x".repeat(5_000);
-        let rendered = truncate_instruction_content(&content, 4_000);
-        assert!(rendered.contains("[truncated]"));
-        assert!(rendered.chars().count() <= 4_000 + "\n\n[truncated]".chars().count());
-    }
-
-    #[test]
-    fn discovers_dot_acrawl_instructions_markdown() {
-        let root = temp_dir();
-        let nested = root.join("apps").join("api");
-        fs::create_dir_all(nested.join(".acrawl")).expect("nested acrawl dir");
-        fs::write(
-            nested.join(".acrawl").join("instructions.md"),
-            "instruction markdown",
-        )
-        .expect("write instructions.md");
-
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
-        assert!(context
-            .instruction_files
-            .iter()
-            .any(|file| file.path.ends_with(".acrawl/instructions.md")));
-        assert!(
-            render_instruction_files(&context.instruction_files).contains("instruction markdown")
-        );
-
-        fs::remove_dir_all(root).expect("cleanup temp dir");
-    }
-
-    #[test]
-    fn renders_instruction_file_metadata() {
-        let rendered = render_instruction_files(&[ContextFile {
-            path: PathBuf::from("/tmp/project/AGENTS.md"),
-            content: "Project rules".to_string(),
-        }]);
-        assert!(rendered.contains("# Agent instructions"));
-        assert!(rendered.contains("scope: /tmp/project"));
-        assert!(rendered.contains("Project rules"));
     }
 }

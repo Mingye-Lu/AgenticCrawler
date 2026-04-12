@@ -68,7 +68,7 @@ pub use permissions::{
     PermissionPrompter, PermissionRequest,
 };
 pub use prompt::{
-    load_system_prompt, prepend_bullets, ContextFile, ProjectContext, PromptBuildError,
+    load_system_prompt, prepend_bullets, ProjectContext, PromptBuildError,
     SystemPromptBuilder, FRONTIER_MODEL_NAME, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
 };
 pub use remote::{
