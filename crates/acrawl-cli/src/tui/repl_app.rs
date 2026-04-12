@@ -1306,15 +1306,6 @@ fn handle_slash_command_tui(
             let report = LiveCli::config_report(section.as_deref())?;
             state.push_system_card("Config", &report);
         }
-        SlashCommand::Memory => {
-            let report = LiveCli::memory_report()?;
-            state.push_system_card("Memory", &report);
-        }
-        SlashCommand::Diff => {
-            let report = LiveCli::diff_report()?;
-            state.push_system("Diff");
-            state.push_system(&report);
-        }
         SlashCommand::Version => {
             let report = LiveCli::version_report();
             state.push_system_card("Version", &report);
@@ -1334,20 +1325,12 @@ fn handle_slash_command_tui(
             }
             state.push_system_card("Session", &result.message);
         }
-        SlashCommand::Teleport { target } => {
-            let report = cli
-                .lock()
-                .expect("cli lock")
-                .teleport_report(target.as_deref())?;
-            state.push_system("Teleport");
-            state.push_system(&report);
-        }
-        SlashCommand::DebugToolCall => {
+        SlashCommand::Debug => {
             let report = cli.lock().expect("cli lock").debug_tool_call_report()?;
             state.push_system("Debug Tool Call");
             state.push_system(&report);
         }
-        SlashCommand::Headed | SlashCommand::NoHeadless => {
+        SlashCommand::Headed => {
             std::env::set_var("HEADLESS", "false");
             state.push_system_card(
                 "Browser Mode",
@@ -1380,7 +1363,7 @@ fn handle_slash_command_tui(
                 _ => {}
             }
         }
-        other => {
+        other @ SlashCommand::Unknown(_) => {
             suspend_for_stdout(terminal, || {
                 let mut g = cli.lock().expect("cli lock");
                 let _ = g.handle_repl_command(other);

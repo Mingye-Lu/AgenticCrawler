@@ -17,7 +17,7 @@ use runtime::{load_system_prompt, PermissionMode, Session};
 
 use app::{
     default_permission_mode, initial_model_from_env, permission_mode_from_label,
-    resolve_model_alias, run_init, run_login, run_logout, run_repl, run_resume_command,
+    resolve_model_alias, run_login, run_logout, run_repl, run_resume_command,
     AllowedToolSet, LiveCli,
 };
 use format::{normalize_permission_mode, render_version_report, DEFAULT_DATE, VERSION};
@@ -64,7 +64,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         CliAction::Login => run_login()?,
         CliAction::Logout => run_logout()?,
-        CliAction::Init => run_init()?,
+        CliAction::Init => {
+            let cwd = env::current_dir()?;
+            println!("{}", crate::init::initialize_repo(&cwd)?.render());
+        }
         CliAction::Repl {
             model,
             allowed_tools,
@@ -528,7 +531,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  acrawl --resume session.json /status /diff /export notes.txt"
+        "  acrawl --resume session.json /status /compact /export notes.txt"
     )?;
     writeln!(out, "  acrawl login")?;
     writeln!(out, "  acrawl init")?;
@@ -795,8 +798,8 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                "help", "status", "compact", "clear", "cost", "config", "memory", "init", "diff",
-                "version", "export",
+                "help", "status", "compact", "clear", "cost", "config", "version",
+                "export",
             ]
         );
     }
@@ -839,8 +842,7 @@ mod tests {
                 section: Some("env".to_string())
             })
         );
-        assert_eq!(SlashCommand::parse("/memory"), Some(SlashCommand::Memory));
-        assert_eq!(SlashCommand::parse("/init"), Some(SlashCommand::Init));
+        assert_eq!(SlashCommand::parse("/debug"), Some(SlashCommand::Debug));
     }
 
     #[test]

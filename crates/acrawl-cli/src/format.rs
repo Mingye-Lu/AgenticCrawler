@@ -1,5 +1,4 @@
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -7,8 +6,6 @@ use commands::render_slash_command_help;
 use runtime::{
     ConfigLoader, ConfigSource, ContentBlock, MessageRole, ProjectContext, Session, TokenUsage,
 };
-
-use crate::init::initialize_repo;
 
 pub(crate) const DEFAULT_DATE: &str = "2026-03-31";
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -292,45 +289,6 @@ pub(crate) fn render_config_report(
     Ok(lines.join("\n"))
 }
 
-pub(crate) fn render_memory_report() -> Result<String, Box<dyn std::error::Error>> {
-    let cwd = env::current_dir()?;
-    let project_context = ProjectContext::discover(&cwd, DEFAULT_DATE)?;
-    let mut lines = vec![format!(
-        "Memory\n  Working directory {}\n  Instruction files {}",
-        cwd.display(),
-        project_context.instruction_files.len()
-    )];
-    if project_context.instruction_files.is_empty() {
-        lines.push("Discovered files".to_string());
-        lines.push(
-            "  No agent instruction files discovered in the current directory ancestry."
-                .to_string(),
-        );
-    } else {
-        lines.push("Discovered files".to_string());
-        for (index, file) in project_context.instruction_files.iter().enumerate() {
-            let preview = file.content.lines().next().unwrap_or("").trim();
-            let preview = if preview.is_empty() {
-                "<empty>"
-            } else {
-                preview
-            };
-            lines.push(format!("  {}. {}", index + 1, file.path.display()));
-            lines.push(format!(
-                "     lines={} preview={}",
-                file.content.lines().count(),
-                preview
-            ));
-        }
-    }
-    Ok(lines.join("\n"))
-}
-
-pub(crate) fn init_agents_md() -> Result<String, Box<dyn std::error::Error>> {
-    let cwd = env::current_dir()?;
-    Ok(initialize_repo(&cwd)?.render())
-}
-
 pub(crate) fn normalize_permission_mode(mode: &str) -> Option<&'static str> {
     match mode.trim() {
         "read-only" => Some("read-only"),
@@ -338,71 +296,6 @@ pub(crate) fn normalize_permission_mode(mode: &str) -> Option<&'static str> {
         "danger-full-access" => Some("danger-full-access"),
         _ => None,
     }
-}
-
-pub(crate) fn render_diff_report() -> Result<String, Box<dyn std::error::Error>> {
-    let output = Command::new("git")
-        .args(["diff", "--", ":(exclude).omx"])
-        .current_dir(env::current_dir()?)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("git diff failed: {stderr}").into());
-    }
-    let diff = String::from_utf8(output.stdout)?;
-    if diff.trim().is_empty() {
-        return Ok(
-            "Diff\n  Result           clean working tree\n  Detail           no current changes"
-                .to_string(),
-        );
-    }
-    Ok(format!("Diff\n\n{}", diff.trim_end()))
-}
-
-pub(crate) fn render_teleport_report(target: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let cwd = env::current_dir()?;
-
-    let file_list = Command::new("rg")
-        .args(["--files"])
-        .current_dir(&cwd)
-        .output()?;
-    let file_matches = if file_list.status.success() {
-        String::from_utf8(file_list.stdout)?
-            .lines()
-            .filter(|line| line.contains(target))
-            .take(10)
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
-
-    let content_output = Command::new("rg")
-        .args(["-n", "-S", "--color", "never", target, "."])
-        .current_dir(&cwd)
-        .output()?;
-
-    let mut lines = vec![format!("Teleport\n  Target           {target}")];
-    if !file_matches.is_empty() {
-        lines.push(String::new());
-        lines.push("File matches".to_string());
-        lines.extend(file_matches.into_iter().map(|path| format!("  {path}")));
-    }
-
-    if content_output.status.success() {
-        let matches = String::from_utf8(content_output.stdout)?;
-        if !matches.trim().is_empty() {
-            lines.push(String::new());
-            lines.push("Content matches".to_string());
-            lines.push(truncate_for_prompt(&matches, 4_000));
-        }
-    }
-
-    if lines.len() == 1 {
-        lines.push("  Result           no matches found".to_string());
-    }
-
-    Ok(lines.join("\n"))
 }
 
 pub(crate) fn render_last_tool_debug_report(
@@ -564,98 +457,6 @@ pub(crate) fn resolve_export_path(
     Ok(cwd.join(final_name))
 }
 
-pub(crate) fn git_output(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(env::current_dir()?)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("git {} failed: {stderr}", args.join(" ")).into());
-    }
-    Ok(String::from_utf8(output.stdout)?)
-}
-
-pub(crate) fn git_status_ok(args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(env::current_dir()?)
-        .output()?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("git {} failed: {stderr}", args.join(" ")).into());
-    }
-    Ok(())
-}
-
-pub(crate) fn command_exists(name: &str) -> bool {
-    Command::new("which")
-        .arg(name)
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
-}
-
-pub(crate) fn write_temp_text_file(
-    filename: &str,
-    contents: &str,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let path = env::temp_dir().join(filename);
-    fs::write(&path, contents)?;
-    Ok(path)
-}
-
-pub(crate) fn recent_user_context(session: &Session, limit: usize) -> String {
-    let requests = session
-        .messages
-        .iter()
-        .filter(|message| message.role == MessageRole::User)
-        .filter_map(|message| {
-            message.blocks.iter().find_map(|block| match block {
-                ContentBlock::Text { text } => Some(text.trim().to_string()),
-                _ => None,
-            })
-        })
-        .rev()
-        .take(limit)
-        .collect::<Vec<_>>();
-
-    if requests.is_empty() {
-        "<no prior user messages>".to_string()
-    } else {
-        requests
-            .into_iter()
-            .rev()
-            .enumerate()
-            .map(|(index, text)| format!("{}. {}", index + 1, text))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-pub(crate) fn truncate_for_prompt(value: &str, limit: usize) -> String {
-    if value.chars().count() <= limit {
-        value.trim().to_string()
-    } else {
-        let truncated = value.chars().take(limit).collect::<String>();
-        format!("{}\n…[truncated]", truncated.trim_end())
-    }
-}
-
-pub(crate) fn sanitize_generated_message(value: &str) -> String {
-    value.trim().trim_matches('`').trim().replace("\r\n", "\n")
-}
-
-pub(crate) fn parse_titled_body(value: &str) -> Option<(String, String)> {
-    let normalized = sanitize_generated_message(value);
-    let title = normalized
-        .lines()
-        .find_map(|line| line.strip_prefix("TITLE:").map(str::trim))?;
-    let body_start = normalized.find("BODY:")?;
-    let body = normalized[body_start + "BODY:".len()..].trim();
-    Some((title.to_string(), body.to_string()))
-}
-
 pub(crate) fn truncate_for_summary(value: &str, limit: usize) -> String {
     let mut chars = value.chars();
     let truncated = chars.by_ref().take(limit).collect::<String>();
@@ -798,15 +599,6 @@ mod tests {
     }
 
     #[test]
-    fn memory_report_uses_sectioned_layout() {
-        let report = render_memory_report().expect("memory report should render");
-        assert!(report.contains("Memory"));
-        assert!(report.contains("Working directory"));
-        assert!(report.contains("Instruction files"));
-        assert!(report.contains("Discovered files"));
-    }
-
-    #[test]
     fn config_report_uses_sectioned_layout() {
         let report = render_config_report(None).expect("config report should render");
         assert!(report.contains("Config"));
@@ -855,15 +647,12 @@ mod tests {
         assert!(help.contains("/cost"));
         assert!(help.contains("/resume <session-path>"));
         assert!(help.contains("/config [env|hooks|model]"));
-        assert!(help.contains("/memory"));
-        assert!(help.contains("/init"));
-        assert!(help.contains("/diff"));
+        assert!(help.contains("/debug"));
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));
         assert!(help.contains("/session [list|switch <session-id>]"));
         assert!(help.contains("/headed"));
         assert!(help.contains("/headless"));
-        assert!(help.contains("/no-headless"));
         assert!(help.contains("/exit"));
     }
 

@@ -27,14 +27,12 @@ use runtime::{
 use serde_json::json;
 
 use crate::format::{
-    command_exists, format_auto_compaction_notice, format_compact_report, format_cost_report,
+    format_auto_compaction_notice, format_compact_report, format_cost_report,
     format_model_report, format_model_switch_report, format_permissions_report,
-    format_permissions_switch_report, format_resume_report, format_status_report, git_output,
-    git_status_ok, init_agents_md, normalize_permission_mode, parse_titled_body,
-    recent_user_context, render_config_report, render_diff_report, render_export_text,
-    render_last_tool_debug_report, render_memory_report, render_repl_help, render_teleport_report,
-    render_version_report, resolve_export_path, sanitize_generated_message, status_context,
-    truncate_for_prompt, write_temp_text_file, StatusUsage, DEFAULT_DATE,
+    format_permissions_switch_report, format_resume_report, format_status_report,
+    normalize_permission_mode, render_config_report, render_export_text,
+    render_last_tool_debug_report, render_repl_help, render_version_report,
+    resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
 use crate::input;
 use crate::session_mgr::{
@@ -469,31 +467,7 @@ impl LiveCli {
                 println!("{}", self.status_report()?);
                 false
             }
-            SlashCommand::Bughunter { scope } => {
-                self.run_bughunter(scope.as_deref())?;
-                false
-            }
-            SlashCommand::Commit => {
-                self.run_commit()?;
-                true
-            }
-            SlashCommand::Pr { context } => {
-                self.run_pr(context.as_deref())?;
-                false
-            }
-            SlashCommand::Issue { context } => {
-                self.run_issue(context.as_deref())?;
-                false
-            }
-            SlashCommand::Ultraplan { task } => {
-                self.run_ultraplan(task.as_deref())?;
-                false
-            }
-            SlashCommand::Teleport { target } => {
-                println!("{}", self.teleport_report(target.as_deref())?);
-                false
-            }
-            SlashCommand::DebugToolCall => {
+            SlashCommand::Debug => {
                 println!("{}", self.debug_tool_call_report()?);
                 false
             }
@@ -530,18 +504,6 @@ impl LiveCli {
                 println!("{}", Self::config_report(section.as_deref())?);
                 false
             }
-            SlashCommand::Memory => {
-                println!("{}", Self::memory_report()?);
-                false
-            }
-            SlashCommand::Init => {
-                run_init()?;
-                false
-            }
-            SlashCommand::Diff => {
-                println!("{}", Self::diff_report()?);
-                false
-            }
             SlashCommand::Version => {
                 println!("{}", Self::version_report());
                 false
@@ -559,7 +521,7 @@ impl LiveCli {
                 self.run_auth(provider.as_deref())?;
                 false
             }
-            SlashCommand::Headed | SlashCommand::NoHeadless => {
+            SlashCommand::Headed => {
                 env::set_var("HEADLESS", "false");
                 println!("Browser mode\n  Result           switched to headed (visible)");
                 false
@@ -760,12 +722,6 @@ impl LiveCli {
     ) -> Result<String, Box<dyn std::error::Error>> {
         render_config_report(section)
     }
-    pub(crate) fn memory_report() -> Result<String, Box<dyn std::error::Error>> {
-        render_memory_report()
-    }
-    pub(crate) fn diff_report() -> Result<String, Box<dyn std::error::Error>> {
-        render_diff_report()
-    }
     pub(crate) fn version_report() -> String {
         render_version_report()
     }
@@ -886,130 +842,8 @@ impl LiveCli {
         })
     }
 
-    fn run_internal_prompt_text(
-        &self,
-        prompt: &str,
-        enable_tools: bool,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        let session = self.runtime.session().clone();
-        let mut runtime = build_runtime(
-            session,
-            self.model.clone(),
-            self.system_prompt.clone(),
-            enable_tools,
-            false,
-            self.allowed_tools.clone(),
-            self.permission_mode,
-            self.ui_sender(),
-        )?;
-        let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
-        let summary = runtime.run_turn(prompt, Some(&mut permission_prompter))?;
-        Ok(final_assistant_text(&summary).trim().to_string())
-    }
-
-    fn run_bughunter(&self, scope: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-        let scope = scope.unwrap_or("the current repository");
-        let prompt = format!("You are /bughunter. Inspect {scope} and identify the most likely bugs or correctness issues. Prioritize concrete findings with file paths, severity, and suggested fixes. Use tools if needed.");
-        println!("{}", self.run_internal_prompt_text(&prompt, true)?);
-        Ok(())
-    }
-
-    fn run_ultraplan(&self, task: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-        let task = task.unwrap_or("the current repo work");
-        let prompt = format!("You are /ultraplan. Produce a deep multi-step execution plan for {task}. Include goals, risks, implementation sequence, verification steps, and rollback considerations. Use tools if needed.");
-        println!("{}", self.run_internal_prompt_text(&prompt, true)?);
-        Ok(())
-    }
-
-    #[allow(clippy::unused_self)]
-    pub(crate) fn teleport_report(
-        &self,
-        target: Option<&str>,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        let Some(target) = target.map(str::trim).filter(|value| !value.is_empty()) else {
-            return Ok("Usage: /teleport <symbol-or-path>".to_string());
-        };
-        render_teleport_report(target)
-    }
-
     pub(crate) fn debug_tool_call_report(&self) -> Result<String, Box<dyn std::error::Error>> {
         render_last_tool_debug_report(self.runtime.session())
-    }
-
-    fn run_commit(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let status = git_output(&["status", "--short"])?;
-        if status.trim().is_empty() {
-            println!("Commit\n  Result           skipped\n  Reason           no workspace changes");
-            return Ok(());
-        }
-        git_status_ok(&["add", "-A"])?;
-        let staged_stat = git_output(&["diff", "--cached", "--stat"])?;
-        let prompt = format!("Generate a git commit message in plain text Lore format only. Base it on this staged diff summary:\n\n{}\n\nRecent conversation context:\n{}", truncate_for_prompt(&staged_stat, 8_000), recent_user_context(self.runtime.session(), 6));
-        let message = sanitize_generated_message(&self.run_internal_prompt_text(&prompt, false)?);
-        if message.trim().is_empty() {
-            return Err("generated commit message was empty".into());
-        }
-        let path = write_temp_text_file("acrawl-commit-message.txt", &message)?;
-        let output = Command::new("git")
-            .args(["commit", "--file"])
-            .arg(&path)
-            .current_dir(env::current_dir()?)
-            .output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(format!("git commit failed: {stderr}").into());
-        }
-        println!(
-            "Commit\n  Result           created\n  Message file     {}\n\n{}",
-            path.display(),
-            message.trim()
-        );
-        Ok(())
-    }
-
-    fn run_pr(&self, context: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-        let staged = git_output(&["diff", "--stat"])?;
-        let prompt = format!("Generate a pull request title and body from this conversation and diff summary. Output plain text in this format exactly:\nTITLE: <title>\nBODY:\n<body markdown>\n\nContext hint: {}\n\nDiff summary:\n{}", context.unwrap_or("none"), truncate_for_prompt(&staged, 10_000));
-        let draft = sanitize_generated_message(&self.run_internal_prompt_text(&prompt, false)?);
-        let (title, body) = parse_titled_body(&draft)
-            .ok_or_else(|| "failed to parse generated PR title/body".to_string())?;
-        if command_exists("gh") {
-            let body_path = write_temp_text_file("acrawl-pr-body.md", &body)?;
-            let output = Command::new("gh")
-                .args(["pr", "create", "--title", &title, "--body-file"])
-                .arg(&body_path)
-                .current_dir(env::current_dir()?)
-                .output()?;
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                println!("PR\n  Result           created\n  Title            {title}\n  URL              {}", if stdout.is_empty() { "<unknown>" } else { &stdout });
-                return Ok(());
-            }
-        }
-        println!("PR draft\n  Title            {title}\n\n{body}");
-        Ok(())
-    }
-
-    fn run_issue(&self, context: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-        let prompt = format!("Generate a GitHub issue title and body from this conversation. Output plain text in this format exactly:\nTITLE: <title>\nBODY:\n<body markdown>\n\nContext hint: {}\n\nConversation context:\n{}", context.unwrap_or("none"), truncate_for_prompt(&recent_user_context(self.runtime.session(), 10), 10_000));
-        let draft = sanitize_generated_message(&self.run_internal_prompt_text(&prompt, false)?);
-        let (title, body) = parse_titled_body(&draft)
-            .ok_or_else(|| "failed to parse generated issue title/body".to_string())?;
-        if command_exists("gh") {
-            let body_path = write_temp_text_file("acrawl-issue-body.md", &body)?;
-            let output = Command::new("gh")
-                .args(["issue", "create", "--title", &title, "--body-file"])
-                .arg(&body_path)
-                .current_dir(env::current_dir()?)
-                .output()?;
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                println!("Issue\n  Result           created\n  Title            {title}\n  URL              {}", if stdout.is_empty() { "<unknown>" } else { &stdout });
-                return Ok(());
-            }
-        }
-        println!("Issue draft\n  Title            {title}\n\n{body}");
-        Ok(())
     }
 }
 
@@ -1096,18 +930,6 @@ pub(crate) fn run_resume_command(
             session: session.clone(),
             message: Some(render_config_report(section.as_deref())?),
         }),
-        SlashCommand::Memory => Ok(ResumeCommandOutcome {
-            session: session.clone(),
-            message: Some(render_memory_report()?),
-        }),
-        SlashCommand::Init => Ok(ResumeCommandOutcome {
-            session: session.clone(),
-            message: Some(init_agents_md()?),
-        }),
-        SlashCommand::Diff => Ok(ResumeCommandOutcome {
-            session: session.clone(),
-            message: Some(render_diff_report()?),
-        }),
         SlashCommand::Version => Ok(ResumeCommandOutcome {
             session: session.clone(),
             message: Some(render_version_report()),
@@ -1117,13 +939,7 @@ pub(crate) fn run_resume_command(
             fs::write(&export_path, render_export_text(session))?;
             Ok(ResumeCommandOutcome { session: session.clone(), message: Some(format!("Export\n  Result           wrote transcript\n  File             {}\n  Messages         {}", export_path.display(), session.messages.len())) })
         }
-        SlashCommand::Bughunter { .. }
-        | SlashCommand::Commit
-        | SlashCommand::Pr { .. }
-        | SlashCommand::Issue { .. }
-        | SlashCommand::Ultraplan { .. }
-        | SlashCommand::Teleport { .. }
-        | SlashCommand::DebugToolCall
+        SlashCommand::Debug
         | SlashCommand::Resume { .. }
         | SlashCommand::Model { .. }
         | SlashCommand::Permissions { .. }
@@ -1131,7 +947,6 @@ pub(crate) fn run_resume_command(
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed
         | SlashCommand::Headless
-        | SlashCommand::NoHeadless
         | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),
     }
 }
@@ -1188,11 +1003,6 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
 pub(crate) fn run_logout() -> Result<(), Box<dyn std::error::Error>> {
     clear_oauth_credentials()?;
     println!("OAuth credentials cleared.");
-    Ok(())
-}
-
-pub(crate) fn run_init() -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", init_agents_md()?);
     Ok(())
 }
 
