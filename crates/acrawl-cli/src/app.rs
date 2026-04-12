@@ -186,7 +186,9 @@ fn run_repl_classic(
                 if trimmed.is_empty() {
                     continue;
                 }
-                if matches!(trimmed.as_str(), "/exit" | "/quit") {
+                if trimmed.eq_ignore_ascii_case("/exit")
+                    || trimmed.eq_ignore_ascii_case("/quit")
+                {
                     cli.persist_session()?;
                     break;
                 }

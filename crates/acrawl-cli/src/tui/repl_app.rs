@@ -686,13 +686,14 @@ impl ReplTuiState {
             return;
         }
 
+        let trimmed_lower = trimmed.to_ascii_lowercase();
         let candidates = slash_command_specs()
             .iter()
             .map(|spec| SlashOverlayItem {
                 command: format!("/{}", spec.name),
                 summary: spec.summary,
             })
-            .filter(|item| item.command.starts_with(trimmed))
+            .filter(|item| item.command.starts_with(&trimmed_lower))
             .collect::<Vec<_>>();
 
         if candidates.is_empty() {
@@ -1888,7 +1889,9 @@ fn run_loop(
                             state.wake_input_caret();
                             continue;
                         }
-                        if matches!(trimmed.as_str(), "/exit" | "/quit") {
+                        if trimmed.eq_ignore_ascii_case("/exit")
+                            || trimmed.eq_ignore_ascii_case("/quit")
+                        {
                             state.exit = true;
                             state.persist_on_exit = true;
                             continue;
@@ -1931,7 +1934,7 @@ fn run_loop(
                             state.wake_input_caret();
                             state.refresh_slash_overlay();
                         } else {
-                            let prefix = state.input.clone();
+                            let prefix = state.input.to_ascii_lowercase();
                             let candidates = slash_command_completion_candidates();
                             let matches: Vec<_> = candidates
                                 .into_iter()

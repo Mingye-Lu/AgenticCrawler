@@ -270,7 +270,9 @@ impl SlashCommand {
         }
 
         let mut parts = trimmed.trim_start_matches('/').split_whitespace();
-        let command = parts.next().unwrap_or_default();
+        let command_raw = parts.next().unwrap_or_default();
+        let command_lower = command_raw.to_ascii_lowercase();
+        let command = command_lower.as_str();
         Some(match command {
             "help" => Self::Help,
             "status" => Self::Status,
@@ -331,9 +333,11 @@ impl SlashCommand {
 }
 
 fn remainder_after_command(input: &str, command: &str) -> Option<String> {
+    // Skip the "/" + command name. Works regardless of input case because
+    // all command names are ASCII, so byte length is preserved across case.
     input
         .trim()
-        .strip_prefix(&format!("/{command}"))
+        .get(1 + command.len()..)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
@@ -557,6 +561,35 @@ mod tests {
         assert_eq!(
             SlashCommand::parse("/no-headless"),
             Some(SlashCommand::NoHeadless)
+        );
+    }
+
+    #[test]
+    fn parses_slash_commands_case_insensitively() {
+        assert_eq!(SlashCommand::parse("/Help"), Some(SlashCommand::Help));
+        assert_eq!(SlashCommand::parse("/STATUS"), Some(SlashCommand::Status));
+        assert_eq!(SlashCommand::parse("/COMPACT"), Some(SlashCommand::Compact));
+        assert_eq!(
+            SlashCommand::parse("/Model claude-opus"),
+            Some(SlashCommand::Model {
+                model: Some("claude-opus".to_string()),
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/Bughunter Runtime"),
+            Some(SlashCommand::Bughunter {
+                scope: Some("Runtime".to_string()),
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/NO-HEADLESS"),
+            Some(SlashCommand::NoHeadless)
+        );
+        assert_eq!(
+            SlashCommand::parse("/Export Notes.txt"),
+            Some(SlashCommand::Export {
+                path: Some("Notes.txt".to_string()),
+            })
         );
     }
 
