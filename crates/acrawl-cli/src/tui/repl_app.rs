@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 use crate::render::TerminalRenderer;
 use ansi_to_tui::IntoText;
 use commands::{slash_command_specs, SlashCommand};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -828,6 +830,39 @@ fn rect_contains_mouse(r: Rect, col: u16, row: u16) -> bool {
         && row < r.y.saturating_add(r.height)
 }
 
+fn base64_encode(input: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = chunk.get(1).copied().map_or(0u32, u32::from);
+        let b2 = chunk.get(2).copied().map_or(0u32, u32::from);
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+fn copy_osc52(text: &str) {
+    let encoded = base64_encode(text.as_bytes());
+    let _ = io::Write::write_all(
+        &mut io::stdout(),
+        format!("\x1b]52;c;{encoded}\x07").as_bytes(),
+    );
+    let _ = io::Write::flush(&mut io::stdout());
+}
+
 struct MouseCaptureGuard;
 
 impl Drop for MouseCaptureGuard {
@@ -872,6 +907,12 @@ struct ReplTuiState {
     typewriter_chars: VecDeque<char>,
     /// The current line being built char-by-char (shown as live line).
     typewriter_live: String,
+    /// Mouse selection anchor (col screen-relative, row content-absolute).
+    selection_anchor: Option<(u16, usize)>,
+    /// Mouse selection moving end (col screen-relative, row content-absolute).
+    selection_end: Option<(u16, usize)>,
+    /// Set when right-click requests a copy of the current selection.
+    pending_copy: Option<bool>,
 }
 
 impl ReplTuiState {
@@ -904,6 +945,9 @@ impl ReplTuiState {
             spinner_deadline: Instant::now() + Duration::from_millis(120),
             typewriter_chars: VecDeque::new(),
             typewriter_live: String::new(),
+            selection_anchor: None,
+            selection_end: None,
+            pending_copy: None,
         }
     }
 
@@ -1654,6 +1698,56 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
         .scroll_padding(2);
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
 
+    if let (Some(anchor), Some(end)) = (state.selection_anchor, state.selection_end) {
+        let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
+            (anchor, end)
+        } else {
+            (end, anchor)
+        };
+        let scroll_off = state.list_state.offset();
+        let viewport_h = usize::from(main_inner.height);
+        let max_col = main_inner.width.saturating_sub(1);
+        if s_end.1 >= scroll_off && s_start.1 < scroll_off + viewport_h {
+            let vis_first = s_start.1.max(scroll_off) - scroll_off;
+            let vis_last = (s_end.1 - scroll_off).min(viewport_h.saturating_sub(1));
+            let highlight_bg = Color::Rgb(50, 80, 130);
+            let wants_copy = state.pending_copy.take().is_some();
+            let buf = frame.buffer_mut();
+            let mut copy_lines: Vec<String> = Vec::new();
+            for screen_row in vis_first..=vis_last {
+                let abs_row = scroll_off + screen_row;
+                let c0 = if abs_row == s_start.1 { s_start.0 } else { 0 };
+                let c1 = if abs_row == s_end.1 {
+                    s_end.0.min(max_col)
+                } else {
+                    max_col
+                };
+                let y = main_inner.y + u16::try_from(screen_row).unwrap_or(0);
+                let mut line_buf = String::new();
+                for col in c0..=c1 {
+                    let x = main_inner.x + col;
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        if wants_copy {
+                            line_buf.push_str(cell.symbol());
+                        }
+                        cell.set_bg(highlight_bg);
+                    }
+                }
+                if wants_copy {
+                    copy_lines.push(line_buf.trim_end().to_string());
+                }
+            }
+            if wants_copy {
+                let text = copy_lines.join("\n");
+                if !text.trim().is_empty() {
+                    copy_osc52(&text);
+                    state.selection_anchor = None;
+                    state.selection_end = None;
+                }
+            }
+        }
+    }
+
     // Busy indicator overlay at bottom-right of transcript
     if state.busy {
         let spinner = state.spinner_char();
@@ -2151,7 +2245,6 @@ fn run_loop(
             }
         })?;
 
-        // Advance typewriter: dynamic speed to catch up if buffer accumulates
         if !state.typewriter_chars.is_empty() {
             let q_len = state.typewriter_chars.len();
             let count = if q_len > 100 {
@@ -2186,6 +2279,7 @@ fn run_loop(
                         .last_wrapped_len
                         .saturating_sub(state.last_view_height.max(1));
                     let cur = state.list_state.offset();
+                    let tr = state.last_transcript_rect;
                     match me.kind {
                         MouseEventKind::ScrollUp => {
                             *state.list_state.offset_mut() = cur.saturating_sub(3);
@@ -2195,9 +2289,34 @@ fn run_loop(
                             *state.list_state.offset_mut() = (cur.saturating_add(3)).min(max_off);
                             state.follow_bottom = state.list_state.offset() >= max_off;
                         }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            let col = me.column.saturating_sub(tr.x);
+                            let row = cur + usize::from(me.row.saturating_sub(tr.y));
+                            state.selection_anchor = Some((col, row));
+                            state.selection_end = Some((col, row));
+                        }
+                        MouseEventKind::Drag(MouseButton::Left)
+                        | MouseEventKind::Up(MouseButton::Left) => {
+                            let col = me
+                                .column
+                                .saturating_sub(tr.x)
+                                .min(tr.width.saturating_sub(1));
+                            let row = cur
+                                + usize::from(
+                                    me.row.saturating_sub(tr.y).min(tr.height.saturating_sub(1)),
+                                );
+                            state.selection_end = Some((col, row));
+                        }
+                        MouseEventKind::Down(MouseButton::Right) => {
+                            if state.selection_anchor.is_some() {
+                                state.pending_copy = Some(true);
+                            }
+                        }
                         _ => {}
                     }
                 } else if in_input || state.ui_state == AppUiState::WelcomeMode {
+                    state.selection_anchor = None;
+                    state.selection_end = None;
                     match me.kind {
                         MouseEventKind::ScrollUp => {
                             state.input_scroll_offset = state.input_scroll_offset.saturating_sub(1);
@@ -2210,6 +2329,11 @@ fn run_loop(
                 }
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+                    state.selection_anchor = None;
+                    state.selection_end = None;
+                }
+
                 if let Some((req, respond)) = state.pending_permission.take() {
                     #[allow(clippy::unnested_or_patterns)]
                     match key.code {
