@@ -8,7 +8,7 @@ fn format_tool(spec: &ToolSpec) -> String {
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
         .unwrap_or_default();
 
-    if required.is_empty() {
+    let mut line = if required.is_empty() {
         format!("- **{}**: {}", spec.name, spec.description)
     } else {
         format!(
@@ -17,7 +17,12 @@ fn format_tool(spec: &ToolSpec) -> String {
             spec.description,
             required.join(", ")
         )
+    };
+    if let Some(instructions) = spec.instructions {
+        use std::fmt::Write;
+        let _ = write!(line, "\n  {instructions}");
     }
+    line
 }
 
 fn list_tools(specs: &[ToolSpec]) -> String {
@@ -81,6 +86,7 @@ mod tests {
                     "required": ["url"]
                 }),
                 required_permission: PermissionMode::DangerFullAccess,
+                instructions: Some("Always use full URLs."),
             },
             ToolSpec {
                 name: "click",
@@ -91,6 +97,7 @@ mod tests {
                     "required": ["selector"]
                 }),
                 required_permission: PermissionMode::DangerFullAccess,
+                instructions: None,
             },
             ToolSpec {
                 name: "screenshot",
@@ -100,6 +107,7 @@ mod tests {
                     "properties": {}
                 }),
                 required_permission: PermissionMode::DangerFullAccess,
+                instructions: None,
             },
         ]
     }
@@ -117,6 +125,10 @@ mod tests {
         assert!(first.contains("navigate"), "should list navigate tool");
         assert!(first.contains("click"), "should list click tool");
         assert!(first.contains("screenshot"), "should list screenshot tool");
+        assert!(
+            first.contains("Always use full URLs."),
+            "should render per-tool instructions"
+        );
     }
 
     #[test]
@@ -126,6 +138,7 @@ mod tests {
             description: "Navigate to a URL",
             input_schema: json!({"required": ["url"]}),
             required_permission: PermissionMode::DangerFullAccess,
+            instructions: None,
         };
         let line = format_tool(&spec);
         assert!(line.contains("params: url"));
@@ -138,6 +151,7 @@ mod tests {
             description: "Take a screenshot",
             input_schema: json!({"type": "object"}),
             required_permission: PermissionMode::DangerFullAccess,
+            instructions: None,
         };
         let line = format_tool(&spec);
         assert!(!line.contains("params"));

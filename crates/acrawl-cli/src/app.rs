@@ -1152,12 +1152,14 @@ pub(crate) fn wait_for_oauth_callback_cancellable(
 }
 
 fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    Ok(load_system_prompt(
+    let mut sections = crawler::prompt::build_system_prompt(&mvp_tool_specs());
+    sections.extend(load_system_prompt(
         env::current_dir()?,
         DEFAULT_DATE,
         env::consts::OS,
         "unknown",
-    )?)
+    )?);
+    Ok(sections)
 }
 
 fn build_runtime_feature_config(
