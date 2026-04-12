@@ -1303,11 +1303,10 @@ pub(crate) fn wait_for_oauth_callback_cancellable(
                         "missing callback request target",
                     )) as Box<dyn std::error::Error + Send>
                 })?;
-                let callback =
-                    parse_oauth_callback_request_target(target).map_err(|error| {
-                        Box::new(io::Error::new(io::ErrorKind::InvalidData, error))
-                            as Box<dyn std::error::Error + Send>
-                    })?;
+                let callback = parse_oauth_callback_request_target(target).map_err(|error| {
+                    Box::new(io::Error::new(io::ErrorKind::InvalidData, error))
+                        as Box<dyn std::error::Error + Send>
+                })?;
                 let body = if callback.error.is_some() {
                     "OAuth login failed. You can close this window."
                 } else {
@@ -2286,9 +2285,7 @@ mod tests {
         let (cancel_tx, cancel_rx) = mpsc::channel();
         cancel_tx.send(()).expect("send cancel signal");
 
-        let handle = std::thread::spawn(move || {
-            wait_for_oauth_callback_cancellable(0, cancel_rx)
-        });
+        let handle = std::thread::spawn(move || wait_for_oauth_callback_cancellable(0, cancel_rx));
 
         let result = handle.join().expect("thread should not panic");
         let err = result.expect_err("should return error on cancel");
@@ -2303,9 +2300,7 @@ mod tests {
     fn cancellable_callback_returns_on_cancel_while_listening() {
         let (cancel_tx, cancel_rx) = mpsc::channel();
 
-        let handle = std::thread::spawn(move || {
-            wait_for_oauth_callback_cancellable(0, cancel_rx)
-        });
+        let handle = std::thread::spawn(move || wait_for_oauth_callback_cancellable(0, cancel_rx));
 
         // Give the listener time to start polling
         std::thread::sleep(std::time::Duration::from_millis(250));

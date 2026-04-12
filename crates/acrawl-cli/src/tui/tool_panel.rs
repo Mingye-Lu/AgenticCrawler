@@ -46,12 +46,18 @@ pub(crate) fn format_tool_call_start(name: &str, input: &str) -> String {
             .and_then(|value| value.as_str())
             .unwrap_or("?")
             .to_string(),
-        "navigate" => format!("\x1b[38;5;220m⠧ Navigate: {}\x1b[0m", parsed.get("url").and_then(|v| v.as_str()).unwrap_or("?")),
+        "navigate" => format!(
+            "\x1b[38;5;220m⠧ Navigate: {}\x1b[0m",
+            parsed.get("url").and_then(|v| v.as_str()).unwrap_or("?")
+        ),
         "click" => "\x1b[38;5;220m⠧ Click element\x1b[0m".to_string(),
         "fill_form" => "\x1b[38;5;220m⠧ Fill form\x1b[0m".to_string(),
         "scroll" => "\x1b[38;5;220m⠧ Scroll\x1b[0m".to_string(),
         "hover" => "\x1b[38;5;220m⠧ Hover\x1b[0m".to_string(),
-        "press_key" => format!("\x1b[38;5;220m⠧ Press key {}\x1b[0m", parsed.get("key").and_then(|v| v.as_str()).unwrap_or("?")),
+        "press_key" => format!(
+            "\x1b[38;5;220m⠧ Press key {}\x1b[0m",
+            parsed.get("key").and_then(|v| v.as_str()).unwrap_or("?")
+        ),
         "switch_tab" => "\x1b[38;5;220m⠧ Switch tab\x1b[0m".to_string(),
         "wait" => "\x1b[38;5;220m⠧ Wait\x1b[0m".to_string(),
         "select_option" => "\x1b[38;5;220m⠧ Select option\x1b[0m".to_string(),
@@ -93,7 +99,8 @@ pub(crate) fn format_tool_result(name: &str, output: &str, is_error: bool) -> St
         "edit_file" | "Edit" => format_edit_result(icon, &parsed),
         "glob_search" | "Glob" => format_glob_result(icon, &parsed),
         "grep_search" | "Grep" => format_grep_result(icon, &parsed),
-        "navigate" | "click" | "fill_form" | "scroll" | "hover" | "press_key" | "switch_tab" | "wait" | "select_option" | "go_back" | "execute_js" => {
+        "navigate" | "click" | "fill_form" | "scroll" | "hover" | "press_key" | "switch_tab"
+        | "wait" | "select_option" | "go_back" | "execute_js" => {
             format!("{icon} \x1b[38;5;245m{name} done\x1b[0m")
         }
         "extract_data" | "list_resources" => {
@@ -101,8 +108,13 @@ pub(crate) fn format_tool_result(name: &str, output: &str, is_error: bool) -> St
             format!("{icon} \x1b[38;5;245m{name}\x1b[0m: {summary}")
         }
         "screenshot" => {
-            let path = parsed.get("saved_path").and_then(|v| v.as_str()).unwrap_or("?");
-            format!("{icon} \x1b[38;5;245m{name}\x1b[0m 📸 Screenshot saved to \x1b[4m{path}\x1b[0m")
+            let path = parsed
+                .get("saved_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            format!(
+                "{icon} \x1b[38;5;245m{name}\x1b[0m 📸 Screenshot saved to \x1b[4m{path}\x1b[0m"
+            )
         }
         _ => {
             let summary = truncate_for_summary(output.trim(), 200);

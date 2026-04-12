@@ -670,11 +670,15 @@ fn find_stream_safe_boundary(markdown: &str) -> Option<usize> {
 
     // We yield at certain safe points to reduce perceived latency
     // Lines are safest, but for typewriter feel, word endings are better.
-    for (offset, line) in markdown.split_inclusive(|c| c == '\n' || c == ' ').scan(0usize, |cursor, part| {
-        let start = *cursor;
-        *cursor += part.len();
-        Some((start, part))
-    }) {
+    for (offset, line) in
+        markdown
+            .split_inclusive(|c| c == '\n' || c == ' ')
+            .scan(0usize, |cursor, part| {
+                let start = *cursor;
+                *cursor += part.len();
+                Some((start, part))
+            })
+    {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
             in_fence = !in_fence;
@@ -688,10 +692,10 @@ fn find_stream_safe_boundary(markdown: &str) -> Option<usize> {
             continue;
         }
 
-        // Reverted to newline-only boundary for stability. 
+        // Reverted to newline-only boundary for stability.
         // Real-time responsiveness will be handled by raw token streaming.
         if line.ends_with('\n') {
-             last_boundary = Some(offset + line.len());
+            last_boundary = Some(offset + line.len());
         }
     }
 

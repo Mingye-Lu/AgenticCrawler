@@ -16,8 +16,9 @@ use crawler::mvp_tool_specs;
 use runtime::{load_system_prompt, PermissionMode, Session};
 
 use app::{
-    default_permission_mode, initial_model_from_env, permission_mode_from_label, resolve_model_alias,
-    run_init, run_login, run_logout, run_repl, run_resume_command, AllowedToolSet, LiveCli,
+    default_permission_mode, initial_model_from_env, permission_mode_from_label,
+    resolve_model_alias, run_init, run_login, run_logout, run_repl, run_resume_command,
+    AllowedToolSet, LiveCli,
 };
 use format::{normalize_permission_mode, render_version_report, DEFAULT_DATE, VERSION};
 
@@ -564,10 +565,8 @@ mod tests {
             "CLAUDE_MODEL",
             "CODEX_MODEL",
         ];
-        let saved: Vec<(&str, Option<String>)> = KEYS
-            .iter()
-            .map(|k| (*k, env::var(k).ok()))
-            .collect();
+        let saved: Vec<(&str, Option<String>)> =
+            KEYS.iter().map(|k| (*k, env::var(k).ok())).collect();
         for k in KEYS {
             env::remove_var(k);
         }

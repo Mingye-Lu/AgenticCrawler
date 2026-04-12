@@ -256,7 +256,7 @@ fn convert_codex_message(message: &InputMessage, out: &mut Vec<Value>) {
         role => {
             for block in &message.content {
                 if let InputContentBlock::Text { text } = block {
-                    push_codex_message_text(role, "input_text", text.clone(), out);
+                    push_codex_message_text(role, "input_text", text, out);
                 }
             }
         }
@@ -276,7 +276,7 @@ fn convert_codex_assistant_message(message: &InputMessage, out: &mut Vec<Value>)
                     push_codex_message_text(
                         "assistant",
                         "output_text",
-                        text_parts.join("\n"),
+                        &text_parts.join("\n"),
                         out,
                     );
                     text_parts.clear();
@@ -294,7 +294,7 @@ fn convert_codex_assistant_message(message: &InputMessage, out: &mut Vec<Value>)
     }
 
     if !text_parts.is_empty() {
-        push_codex_message_text("assistant", "output_text", text_parts.join("\n"), out);
+        push_codex_message_text("assistant", "output_text", &text_parts.join("\n"), out);
     }
 }
 
@@ -312,7 +312,7 @@ fn convert_codex_user_message(message: &InputMessage, out: &mut Vec<Value>) {
                 ..
             } => {
                 if !text_parts.is_empty() {
-                    push_codex_message_text("user", "input_text", text_parts.join("\n"), out);
+                    push_codex_message_text("user", "input_text", &text_parts.join("\n"), out);
                     text_parts.clear();
                 }
 
@@ -336,11 +336,11 @@ fn convert_codex_user_message(message: &InputMessage, out: &mut Vec<Value>) {
     }
 
     if !text_parts.is_empty() {
-        push_codex_message_text("user", "input_text", text_parts.join("\n"), out);
+        push_codex_message_text("user", "input_text", &text_parts.join("\n"), out);
     }
 }
 
-fn push_codex_message_text(role: &str, content_type: &str, text: String, out: &mut Vec<Value>) {
+fn push_codex_message_text(role: &str, content_type: &str, text: &str, out: &mut Vec<Value>) {
     out.push(serde_json::json!({
         "type": "message",
         "role": role,
@@ -381,7 +381,7 @@ fn extract_account_id_from_jwt(token: &str) -> Option<String> {
 
 fn decode_base64url(input: &str) -> Option<Vec<u8>> {
     let mut normalized = input.replace('-', "+").replace('_', "/");
-    while normalized.len() % 4 != 0 {
+    while !normalized.len().is_multiple_of(4) {
         normalized.push('=');
     }
     decode_base64_standard(&normalized)
@@ -392,7 +392,7 @@ fn decode_base64_standard(input: &str) -> Option<Vec<u8>> {
     if bytes.is_empty() {
         return Some(Vec::new());
     }
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return None;
     }
 
@@ -429,10 +429,8 @@ fn decode_base64_standard(input: &str) -> Option<Vec<u8>> {
             decode_base64_value(chunk[3])?
         };
 
-        let block = (u32::from(v0) << 18)
-            | (u32::from(v1) << 12)
-            | (u32::from(v2) << 6)
-            | u32::from(v3);
+        let block =
+            (u32::from(v0) << 18) | (u32::from(v1) << 12) | (u32::from(v2) << 6) | u32::from(v3);
 
         output.push(((block >> 16) & 0xFF) as u8);
         if pad < 2 {
@@ -578,7 +576,11 @@ impl CodexStreamState {
         }
     }
 
-    fn process_event(&mut self, event_type: &str, data: &Value) -> Result<Vec<StreamEvent>, ApiError> {
+    fn process_event(
+        &mut self,
+        event_type: &str,
+        data: &Value,
+    ) -> Result<Vec<StreamEvent>, ApiError> {
         let mut events = Vec::new();
 
         match event_type {
@@ -659,7 +661,10 @@ impl CodexStreamState {
     }
 
     fn emit_text_delta(&mut self, data: &Value, events: &mut Vec<StreamEvent>) {
-        let delta = data.get("delta").and_then(Value::as_str).unwrap_or_default();
+        let delta = data
+            .get("delta")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if delta.is_empty() {
             return;
         }
@@ -693,9 +698,10 @@ impl CodexStreamState {
             return;
         }
 
-        let call_id = item.get("call_id").and_then(Value::as_str).or_else(|| {
-            data.get("call_id").and_then(Value::as_str)
-        });
+        let call_id = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .or_else(|| data.get("call_id").and_then(Value::as_str));
         let Some(call_id) = call_id.filter(|value| !value.is_empty()) else {
             return;
         };
@@ -743,19 +749,19 @@ impl CodexStreamState {
     }
 
     fn emit_function_call_delta(&mut self, data: &Value, events: &mut Vec<StreamEvent>) {
-        let delta = data.get("delta").and_then(Value::as_str).unwrap_or_default();
+        let delta = data
+            .get("delta")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if delta.is_empty() {
             return;
         }
 
-        let call_id = data
-            .get("call_id")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                data.get("item")
-                    .and_then(|item| item.get("call_id"))
-                    .and_then(Value::as_str)
-            });
+        let call_id = data.get("call_id").and_then(Value::as_str).or_else(|| {
+            data.get("item")
+                .and_then(|item| item.get("call_id"))
+                .and_then(Value::as_str)
+        });
         let Some(call_id) = call_id.filter(|value| !value.is_empty()) else {
             return;
         };
@@ -816,7 +822,9 @@ impl CodexStreamState {
         };
 
         if let Some(index) = self.active_tools.remove(call_id) {
-            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent { index }));
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index,
+            }));
         }
     }
 
@@ -839,7 +847,9 @@ impl CodexStreamState {
         let mut indices: Vec<u32> = self.active_tools.values().copied().collect();
         indices.sort_unstable();
         for index in indices {
-            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent { index }));
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index,
+            }));
         }
         self.active_tools.clear();
     }
@@ -854,7 +864,9 @@ impl CodexStreamState {
     }
 
     fn update_usage(&mut self, data: &Value) {
-        let usage = data.get("response").and_then(|response| response.get("usage"));
+        let usage = data
+            .get("response")
+            .and_then(|response| response.get("usage"));
         let usage = usage.or_else(|| data.get("usage"));
 
         if let Some(input_tokens) = usage
@@ -1031,7 +1043,7 @@ mod tests {
         output
     }
 
-    fn build_jwt(payload: Value) -> String {
+    fn build_jwt(payload: &Value) -> String {
         let header = serde_json::json!({"alg": "none", "typ": "JWT"});
         format!(
             "{}.{}.sig",
@@ -1043,7 +1055,10 @@ mod tests {
     #[test]
     fn codex_responses_url_reads_from_env() {
         let _guard = env_lock();
-        std::env::set_var("CODEX_RESPONSES_URL", "https://proxy.example.com/codex/responses");
+        std::env::set_var(
+            "CODEX_RESPONSES_URL",
+            "https://proxy.example.com/codex/responses",
+        );
         assert_eq!(
             read_codex_responses_url(),
             "https://proxy.example.com/codex/responses"
@@ -1147,15 +1162,12 @@ mod tests {
         assert_eq!(tools[0]["type"], "function");
         assert_eq!(tools[0]["name"], "navigate");
         assert_eq!(tools[0]["description"], "Go to a URL");
-        assert_eq!(
-            body["tool_choice"]["function"]["name"],
-            "navigate"
-        );
+        assert_eq!(body["tool_choice"]["function"]["name"], "navigate");
     }
 
     #[test]
     fn extract_account_id_from_jwt_reads_account_claims() {
-        let nested_claim_token = build_jwt(serde_json::json!({
+        let nested_claim_token = build_jwt(&serde_json::json!({
             "https://api.openai.com/auth": {
                 "account_id": "org_abc123"
             }
@@ -1165,7 +1177,7 @@ mod tests {
             Some("org_abc123".to_string())
         );
 
-        let fallback_claim_token = build_jwt(serde_json::json!({
+        let fallback_claim_token = build_jwt(&serde_json::json!({
             "chatgpt_account_id": "org_fallback"
         }));
         assert_eq!(
