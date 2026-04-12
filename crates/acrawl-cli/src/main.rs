@@ -17,8 +17,8 @@ use runtime::{load_system_prompt, PermissionMode, Session};
 
 use app::{
     default_permission_mode, initial_model_from_env, permission_mode_from_label,
-    resolve_model_alias, run_login, run_logout, run_repl, run_resume_command,
-    AllowedToolSet, LiveCli,
+    resolve_model_alias, run_login, run_logout, run_repl, run_resume_command, AllowedToolSet,
+    LiveCli,
 };
 use format::{normalize_permission_mode, render_version_report, DEFAULT_DATE, VERSION};
 
@@ -797,10 +797,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             names,
-            vec![
-                "help", "status", "compact", "clear", "cost", "config", "version",
-                "export",
-            ]
+            vec!["help", "status", "compact", "clear", "cost", "config", "version", "export",]
         );
     }
 
