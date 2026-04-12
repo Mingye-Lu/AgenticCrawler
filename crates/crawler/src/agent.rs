@@ -103,6 +103,13 @@ impl CrawlerAgent {
         self
     }
 
+    /// Drop the current browser context so the next tool call will spawn a
+    /// fresh Playwright bridge.  This is used by `/headed` and `/headless` to
+    /// make the mode switch take effect immediately.
+    pub fn reset_browser(&mut self) {
+        self.browser = None;
+    }
+
     pub fn run(self, goal: &str, api_client: impl ApiClient) -> Result<CrawlResult, CrawlError> {
         let max_steps = self.max_steps;
         let system_prompt = build_system_prompt(&mvp_tool_specs());

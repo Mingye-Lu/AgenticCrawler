@@ -523,11 +523,13 @@ impl LiveCli {
             }
             SlashCommand::Headed => {
                 env::set_var("HEADLESS", "false");
+                self.reset_browser();
                 println!("Browser mode\n  Result           switched to headed (visible)");
                 false
             }
             SlashCommand::Headless => {
                 env::set_var("HEADLESS", "true");
+                self.reset_browser();
                 println!("Browser mode\n  Result           switched to headless");
                 false
             }
@@ -541,6 +543,10 @@ impl LiveCli {
     pub(crate) fn persist_session(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.runtime.session().save_to_path(&self.session.path)?;
         Ok(())
+    }
+
+    pub(crate) fn reset_browser(&mut self) {
+        self.runtime.tool_executor_mut().reset_browser();
     }
 
     pub(crate) fn status_report(&self) -> Result<String, Box<dyn std::error::Error>> {
@@ -1812,6 +1818,10 @@ impl CliToolExecutor {
             agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools()),
             ui_tx,
         }
+    }
+
+    fn reset_browser(&mut self) {
+        self.agent.reset_browser();
     }
 }
 impl ToolExecutor for CliToolExecutor {
