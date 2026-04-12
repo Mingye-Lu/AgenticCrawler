@@ -43,7 +43,7 @@ pub(crate) struct AuthModal {
 }
 
 impl AuthModal {
-    /// Create auth modal. If provider is given, skip ProviderSelect.
+    /// Create auth modal. If provider is given, skip `ProviderSelect`.
     pub(crate) fn new(ui_tx: Sender<ReplTuiEvent>, provider: Option<Provider>) -> Self {
         let step = if let Some(p) = provider {
             match p {
@@ -100,7 +100,7 @@ impl Modal for AuthModal {
                 let mut lines = vec![
                     Line::from("Paste your API key:"),
                     Line::default(),
-                    Line::from(format!("  [{}]", masked)),
+                    Line::from(format!("  [{masked}]")),
                     Line::default(),
                 ];
                 if let Some(message) = error {

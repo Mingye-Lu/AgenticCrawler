@@ -139,7 +139,7 @@ fn wrap_plain_text(input: &str, width: u16) -> Vec<String> {
     let w = usize::from(width.max(8));
     textwrap::wrap(input, w)
         .into_iter()
-        .map(|line| line.into_owned())
+        .map(std::borrow::Cow::into_owned)
         .collect()
 }
 
@@ -220,7 +220,7 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
                 let split_idx = remaining_text
                     .chars()
                     .take(available)
-                    .map(|c| c.len_utf8())
+                    .map(char::len_utf8)
                     .sum::<usize>();
                 let head = remaining_text[..split_idx].to_string();
                 remaining_text = remaining_text[split_idx..].to_string();
@@ -243,10 +243,11 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
     result
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_wrapped_list(
     entries: &[TranscriptEntry],
     width: u16,
-    live: Option<&str>,
+    live_text: Option<&str>,
 ) -> Vec<ListItem<'static>> {
     let mut out = Vec::new();
     // Restore the top padding margin
@@ -318,7 +319,7 @@ fn build_wrapped_list(
                         if idx == 0 {
                             out.push(ListItem::new(Line::from(vec![
                                 Span::styled("│ ", border_style),
-                                Span::styled(format!("{key:width$}", width = key_width), key_style),
+                                Span::styled(format!("{key:key_width$}"), key_style),
                                 Span::raw(" "),
                                 Span::raw(line.into_owned()),
                             ])));
@@ -349,7 +350,7 @@ fn build_wrapped_list(
     }
 
     // Live typewriter line shown at the bottom during streaming
-    if let Some(text) = live {
+    if let Some(text) = live_text {
         if !text.is_empty() {
             // Render the live fragment using the Markdown renderer to maintain high-fidelity formatting (bold, etc.)
             let renderer = TerminalRenderer::new();
@@ -397,6 +398,7 @@ enum WorkerMsg {
     Shutdown,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 struct ReplTuiState {
     ui_state: AppUiState,
     entries: Vec<TranscriptEntry>,
@@ -526,6 +528,7 @@ impl ReplTuiState {
         self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn calculate_input_dimensions(&mut self, width: u16) -> (u16, Vec<Line<'static>>, usize) {
         let is_placeholder = self.input.is_empty();
         let placeholder_text = self.input_placeholder();
@@ -642,6 +645,7 @@ impl ReplTuiState {
 
         render_lines.push(Line::from(""));
 
+        #[allow(clippy::cast_possible_truncation)]
         let box_height = (total_sliced as u16) + 4;
         (box_height, render_lines, max_scroll)
     }
@@ -980,7 +984,7 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     let art_area = Rect::new(art_x, art_y, art_w.min(area.width), art_h.min(area.height));
     frame.render_widget(Paragraph::new(Text::from(lines)), art_area);
 
-    let input_w = area.width.saturating_sub(12).min(90).max(30);
+    let input_w = area.width.saturating_sub(12).clamp(30, 90);
     let (box_height, render_lines, max_scroll) = state.calculate_input_dimensions(input_w);
     let input_h = box_height;
 
@@ -1079,6 +1083,7 @@ fn draw_slash_overlay(
     frame.render_stateful_widget(list, inner, &mut list_state);
 }
 
+#[allow(clippy::too_many_lines)]
 fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &HeaderSnapshot) {
     let area = frame.area();
     let (footer_h, render_lines, max_scroll) = state.calculate_input_dimensions(area.width);
@@ -1219,11 +1224,12 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
     draw_slash_overlay(frame, state, input_area, main_area);
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_slash_command_tui(
     terminal: &mut DefaultTerminal,
     state: &mut ReplTuiState,
     cli: &Arc<Mutex<LiveCli>>,
-    ui_tx: Sender<ReplTuiEvent>,
+    ui_tx: &Sender<ReplTuiEvent>,
     cmd: SlashCommand,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
@@ -1593,18 +1599,19 @@ pub fn run_repl_ratatui(
 
     let mut terminal = ratatui::init();
     let work_shutdown = work_tx.clone();
-    let result = run_loop(&mut terminal, &ui_rx, ui_tx, work_tx, cli);
+    let result = run_loop(&mut terminal, &ui_rx, &ui_tx, &work_tx, &cli);
     let _ = work_shutdown.send(WorkerMsg::Shutdown);
     ratatui::restore();
     result
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_loop(
     terminal: &mut DefaultTerminal,
     ui_rx: &Receiver<ReplTuiEvent>,
-    ui_tx: Sender<ReplTuiEvent>,
-    work_tx: Sender<WorkerMsg>,
-    cli: Arc<Mutex<LiveCli>>,
+    ui_tx: &Sender<ReplTuiEvent>,
+    work_tx: &Sender<WorkerMsg>,
+    cli: &Arc<Mutex<LiveCli>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute!(io::stdout(), event::EnableMouseCapture);
     let _mouse_guard = MouseCaptureGuard;
@@ -1656,10 +1663,10 @@ fn run_loop(
         }
 
         // Shorter poll when typewriter has pending chars so reveal feels smooth
-        let poll_ms = if !state.typewriter_chars.is_empty() {
-            16
-        } else {
+        let poll_ms = if state.typewriter_chars.is_empty() {
             50
+        } else {
+            16
         };
         if !event::poll(Duration::from_millis(poll_ms))? {
             continue;
@@ -1706,10 +1713,10 @@ fn run_loop(
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if let Some((req, respond)) = state.pending_permission.take() {
                     match key.code {
-                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        KeyCode::Char('y' | 'Y') => {
                             let _ = respond.send(PermissionPromptDecision::Allow);
                         }
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                             let _ = respond.send(PermissionPromptDecision::Deny {
                                 reason: format!(
                                     "tool '{}' denied from TUI permission dialog",
@@ -1732,10 +1739,10 @@ fn run_loop(
                             ..
                         } = modal.step
                         {
-                            if !key_buffer.is_empty() {
-                                Some(key_buffer.clone())
-                            } else {
+                            if key_buffer.is_empty() {
                                 None
+                            } else {
+                                Some(key_buffer.clone())
                             }
                         } else {
                             None
@@ -1769,7 +1776,7 @@ fn run_loop(
                             crate::app::Provider::Codex => {
                                 spawn_codex_oauth_thread(ui_tx.clone(), &mut state.active_modal);
                             }
-                            _ => {}
+                            crate::app::Provider::OpenAi => {}
                         }
                     }
 
@@ -1862,13 +1869,7 @@ fn run_loop(
                             continue;
                         }
                         if let Some(cmd) = SlashCommand::parse(&trimmed) {
-                            handle_slash_command_tui(
-                                terminal,
-                                &mut state,
-                                &cli,
-                                ui_tx.clone(),
-                                cmd,
-                            )?;
+                            handle_slash_command_tui(terminal, &mut state, cli, ui_tx, cmd)?;
                             state.wake_input_caret();
                             continue;
                         }
@@ -1912,7 +1913,7 @@ fn run_loop(
                                 .filter(|candidate| candidate.starts_with(&prefix))
                                 .collect();
                             if matches.len() == 1 {
-                                state.input = matches[0].clone();
+                                state.input.clone_from(&matches[0]);
                                 state.input.push(' ');
                                 state.input_scroll_offset = usize::MAX;
                                 state.wake_input_caret();

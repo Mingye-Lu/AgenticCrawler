@@ -111,15 +111,17 @@ pub(crate) fn initial_model_from_env() -> String {
         .to_ascii_lowercase();
 
     match provider.as_str() {
-        "openai" => trimmed_env_var("OPENAI_MODEL")
-            .map(|m| resolve_model_alias(&m).to_string())
-            .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string()),
+        "openai" => trimmed_env_var("OPENAI_MODEL").map_or_else(
+            || DEFAULT_OPENAI_MODEL.to_string(),
+            |m| resolve_model_alias(&m).to_string(),
+        ),
         "codex" => {
             trimmed_env_var("CODEX_MODEL").unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string())
         }
-        "claude" | "anthropic" | "" => trimmed_env_var("CLAUDE_MODEL")
-            .map(|m| resolve_model_alias(&m).to_string())
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+        "claude" | "anthropic" | "" => trimmed_env_var("CLAUDE_MODEL").map_or_else(
+            || DEFAULT_MODEL.to_string(),
+            |m| resolve_model_alias(&m).to_string(),
+        ),
         _ => DEFAULT_MODEL.to_string(),
     }
 }
@@ -333,7 +335,7 @@ impl LiveCli {
             let _ = tx.send(ReplTuiEvent::TurnFinished(finish.clone()));
         }
         match result {
-            Ok(_) => finish.map_err(|e| e.into()),
+            Ok(_) => finish.map_err(std::convert::Into::into),
             Err(e) => Err(e.into()),
         }
     }
@@ -1259,7 +1261,7 @@ fn wait_for_oauth_callback(
     Ok(callback)
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, clippy::needless_pass_by_value)]
 pub(crate) fn wait_for_oauth_callback_cancellable(
     port: u16,
     cancel_rx: mpsc::Receiver<()>,
@@ -1349,6 +1351,7 @@ fn build_runtime_feature_config(
         .clone())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_runtime(
     mut session: Session,
     model: String,

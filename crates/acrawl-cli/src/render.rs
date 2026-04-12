@@ -266,7 +266,7 @@ impl TerminalRenderer {
             );
         }
 
-        output.to_string()
+        output.clone()
     }
 
     #[must_use]
@@ -670,14 +670,13 @@ fn find_stream_safe_boundary(markdown: &str) -> Option<usize> {
 
     // We yield at certain safe points to reduce perceived latency
     // Lines are safest, but for typewriter feel, word endings are better.
-    for (offset, line) in
-        markdown
-            .split_inclusive(|c| c == '\n' || c == ' ')
-            .scan(0usize, |cursor, part| {
-                let start = *cursor;
-                *cursor += part.len();
-                Some((start, part))
-            })
+    for (offset, line) in markdown
+        .split_inclusive(['\n', ' '])
+        .scan(0usize, |cursor, part| {
+            let start = *cursor;
+            *cursor += part.len();
+            Some((start, part))
+        })
     {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") || trimmed.starts_with("~~~") {

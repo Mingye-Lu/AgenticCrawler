@@ -13,6 +13,7 @@ pub enum ModalAction {
     /// Modal should close.
     Dismiss,
     /// Key was not handled; let the main handler process it.
+    #[allow(dead_code)]
     Passthrough,
 }
 
@@ -125,9 +126,9 @@ mod tests {
     #[test]
     fn modal_action_variants_exist() {
         // Compile-time validation: ensure all variants can be constructed
-        let _consumed = ModalAction::Consumed;
-        let _dismiss = ModalAction::Dismiss;
-        let _passthrough = ModalAction::Passthrough;
+        let _ = ModalAction::Consumed;
+        let _ = ModalAction::Dismiss;
+        let _ = ModalAction::Passthrough;
 
         // Verify they are distinct
         assert_ne!(ModalAction::Consumed, ModalAction::Dismiss);

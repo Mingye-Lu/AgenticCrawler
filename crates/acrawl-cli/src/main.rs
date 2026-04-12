@@ -557,6 +557,7 @@ mod tests {
     }
 
     /// `parse_args` reads model defaults from env; isolate tests from the outer environment.
+    #[allow(clippy::items_after_statements)]
     fn with_clean_model_env(f: impl FnOnce()) {
         let _guard = model_env_mutex();
         const KEYS: &[&str] = &[
