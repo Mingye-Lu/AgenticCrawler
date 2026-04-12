@@ -264,6 +264,316 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
     result
 }
 
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_escape = false;
+    let mut in_csi = false;
+    for c in s.chars() {
+        if in_csi {
+            if c.is_ascii_alphabetic() {
+                in_csi = false;
+                in_escape = false;
+            }
+        } else if in_escape {
+            if c == '[' {
+                in_csi = true;
+            } else {
+                in_escape = false;
+            }
+        } else if c == '\x1b' {
+            in_escape = true;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+fn extract_json_path(parsed: &serde_json::Value) -> String {
+    parsed
+        .get("file_path")
+        .or_else(|| parsed.get("filePath"))
+        .or_else(|| parsed.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("?")
+        .to_string()
+}
+
+fn cap_content_lines(lines: Vec<String>, max: usize) -> Vec<ListItem<'static>> {
+    let total = lines.len();
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    if total <= max {
+        lines
+            .into_iter()
+            .map(|l| ListItem::new(Line::from(Span::styled(l, dim))))
+            .collect()
+    } else {
+        let mut items: Vec<ListItem<'static>> = lines
+            .into_iter()
+            .take(max)
+            .map(|l| ListItem::new(Line::from(Span::styled(l, dim))))
+            .collect();
+        items.push(ListItem::new(Line::from(Span::styled(
+            format!("  \u{2026} ({} more lines)", total - max),
+            dim,
+        ))));
+        items
+    }
+}
+
+fn render_bash_success(
+    items: &mut Vec<ListItem<'static>>,
+    name: &str,
+    input_summary: &str,
+    parsed: &serde_json::Value,
+) {
+    let green = Style::default().fg(Color::Green);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let red = Style::default().fg(Color::Red);
+
+    let cmd = serde_json::from_str::<serde_json::Value>(input_summary)
+        .ok()
+        .and_then(|v| {
+            v.get("command")
+                .and_then(|c| c.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| input_summary.to_string());
+
+    let cmd_display = if cmd.len() > 60 {
+        format!("{}…", &cmd[..60])
+    } else {
+        cmd
+    };
+
+    let mut header_spans = vec![
+        Span::styled("✓", green),
+        Span::styled(format!(" {name} "), bold),
+        Span::styled("$ ", dim),
+        Span::styled(cmd_display, dim),
+    ];
+    if let Some(task_id) = parsed.get("backgroundTaskId").and_then(|v| v.as_str()) {
+        header_spans.push(Span::styled(format!(" backgrounded ({task_id})"), dim));
+    } else if let Some(interp) = parsed
+        .get("returnCodeInterpretation")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        header_spans.push(Span::styled(format!(" {interp}"), dim));
+    }
+    items.push(ListItem::new(Line::from(header_spans)));
+
+    if let Some(stdout) = parsed.get("stdout").and_then(|v| v.as_str()) {
+        let trimmed = stdout.trim_end();
+        if !trimmed.is_empty() {
+            let lines: Vec<String> = strip_ansi(trimmed).lines().map(str::to_string).collect();
+            items.extend(cap_content_lines(lines, 15));
+        }
+    }
+    if let Some(stderr) = parsed.get("stderr").and_then(|v| v.as_str()) {
+        let trimmed = stderr.trim_end();
+        if !trimmed.is_empty() {
+            for line in strip_ansi(trimmed).lines().take(5) {
+                items.push(ListItem::new(Line::from(Span::styled(
+                    line.to_string(),
+                    red,
+                ))));
+            }
+        }
+    }
+}
+
+fn render_read_success(items: &mut Vec<ListItem<'static>>, name: &str, parsed: &serde_json::Value) {
+    let file = parsed.get("file").unwrap_or(parsed);
+    let path = extract_json_path(file);
+    let start_line = file
+        .get("startLine")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
+    let num_lines = file
+        .get("numLines")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let total_lines = file
+        .get("totalLines")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(num_lines);
+    let end_line = start_line.saturating_add(num_lines.saturating_sub(1));
+    let content = file
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::styled(format!(" {name} "), bold),
+        Span::styled(
+            format!(
+                "{path} (lines {start_line}-{} of {total_lines})",
+                end_line.max(start_line)
+            ),
+            dim,
+        ),
+    ])));
+    if !content.is_empty() {
+        let lines: Vec<String> = strip_ansi(content.trim_end())
+            .lines()
+            .map(str::to_string)
+            .collect();
+        items.extend(cap_content_lines(lines, 15));
+    }
+}
+
+fn render_write_success(
+    items: &mut Vec<ListItem<'static>>,
+    name: &str,
+    parsed: &serde_json::Value,
+) {
+    let path = extract_json_path(parsed);
+    let kind = parsed
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("write");
+    let line_count = parsed
+        .get("content")
+        .and_then(|v| v.as_str())
+        .map_or(0, |c| c.lines().count());
+    let verb = if kind == "create" { "Wrote" } else { "Updated" };
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::styled(format!(" {name} "), bold),
+        Span::styled(format!("{verb} {path} ({line_count} lines)"), dim),
+    ])));
+}
+
+fn render_edit_success(items: &mut Vec<ListItem<'static>>, name: &str, parsed: &serde_json::Value) {
+    let path = extract_json_path(parsed);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::styled(format!(" {name} "), bold),
+        Span::styled(path, dim),
+    ])));
+    let mut diff_lines: Vec<ListItem<'static>> = Vec::new();
+    if let Some(hunks) = parsed.get("structuredPatch").and_then(|v| v.as_array()) {
+        for hunk in hunks.iter().take(2) {
+            if let Some(lines) = hunk.get("lines").and_then(|v| v.as_array()) {
+                for line_val in lines.iter().take(6) {
+                    if let Some(line) = line_val.as_str() {
+                        let style = match line.chars().next() {
+                            Some('+') => Style::default().fg(Color::Green),
+                            Some('-') => Style::default().fg(Color::Red),
+                            _ => dim,
+                        };
+                        diff_lines.push(ListItem::new(Line::from(Span::styled(
+                            line.to_string(),
+                            style,
+                        ))));
+                    }
+                }
+            }
+        }
+    } else {
+        if let Some(old) = parsed.get("oldString").and_then(|v| v.as_str()) {
+            let first_line = old.lines().find(|l| !l.trim().is_empty()).unwrap_or(old);
+            if !first_line.is_empty() {
+                diff_lines.push(ListItem::new(Line::from(Span::styled(
+                    format!("- {first_line}"),
+                    Style::default().fg(Color::Red),
+                ))));
+            }
+        }
+        if let Some(new) = parsed.get("newString").and_then(|v| v.as_str()) {
+            let first_line = new.lines().find(|l| !l.trim().is_empty()).unwrap_or(new);
+            if !first_line.is_empty() {
+                diff_lines.push(ListItem::new(Line::from(Span::styled(
+                    format!("+ {first_line}"),
+                    Style::default().fg(Color::Green),
+                ))));
+            }
+        }
+    }
+    items.extend(diff_lines);
+}
+
+fn render_glob_success(items: &mut Vec<ListItem<'static>>, name: &str, parsed: &serde_json::Value) {
+    let num_files = parsed
+        .get("numFiles")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::styled(format!(" {name} "), bold),
+        Span::styled(format!("matched {num_files} files"), dim),
+    ])));
+    if let Some(filenames) = parsed.get("filenames").and_then(|v| v.as_array()) {
+        for filename in filenames.iter().take(8).filter_map(|v| v.as_str()) {
+            items.push(ListItem::new(Line::from(Span::styled(
+                filename.to_string(),
+                dim,
+            ))));
+        }
+    }
+}
+
+fn render_grep_success(
+    items: &mut Vec<ListItem<'static>>,
+    name: &str,
+    output: &str,
+    parsed: &serde_json::Value,
+) {
+    let num_matches = parsed
+        .get("numMatches")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let num_files = parsed
+        .get("numFiles")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    items.push(ListItem::new(Line::from(vec![
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::styled(format!(" {name} "), bold),
+        Span::styled(
+            format!("{num_matches} matches across {num_files} files"),
+            dim,
+        ),
+    ])));
+    let content = parsed
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if !content.trim().is_empty() {
+        let lines: Vec<String> = strip_ansi(content.trim_end())
+            .lines()
+            .map(str::to_string)
+            .collect();
+        items.extend(cap_content_lines(lines, 15));
+    } else if let Some(filenames) = parsed.get("filenames").and_then(|v| v.as_array()) {
+        for filename in filenames.iter().take(8).filter_map(|v| v.as_str()) {
+            items.push(ListItem::new(Line::from(Span::styled(
+                filename.to_string(),
+                dim,
+            ))));
+        }
+    } else {
+        let raw = strip_ansi(output.trim());
+        if !raw.is_empty() {
+            let lines: Vec<String> = raw.lines().map(str::to_string).collect();
+            items.extend(cap_content_lines(lines, 15));
+        }
+    }
+}
+
 fn render_tool_call_lines(
     name: &str,
     input_summary: &str,
@@ -272,36 +582,52 @@ fn render_tool_call_lines(
     spinner: char,
 ) -> Vec<ListItem<'static>> {
     let mut items = Vec::new();
-    let header = match status {
+    match status {
         ToolCallStatus::Running => {
             let spinner_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::DIM);
             let name_style = Style::default().add_modifier(Modifier::BOLD);
             let param_style = Style::default().add_modifier(Modifier::DIM);
-            Line::from(vec![
+            items.push(ListItem::new(Line::from(vec![
                 Span::styled(spinner.to_string(), spinner_style),
                 Span::styled(format!(" {name} "), name_style),
                 Span::styled(input_summary.to_string(), param_style),
-            ])
+            ])));
         }
         ToolCallStatus::Success { output } => {
-            let icon_style = Style::default().fg(Color::Green);
-            let name_style = Style::default().add_modifier(Modifier::BOLD);
-            let param_style = Style::default().add_modifier(Modifier::DIM);
-            let summary = if output.trim().is_empty() {
-                "done".to_string()
-            } else {
-                let trimmed = output.trim().replace('\n', " ");
-                if trimmed.len() > 60 {
-                    format!("{}…", &trimmed[..60])
-                } else {
-                    trimmed
+            let parsed: serde_json::Value =
+                serde_json::from_str(output).unwrap_or(serde_json::Value::String(output.clone()));
+            match name {
+                "bash" | "Bash" => {
+                    render_bash_success(&mut items, name, input_summary, &parsed);
                 }
-            };
-            Line::from(vec![
-                Span::styled("✓", icon_style),
-                Span::styled(format!(" {name} "), name_style),
-                Span::styled(summary, param_style),
-            ])
+                "read_file" | "Read" => render_read_success(&mut items, name, &parsed),
+                "write_file" | "Write" => render_write_success(&mut items, name, &parsed),
+                "edit_file" | "Edit" => render_edit_success(&mut items, name, &parsed),
+                "glob_search" | "Glob" => render_glob_success(&mut items, name, &parsed),
+                "grep_search" | "Grep" => {
+                    render_grep_success(&mut items, name, output, &parsed);
+                }
+                _ => {
+                    let summary = if output.trim().is_empty() {
+                        "done".to_string()
+                    } else {
+                        let trimmed = strip_ansi(output.trim()).replace('\n', " ");
+                        if trimmed.len() > 60 {
+                            format!("{}…", &trimmed[..60])
+                        } else {
+                            trimmed
+                        }
+                    };
+                    items.push(ListItem::new(Line::from(vec![
+                        Span::styled("✓", Style::default().fg(Color::Green)),
+                        Span::styled(
+                            format!(" {name} "),
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(summary, Style::default().add_modifier(Modifier::DIM)),
+                    ])));
+                }
+            }
         }
         ToolCallStatus::Error(msg) => {
             let icon_style = Style::default().fg(Color::Red);
@@ -312,14 +638,13 @@ fn render_tool_call_lines(
             } else {
                 msg.clone()
             };
-            Line::from(vec![
+            items.push(ListItem::new(Line::from(vec![
                 Span::styled("✗", icon_style),
                 Span::styled(format!(" {name} "), name_style),
                 Span::styled(truncated, err_style),
-            ])
+            ])));
         }
-    };
-    items.push(ListItem::new(header));
+    }
     items
 }
 
@@ -2185,5 +2510,188 @@ mod tests {
         let long_input = "a".repeat(80);
         let items = render_tool_call_lines("bash", &long_input, &ToolCallStatus::Running, 80, '⠋');
         assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn render_tool_call_bash_rich_stdout() {
+        let output = serde_json::json!({
+            "stdout": "line1\nline2\nline3",
+            "stderr": ""
+        })
+        .to_string();
+        let items = render_tool_call_lines(
+            "bash",
+            r#"{"command":"ls -la"}"#,
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+        );
+        assert!(
+            items.len() >= 2,
+            "Expected header + stdout lines, got {}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn render_tool_call_bash_with_stderr() {
+        let output = serde_json::json!({
+            "stdout": "",
+            "stderr": "error line"
+        })
+        .to_string();
+        let items =
+            render_tool_call_lines("bash", "cmd", &ToolCallStatus::Success { output }, 80, '⠋');
+        assert!(
+            items.len() >= 2,
+            "Expected header + stderr line, got {}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn render_tool_call_read_file_with_content() {
+        let output = serde_json::json!({
+            "file": {
+                "filePath": "src/main.rs",
+                "startLine": 1,
+                "numLines": 3,
+                "totalLines": 100,
+                "content": "fn main() {\n    println!(\"hi\");\n}"
+            }
+        })
+        .to_string();
+        let items = render_tool_call_lines(
+            "read_file",
+            "src/main.rs",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+        );
+        assert!(
+            items.len() >= 2,
+            "Expected header + content lines, got {}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn render_tool_call_write_file_single_line() {
+        let output = serde_json::json!({
+            "filePath": "out.txt",
+            "type": "create",
+            "content": "line1\nline2\nline3"
+        })
+        .to_string();
+        let items = render_tool_call_lines(
+            "write_file",
+            "out.txt",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+        );
+        assert_eq!(items.len(), 1, "write_file should produce exactly 1 line");
+    }
+
+    #[test]
+    fn render_tool_call_edit_file_with_patch() {
+        let output = serde_json::json!({
+            "filePath": "src/lib.rs",
+            "structuredPatch": [{
+                "lines": ["-old line", "+new line", " context"]
+            }]
+        })
+        .to_string();
+        let items = render_tool_call_lines(
+            "edit_file",
+            "src/lib.rs",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+        );
+        assert!(
+            items.len() >= 2,
+            "Expected header + diff lines, got {}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn render_tool_call_glob_search_files() {
+        let output = serde_json::json!({
+            "numFiles": 3,
+            "filenames": ["a.rs", "b.rs", "c.rs"]
+        })
+        .to_string();
+        let items = render_tool_call_lines(
+            "glob_search",
+            "*.rs",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+        );
+        assert_eq!(
+            items.len(),
+            4,
+            "Expected header + 3 filenames = 4, got {}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn render_tool_call_grep_search_matches() {
+        let output = serde_json::json!({
+            "numMatches": 5,
+            "numFiles": 2,
+            "filenames": ["a.rs", "b.rs"]
+        })
+        .to_string();
+        let items = render_tool_call_lines(
+            "grep_search",
+            "pattern",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+        );
+        assert!(
+            items.len() >= 2,
+            "Expected header + filenames, got {}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn render_tool_call_unknown_tool_single_line() {
+        let output = "navigation complete".to_string();
+        let items = render_tool_call_lines(
+            "navigate",
+            "https://example.com",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+        );
+        assert_eq!(
+            items.len(),
+            1,
+            "Unknown tool should produce exactly 1 line, got {}",
+            items.len()
+        );
+    }
+
+    #[test]
+    fn render_tool_call_bash_overflow_truncated() {
+        let stdout = (0..20)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let output = serde_json::json!({ "stdout": stdout, "stderr": "" }).to_string();
+        let items =
+            render_tool_call_lines("bash", "cmd", &ToolCallStatus::Success { output }, 80, '⠋');
+        assert_eq!(
+            items.len(),
+            17,
+            "Expected 1 header + 15 lines + 1 overflow = 17, got {}",
+            items.len()
+        );
     }
 }
