@@ -19,13 +19,11 @@ pub enum ReplTuiEvent {
         input: String,
     },
     SystemMessage(String),
-    #[allow(dead_code)]
     /// Notification that a tool call has started — creates a transcript entry in TUI mode.
     ToolCallStart {
         name: String,
         input: String,
     },
-    #[allow(dead_code)]
     /// Notification that a tool call completed — updates the transcript entry in TUI mode.
     ToolCallComplete {
         name: String,

@@ -27,11 +27,10 @@ use runtime::{
 use serde_json::json;
 
 use crate::format::{
-    format_auto_compaction_notice, format_compact_report, format_cost_report,
-    format_model_report, format_model_switch_report, format_permissions_report,
-    format_permissions_switch_report, format_resume_report, format_status_report,
-    normalize_permission_mode, render_config_report, render_export_text,
-    render_last_tool_debug_report, render_repl_help, render_version_report,
+    format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
+    format_model_switch_report, format_permissions_report, format_permissions_switch_report,
+    format_resume_report, format_status_report, normalize_permission_mode, render_config_report,
+    render_export_text, render_last_tool_debug_report, render_repl_help, render_version_report,
     resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
 use crate::input;
@@ -184,9 +183,7 @@ fn run_repl_classic(
                 if trimmed.is_empty() {
                     continue;
                 }
-                if trimmed.eq_ignore_ascii_case("/exit")
-                    || trimmed.eq_ignore_ascii_case("/quit")
-                {
+                if trimmed.eq_ignore_ascii_case("/exit") || trimmed.eq_ignore_ascii_case("/quit") {
                     cli.persist_session()?;
                     break;
                 }
@@ -1581,7 +1578,14 @@ impl ApiClient for LlmRuntimeClient {
                             writeln!(out, "\n{tool_banner}")
                                 .and_then(|()| out.flush())
                                 .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            self.send_ui_stream(format!("\n{tool_banner}"));
+                            if let Some(tx) = &self.ui_tx {
+                                let _ = tx.send(ReplTuiEvent::ToolCallStart {
+                                    name: name.clone(),
+                                    input: input.clone(),
+                                });
+                            } else {
+                                self.send_ui_stream(format!("\n{tool_banner}"));
+                            }
                             events.push(AssistantEvent::ToolUse { id, name, input });
                         }
                     }
@@ -1852,13 +1856,11 @@ impl ToolExecutor for CliToolExecutor {
                         .stream_markdown(&markdown, &mut io::stdout())
                         .map_err(|error: io::Error| ToolError::new(error.to_string()))?;
                 } else if let Some(tx) = &self.ui_tx {
-                    let markdown = format_tool_result(tool_name, &output, false);
-                    let mut buf = Vec::<u8>::new();
-                    self.renderer
-                        .stream_markdown(&markdown, &mut buf)
-                        .map_err(|error: io::Error| ToolError::new(error.to_string()))?;
-                    let rendered = String::from_utf8_lossy(&buf).into_owned();
-                    let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
+                    let _ = tx.send(ReplTuiEvent::ToolCallComplete {
+                        name: tool_name.to_string(),
+                        output: output.clone(),
+                        is_error: false,
+                    });
                 }
                 Ok(output)
             }
@@ -1872,14 +1874,11 @@ impl ToolExecutor for CliToolExecutor {
                             ToolError::new(stream_error.to_string())
                         })?;
                 } else if let Some(tx) = &self.ui_tx {
-                    let rendered_error = error.to_string();
-                    let markdown = format_tool_result(tool_name, &rendered_error, true);
-                    let mut buf = Vec::<u8>::new();
-                    self.renderer.stream_markdown(&markdown, &mut buf).map_err(
-                        |stream_error: io::Error| ToolError::new(stream_error.to_string()),
-                    )?;
-                    let rendered = String::from_utf8_lossy(&buf).into_owned();
-                    let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
+                    let _ = tx.send(ReplTuiEvent::ToolCallComplete {
+                        name: tool_name.to_string(),
+                        output: error.to_string(),
+                        is_error: true,
+                    });
                 }
                 Err(error)
             }

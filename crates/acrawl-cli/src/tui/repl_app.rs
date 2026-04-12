@@ -648,6 +648,36 @@ fn render_tool_call_lines(
     items
 }
 
+fn tool_input_summary(name: &str, input: &str) -> String {
+    let parsed: serde_json::Value = serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+    let key_param = match name {
+        "bash" | "Bash" => parsed
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or(input),
+        "navigate" => parsed.get("url").and_then(|v| v.as_str()).unwrap_or(input),
+        "read_file" | "Read" | "write_file" | "Write" | "edit_file" | "Edit" => parsed
+            .get("file_path")
+            .or_else(|| parsed.get("filePath"))
+            .or_else(|| parsed.get("path"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(input),
+        "glob_search" | "Glob" | "grep_search" | "Grep" => parsed
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or(input),
+        "click" | "scroll" | "hover" | "press_key" | "fill_form" | "select_option"
+        | "switch_tab" | "wait" | "go_back" | "execute_js" | "screenshot" | "extract_data"
+        | "list_resources" | "save_file" => "",
+        _ => input,
+    };
+    if key_param.len() > 60 {
+        format!("{}…", &key_param[..60])
+    } else {
+        key_param.to_string()
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn build_wrapped_list(
     entries: &[TranscriptEntry],
@@ -949,15 +979,23 @@ impl ReplTuiState {
         }
     }
 
-    fn start_tool_call_entry(&mut self, name: String, input: &str) {
-        self.flush_typewriter();
-        let compact_input = input.trim().replace('\n', " ");
-        let input_summary = if compact_input.len() > 60 {
-            format!("{}…", &compact_input[..60])
-        } else {
-            compact_input
-        };
+    fn wake_input_caret(&mut self) {
+        self.cursor_on = true;
+        self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
+    }
 
+    fn handle_tool_call_start(&mut self, name: String, input: &str) {
+        if !self.typewriter_chars.is_empty() {
+            let count = self.typewriter_chars.len();
+            self.tick_typewriter(count);
+        }
+        if !self.typewriter_live.is_empty() {
+            let raw = std::mem::take(&mut self.typewriter_live);
+            for styled_line in ansi_to_lines(&raw) {
+                self.entries.push(TranscriptEntry::Stream(styled_line));
+            }
+        }
+        let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
         self.tool_call_entry_index = Some(self.entries.len());
         self.entries.push(TranscriptEntry::ToolCall {
@@ -965,25 +1003,40 @@ impl ReplTuiState {
             input_summary,
             status: ToolCallStatus::Running,
         });
+        self.follow_bottom = true;
     }
 
-    fn complete_tool_call_entry(&mut self, output: String, is_error: bool) -> bool {
+    fn handle_tool_call_complete(&mut self, name: &str, output: String, is_error: bool) {
+        let status = if is_error {
+            ToolCallStatus::Error(output)
+        } else {
+            ToolCallStatus::Success { output }
+        };
+
         if let Some(idx) = self.tool_call_entry_index.take() {
-            if let Some(TranscriptEntry::ToolCall { status, .. }) = self.entries.get_mut(idx) {
-                *status = if is_error {
-                    ToolCallStatus::Error(output)
-                } else {
-                    ToolCallStatus::Success { output }
-                };
-                return true;
+            if let Some(TranscriptEntry::ToolCall {
+                name: entry_name,
+                status: entry_status,
+                ..
+            }) = self.entries.get_mut(idx)
+            {
+                if entry_name == name {
+                    *entry_status = status.clone();
+                    self.follow_bottom = true;
+                    return;
+                }
             }
         }
-        false
-    }
 
-    fn wake_input_caret(&mut self) {
-        self.cursor_on = true;
-        self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
+        if let Some(TranscriptEntry::ToolCall {
+            status: entry_status,
+            ..
+        }) = self.entries.iter_mut().rev().find(
+            |entry| matches!(entry, TranscriptEntry::ToolCall { name: entry_name, .. } if entry_name == name),
+        ) {
+            *entry_status = status;
+        }
+        self.follow_bottom = true;
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1237,6 +1290,18 @@ impl ReplTuiState {
                         }
                     }
                 }
+                ReplTuiEvent::ToolCallStart { name, input } => {
+                    self.handle_tool_call_start(name, &input);
+                    had_new_rows = true;
+                }
+                ReplTuiEvent::ToolCallComplete {
+                    name,
+                    output,
+                    is_error,
+                } => {
+                    self.handle_tool_call_complete(&name, output, is_error);
+                    had_new_rows = true;
+                }
                 ReplTuiEvent::TurnFinished(result) => {
                     self.busy = false;
                     self.current_tool = None;
@@ -1267,17 +1332,6 @@ impl ReplTuiState {
                 ReplTuiEvent::SystemMessage(s) => {
                     had_new_rows = true;
                     self.push_system(&s);
-                }
-                ReplTuiEvent::ToolCallStart { name, input } => {
-                    self.start_tool_call_entry(name, &input);
-                    had_new_rows = true;
-                }
-                ReplTuiEvent::ToolCallComplete {
-                    name: _,
-                    output,
-                    is_error,
-                } => {
-                    had_new_rows |= self.complete_tool_call_entry(output, is_error);
                 }
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
                     if let Some(ref mut modal) = self.active_modal {
@@ -2428,8 +2482,11 @@ mod tests {
 
     use crate::app::Provider;
     use crate::tui::auth_modal::{AuthModal, AuthModalStep};
+    use crate::tui::ReplTuiEvent;
 
-    use super::{render_tool_call_lines, ToolCallStatus};
+    use super::{
+        render_tool_call_lines, tool_input_summary, ReplTuiState, ToolCallStatus, TranscriptEntry,
+    };
 
     #[test]
     fn auth_command_blocked_when_busy() {
@@ -2693,5 +2750,111 @@ mod tests {
             "Expected 1 header + 15 lines + 1 overflow = 17, got {}",
             items.len()
         );
+    }
+
+    #[test]
+    fn tool_input_summary_extracts_key_fields() {
+        assert_eq!(tool_input_summary("bash", r#"{"command":"ls"}"#), "ls");
+        assert_eq!(
+            tool_input_summary("navigate", r#"{"url":"https://example.com"}"#),
+            "https://example.com"
+        );
+        assert_eq!(
+            tool_input_summary("read_file", r#"{"filePath":"src/main.rs"}"#),
+            "src/main.rs"
+        );
+        assert_eq!(
+            tool_input_summary("glob_search", r#"{"pattern":"*.rs"}"#),
+            "*.rs"
+        );
+    }
+
+    #[test]
+    fn tool_call_start_flushes_typewriter_first() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+
+        for c in "hello\n".chars() {
+            state.typewriter_chars.push_back(c);
+        }
+
+        tx.send(ReplTuiEvent::ToolCallStart {
+            name: "bash".to_string(),
+            input: r#"{"command":"ls"}"#.to_string(),
+        })
+        .unwrap();
+        state.drain_events(&rx);
+
+        assert!(state.entries.len() >= 2);
+        assert!(matches!(state.entries[0], TranscriptEntry::Stream(_)));
+        assert!(matches!(
+            state.entries[1],
+            TranscriptEntry::ToolCall {
+                status: ToolCallStatus::Running,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn tool_call_complete_updates_in_place_success() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+
+        state.entries.push(TranscriptEntry::ToolCall {
+            name: "bash".to_string(),
+            input_summary: "ls".to_string(),
+            status: ToolCallStatus::Running,
+        });
+        state.tool_call_entry_index = Some(0);
+
+        tx.send(ReplTuiEvent::ToolCallComplete {
+            name: "bash".to_string(),
+            output: "file.txt".to_string(),
+            is_error: false,
+        })
+        .unwrap();
+        state.drain_events(&rx);
+
+        assert_eq!(state.entries.len(), 1);
+        assert!(matches!(
+            state.entries[0],
+            TranscriptEntry::ToolCall {
+                status: ToolCallStatus::Success { .. },
+                ..
+            }
+        ));
+        assert!(state.tool_call_entry_index.is_none());
+    }
+
+    #[test]
+    fn tool_call_complete_updates_in_place_error() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+
+        state.entries.push(TranscriptEntry::ToolCall {
+            name: "bash".to_string(),
+            input_summary: "bad cmd".to_string(),
+            status: ToolCallStatus::Running,
+        });
+        state.tool_call_entry_index = Some(0);
+
+        tx.send(ReplTuiEvent::ToolCallComplete {
+            name: "bash".to_string(),
+            output: "command not found".to_string(),
+            is_error: true,
+        })
+        .unwrap();
+        state.drain_events(&rx);
+
+        assert_eq!(state.entries.len(), 1);
+        assert!(matches!(
+            state.entries[0],
+            TranscriptEntry::ToolCall {
+                status: ToolCallStatus::Error(_),
+                ..
+            }
+        ));
+        assert!(state.tool_call_entry_index.is_none());
     }
 }
