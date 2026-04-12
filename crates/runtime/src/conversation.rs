@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
@@ -107,6 +109,7 @@ pub struct ConversationRuntime<C, T> {
     usage_tracker: UsageTracker,
     hook_runner: HookRunner,
     auto_compaction_input_tokens_threshold: u32,
+    cancel_flag: Arc<AtomicBool>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -152,6 +155,7 @@ where
             usage_tracker,
             hook_runner: HookRunner::from_feature_config(feature_config),
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -167,6 +171,16 @@ where
         self
     }
 
+    #[must_use]
+    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancel_flag)
+    }
+
+    pub fn request_cancel(&self) {
+        self.cancel_flag.store(true, Ordering::Release);
+    }
+
+    #[allow(clippy::too_many_lines)]
     pub fn run_turn(
         &mut self,
         user_input: impl Into<String>,
@@ -181,6 +195,11 @@ where
         let mut iterations = 0;
 
         loop {
+            if self.cancel_flag.load(Ordering::Acquire) {
+                self.cancel_flag.store(false, Ordering::Release);
+                return Err(RuntimeError::new("interrupted by user"));
+            }
+
             iterations += 1;
             if iterations > self.max_iterations {
                 return Err(RuntimeError::new(

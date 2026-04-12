@@ -3,6 +3,7 @@
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -913,6 +914,7 @@ struct ReplTuiState {
     selection_end: Option<(u16, usize)>,
     /// Set when right-click requests a copy of the current selection.
     pending_copy: Option<bool>,
+    last_esc_at: Option<Instant>,
 }
 
 impl ReplTuiState {
@@ -948,6 +950,7 @@ impl ReplTuiState {
             selection_anchor: None,
             selection_end: None,
             pending_copy: None,
+            last_esc_at: None,
         }
     }
 
@@ -2193,9 +2196,11 @@ pub fn run_repl_ratatui(
         }
     });
 
+    let cancel_flag = cli.lock().expect("cli lock").cancel_flag();
+
     let mut terminal = ratatui::init();
     let work_shutdown = work_tx.clone();
-    let result = run_loop(&mut terminal, &ui_rx, &ui_tx, &work_tx, &cli);
+    let result = run_loop(&mut terminal, &ui_rx, &ui_tx, &work_tx, &cli, &cancel_flag);
     let _ = work_shutdown.send(WorkerMsg::Shutdown);
     ratatui::restore();
     result
@@ -2208,6 +2213,7 @@ fn run_loop(
     ui_tx: &Sender<ReplTuiEvent>,
     work_tx: &Sender<WorkerMsg>,
     cli: &Arc<Mutex<LiveCli>>,
+    cancel_flag: &Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute!(io::stdout(), event::EnableMouseCapture);
     let _mouse_guard = MouseCaptureGuard;
@@ -2416,6 +2422,8 @@ fn run_loop(
 
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if state.busy {
+                        cancel_flag.store(true, Ordering::Release);
+                        state.push_system("Interrupting…");
                         continue;
                     }
                     state.exit = true;
@@ -2555,7 +2563,21 @@ fn run_loop(
                         }
                     }
                     KeyCode::Esc => {
-                        state.slash_overlay = None;
+                        if state.busy {
+                            let now = Instant::now();
+                            if state
+                                .last_esc_at
+                                .is_some_and(|t| now.duration_since(t) < Duration::from_millis(500))
+                            {
+                                cancel_flag.store(true, Ordering::Release);
+                                state.push_system("Interrupting…");
+                                state.last_esc_at = None;
+                            } else {
+                                state.last_esc_at = Some(now);
+                            }
+                        } else {
+                            state.slash_overlay = None;
+                        }
                     }
                     KeyCode::PageUp => {
                         let cur = state.list_state.offset();

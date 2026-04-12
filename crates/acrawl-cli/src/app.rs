@@ -307,6 +307,10 @@ impl LiveCli {
         self.ui_tx.clone()
     }
 
+    pub(crate) fn cancel_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        self.runtime.cancel_flag()
+    }
+
     pub(crate) fn run_turn_tui(
         &mut self,
         input: &str,
