@@ -144,6 +144,15 @@ impl ChatCompletionsClient {
         self
     }
 
+    #[must_use]
+    pub fn with_optional_auth(mut self, auth: AuthSource) -> Self {
+        self.auth = match auth {
+            AuthSource::None => None,
+            other => Some(other),
+        };
+        self
+    }
+
     fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         match &self.auth {
             Some(
