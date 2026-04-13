@@ -258,8 +258,25 @@ pub struct HttpResponse {
     pub body: String,
 }
 
+/// Returns `true` when the `HEADLESS` env var is unset or is not one of the
+/// explicit "off" values (`false`, `0`, `no`, `off`).  This mirrors the
+/// `parseHeadless()` logic in the embedded Node.js Playwright bridge script.
+fn is_headless() -> bool {
+    match std::env::var("HEADLESS") {
+        Err(_) => true,
+        Ok(val) => {
+            let v = val.trim().to_lowercase();
+            !matches!(v.as_str(), "false" | "0" | "no" | "off")
+        }
+    }
+}
+
 pub struct FetchRouter {
     http: HttpFetcher,
+    /// When `true` (headed mode), navigate always goes through the browser so
+    /// the user can see the page loading in the Chromium window.  When `false`
+    /// (headless, the default), the faster HTTP-first path is used.
+    prefer_browser: bool,
 }
 
 impl FetchRouter {
@@ -269,6 +286,7 @@ impl FetchRouter {
     pub fn new() -> Result<Self, FetchError> {
         Ok(Self {
             http: HttpFetcher::new()?,
+            prefer_browser: !is_headless(),
         })
     }
 
@@ -283,6 +301,12 @@ impl FetchRouter {
         url: &str,
         browser: Option<&mut BrowserContext>,
     ) -> Result<FetchedPage, FetchError> {
+        if self.prefer_browser {
+            if let Some(ctx) = browser {
+                return Self::fetch_via_browser(ctx, url).await;
+            }
+        }
+
         let http_result = self.http.fetch(url).await;
 
         match http_result {
