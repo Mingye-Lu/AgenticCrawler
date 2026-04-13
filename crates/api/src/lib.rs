@@ -1,5 +1,7 @@
 mod client;
+pub mod provider_types;
 pub mod codex;
+pub mod credentials;
 mod error;
 pub mod openai;
 mod sse;
@@ -15,9 +17,15 @@ pub use codex::{
     CodexClient, CodexLoginRequest, CodexMessageStream, CODEX_CALLBACK_PORT, CODEX_SCOPES,
     DEFAULT_CODEX_MODEL, OPENAI_AUTH_URL, OPENAI_CLIENT_ID, OPENAI_TOKEN_URL,
 };
+pub use credentials::{
+    CredentialError, CredentialStore, StoredOAuthTokens, StoredProviderConfig,
+    credentials_file_path, get_active_config, load_credentials, remove_provider_config,
+    save_credentials, set_provider_config,
+};
 pub use error::ApiError;
 pub use openai::{OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
 pub use sse::{parse_frame, SseParser};
+pub use provider_types::{AuthMethod, Provider, ProviderConfig};
 pub use types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
     InputContentBlock, InputMessage, MessageDelta, MessageDeltaEvent, MessageRequest,
