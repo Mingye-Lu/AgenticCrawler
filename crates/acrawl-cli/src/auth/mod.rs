@@ -183,7 +183,7 @@ pub(super) fn wait_for_oauth_callback(
     Ok(callback)
 }
 
-#[allow(dead_code, clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn wait_for_oauth_callback_cancellable(
     port: u16,
     cancel_rx: mpsc::Receiver<()>,

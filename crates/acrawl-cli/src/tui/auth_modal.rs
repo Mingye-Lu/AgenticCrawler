@@ -80,8 +80,6 @@ pub(crate) enum AuthModalStep {
 
 pub(crate) struct AuthModal {
     pub(crate) step: AuthModalStep,
-    #[allow(dead_code)]
-    ui_tx: Sender<ReplTuiEvent>,
 }
 
 impl AuthModal {
@@ -122,7 +120,10 @@ impl AuthModal {
         value.replace_range(start..end, "");
     }
 
-    pub(crate) fn new(ui_tx: Sender<ReplTuiEvent>, provider: Option<crate::app::Provider>) -> Self {
+    pub(crate) fn new(
+        _ui_tx: Sender<ReplTuiEvent>,
+        provider: Option<crate::app::Provider>,
+    ) -> Self {
         let step = if let Some(p) = provider {
             match p {
                 crate::app::Provider::OpenAi => AuthModalStep::ApiKeyInput {
@@ -149,17 +150,16 @@ impl AuthModal {
             AuthModalStep::ProviderSelect { selected: 0 }
         };
 
-        Self { step, ui_tx }
+        Self { step }
     }
 
     pub(crate) fn new_model_only(
-        ui_tx: Sender<ReplTuiEvent>,
+        _ui_tx: Sender<ReplTuiEvent>,
         provider: crate::app::Provider,
     ) -> Self {
         let provider: ProviderKind = provider.into();
         Self {
             step: AuthModalStep::ModelFetchLoading { provider },
-            ui_tx,
         }
     }
 
@@ -1010,12 +1010,10 @@ mod tests {
 
     #[test]
     fn success_any_key_dismisses() {
-        let (ui_tx, _ui_rx) = mpsc::channel();
         let mut modal = AuthModal {
             step: AuthModalStep::Success {
                 message: "done".to_string(),
             },
-            ui_tx,
         };
 
         assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Dismiss);
@@ -1023,12 +1021,10 @@ mod tests {
 
     #[test]
     fn error_any_key_dismisses() {
-        let (ui_tx, _ui_rx) = mpsc::channel();
         let mut modal = AuthModal {
             step: AuthModalStep::Error {
                 message: "failed".to_string(),
             },
-            ui_tx,
         };
 
         assert_eq!(
