@@ -10,9 +10,9 @@ use std::sync::mpsc;
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
     AnthropicClient, AuthSource, ChatCompletionsClient, ContentBlockDelta, InputContentBlock,
-    InputMessage, MessageRequest, MessageResponse, OpenAiMessageStream,
-    OpenAiResponsesClient, OutputContentBlock, ResponsesMessageStream,
-    StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
+    InputMessage, MessageRequest, MessageResponse, OpenAiMessageStream, OpenAiResponsesClient,
+    OutputContentBlock, ResponsesMessageStream, StreamEvent as ApiStreamEvent, ToolChoice,
+    ToolDefinition, ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
@@ -143,10 +143,8 @@ pub(crate) fn run_repl(
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let classic = runtime::load_settings()
-        .classic_repl
-        .unwrap_or(false)
-        || !io::stdout().is_terminal();
+    let classic =
+        runtime::load_settings().classic_repl.unwrap_or(false) || !io::stdout().is_terminal();
     if classic {
         run_repl_classic(model, allowed_tools, permission_mode)
     } else {
@@ -1285,9 +1283,7 @@ impl LlmRuntimeClient {
                     .get("anthropic")
                     .ok_or("No Anthropic credentials found. Run `acrawl auth`.")?;
                 let auth = credential_config_to_auth_source(config);
-                LlmProvider::Anthropic(
-                    AnthropicClient::from_auth(auth),
-                )
+                LlmProvider::Anthropic(AnthropicClient::from_auth(auth))
             }
             Provider::OpenAi => {
                 let config = store

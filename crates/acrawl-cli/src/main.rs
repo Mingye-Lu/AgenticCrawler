@@ -504,7 +504,10 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "  acrawl system-prompt [--cwd PATH] [--date YYYY-MM-DD]"
     )?;
     writeln!(out, "  acrawl auth [anthropic|openai|other]")?;
-    writeln!(out, "      Configure credentials for a provider interactively")?;
+    writeln!(
+        out,
+        "      Configure credentials for a provider interactively"
+    )?;
     writeln!(out, "  acrawl login")?;
     writeln!(out, "      (deprecated — use `acrawl auth`)")?;
     writeln!(out, "  acrawl logout")?;
@@ -604,8 +607,7 @@ mod tests {
     fn with_clean_config_env(f: impl FnOnce()) {
         let _guard = model_env_mutex();
         let saved_config_home = env::var("ACRAWL_CONFIG_HOME").ok();
-        let temp_dir =
-            std::env::temp_dir().join(format!("acrawl_cli_test_{}", std::process::id()));
+        let temp_dir = std::env::temp_dir().join(format!("acrawl_cli_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
         f();
@@ -726,10 +728,7 @@ mod tests {
     #[test]
     fn initial_model_defaults_without_credentials() {
         with_clean_config_env(|| {
-            assert_eq!(
-                initial_model_from_credentials(),
-                DEFAULT_MODEL.to_string()
-            );
+            assert_eq!(initial_model_from_credentials(), DEFAULT_MODEL.to_string());
         });
     }
 
