@@ -13,7 +13,6 @@ use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
-const AUTO_COMPACTION_THRESHOLD_ENV_VAR: &str = "ACRAWL_AUTO_COMPACT_INPUT_TOKENS";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRequest {
@@ -361,13 +360,13 @@ where
 
 #[must_use]
 pub fn auto_compaction_threshold_from_env() -> u32 {
-    parse_auto_compaction_threshold(
-        std::env::var(AUTO_COMPACTION_THRESHOLD_ENV_VAR)
-            .ok()
-            .as_deref(),
-    )
+    let settings = crate::settings::load_settings();
+    let tokens = crate::settings::settings_get_auto_compact_tokens(&settings);
+    u32::try_from(tokens.min(u64::from(u32::MAX)))
+        .unwrap_or(DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD)
 }
 
+#[cfg(test)]
 #[must_use]
 fn parse_auto_compaction_threshold(value: Option<&str>) -> u32 {
     value

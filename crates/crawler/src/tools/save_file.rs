@@ -39,7 +39,8 @@ pub fn parse_input(input: &Value) -> Result<SaveFileInput, CrawlError> {
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let parsed = parse_input(input)?;
 
-    let workspace = std::env::var("WORKSPACE_DIR").unwrap_or_else(|_| "workspace".to_string());
+    let settings = runtime::load_settings();
+    let workspace = runtime::settings_get_workspace_dir(&settings).to_string();
     let mut target = PathBuf::from(&workspace);
     if let Some(ref sub) = parsed.subdir {
         target.push(sub);

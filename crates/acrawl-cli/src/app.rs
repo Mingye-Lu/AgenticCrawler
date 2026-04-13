@@ -13,7 +13,6 @@ use api::{
     InputMessage, MessageRequest, MessageResponse, OpenAiMessageStream,
     OpenAiResponsesClient, OutputContentBlock, ResponsesMessageStream,
     StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
-    DEFAULT_CODEX_MODEL, DEFAULT_OPENAI_MODEL,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
@@ -95,37 +94,6 @@ pub(crate) fn resolve_model_alias(model: &str) -> &str {
     }
 }
 
-fn trimmed_env_var(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-/// Default model when `--model` is omitted: `LLM_PROVIDER` + `*_MODEL` (see `.env.example`).
-pub(crate) fn initial_model_from_env() -> String {
-    let provider = env::var("LLM_PROVIDER")
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-
-    match provider.as_str() {
-        "openai" => trimmed_env_var("OPENAI_MODEL").map_or_else(
-            || DEFAULT_OPENAI_MODEL.to_string(),
-            |m| resolve_model_alias(&m).to_string(),
-        ),
-        "codex" => {
-            trimmed_env_var("CODEX_MODEL").unwrap_or_else(|| DEFAULT_CODEX_MODEL.to_string())
-        }
-        "claude" | "anthropic" | "" => trimmed_env_var("CLAUDE_MODEL").map_or_else(
-            || DEFAULT_MODEL.to_string(),
-            |m| resolve_model_alias(&m).to_string(),
-        ),
-        _ => DEFAULT_MODEL.to_string(),
-    }
-}
-
-#[allow(dead_code)]
 pub(crate) fn initial_model_from_credentials() -> String {
     let store = api::load_credentials().unwrap_or_default();
     if let Some(provider_name) = &store.active_provider {
@@ -139,8 +107,9 @@ pub(crate) fn initial_model_from_credentials() -> String {
 }
 
 pub(crate) fn default_permission_mode() -> PermissionMode {
-    env::var("ACRAWL_PERMISSION_MODE")
-        .ok()
+    let settings = runtime::load_settings();
+    settings
+        .permission_mode
         .as_deref()
         .and_then(normalize_permission_mode)
         .map_or(PermissionMode::DangerFullAccess, permission_mode_from_label)
@@ -174,7 +143,10 @@ pub(crate) fn run_repl(
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let classic = env::var("ACRAWL_CLASSIC_REPL").is_ok() || !io::stdout().is_terminal();
+    let classic = runtime::load_settings()
+        .classic_repl
+        .unwrap_or(false)
+        || !io::stdout().is_terminal();
     if classic {
         run_repl_classic(model, allowed_tools, permission_mode)
     } else {
@@ -1007,7 +979,7 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     if returned_state != state {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "oauth state mismatch").into());
     }
-    let client = AnthropicClient::from_auth(AuthSource::None).with_base_url(api::read_base_url());
+    let client = AnthropicClient::from_auth(AuthSource::None);
     let exchange_request =
         OAuthTokenExchangeRequest::from_config(oauth, code, state, pkce.verifier, redirect_uri);
     let rt = tokio::runtime::Runtime::new()?;
@@ -1314,7 +1286,7 @@ impl LlmRuntimeClient {
                     .ok_or("No Anthropic credentials found. Run `acrawl auth`.")?;
                 let auth = credential_config_to_auth_source(config);
                 LlmProvider::Anthropic(
-                    AnthropicClient::from_auth(auth).with_base_url(api::read_base_url()),
+                    AnthropicClient::from_auth(auth),
                 )
             }
             Provider::OpenAi => {

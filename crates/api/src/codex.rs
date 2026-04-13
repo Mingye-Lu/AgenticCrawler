@@ -43,12 +43,12 @@ pub fn codex_oauth_config() -> OAuthConfig {
 
 #[must_use]
 pub fn read_codex_model() -> String {
-    std::env::var("CODEX_MODEL").unwrap_or_else(|_| DEFAULT_CODEX_MODEL.to_string())
+    DEFAULT_CODEX_MODEL.to_string()
 }
 
 #[must_use]
 pub fn read_codex_responses_url() -> String {
-    std::env::var("CODEX_RESPONSES_URL").unwrap_or_else(|_| DEFAULT_CODEX_RESPONSES_URL.to_string())
+    DEFAULT_CODEX_RESPONSES_URL.to_string()
 }
 
 /// Loopback redirect URI with `/auth/callback` path (matches Python implementation).
@@ -110,14 +110,8 @@ pub fn resolve_codex_auth() -> Result<AuthSource, ApiError> {
         }
     }
 
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        if !key.is_empty() {
-            return Ok(AuthSource::BearerToken(key));
-        }
-    }
-
     Err(ApiError::Auth(
-        "no Codex OAuth credentials or OPENAI_API_KEY found; run `acrawl login` to authenticate"
+        "no Codex OAuth credentials found; run `acrawl auth` to authenticate"
             .to_string(),
     ))
 }
@@ -1103,17 +1097,11 @@ mod tests {
     }
 
     #[test]
-    fn codex_responses_url_reads_from_env() {
-        let _guard = env_lock();
-        std::env::set_var(
-            "CODEX_RESPONSES_URL",
-            "https://proxy.example.com/codex/responses",
-        );
+    fn codex_responses_url_returns_default_constant() {
         assert_eq!(
             read_codex_responses_url(),
-            "https://proxy.example.com/codex/responses"
+            "https://chatgpt.com/backend-api/codex/responses"
         );
-        std::env::remove_var("CODEX_RESPONSES_URL");
     }
 
     #[test]
@@ -1520,17 +1508,12 @@ mod tests {
 
     #[test]
     fn default_codex_model_is_codex_mini_latest() {
-        let _guard = env_lock();
-        std::env::remove_var("CODEX_MODEL");
         assert_eq!(read_codex_model(), DEFAULT_CODEX_MODEL);
     }
 
     #[test]
-    fn codex_model_reads_from_env() {
-        let _guard = env_lock();
-        std::env::set_var("CODEX_MODEL", "codex-large-2025");
-        assert_eq!(read_codex_model(), "codex-large-2025");
-        std::env::remove_var("CODEX_MODEL");
+    fn codex_model_returns_default_constant() {
+        assert_eq!(read_codex_model(), "codex-mini-latest");
     }
 
     #[test]
@@ -1582,11 +1565,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_codex_auth_skips_expired_oauth_falls_back_to_api_key() {
+    fn resolve_codex_auth_errors_with_expired_oauth_and_no_api_key_fallback() {
         let _guard = env_lock();
         let config_home = temp_config_home();
         std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
-        std::env::set_var("OPENAI_API_KEY", "sk-fallback-key");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
 
@@ -1598,28 +1580,25 @@ mod tests {
         })
         .expect("save expired credentials");
 
-        let auth = resolve_codex_auth().expect("should fall back to API key");
-        assert_eq!(auth.bearer_token(), Some("sk-fallback-key"));
+        let error = resolve_codex_auth().expect_err("should error with expired token");
+        assert!(matches!(error, ApiError::Auth(ref msg) if msg.contains("acrawl auth")));
 
         clear_oauth_credentials().expect("clear");
-        std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).expect("cleanup");
     }
 
     #[test]
-    fn resolve_codex_auth_uses_api_key_when_no_oauth_stored() {
+    fn resolve_codex_auth_errors_without_stored_oauth() {
         let _guard = env_lock();
         let config_home = temp_config_home();
         std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
-        std::env::set_var("OPENAI_API_KEY", "sk-test-key");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
 
-        let auth = resolve_codex_auth().expect("should resolve from API key");
-        assert_eq!(auth.bearer_token(), Some("sk-test-key"));
+        let error = resolve_codex_auth().expect_err("should error without credentials");
+        assert!(matches!(error, ApiError::Auth(ref msg) if msg.contains("acrawl auth")));
 
-        std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).ok();
     }
@@ -1629,12 +1608,11 @@ mod tests {
         let _guard = env_lock();
         let config_home = temp_config_home();
         std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
-        std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
 
         let error = resolve_codex_auth().expect_err("should error without credentials");
-        assert!(matches!(error, ApiError::Auth(ref msg) if msg.contains("acrawl login")));
+        assert!(matches!(error, ApiError::Auth(ref msg) if msg.contains("acrawl auth")));
 
         std::env::remove_var("ACRAWL_CONFIG_HOME");
         std::fs::remove_dir_all(config_home).ok();

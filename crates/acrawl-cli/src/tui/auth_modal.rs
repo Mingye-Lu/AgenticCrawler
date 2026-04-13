@@ -66,6 +66,10 @@ pub(crate) enum AuthModalStep {
         provider: ProviderKind,
         base_url: Option<String>,
     },
+    ModelSelect {
+        provider: ProviderKind,
+        state: crate::tui::model_list::ModelListState,
+    },
     Success {
         provider: ProviderKind,
         message: String,
@@ -133,6 +137,87 @@ impl AuthModal {
         store.active_provider = Some(provider_str.to_string());
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
+    }
+
+    pub(crate) fn process_loading(&mut self) {
+        if let AuthModalStep::ModelFetchLoading {
+            provider,
+            base_url: _,
+        } = &self.step
+        {
+            let provider_copy = *provider;
+
+            let store = api::credentials::load_credentials().unwrap_or_default();
+            let provider_str = match provider_copy {
+                ProviderKind::Anthropic => "anthropic",
+                ProviderKind::OpenAi => "openai",
+                ProviderKind::Other => "other",
+            };
+            let config = store
+                .providers
+                .get(provider_str)
+                .cloned()
+                .unwrap_or_default();
+
+            let models_result = match provider_copy {
+                ProviderKind::Anthropic => {
+                    let key = config.api_key.unwrap_or_default();
+                    tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(api::models::list_anthropic_models(&key))
+                        .map(|models| {
+                            models
+                                .into_iter()
+                                .map(|m| crate::tui::model_list::ModelInfo {
+                                    id: m.id,
+                                    display_name: m.display_name,
+                                })
+                                .collect()
+                        })
+                }
+                ProviderKind::OpenAi => {
+                    let auth = if config.auth_method == "oauth" {
+                        if let Some(oauth) = config.oauth {
+                            api::AuthSource::BearerToken(oauth.access_token)
+                        } else {
+                            api::AuthSource::None
+                        }
+                    } else {
+                        api::AuthSource::ApiKey(config.api_key.unwrap_or_default())
+                    };
+                    tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(api::models::list_openai_models(&auth))
+                        .map(|models| {
+                            models
+                                .into_iter()
+                                .map(|m| crate::tui::model_list::ModelInfo {
+                                    id: m.id,
+                                    display_name: None,
+                                })
+                                .collect()
+                        })
+                }
+                ProviderKind::Other => Ok(vec![]),
+            };
+
+            match models_result {
+                Ok(models) => {
+                    self.step = AuthModalStep::ModelSelect {
+                        provider: provider_copy,
+                        state: crate::tui::model_list::ModelListState {
+                            models,
+                            ..Default::default()
+                        },
+                    };
+                }
+                Err(e) => {
+                    self.step = AuthModalStep::Error {
+                        message: format!("Failed to fetch models: {e}"),
+                    };
+                }
+            }
+        }
     }
 }
 
@@ -237,6 +322,49 @@ impl Modal for AuthModal {
                     Line::from("Please wait..."),
                 ];
                 (Color::Blue, Text::from(lines))
+            }
+            AuthModalStep::ModelSelect { provider, state } => {
+                let mut lines = vec![
+                    Line::from(format!("Select default model for {}:", provider.label())),
+                    Line::default(),
+                    Line::from(format!("  Search: {}_", state.filter)),
+                    Line::default(),
+                ];
+
+                let filtered = state.filtered();
+                if filtered.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  (no models found)",
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                } else {
+                    let start = state.selected_idx.saturating_sub(5);
+                    let end = (start + 10).min(filtered.len());
+
+                    for (i, model) in filtered[start..end].iter().enumerate() {
+                        let actual_idx = start + i;
+                        let cursor = if actual_idx == state.selected_idx {
+                            '>'
+                        } else {
+                            ' '
+                        };
+                        let style = if actual_idx == state.selected_idx {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(ratatui::style::Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("  {cursor} {}", model.display_label()),
+                            style,
+                        )));
+                    }
+                }
+
+                lines.push(Line::default());
+                lines.push(Line::from("Up/Down navigate  Enter select  Esc skip"));
+                (Color::Cyan, Text::from(lines))
             }
             AuthModalStep::Success { message, .. } => {
                 let lines = vec![
@@ -397,10 +525,9 @@ impl Modal for AuthModal {
                         *error = Some("API key cannot be empty".to_string());
                     } else {
                         Self::save_api_key(*provider, base_url.clone(), key_buffer.clone());
-                        // For now, immediately transition to Success since T13 handles model fetching
-                        self.step = AuthModalStep::Success {
+                        self.step = AuthModalStep::ModelFetchLoading {
                             provider: *provider,
-                            message: format!("API key accepted for {}", provider.label()),
+                            base_url: base_url.clone(),
                         };
                     }
                     ModalAction::Consumed
@@ -431,6 +558,51 @@ impl Modal for AuthModal {
                 _ => ModalAction::Consumed,
             },
             AuthModalStep::ModelFetchLoading { .. } => ModalAction::Consumed,
+            AuthModalStep::ModelSelect { provider, state } => match key.code {
+                KeyCode::Up => {
+                    state.handle_up();
+                    ModalAction::Consumed
+                }
+                KeyCode::Down => {
+                    state.handle_down();
+                    ModalAction::Consumed
+                }
+                KeyCode::Char(c) => {
+                    state.handle_char(c);
+                    ModalAction::Consumed
+                }
+                KeyCode::Backspace => {
+                    state.handle_backspace();
+                    ModalAction::Consumed
+                }
+                KeyCode::Enter => {
+                    if let Some(model) = state.selected_model() {
+                        let mut store = api::credentials::load_credentials().unwrap_or_default();
+                        let provider_str = match provider {
+                            ProviderKind::Anthropic => "anthropic",
+                            ProviderKind::OpenAi => "openai",
+                            ProviderKind::Other => "other",
+                        };
+                        if let Some(config) = store.providers.get_mut(provider_str) {
+                            config.default_model = Some(model.id.clone());
+                            let _ = api::credentials::save_credentials(&store);
+                        }
+                    }
+                    self.step = AuthModalStep::Success {
+                        provider: *provider,
+                        message: format!("Authenticated as {}", provider.label()),
+                    };
+                    ModalAction::Consumed
+                }
+                KeyCode::Esc => {
+                    self.step = AuthModalStep::Success {
+                        provider: *provider,
+                        message: format!("Authenticated as {}", provider.label()),
+                    };
+                    ModalAction::Consumed
+                }
+                _ => ModalAction::Consumed,
+            },
             AuthModalStep::Success { .. } | AuthModalStep::Error { .. } => ModalAction::Dismiss,
         }
     }
@@ -447,6 +619,7 @@ impl Modal for AuthModal {
             AuthModalStep::BaseUrlInput { .. } => " Auth · Base URL ",
             AuthModalStep::OAuthWaiting { .. } => " Auth · Waiting ",
             AuthModalStep::ModelFetchLoading { .. } => " Auth · Loading Models ",
+            AuthModalStep::ModelSelect { .. } => " Auth · Select Model ",
             AuthModalStep::Success { .. } => " Auth · Success ",
             AuthModalStep::Error { .. } => " Auth · Error ",
         }

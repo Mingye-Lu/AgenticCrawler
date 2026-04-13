@@ -2215,8 +2215,7 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
                     "oauth state mismatch",
                 )) as _);
             }
-            let client =
-                AnthropicClient::from_auth(AuthSource::None).with_base_url(api::read_base_url());
+            let client = AnthropicClient::from_auth(AuthSource::None);
             let exchange = OAuthTokenExchangeRequest::from_config(
                 &oauth,
                 code,
@@ -2434,6 +2433,10 @@ fn run_loop(
             }
         })?;
 
+        if let Some(ref mut modal) = state.active_modal {
+            modal.process_loading();
+        }
+
         if !state.typewriter_chars.is_empty() {
             let q_len = state.typewriter_chars.len();
             let count = if q_len > 100 {
@@ -2564,32 +2567,7 @@ fn run_loop(
                 }
 
                 if let Some(ref mut modal) = state.active_modal {
-                    let api_key_to_set: Option<String> = if key.code == KeyCode::Enter {
-                        if let AuthModalStep::ApiKeyInput {
-                            provider: crate::tui::auth_modal::ProviderKind::OpenAi,
-                            ref key_buffer,
-                            ..
-                        } = modal.step
-                        {
-                            if key_buffer.is_empty() {
-                                None
-                            } else {
-                                Some(key_buffer.clone())
-                            }
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    };
-
                     let action = modal.handle_key(key);
-
-                    if let Some(api_key) = api_key_to_set {
-                        if matches!(modal.step, AuthModalStep::Success { .. }) {
-                            std::env::set_var("OPENAI_API_KEY", &api_key);
-                        }
-                    }
 
                     if let AuthModalStep::OAuthWaiting {
                         cancel_tx: None,
