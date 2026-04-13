@@ -1,4 +1,9 @@
-//! `OpenAI` Chat Completions API client with SSE streaming.
+//! `OpenAI`-compatible Chat Completions API client with SSE streaming.
+//!
+//! [`ChatCompletionsClient`] works with any endpoint that speaks the
+//! `/v1/chat/completions` SSE protocol — `OpenAI`, Azure, Ollama, LM Studio,
+//! vLLM, etc.  Auth is optional (`None` skips the `Authorization` header)
+//! and the base URL is caller-provided.
 //!
 //! Maps streamed SSE chunks to the shared [`StreamEvent`] enum so callers can
 //! consume any provider uniformly.
@@ -75,19 +80,18 @@ struct OpenAiUsage {
     completion_tokens: Option<u32>,
 }
 
-/// Client for the `OpenAI` Chat Completions API with SSE streaming.
 #[derive(Debug, Clone)]
-pub struct OpenAiClient {
+pub struct ChatCompletionsClient {
     http: reqwest::Client,
-    auth: AuthSource,
+    auth: Option<AuthSource>,
     base_url: String,
     default_model: String,
 }
 
-impl OpenAiClient {
-    /// Read `OPENAI_API_KEY` (required) from env.
-    ///
-    /// Optional `OPENAI_BASE_URL` (default `https://api.openai.com`); `/v1/chat/completions` is appended.
+/// Backwards-compatible alias.
+pub type OpenAiClient = ChatCompletionsClient;
+
+impl ChatCompletionsClient {
     pub fn from_env() -> Result<Self, ApiError> {
         let api_key = match std::env::var("OPENAI_API_KEY") {
             Ok(key) if !key.is_empty() => key,
@@ -102,20 +106,29 @@ impl OpenAiClient {
 
         Ok(Self {
             http: reqwest::Client::new(),
-            auth: AuthSource::BearerToken(api_key),
+            auth: Some(AuthSource::BearerToken(api_key)),
             base_url: read_openai_base_url(),
             default_model: DEFAULT_OPENAI_MODEL.to_string(),
         })
     }
 
-    /// Construct with an explicit [`AuthSource`] (e.g. from Codex OAuth).
     #[must_use]
     pub fn with_auth(auth: AuthSource) -> Self {
         Self {
             http: reqwest::Client::new(),
-            auth,
+            auth: Some(auth),
             base_url: read_openai_base_url(),
             default_model: DEFAULT_OPENAI_MODEL.to_string(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_no_auth(model: impl Into<String>, base_url: impl Into<String>) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            auth: None,
+            base_url: base_url.into(),
+            default_model: model.into(),
         }
     }
 
@@ -131,8 +144,20 @@ impl OpenAiClient {
         self
     }
 
-    /// Send a streaming request, returning an [`OpenAiMessageStream`] that
-    /// yields the same [`StreamEvent`] variants as the Anthropic stream.
+    fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.auth {
+            Some(
+                AuthSource::BearerToken(token)
+                | AuthSource::ApiKey(token)
+                | AuthSource::ApiKeyAndBearer {
+                    bearer_token: token,
+                    ..
+                },
+            ) => req.bearer_auth(token),
+            Some(AuthSource::None) | None => req,
+        }
+    }
+
     pub async fn stream_message(
         &self,
         request: &MessageRequest,
@@ -149,24 +174,12 @@ impl OpenAiClient {
             self.base_url.trim_end_matches('/')
         );
 
-        let mut req = self
+        let req = self
             .http
             .post(&url)
             .header("content-type", "application/json");
-
-        match &self.auth {
-            AuthSource::BearerToken(token)
-            | AuthSource::ApiKey(token)
-            | AuthSource::ApiKeyAndBearer {
-                bearer_token: token,
-                ..
-            } => {
-                req = req.bearer_auth(token);
-            }
-            AuthSource::None => {}
-        }
-
-        req = req.json(&body);
+        let req = self.apply_auth(req);
+        let req = req.json(&body);
 
         let response = req.send().await.map_err(ApiError::from)?;
         let status = response.status();
@@ -683,7 +696,7 @@ mod tests {
         let client = OpenAiClient::from_env().expect("should read API key");
         assert_eq!(
             client.auth,
-            AuthSource::BearerToken("sk-test-key-123".to_string())
+            Some(AuthSource::BearerToken("sk-test-key-123".to_string()))
         );
         assert_eq!(client.base_url, DEFAULT_OPENAI_BASE_URL);
         assert_eq!(client.default_model, DEFAULT_OPENAI_MODEL);
@@ -716,7 +729,10 @@ mod tests {
     #[test]
     fn with_auth_creates_client() {
         let client = OpenAiClient::with_auth(AuthSource::BearerToken("token".to_string()));
-        assert_eq!(client.auth, AuthSource::BearerToken("token".to_string()));
+        assert_eq!(
+            client.auth,
+            Some(AuthSource::BearerToken("token".to_string()))
+        );
     }
 
     #[test]
@@ -957,5 +973,43 @@ mod tests {
         let body2 = build_openai_request(&request2, "gpt-4o");
         assert_eq!(body2["tool_choice"]["type"], "function");
         assert_eq!(body2["tool_choice"]["function"]["name"], "navigate");
+    }
+
+    #[test]
+    fn with_no_auth_sets_none_auth() {
+        let client =
+            ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
+        assert!(client.auth.is_none());
+        assert_eq!(client.base_url, "http://localhost:11434/v1");
+        assert_eq!(client.default_model, "llama3");
+    }
+
+    #[test]
+    fn custom_base_url_used_in_request_url() {
+        let client =
+            ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
+        let url = format!(
+            "{}/v1/chat/completions",
+            client.base_url.trim_end_matches('/')
+        );
+        assert_eq!(url, "http://localhost:11434/v1/v1/chat/completions");
+
+        let client2 =
+            ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434");
+        let url2 = format!(
+            "{}/v1/chat/completions",
+            client2.base_url.trim_end_matches('/')
+        );
+        assert_eq!(url2, "http://localhost:11434/v1/chat/completions");
+    }
+
+    #[test]
+    fn backwards_compat_alias_works() {
+        let client = OpenAiClient::with_auth(AuthSource::BearerToken("tok".to_string()));
+        assert_eq!(
+            client.auth,
+            Some(AuthSource::BearerToken("tok".to_string()))
+        );
+        assert_eq!(client.default_model, DEFAULT_OPENAI_MODEL);
     }
 }

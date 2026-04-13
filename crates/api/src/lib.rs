@@ -3,6 +3,7 @@ pub mod provider_types;
 pub mod codex;
 pub mod credentials;
 mod error;
+pub mod models;
 pub mod openai;
 pub mod responses;
 mod sse;
@@ -20,10 +21,14 @@ pub use codex::{
 };
 pub use credentials::{
     CredentialError, CredentialStore, StoredOAuthTokens, StoredProviderConfig,
-    credentials_file_path, get_active_config, load_credentials, remove_provider_config,
-    save_credentials, set_provider_config,
+    credentials_file_path, get_active_config, load_credentials, load_credentials_from_path,
+    remove_provider_config, save_credentials, save_credentials_to_path, set_provider_config,
 };
 pub use error::ApiError;
+pub use models::{
+    AnthropicModel, AnthropicModelList, OpenAiModel, OpenAiModelList, list_anthropic_models,
+    list_openai_models,
+};
 pub use openai::{OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
 pub use sse::{parse_frame, SseParser};
 pub use responses::{
