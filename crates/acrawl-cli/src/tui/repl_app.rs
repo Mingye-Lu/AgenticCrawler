@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::render::TerminalRenderer;
+use crate::render::PredictiveMarkdownBuffer;
 use ansi_to_tui::IntoText;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::event::{
@@ -913,12 +913,7 @@ fn build_wrapped_list(
     // Live typewriter line shown at the bottom during streaming
     if let Some(text) = live_text {
         if !text.is_empty() {
-            // Render the live fragment using the Markdown renderer to maintain high-fidelity formatting (bold, etc.)
-            let renderer = TerminalRenderer::new();
-            let rendered_ansi = renderer.render_markdown_fragment(text);
-
-            if let Ok(ansi_text) = rendered_ansi.as_bytes().into_text() {
-                // Wrap each rendered line to the available width to prevent overflow
+            if let Ok(ansi_text) = text.as_bytes().into_text() {
                 for line in ansi_text {
                     for wrapped_line in wrap_ansi_line(line, width) {
                         text_out.push(line_to_plain_text(&wrapped_line));
@@ -926,7 +921,6 @@ fn build_wrapped_list(
                     }
                 }
             } else {
-                // Fallback to plain text if ANSI conversion fails
                 let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
                 for row in wrap_plain_text(text, width) {
                     text_out.push(row.clone());
@@ -1026,6 +1020,10 @@ struct ReplTuiState {
     typewriter_chars: VecDeque<char>,
     /// The current line being built char-by-char (shown as live line).
     typewriter_live: String,
+    /// ANSI-styled version of the current line, built by the predictive markdown buffer.
+    typewriter_live_ansi: String,
+    /// Streaming markdown state machine that produces styled ANSI as chars are revealed.
+    md_buffer: PredictiveMarkdownBuffer,
     /// Mouse selection anchor (col screen-relative, row content-absolute).
     selection_anchor: Option<(u16, usize)>,
     /// Mouse selection moving end (col screen-relative, row content-absolute).
@@ -1066,6 +1064,8 @@ impl ReplTuiState {
             spinner_deadline: Instant::now() + Duration::from_millis(120),
             typewriter_chars: VecDeque::new(),
             typewriter_live: String::new(),
+            typewriter_live_ansi: String::new(),
+            md_buffer: PredictiveMarkdownBuffer::new(),
             selection_anchor: None,
             selection_end: None,
             pending_copy: None,
@@ -1119,13 +1119,17 @@ impl ReplTuiState {
             match self.typewriter_chars.pop_front() {
                 None => break,
                 Some('\n') => {
-                    let raw = std::mem::take(&mut self.typewriter_live);
-                    for styled_line in ansi_to_lines(&raw) {
+                    self.md_buffer
+                        .feed_char('\n', &mut self.typewriter_live_ansi);
+                    let ansi = std::mem::take(&mut self.typewriter_live_ansi);
+                    for styled_line in ansi_to_lines(&ansi) {
                         self.entries.push(TranscriptEntry::Stream(styled_line));
                     }
+                    self.typewriter_live.clear();
                 }
                 Some(c) => {
                     self.typewriter_live.push(c);
+                    self.md_buffer.feed_char(c, &mut self.typewriter_live_ansi);
                 }
             }
         }
@@ -1137,10 +1141,12 @@ impl ReplTuiState {
             self.tick_typewriter(count);
         }
         if !self.typewriter_live.is_empty() {
-            let raw = std::mem::take(&mut self.typewriter_live);
-            for styled_line in ansi_to_lines(&raw) {
+            self.md_buffer.flush(&mut self.typewriter_live_ansi);
+            let ansi = std::mem::take(&mut self.typewriter_live_ansi);
+            for styled_line in ansi_to_lines(&ansi) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
+            self.typewriter_live.clear();
         }
     }
 
@@ -1155,10 +1161,12 @@ impl ReplTuiState {
             self.tick_typewriter(count);
         }
         if !self.typewriter_live.is_empty() {
-            let raw = std::mem::take(&mut self.typewriter_live);
-            for styled_line in ansi_to_lines(&raw) {
+            self.md_buffer.flush(&mut self.typewriter_live_ansi);
+            let ansi = std::mem::take(&mut self.typewriter_live_ansi);
+            for styled_line in ansi_to_lines(&ansi) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
+            self.typewriter_live.clear();
         }
         let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
@@ -1800,7 +1808,7 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
     let live_line = if state.typewriter_live.is_empty() {
         None
     } else {
-        Some(state.typewriter_live.as_str())
+        Some(state.typewriter_live_ansi.as_str())
     };
     let (wrapped, wrapped_text) = build_wrapped_list(
         &state.entries,
