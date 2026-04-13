@@ -1037,6 +1037,7 @@ pub(crate) fn run_openai_login() -> Result<(), Box<dyn std::error::Error>> {
                 refresh_token: token_set.refresh_token,
                 expires_at: token_set.expires_at.and_then(|v| i64::try_from(v).ok()),
                 scopes: token_set.scopes,
+                account_id: None,
             }),
             ..Default::default()
         },
@@ -1364,7 +1365,15 @@ impl LlmRuntimeClient {
                         .get("openai")
                         .ok_or("No OpenAI credentials found. Run `acrawl auth`.")?;
                     let auth = credential_config_to_auth_source(config);
-                    LlmProvider::OpenAi(OpenAiResponsesClient::new(auth, &model))
+                    let mut client = OpenAiResponsesClient::new(auth, &model);
+                    if config.auth_method == "oauth" {
+                        let account_id = config
+                            .oauth
+                            .as_ref()
+                            .and_then(|o| o.account_id.clone());
+                        client = client.with_codex_endpoint(account_id);
+                    }
+                    LlmProvider::OpenAi(client)
                 }
                 Provider::Other => {
                     let default_base_url = "http://localhost:11434/v1".to_string();
@@ -1495,6 +1504,7 @@ fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::E
                                 refresh_token: oauth.refresh_token,
                                 expires_at: oauth.expires_at.and_then(|v| i64::try_from(v).ok()),
                                 scopes: oauth.scopes,
+                                account_id: None,
                             }),
                             ..Default::default()
                         },

@@ -42,6 +42,8 @@ pub struct StoredOAuthTokens {
     pub expires_at: Option<i64>,
     #[serde(default)]
     pub scopes: Vec<String>,
+    #[serde(default)]
+    pub account_id: Option<String>,
 }
 
 /// Provider-specific configuration
@@ -218,6 +220,7 @@ mod tests {
                 refresh_token: Some("refresh_token_456".to_string()),
                 expires_at: Some(1_234_567_890),
                 scopes: vec!["read".to_string(), "write".to_string()],
+                account_id: None,
             }),
             ..Default::default()
         };

@@ -2144,6 +2144,76 @@ fn handle_slash_command_tui(
     Ok(())
 }
 
+fn extract_openai_account_id(jwt: &str) -> Option<String> {
+    let payload = jwt.split('.').nth(1)?;
+    let decoded = base64_url_decode(payload)?;
+    let claims: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    claims
+        .get("chatgpt_account_id")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            claims
+                .pointer("/https:~1~1api.openai.com~1auth/chatgpt_account_id")
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| {
+            claims
+                .pointer("/organizations/0/id")
+                .and_then(|v| v.as_str())
+        })
+        .map(String::from)
+}
+
+fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
+    let standard = input.replace('-', "+").replace('_', "/");
+    let padded = match standard.len() % 4 {
+        2 => format!("{standard}=="),
+        3 => format!("{standard}="),
+        _ => standard,
+    };
+    let table: [u8; 256] = {
+        let mut t = [255u8; 256];
+        for (i, &c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+            .iter()
+            .enumerate()
+        {
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                t[c as usize] = i as u8;
+            }
+        }
+        t[b'=' as usize] = 0;
+        t
+    };
+    let bytes: Vec<u8> = padded
+        .bytes()
+        .filter(|&b| b != b'\n' && b != b'\r')
+        .collect();
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    for chunk in bytes.chunks(4) {
+        let (a, b, c, d) = (
+            table[chunk[0] as usize],
+            table[chunk[1] as usize],
+            table[chunk[2] as usize],
+            table[chunk[3] as usize],
+        );
+        if a == 255 || b == 255 || c == 255 || d == 255 {
+            return None;
+        }
+        out.push((a << 2) | (b >> 4));
+        if chunk[2] != b'=' {
+            out.push((b << 4) | (c >> 2));
+        }
+        if chunk[3] != b'=' {
+            out.push((c << 6) | d);
+        }
+    }
+    Some(out)
+}
+
 #[allow(clippy::too_many_lines)]
 fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
@@ -2241,6 +2311,7 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
                         refresh_token: token_set.refresh_token.clone(),
                         expires_at: token_set.expires_at.and_then(|v| i64::try_from(v).ok()),
                         scopes: token_set.scopes.clone(),
+                        account_id: None,
                     }),
                     ..Default::default()
                 },
@@ -2332,11 +2403,13 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
             let token_set = rt
                 .block_on(client.exchange_oauth_code(&login_request.config, &exchange))
                 .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
+            let account_id = extract_openai_account_id(&token_set.access_token);
             let oauth_tokens = api::StoredOAuthTokens {
                 access_token: token_set.access_token,
                 refresh_token: token_set.refresh_token,
                 expires_at: token_set.expires_at.and_then(|v| i64::try_from(v).ok()),
                 scopes: token_set.scopes,
+                account_id,
             };
             let mut store = api::credentials::load_credentials().unwrap_or_default();
             store.active_provider = Some("openai".to_string());

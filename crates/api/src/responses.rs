@@ -13,12 +13,16 @@ use crate::types::{
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
 
+const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+
 #[derive(Debug, Clone)]
 pub struct OpenAiResponsesClient {
     http: reqwest::Client,
     auth: AuthSource,
     base_url: String,
     model: String,
+    codex_endpoint: bool,
+    account_id: Option<String>,
 }
 
 impl OpenAiResponsesClient {
@@ -29,12 +33,21 @@ impl OpenAiResponsesClient {
             auth,
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             model: model.into(),
+            codex_endpoint: false,
+            account_id: None,
         }
     }
 
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_codex_endpoint(mut self, account_id: Option<String>) -> Self {
+        self.codex_endpoint = true;
+        self.account_id = account_id;
         self
     }
 
@@ -54,15 +67,23 @@ impl OpenAiResponsesClient {
             body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
         }
 
-        let url = format!("{}/v1/responses", self.base_url.trim_end_matches('/'));
+        let url = if self.codex_endpoint {
+            CODEX_RESPONSES_URL.to_string()
+        } else {
+            format!("{}/v1/responses", self.base_url.trim_end_matches('/'))
+        };
         let mut req = self
             .http
             .post(&url)
             .header("content-type", "application/json")
-            .header("accept", "text/event-stream");
+            .header("accept", "text/event-stream")
+            .header("originator", "acrawl");
 
         if let Some(token) = self.auth.bearer_token().or_else(|| self.auth.api_key()) {
             req = req.bearer_auth(token);
+        }
+        if let Some(id) = &self.account_id {
+            req = req.header("ChatGPT-Account-Id", id);
         }
 
         let response = req.json(&body).send().await.map_err(ApiError::from)?;
