@@ -584,7 +584,7 @@ fn convert_assistant_message(msg: &InputMessage, out: &mut Vec<Value>) {
                     },
                 }));
             }
-            InputContentBlock::ToolResult { .. } => {}
+            InputContentBlock::ToolResult { .. } | InputContentBlock::Reasoning { .. } => {}
         }
     }
 
@@ -642,7 +642,7 @@ fn convert_user_message(msg: &InputMessage, out: &mut Vec<Value>) {
                     "content": content_text,
                 }));
             }
-            InputContentBlock::ToolUse { .. } => {}
+            InputContentBlock::ToolUse { .. } | InputContentBlock::Reasoning { .. } => {}
         }
     }
 

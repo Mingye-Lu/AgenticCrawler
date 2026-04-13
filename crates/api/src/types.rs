@@ -75,6 +75,10 @@ pub enum InputContentBlock {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         is_error: bool,
     },
+    Reasoning {
+        #[serde(flatten)]
+        data: Value,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -199,6 +203,95 @@ pub struct ContentBlockStopEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageStopEvent {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reasoning_variant_round_trip() {
+        let reasoning_data = serde_json::json!({
+            "id": "rs_abc123",
+            "content": []
+        });
+
+        let reasoning_block = InputContentBlock::Reasoning {
+            data: reasoning_data.clone(),
+        };
+
+        let serialized = serde_json::to_value(&reasoning_block).expect("serialize");
+
+        let deserialized: InputContentBlock =
+            serde_json::from_value(serialized.clone()).expect("deserialize");
+
+        assert_eq!(reasoning_block, deserialized);
+
+        assert_eq!(serialized["type"], "reasoning");
+        assert_eq!(serialized["id"], "rs_abc123");
+    }
+
+    #[test]
+    fn reasoning_variant_has_correct_type_field() {
+        let reasoning_block = InputContentBlock::Reasoning {
+            data: serde_json::json!({
+                "id": "rs_xyz",
+                "content": []
+            }),
+        };
+
+        let serialized = serde_json::to_string(&reasoning_block).expect("serialize to string");
+
+        assert!(serialized.contains("\"type\":\"reasoning\""));
+    }
+
+    #[test]
+    fn existing_text_variant_unchanged() {
+        let text_block = InputContentBlock::Text {
+            text: "hello world".to_string(),
+        };
+
+        let serialized = serde_json::to_value(&text_block).expect("serialize");
+        let deserialized: InputContentBlock =
+            serde_json::from_value(serialized.clone()).expect("deserialize");
+
+        assert_eq!(text_block, deserialized);
+        assert_eq!(serialized["type"], "text");
+        assert_eq!(serialized["text"], "hello world");
+    }
+
+    #[test]
+    fn existing_tool_use_variant_unchanged() {
+        let tool_use_block = InputContentBlock::ToolUse {
+            id: "call_123".to_string(),
+            name: "navigate".to_string(),
+            input: serde_json::json!({"url": "https://example.com"}),
+        };
+
+        let serialized = serde_json::to_value(&tool_use_block).expect("serialize");
+        let deserialized: InputContentBlock =
+            serde_json::from_value(serialized.clone()).expect("deserialize");
+
+        assert_eq!(tool_use_block, deserialized);
+        assert_eq!(serialized["type"], "tool_use");
+        assert_eq!(serialized["id"], "call_123");
+        assert_eq!(serialized["name"], "navigate");
+    }
+
+    #[test]
+    fn reasoning_variant_deserializes_from_json() {
+        let json_str = r#"{"type":"reasoning","id":"rs_test","content":[]}"#;
+        let deserialized: InputContentBlock =
+            serde_json::from_str(json_str).expect("deserialize from json string");
+
+        match deserialized {
+            InputContentBlock::Reasoning { data } => {
+                assert_eq!(data["id"], "rs_test");
+                assert_eq!(data["content"], serde_json::json!([]));
+            }
+            _ => panic!("Expected Reasoning variant"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

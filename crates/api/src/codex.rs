@@ -289,7 +289,7 @@ fn convert_codex_assistant_message(message: &InputMessage, out: &mut Vec<Value>)
                     "arguments": input.to_string(),
                 }));
             }
-            InputContentBlock::ToolResult { .. } => {}
+            InputContentBlock::ToolResult { .. } | InputContentBlock::Reasoning { .. } => {}
         }
     }
 
@@ -331,7 +331,7 @@ fn convert_codex_user_message(message: &InputMessage, out: &mut Vec<Value>) {
                     "output": output,
                 }));
             }
-            InputContentBlock::ToolUse { .. } => {}
+            InputContentBlock::ToolUse { .. } | InputContentBlock::Reasoning { .. } => {}
         }
     }
 
