@@ -286,18 +286,16 @@ pub async fn fetch_models_dev(provider_id: &str) -> Result<Vec<ModelInfo>, ApiEr
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
 
-        let pricing = model_data
-            .get("cost")
-            .and_then(|cost| {
-                let input = cost.get("input")?.as_f64()?;
-                let output = cost.get("output")?.as_f64()?;
-                Some(ModelPricing {
-                    input_per_mtok: input,
-                    output_per_mtok: output,
-                    cache_read_per_mtok: None,
-                    cache_write_per_mtok: None,
-                })
-            });
+        let pricing = model_data.get("cost").and_then(|cost| {
+            let input = cost.get("input")?.as_f64()?;
+            let output = cost.get("output")?.as_f64()?;
+            Some(ModelPricing {
+                input_per_mtok: input,
+                output_per_mtok: output,
+                cache_read_per_mtok: None,
+                cache_write_per_mtok: None,
+            })
+        });
 
         models.push(ModelInfo {
             id: id.clone(),

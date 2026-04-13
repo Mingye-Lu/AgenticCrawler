@@ -66,7 +66,10 @@ impl ProviderClient {
         request: &MessageRequest,
     ) -> Result<ProviderStream, ApiError> {
         match self {
-            Self::Anthropic(c) => c.stream_message(request).await.map(ProviderStream::Anthropic),
+            Self::Anthropic(c) => c
+                .stream_message(request)
+                .await
+                .map(ProviderStream::Anthropic),
             Self::OpenAi(c) => c.stream_message(request).await.map(ProviderStream::OpenAi),
             Self::Custom(c) => c.stream_message(request).await.map(ProviderStream::Custom),
         }
@@ -135,20 +138,23 @@ impl ProviderRegistry {
 
     #[must_use]
     pub fn resolve_alias<'a>(&'a self, model: &'a str) -> &'a str {
-        self.resolve_model(model)
-            .map_or(model, |m| m.id.as_str())
+        self.resolve_model(model).map_or(model, |m| m.id.as_str())
     }
 
     #[must_use]
     pub fn max_tokens(&self, model: &str) -> u32 {
-        self.resolve_model(model)
-            .map_or_else(|| catalog::default_max_tokens(model), |m| m.max_output_tokens)
+        self.resolve_model(model).map_or_else(
+            || catalog::default_max_tokens(model),
+            |m| m.max_output_tokens,
+        )
     }
 
     #[must_use]
     pub fn provider_for_model<'a>(&'a self, model: &'a str) -> &'a str {
-        self.resolve_model(model)
-            .map_or_else(|| catalog::infer_provider(model), |m| m.provider_id.as_str())
+        self.resolve_model(model).map_or_else(
+            || catalog::infer_provider(model),
+            |m| m.provider_id.as_str(),
+        )
     }
 
     #[must_use]
@@ -227,7 +233,10 @@ mod tests {
     fn registry_provider_for_model_uses_catalog() {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
-        assert_eq!(registry.provider_for_model("claude-sonnet-4-6"), "anthropic");
+        assert_eq!(
+            registry.provider_for_model("claude-sonnet-4-6"),
+            "anthropic"
+        );
         assert_eq!(registry.provider_for_model("gpt-4o"), "openai");
         assert_eq!(registry.provider_for_model("codex-mini-latest"), "openai");
         assert_eq!(registry.provider_for_model("llama3.2"), "other");

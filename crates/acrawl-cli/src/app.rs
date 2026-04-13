@@ -7,9 +7,10 @@ use std::sync::mpsc;
 
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
-    provider::{ProviderClient, ProviderRegistry}, ContentBlockDelta, InputContentBlock,
-    InputMessage, MessageRequest, MessageResponse, OutputContentBlock,
-    StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
+    provider::{ProviderClient, ProviderRegistry},
+    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
+    OutputContentBlock, StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition,
+    ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
@@ -1505,7 +1506,10 @@ mod tests {
     #[test]
     fn routes_claude_models_to_anthropic() {
         let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
-        assert_eq!(registry.provider_for_model("claude-sonnet-4-6"), "anthropic");
+        assert_eq!(
+            registry.provider_for_model("claude-sonnet-4-6"),
+            "anthropic"
+        );
     }
 
     #[test]
