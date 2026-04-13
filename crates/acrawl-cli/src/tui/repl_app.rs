@@ -824,46 +824,67 @@ fn build_wrapped_list(
                 let key_style = Style::default()
                     .fg(Color::LightYellow)
                     .add_modifier(Modifier::BOLD);
-                let header = format!("┌─ {title} ");
+                let w = usize::from(width);
+
+                // Header: ┌─ title ───────┐
+                let title_prefix = format!("┌─ {title} ");
+                let title_fill = w
+                    .saturating_sub(title_prefix.chars().count())
+                    .saturating_sub(1);
+                let header = format!("{title_prefix}{}┐", "─".repeat(title_fill));
                 text_out.push(header.clone());
                 out.push(ListItem::new(Line::from(Span::styled(
                     header,
                     border_style,
                 ))));
+
+                // Content rows: │ key  value   │
+                let max_key_len = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+                let key_col = max_key_len.max(w.saturating_sub(8).clamp(8, 30));
+                let val_col = w.saturating_sub(key_col + 5).max(8);
+
                 for (key, value) in rows {
-                    let key_width = usize::from(width.max(24)).saturating_sub(8).min(30);
-                    let value_width = usize::from(width.max(24))
-                        .saturating_sub(key_width)
-                        .saturating_sub(7)
-                        .max(8);
-                    let wrapped = textwrap::wrap(value, value_width);
+                    let wrapped = textwrap::wrap(value, val_col);
                     for (idx, line) in wrapped.into_iter().enumerate() {
+                        let line_str = line.into_owned();
+                        let pad = w.saturating_sub(2 + key_col + 1 + line_str.len() + 2);
+
                         let plain_line = if idx == 0 {
-                            format!("│ {key:key_width$} {line}")
+                            format!("│ {key:key_col$} {line_str}{} │", " ".repeat(pad))
                         } else {
-                            format!("│ {} {line}", " ".repeat(key_width))
+                            format!("│ {} {line_str}{} │", " ".repeat(key_col), " ".repeat(pad),)
                         };
                         text_out.push(plain_line);
-                        if idx == 0 {
-                            out.push(ListItem::new(Line::from(vec![
+
+                        let spans = if idx == 0 {
+                            vec![
                                 Span::styled("│ ", border_style),
-                                Span::styled(format!("{key:key_width$}"), key_style),
+                                Span::styled(format!("{key:key_col$}"), key_style),
                                 Span::raw(" "),
-                                Span::raw(line.into_owned()),
-                            ])));
+                                Span::raw(line_str),
+                                Span::raw(" ".repeat(pad)),
+                                Span::styled(" │", border_style),
+                            ]
                         } else {
-                            out.push(ListItem::new(Line::from(vec![
+                            vec![
                                 Span::styled("│ ", border_style),
-                                Span::raw(" ".repeat(key_width)),
+                                Span::raw(" ".repeat(key_col)),
                                 Span::raw(" "),
-                                Span::raw(line.into_owned()),
-                            ])));
-                        }
+                                Span::raw(line_str),
+                                Span::raw(" ".repeat(pad)),
+                                Span::styled(" │", border_style),
+                            ]
+                        };
+                        out.push(ListItem::new(Line::from(spans)));
                     }
                 }
-                text_out.push("└────────────────".to_string());
+
+                // Footer: └───────────────┘
+                let bottom_fill = w.saturating_sub(2);
+                let bottom = format!("└{}┘", "─".repeat(bottom_fill));
+                text_out.push(bottom.clone());
                 out.push(ListItem::new(Line::from(Span::styled(
-                    "└────────────────",
+                    bottom,
                     border_style,
                 ))));
             }
