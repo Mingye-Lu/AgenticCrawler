@@ -119,6 +119,53 @@ pub async fn list_openai_models(auth: &AuthSource) -> Result<Vec<OpenAiModel>, A
     Ok(model_list.data)
 }
 
+/// Fetch models from the public models.dev catalog.
+/// This is used for OAuth-authenticated providers where `/v1/models` requires
+/// API-key scopes that OAuth tokens do not carry.
+///
+/// # Errors
+///
+/// Returns `ApiError` if the HTTP request fails or the response cannot be deserialized.
+pub async fn list_models_dev(provider_id: &str) -> Result<Vec<OpenAiModel>, ApiError> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://models.dev/api.json")
+        .header("User-Agent", "acrawl")
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(ApiError::Http)?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(ApiError::Api {
+            status,
+            error_type: None,
+            message: None,
+            body,
+            retryable: status.is_server_error(),
+        });
+    }
+
+    let catalog: std::collections::HashMap<String, serde_json::Value> =
+        response.json().await.map_err(ApiError::Http)?;
+    let Some(provider) = catalog.get(provider_id) else {
+        return Ok(vec![]);
+    };
+    let Some(models_obj) = provider.get("models").and_then(|v| v.as_object()) else {
+        return Ok(vec![]);
+    };
+    Ok(models_obj
+        .keys()
+        .map(|id| OpenAiModel {
+            id: id.clone(),
+            created: None,
+            owned_by: None,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

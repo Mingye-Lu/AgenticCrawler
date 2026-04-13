@@ -25,8 +25,8 @@ pub use credentials::{
 };
 pub use error::ApiError;
 pub use models::{
-    list_anthropic_models, list_openai_models, AnthropicModel, AnthropicModelList, OpenAiModel,
-    OpenAiModelList,
+    list_anthropic_models, list_models_dev, list_openai_models, AnthropicModel, AnthropicModelList,
+    OpenAiModel, OpenAiModelList,
 };
 pub use openai::{ChatCompletionsClient, OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
 pub use provider_types::{AuthMethod, Provider, ProviderConfig};
