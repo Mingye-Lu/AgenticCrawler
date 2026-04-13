@@ -400,7 +400,10 @@ mod tests {
         let result = agent.execute("navigate", "");
         assert!(result.is_ok());
         let output = result.unwrap();
-        assert!(output.contains("unknown"), "expected fallback url in mock: {output}");
+        assert!(
+            output.contains("unknown"),
+            "expected fallback url in mock: {output}"
+        );
     }
 
     #[test]

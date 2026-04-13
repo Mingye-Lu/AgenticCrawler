@@ -16,7 +16,7 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use crossterm::execute;
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -37,6 +37,9 @@ use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
 
 const MAX_INPUT_LINES: usize = 5;
+const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
+const WELCOME_BOX_MAX_WIDTH: u16 = 82;
+const WELCOME_BOX_MIN_WIDTH: u16 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppUiState {
@@ -149,6 +152,73 @@ fn permission_badge(mode: PermissionMode) -> (String, Style) {
                 .add_modifier(Modifier::BOLD),
         ),
     }
+}
+
+fn read_env_non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn required_provider_for_model(model: &str) -> Option<&'static str> {
+    if model.starts_with("claude") {
+        Some("anthropic")
+    } else if model.starts_with("gpt-")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.starts_with("codex-")
+        || model.starts_with("chatgpt-")
+    {
+        Some("openai")
+    } else {
+        None
+    }
+}
+
+fn has_store_credentials_for(provider: &str) -> bool {
+    let Ok(store) = api::credentials::load_credentials() else {
+        return false;
+    };
+    store.providers.get(provider).is_some_and(|config| {
+        let has_api_key = config
+            .api_key
+            .as_ref()
+            .is_some_and(|key| !key.trim().is_empty());
+        let has_inline_oauth = config
+            .oauth
+            .as_ref()
+            .is_some_and(|oauth| !oauth.access_token.trim().is_empty());
+        let has_runtime_oauth = config.auth_method == "oauth"
+            && runtime::load_oauth_credentials()
+                .ok()
+                .flatten()
+                .is_some_and(|oauth| !oauth.access_token.trim().is_empty());
+        has_api_key || has_inline_oauth || has_runtime_oauth
+    })
+}
+
+fn has_env_credentials_for(provider: &str) -> bool {
+    match provider {
+        "anthropic" => {
+            read_env_non_empty("ANTHROPIC_API_KEY").is_some()
+                || read_env_non_empty("ANTHROPIC_AUTH_TOKEN").is_some()
+        }
+        "openai" => read_env_non_empty("OPENAI_API_KEY").is_some(),
+        _ => false,
+    }
+}
+
+fn detect_missing_auth_provider(model: &str) -> Option<String> {
+    let any_store = has_store_credentials_for("anthropic")
+        || has_store_credentials_for("openai")
+        || has_store_credentials_for("other");
+    let any_env =
+        has_env_credentials_for("anthropic") || has_env_credentials_for("openai");
+    if any_store || any_env {
+        return None;
+    }
+    required_provider_for_model(model).map(str::to_string)
 }
 
 fn wrap_plain_text(input: &str, width: u16) -> Vec<String> {
@@ -1005,6 +1075,9 @@ struct ReplTuiState {
     busy: bool,
     pending_permission: Option<(PermissionRequest, Sender<PermissionPromptDecision>)>,
     active_modal: Option<AuthModal>,
+    auth_onboarding_required: bool,
+    auth_onboarding_provider: Option<String>,
+    welcome_success_notice: Option<String>,
     exit: bool,
     current_tool: Option<String>,
     status_entry_index: Option<usize>,
@@ -1051,6 +1124,9 @@ impl ReplTuiState {
             busy: false,
             pending_permission: None,
             active_modal: None,
+            auth_onboarding_required: false,
+            auth_onboarding_provider: None,
+            welcome_success_notice: None,
             exit: false,
             persist_on_exit: false,
             current_tool: None,
@@ -1104,6 +1180,8 @@ impl ReplTuiState {
     fn input_placeholder(&self) -> &'static str {
         if self.pending_permission.is_some() {
             "Waiting for your authorization  (y / n / Esc)…"
+        } else if self.auth_onboarding_required && self.active_modal.is_none() {
+            "Press Enter to open guided auth setup"
         } else if self.busy {
             "AgenticCrawler is working…  (you can queue your next prompt)"
         } else if self.ui_state == AppUiState::WelcomeMode {
@@ -1111,6 +1189,11 @@ impl ReplTuiState {
         } else {
             "Any follow-up instructions?"
         }
+    }
+
+    fn refresh_auth_onboarding(&mut self, model: &str) {
+        self.auth_onboarding_provider = detect_missing_auth_provider(model);
+        self.auth_onboarding_required = self.auth_onboarding_provider.is_some();
     }
 
     /// Advance the typewriter: reveal `chars_per_tick` chars from the queue.
@@ -1333,6 +1416,7 @@ impl ReplTuiState {
 
     fn push_user_line(&mut self, text: &str) {
         self.ui_state = AppUiState::ChatMode;
+        self.welcome_success_notice = None;
         self.entries
             .push(TranscriptEntry::User(text.trim().to_string()));
         self.follow_bottom = true;
@@ -1661,6 +1745,58 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapsh
     );
 }
 
+fn draw_auth_onboarding_panel(frame: &mut ratatui::Frame<'_>, area: Rect, provider: &str) -> u16 {
+    let block = Block::default()
+        .title(" Auth Setup Required ")
+        .title_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Rgb(220, 170, 40)));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let provider_label = match provider {
+        "anthropic" => "Anthropic",
+        "openai" => "OpenAI",
+        other => other,
+    };
+    let text = Text::from(vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Provider", Style::default().fg(Color::DarkGray)),
+            Span::raw("  "),
+            Span::styled(provider_label, Style::default().fg(Color::LightCyan)),
+        ]),
+        Line::from(""),
+        Line::from("Press Enter to open the guided auth flow."),
+        Line::from("You can also run /auth, or keep API keys in env variables."),
+        Line::from(""),
+    ]);
+    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
+    area.height
+}
+
+fn auth_modal_target_height(modal: &AuthModal) -> u16 {
+    match &modal.step {
+        AuthModalStep::ProviderSelect { .. } => 9,
+        AuthModalStep::AuthMethodSelect { .. } => 9,
+        AuthModalStep::BaseUrlInput { .. } => 8,
+        AuthModalStep::ApiKeyInput { .. } => 8,
+        AuthModalStep::OAuthWaiting { .. } => 7,
+        AuthModalStep::ModelFetchLoading { .. } => 7,
+        AuthModalStep::ModelSelect { state, .. } => {
+            let visible_rows = u16::try_from(state.filtered().len().clamp(1, 6)).unwrap_or(1);
+            9 + visible_rows
+        }
+        AuthModalStep::Success { .. } => 7,
+        AuthModalStep::Error { .. } => 7,
+    }
+}
+
 fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiState) {
     let ascii = [
         "  █████╗  ██████╗██████╗  █████╗ ██╗    ██╗██╗",
@@ -1690,7 +1826,7 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     let version_padded = format!("{}{version_str}", " ".repeat(pad));
     lines.push(Line::from(Span::styled(
         version_padded,
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(Color::White),
     )));
 
     let art_h = u16::try_from(lines.len()).unwrap_or(6);
@@ -1700,12 +1836,37 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     let art_area = Rect::new(art_x, art_y, art_w.min(area.width), art_h.min(area.height));
     frame.render_widget(Paragraph::new(Text::from(lines)), art_area);
 
-    let input_w = area.width.saturating_sub(12).clamp(30, 90);
+    let next_y = art_y.saturating_add(art_h).saturating_add(2);
+    if state.auth_onboarding_required {
+        let card_w = area
+            .width
+            .saturating_sub(WELCOME_BOX_SIDE_GUTTER)
+            .clamp(WELCOME_BOX_MIN_WIDTH, WELCOME_BOX_MAX_WIDTH);
+        let card_h = state.active_modal.as_ref().map_or(8, auth_modal_target_height);
+        let card_x = area.x + area.width.saturating_sub(card_w) / 2;
+        let card_area = Rect::new(
+            card_x,
+            next_y,
+            card_w,
+            card_h.min(area.height.saturating_sub(2)),
+        );
+        if let Some(modal) = &state.active_modal {
+            modal.draw(frame, card_area);
+        } else if let Some(provider) = &state.auth_onboarding_provider {
+            let _ = draw_auth_onboarding_panel(frame, card_area, provider);
+        }
+        return;
+    }
+
+    let input_w = area
+        .width
+        .saturating_sub(WELCOME_BOX_SIDE_GUTTER)
+        .clamp(WELCOME_BOX_MIN_WIDTH, WELCOME_BOX_MAX_WIDTH);
     let (box_height, render_lines, max_scroll) = state.calculate_input_dimensions(input_w);
     let input_h = box_height;
 
     let input_x = area.x + area.width.saturating_sub(input_w) / 2;
-    let input_y = art_y.saturating_add(art_h).saturating_add(2);
+    let input_y = next_y;
     let input_area = Rect::new(
         input_x,
         input_y.min(area.y.saturating_add(area.height.saturating_sub(input_h))),
@@ -1746,6 +1907,22 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
             }),
             &mut scrollbar_state,
         );
+    }
+
+    if let Some(message) = &state.welcome_success_notice {
+        let message_y = input_area
+            .y
+            .saturating_add(input_area.height)
+            .saturating_add(1);
+        if message_y < area.y.saturating_add(area.height) {
+            let message_area = Rect::new(input_x, message_y, input_w, 1);
+            frame.render_widget(
+                Paragraph::new(message.clone())
+                    .style(Style::default().fg(Color::Green))
+                    .alignment(Alignment::Center),
+                message_area,
+            );
+        }
     }
 
     draw_slash_overlay(frame, state, input_area, area);
@@ -2042,6 +2219,7 @@ fn handle_slash_command_tui(
             if result.persist_after {
                 g.persist_session()?;
             }
+            state.refresh_auth_onboarding(g.model_name());
             state.push_system_card("Model", &result.message);
         }
         SlashCommand::Permissions { mode } => {
@@ -2391,15 +2569,8 @@ fn run_loop(
     let _mouse_guard = MouseCaptureGuard;
 
     let mut state = ReplTuiState::new();
-
-    // Auto-launch auth modal if no credentials are configured
-    if let Ok(store) = api::credentials::load_credentials() {
-        if store.active_provider.is_none() || store.providers.is_empty() {
-            state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
-        }
-    } else {
-        // If credentials file doesn't exist or can't be read, launch auth modal
-        state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
+    if let Ok(guard) = cli.lock() {
+        state.refresh_auth_onboarding(guard.model_name());
     }
 
     loop {
@@ -2429,7 +2600,9 @@ fn run_loop(
                 draw_permission_modal(frame, req);
             }
             if let Some(ref modal) = state.active_modal {
-                modal.draw(frame, frame.area());
+                if !(state.auth_onboarding_required && state.ui_state == AppUiState::WelcomeMode) {
+                    modal.draw(frame, frame.area());
+                }
             }
         })?;
 
@@ -2568,6 +2741,7 @@ fn run_loop(
 
                 if let Some(ref mut modal) = state.active_modal {
                     let action = modal.handle_key(key);
+                    let modal_succeeded = matches!(modal.step, AuthModalStep::Success { .. });
 
                     if let AuthModalStep::OAuthWaiting {
                         cancel_tx: None,
@@ -2592,6 +2766,35 @@ fn run_loop(
                         ModalAction::Consumed => continue,
                         ModalAction::Dismiss => {
                             state.active_modal = None;
+                            if modal_succeeded {
+                                match cli.lock() {
+                                    Ok(mut guard) => {
+                                        let preferred_model =
+                                            crate::app::initial_model_from_credentials();
+                                        if preferred_model != guard.model_name() {
+                                            let _ = guard.model_command(Some(preferred_model));
+                                        }
+                                        if let Err(error) = guard.refresh_runtime_auth() {
+                                            state.push_system(&format!(
+                                                "Auth setup saved, but runtime refresh failed: {error}"
+                                            ));
+                                        } else {
+                                            state.refresh_auth_onboarding(guard.model_name());
+                                            state.ui_state = AppUiState::WelcomeMode;
+                                            state.entries.clear();
+                                            state.welcome_success_notice = Some(
+                                                "Authentication configured. Runtime is ready."
+                                                    .to_string(),
+                                            );
+                                        }
+                                    }
+                                    Err(_) => {
+                                        state.push_system(
+                                            "Authentication configured, but runtime lock failed.",
+                                        );
+                                    }
+                                }
+                            }
                             continue;
                         }
                         ModalAction::Passthrough => {}
@@ -2657,6 +2860,12 @@ fn run_loop(
                             );
                             continue;
                         }
+                        if state.auth_onboarding_required && state.active_modal.is_none() {
+                            if state.input.trim().is_empty() {
+                                state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
+                                continue;
+                            }
+                        }
 
                         if state.slash_overlay.is_some() {
                             let trimmed = state.input.trim().to_string();
@@ -2690,6 +2899,13 @@ fn run_loop(
                         if let Some(cmd) = SlashCommand::parse(&trimmed) {
                             handle_slash_command_tui(terminal, &mut state, cli, ui_tx, cmd)?;
                             state.wake_input_caret();
+                            continue;
+                        }
+                        if state.auth_onboarding_required && state.active_modal.is_none() {
+                            state.push_system(
+                                "Authentication is required before the first turn. Opening setup…",
+                            );
+                            state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
                             continue;
                         }
                         state.push_user_line(&trimmed);

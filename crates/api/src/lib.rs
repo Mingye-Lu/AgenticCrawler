@@ -1,10 +1,10 @@
 mod client;
-pub mod provider_types;
 pub mod codex;
 pub mod credentials;
 mod error;
 pub mod models;
 pub mod openai;
+pub mod provider_types;
 pub mod responses;
 mod sse;
 mod types;
@@ -20,22 +20,22 @@ pub use codex::{
     DEFAULT_CODEX_MODEL, OPENAI_AUTH_URL, OPENAI_CLIENT_ID, OPENAI_TOKEN_URL,
 };
 pub use credentials::{
-    CredentialError, CredentialStore, StoredOAuthTokens, StoredProviderConfig,
     credentials_file_path, get_active_config, load_credentials, load_credentials_from_path,
     remove_provider_config, save_credentials, save_credentials_to_path, set_provider_config,
+    CredentialError, CredentialStore, StoredOAuthTokens, StoredProviderConfig,
 };
 pub use error::ApiError;
 pub use models::{
-    AnthropicModel, AnthropicModelList, OpenAiModel, OpenAiModelList, list_anthropic_models,
-    list_openai_models,
+    list_anthropic_models, list_openai_models, AnthropicModel, AnthropicModelList, OpenAiModel,
+    OpenAiModelList,
 };
 pub use openai::{ChatCompletionsClient, OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
-pub use sse::{parse_frame, SseParser};
-pub use responses::{
-    OpenAiResponsesClient, ResponsesMessageStream, ResponsesStreamState, build_responses_request,
-    convert_responses_messages, convert_responses_tool, responses_tool_choice,
-};
 pub use provider_types::{AuthMethod, Provider, ProviderConfig};
+pub use responses::{
+    build_responses_request, convert_responses_messages, convert_responses_tool,
+    responses_tool_choice, OpenAiResponsesClient, ResponsesMessageStream, ResponsesStreamState,
+};
+pub use sse::{parse_frame, SseParser};
 pub use types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
     InputContentBlock, InputMessage, MessageDelta, MessageDeltaEvent, MessageRequest,

@@ -986,8 +986,7 @@ mod tests {
 
     #[test]
     fn with_no_auth_sets_none_auth() {
-        let client =
-            ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
+        let client = ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
         assert!(client.auth.is_none());
         assert_eq!(client.base_url, "http://localhost:11434/v1");
         assert_eq!(client.default_model, "llama3");
@@ -995,16 +994,14 @@ mod tests {
 
     #[test]
     fn custom_base_url_used_in_request_url() {
-        let client =
-            ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
+        let client = ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
         let url = format!(
             "{}/v1/chat/completions",
             client.base_url.trim_end_matches('/')
         );
         assert_eq!(url, "http://localhost:11434/v1/v1/chat/completions");
 
-        let client2 =
-            ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434");
+        let client2 = ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434");
         let url2 = format!(
             "{}/v1/chat/completions",
             client2.base_url.trim_end_matches('/')

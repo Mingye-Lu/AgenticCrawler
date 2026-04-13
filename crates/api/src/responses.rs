@@ -431,7 +431,11 @@ impl ResponsesStreamState {
         self.process_event(&event_type, &data)
     }
 
-    fn process_event(&mut self, event_type: &str, data: &Value) -> Result<Vec<StreamEvent>, ApiError> {
+    fn process_event(
+        &mut self,
+        event_type: &str,
+        data: &Value,
+    ) -> Result<Vec<StreamEvent>, ApiError> {
         let mut events = Vec::new();
 
         match event_type {
@@ -734,7 +738,9 @@ impl ResponsesStreamState {
             }
 
             self.calls_with_deltas.remove(call_id);
-            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent { index }));
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index,
+            }));
         }
     }
 
@@ -758,7 +764,9 @@ impl ResponsesStreamState {
         indices.sort_unstable();
         indices.dedup();
         for index in indices {
-            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent { index }));
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index,
+            }));
         }
         self.active_tools.clear();
         self.calls_with_deltas.clear();
@@ -909,8 +917,8 @@ mod tests {
     use std::thread;
 
     use super::*;
-    use crate::AuthSource;
     use crate::types::{ToolDefinition, ToolResultContentBlock};
+    use crate::AuthSource;
 
     const TEXT_ONLY_STREAM_FIXTURE: &str = concat!(
         "event: response.created\n",
@@ -1065,7 +1073,9 @@ mod tests {
         let body = build_responses_request(&sample_request(), "gpt-4.1");
         assert_eq!(body["instructions"], "Be precise.");
         let input = body["input"].as_array().expect("input array");
-        assert!(input.iter().all(|item| item.get("role") != Some(&Value::String("system".to_string()))));
+        assert!(input
+            .iter()
+            .all(|item| item.get("role") != Some(&Value::String("system".to_string()))));
     }
 
     #[test]
@@ -1149,8 +1159,14 @@ mod tests {
 
         let body = request_body_from_raw_http(&raw_request);
         assert_eq!(body["model"], "o3");
-        assert_eq!(body["reasoning"], serde_json::json!({"effort": "high", "summary": "auto"}));
-        assert_eq!(body["include"], serde_json::json!(["reasoning.encrypted_content"]));
+        assert_eq!(
+            body["reasoning"],
+            serde_json::json!({"effort": "high", "summary": "auto"})
+        );
+        assert_eq!(
+            body["include"],
+            serde_json::json!(["reasoning.encrypted_content"])
+        );
         assert_eq!(body["store"], false);
     }
 
@@ -1164,8 +1180,9 @@ mod tests {
             "data: [DONE]\n\n"
         );
         let (base_url, requests) = spawn_test_server(response);
-        let client = OpenAiResponsesClient::new(AuthSource::BearerToken("oauth-test".to_string()), "gpt-4o")
-            .with_base_url(base_url);
+        let client =
+            OpenAiResponsesClient::new(AuthSource::BearerToken("oauth-test".to_string()), "gpt-4o")
+                .with_base_url(base_url);
 
         let _stream = client
             .stream_message(&sample_request())
@@ -1222,7 +1239,10 @@ mod tests {
         assert_eq!(converted[0]["type"], "function_call");
         assert_eq!(converted[0]["call_id"], "call_abc");
         assert_eq!(converted[0]["name"], "navigate");
-        assert_eq!(converted[0]["arguments"], r#"{"url":"https://example.com"}"#);
+        assert_eq!(
+            converted[0]["arguments"],
+            r#"{"url":"https://example.com"}"#
+        );
     }
 
     #[test]
@@ -1250,14 +1270,19 @@ mod tests {
 
     #[test]
     fn streaming_text_only() {
-        let events = collect_fixture_events(TEXT_ONLY_STREAM_FIXTURE).expect("fixture should parse");
+        let events =
+            collect_fixture_events(TEXT_ONLY_STREAM_FIXTURE).expect("fixture should parse");
         assert_eq!(events.len(), 7);
         assert!(matches!(events[0], StreamEvent::MessageStart(_)));
         assert!(matches!(events[1], StreamEvent::ContentBlockStart(ref event) if event.index == 0));
-        assert!(matches!(events[2], StreamEvent::ContentBlockDelta(ref event)
-            if matches!(&event.delta, ContentBlockDelta::TextDelta { text } if text == "Hello")));
-        assert!(matches!(events[3], StreamEvent::ContentBlockDelta(ref event)
-            if matches!(&event.delta, ContentBlockDelta::TextDelta { text } if text == " world")));
+        assert!(
+            matches!(events[2], StreamEvent::ContentBlockDelta(ref event)
+            if matches!(&event.delta, ContentBlockDelta::TextDelta { text } if text == "Hello"))
+        );
+        assert!(
+            matches!(events[3], StreamEvent::ContentBlockDelta(ref event)
+            if matches!(&event.delta, ContentBlockDelta::TextDelta { text } if text == " world"))
+        );
         assert!(matches!(events[4], StreamEvent::ContentBlockStop(ref event) if event.index == 0));
         assert!(matches!(events[5], StreamEvent::MessageDelta(ref event)
             if event.delta.stop_reason.as_deref() == Some("end_turn")
@@ -1268,15 +1293,20 @@ mod tests {
 
     #[test]
     fn streaming_tool_call() {
-        let events = collect_fixture_events(TOOL_CALL_STREAM_FIXTURE).expect("fixture should parse");
+        let events =
+            collect_fixture_events(TOOL_CALL_STREAM_FIXTURE).expect("fixture should parse");
         assert_eq!(events.len(), 6);
         assert!(matches!(events[0], StreamEvent::MessageStart(_)));
-        assert!(matches!(events[1], StreamEvent::ContentBlockStart(ref event)
+        assert!(
+            matches!(events[1], StreamEvent::ContentBlockStart(ref event)
             if matches!(&event.content_block, OutputContentBlock::ToolUse { id, name, .. }
-                if id == "call_abc" && name == "navigate")));
-        assert!(matches!(events[2], StreamEvent::ContentBlockDelta(ref event)
+                if id == "call_abc" && name == "navigate"))
+        );
+        assert!(
+            matches!(events[2], StreamEvent::ContentBlockDelta(ref event)
             if matches!(&event.delta, ContentBlockDelta::InputJsonDelta { partial_json }
-                if partial_json == r#"{"url":"#)));
+                if partial_json == r#"{"url":"#))
+        );
         assert!(matches!(events[3], StreamEvent::ContentBlockStop(ref event) if event.index == 0));
         assert!(matches!(events[4], StreamEvent::MessageDelta(ref event)
             if event.delta.stop_reason.as_deref() == Some("tool_use")
@@ -1287,9 +1317,12 @@ mod tests {
 
     #[test]
     fn streaming_error_event() {
-        let error = collect_fixture_events(ERROR_STREAM_FIXTURE).expect_err("error event should fail");
-        assert!(matches!(error, ApiError::Api { ref error_type, ref message, .. }
-            if error_type.as_deref() == Some("server_error") && message.as_deref() == Some("boom")));
+        let error =
+            collect_fixture_events(ERROR_STREAM_FIXTURE).expect_err("error event should fail");
+        assert!(
+            matches!(error, ApiError::Api { ref error_type, ref message, .. }
+            if error_type.as_deref() == Some("server_error") && message.as_deref() == Some("boom"))
+        );
     }
 
     #[test]
@@ -1316,15 +1349,20 @@ mod tests {
             .expect("response.function_call_arguments.done should parse");
 
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], StreamEvent::ContentBlockDelta(ref event)
+        assert!(
+            matches!(events[0], StreamEvent::ContentBlockDelta(ref event)
             if matches!(&event.delta, ContentBlockDelta::InputJsonDelta { partial_json }
-                if partial_json == r#"{"selector":"h1"}"#)));
+                if partial_json == r#"{"selector":"h1"}"#))
+        );
     }
 
     #[test]
     fn tool_choice_conversion_matches_responses_api() {
         assert_eq!(responses_tool_choice(None), serde_json::json!("auto"));
-        assert_eq!(responses_tool_choice(Some(&ToolChoice::Any)), serde_json::json!("required"));
+        assert_eq!(
+            responses_tool_choice(Some(&ToolChoice::Any)),
+            serde_json::json!("required")
+        );
         assert_eq!(
             responses_tool_choice(Some(&ToolChoice::Tool {
                 name: "navigate".to_string(),

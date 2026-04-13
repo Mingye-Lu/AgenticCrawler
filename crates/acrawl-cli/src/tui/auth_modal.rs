@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
 use crate::tui::modal::{draw_modal_frame, Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
@@ -219,6 +219,35 @@ impl AuthModal {
             }
         }
     }
+
+    fn cursor_position(&self, inner: Rect) -> Option<(u16, u16)> {
+        match &self.step {
+            AuthModalStep::BaseUrlInput { input, .. } => {
+                let x = inner
+                    .x
+                    .saturating_add(4)
+                    .saturating_add(u16::try_from(input.chars().count()).unwrap_or(u16::MAX));
+                let y = inner.y.saturating_add(3);
+                Some((x, y))
+            }
+            AuthModalStep::ApiKeyInput {
+                key_buffer, masked, ..
+            } => {
+                let display_len = if *masked {
+                    key_buffer.chars().count()
+                } else {
+                    key_buffer.chars().count()
+                };
+                let x = inner
+                    .x
+                    .saturating_add(3)
+                    .saturating_add(u16::try_from(display_len).unwrap_or(u16::MAX));
+                let y = inner.y.saturating_add(3);
+                Some((x, y))
+            }
+            _ => None,
+        }
+    }
 }
 
 impl Modal for AuthModal {
@@ -384,9 +413,44 @@ impl Modal for AuthModal {
             }
         };
 
-        let inner = draw_modal_frame(frame, area, self.title(), border_color);
-        let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, inner);
+        if area.width <= 92 {
+            let block = Block::default()
+                .title(self.title())
+                .title_style(
+                    Style::default()
+                        .fg(border_color)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                )
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border_color))
+                .padding(Padding::new(1, 1, 0, 0));
+            let inner = block.inner(area);
+            frame.render_widget(Clear, area);
+            frame.render_widget(block, area);
+            let mut content_lines = text.lines.clone();
+            while content_lines.last().is_some_and(|line| {
+                line.spans.iter().all(|span| span.content.trim().is_empty())
+            }) {
+                content_lines.pop();
+            }
+            let mut lines = Vec::with_capacity(content_lines.len() + 2);
+            lines.push(Line::from(""));
+            lines.extend(content_lines);
+            lines.push(Line::from(""));
+            let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+            frame.render_widget(paragraph, inner);
+            if let Some((x, y)) = self.cursor_position(inner) {
+                frame.set_cursor_position((x, y));
+            }
+        } else {
+            let inner = draw_modal_frame(frame, area, self.title(), border_color);
+            let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+            frame.render_widget(paragraph, inner);
+            if let Some((x, y)) = self.cursor_position(inner) {
+                frame.set_cursor_position((x, y));
+            }
+        }
     }
 
     #[allow(clippy::too_many_lines)]
