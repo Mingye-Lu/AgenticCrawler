@@ -1276,41 +1276,63 @@ impl LlmRuntimeClient {
         ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let store = api::load_credentials().unwrap_or_default();
-        let provider = match provider_for_model(&model) {
-            Provider::Anthropic => {
-                let config = store
-                    .providers
-                    .get("anthropic")
-                    .ok_or("No Anthropic credentials found. Run `acrawl auth`.")?;
-                let auth = credential_config_to_auth_source(config);
-                LlmProvider::Anthropic(AnthropicClient::from_auth(auth))
-            }
-            Provider::OpenAi => {
-                let config = store
-                    .providers
-                    .get("openai")
-                    .ok_or("No OpenAI credentials found. Run `acrawl auth`.")?;
-                let auth = credential_config_to_auth_source(config);
-                LlmProvider::OpenAi(OpenAiResponsesClient::new(auth, &model))
-            }
-            Provider::Other => {
-                let default_base_url = "http://localhost:11434/v1".to_string();
-                let (auth, base_url) = store
-                    .providers
-                    .get("other")
-                    .map(|config| {
-                        (
-                            credential_config_to_auth_source(config),
-                            config
-                                .base_url
-                                .clone()
-                                .unwrap_or_else(|| default_base_url.clone()),
-                        )
-                    })
-                    .unwrap_or((AuthSource::None, default_base_url));
-                LlmProvider::Other(
-                    ChatCompletionsClient::with_no_auth(&model, &base_url).with_optional_auth(auth),
-                )
+
+        // If no credentials at all, create a no-auth placeholder so the TUI can
+        // still launch and show the auth modal. The error surfaces on the first
+        // actual API call, not at startup.
+        let provider = if store.providers.is_empty() {
+            LlmProvider::Anthropic(AnthropicClient::from_auth(AuthSource::None))
+        } else {
+            // Prefer the active_provider over model-based routing so that e.g.
+            // a user who configured openai isn't blocked by the default claude model.
+            let effective_provider = store
+                .active_provider
+                .as_deref()
+                .and_then(|name| match name {
+                    "anthropic" => Some(Provider::Anthropic),
+                    "openai" => Some(Provider::OpenAi),
+                    "other" => Some(Provider::Other),
+                    _ => None,
+                })
+                .unwrap_or_else(|| provider_for_model(&model));
+
+            match effective_provider {
+                Provider::Anthropic => {
+                    let config = store
+                        .providers
+                        .get("anthropic")
+                        .ok_or("No Anthropic credentials found. Run `acrawl auth`.")?;
+                    let auth = credential_config_to_auth_source(config);
+                    LlmProvider::Anthropic(AnthropicClient::from_auth(auth))
+                }
+                Provider::OpenAi => {
+                    let config = store
+                        .providers
+                        .get("openai")
+                        .ok_or("No OpenAI credentials found. Run `acrawl auth`.")?;
+                    let auth = credential_config_to_auth_source(config);
+                    LlmProvider::OpenAi(OpenAiResponsesClient::new(auth, &model))
+                }
+                Provider::Other => {
+                    let default_base_url = "http://localhost:11434/v1".to_string();
+                    let (auth, base_url) = store
+                        .providers
+                        .get("other")
+                        .map(|config| {
+                            (
+                                credential_config_to_auth_source(config),
+                                config
+                                    .base_url
+                                    .clone()
+                                    .unwrap_or_else(|| default_base_url.clone()),
+                            )
+                        })
+                        .unwrap_or((AuthSource::None, default_base_url));
+                    LlmProvider::Other(
+                        ChatCompletionsClient::with_no_auth(&model, &base_url)
+                            .with_optional_auth(auth),
+                    )
+                }
             }
         };
         Ok(Self {
