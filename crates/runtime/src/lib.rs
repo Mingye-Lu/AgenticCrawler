@@ -15,6 +15,7 @@ mod prompt;
 mod remote;
 pub mod sandbox;
 mod session;
+pub mod settings;
 mod usage;
 
 pub use bash::{execute_bash, BashCommandInput, BashCommandOutput};
@@ -77,6 +78,11 @@ pub use remote::{
     DEFAULT_SESSION_TOKEN_PATH, DEFAULT_SYSTEM_CA_BUNDLE, NO_PROXY_HOSTS, UPSTREAM_PROXY_ENV_KEYS,
 };
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
+pub use settings::{
+    config_home_dir, load_settings, save_settings, settings_file_path,
+    settings_get_auto_compact_tokens, settings_get_headless, settings_get_max_steps,
+    settings_get_workspace_dir, Settings,
+};
 pub use usage::{
     format_usd, pricing_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
 };
