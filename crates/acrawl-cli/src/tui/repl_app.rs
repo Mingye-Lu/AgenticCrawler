@@ -1826,7 +1826,6 @@ impl ReplTuiState {
 
                                 AuthModalStep::ModelFetchLoading {
                                     provider: provider_kind,
-                                    base_url: None,
                                 }
                             }
                             Err(e) => AuthModalStep::Error { message: e },
@@ -3093,7 +3092,6 @@ fn run_loop(
                             }
                             continue;
                         }
-                        ModalAction::Passthrough => {}
                     }
                 }
 

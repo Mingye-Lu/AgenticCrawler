@@ -36,7 +36,6 @@ impl From<crate::app::Provider> for ProviderKind {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) enum AuthModalStep {
     ProviderSelect {
         selected: usize,
@@ -66,14 +65,12 @@ pub(crate) enum AuthModalStep {
     },
     ModelFetchLoading {
         provider: ProviderKind,
-        base_url: Option<String>,
     },
     ModelSelect {
         provider: ProviderKind,
         state: crate::tui::model_list::ModelListState,
     },
     Success {
-        provider: ProviderKind,
         message: String,
     },
     Error {
@@ -161,10 +158,7 @@ impl AuthModal {
     ) -> Self {
         let provider: ProviderKind = provider.into();
         Self {
-            step: AuthModalStep::ModelFetchLoading {
-                provider,
-                base_url: None,
-            },
+            step: AuthModalStep::ModelFetchLoading { provider },
             ui_tx,
         }
     }
@@ -218,11 +212,7 @@ impl AuthModal {
     }
 
     pub(crate) fn process_loading(&mut self) {
-        if let AuthModalStep::ModelFetchLoading {
-            provider,
-            base_url: _,
-        } = &self.step
-        {
+        if let AuthModalStep::ModelFetchLoading { provider } = &self.step {
             let provider_copy = *provider;
 
             let store = api::credentials::load_credentials().unwrap_or_default();
@@ -741,7 +731,6 @@ impl Modal for AuthModal {
                         Self::save_api_key(*provider, base_url.clone(), key_buffer.clone());
                         self.step = AuthModalStep::ModelFetchLoading {
                             provider: *provider,
-                            base_url: base_url.clone(),
                         };
                     }
                     ModalAction::Consumed
@@ -823,7 +812,6 @@ impl Modal for AuthModal {
                         Self::save_default_model(*provider, &state.filter);
                     }
                     self.step = AuthModalStep::Success {
-                        provider: *provider,
                         message: format!("Authenticated as {}", provider.label()),
                     };
                     ModalAction::Consumed
@@ -835,7 +823,6 @@ impl Modal for AuthModal {
                         Self::save_default_model(*provider, &state.filter);
                     }
                     self.step = AuthModalStep::Success {
-                        provider: *provider,
                         message: format!("Authenticated as {}", provider.label()),
                     };
                     ModalAction::Consumed
@@ -1026,7 +1013,6 @@ mod tests {
         let (ui_tx, _ui_rx) = mpsc::channel();
         let mut modal = AuthModal {
             step: AuthModalStep::Success {
-                provider: ProviderKind::OpenAi,
                 message: "done".to_string(),
             },
             ui_tx,

@@ -12,13 +12,9 @@ pub enum ModalAction {
     Consumed,
     /// Modal should close.
     Dismiss,
-    /// Key was not handled; let the main handler process it.
-    #[allow(dead_code)]
-    Passthrough,
 }
 
 /// Base trait for modal dialogs in the TUI.
-#[allow(dead_code)]
 pub trait Modal {
     /// Draw the modal content into the given frame.
     fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect);
@@ -46,7 +42,6 @@ pub trait Modal {
 ///
 /// # Returns
 /// The inner `Rect` where modal content should be drawn
-#[allow(dead_code)]
 pub fn draw_modal_frame(
     frame: &mut ratatui::Frame<'_>,
     area: Rect,
@@ -125,14 +120,9 @@ mod tests {
 
     #[test]
     fn modal_action_variants_exist() {
-        // Compile-time validation: ensure all variants can be constructed
         let _ = ModalAction::Consumed;
         let _ = ModalAction::Dismiss;
-        let _ = ModalAction::Passthrough;
 
-        // Verify they are distinct
         assert_ne!(ModalAction::Consumed, ModalAction::Dismiss);
-        assert_ne!(ModalAction::Dismiss, ModalAction::Passthrough);
-        assert_ne!(ModalAction::Passthrough, ModalAction::Consumed);
     }
 }

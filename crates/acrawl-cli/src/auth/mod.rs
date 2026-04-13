@@ -2,15 +2,12 @@ pub(crate) mod anthropic;
 pub(crate) mod custom;
 pub(crate) mod openai;
 
-use std::env;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
 use std::sync::mpsc;
 
-use runtime::{
-    clear_oauth_credentials, parse_oauth_callback_request_target, ConfigLoader, OAuthConfig,
-};
+use runtime::{clear_oauth_credentials, parse_oauth_callback_request_target};
 
 use super::Provider;
 
@@ -128,15 +125,6 @@ pub(crate) fn prompt_provider_choice() -> Result<Provider, Box<dyn std::error::E
         "3" | "other" => Ok(Provider::Other),
         other => Err(format!("invalid choice '{other}'").into()),
     }
-}
-
-#[allow(dead_code)]
-pub(crate) fn load_oauth_config_from_cwd() -> Result<Option<OAuthConfig>, api::ApiError> {
-    let cwd = env::current_dir().map_err(api::ApiError::from)?;
-    let config = ConfigLoader::default_for(&cwd).load().map_err(|error| {
-        api::ApiError::Auth(format!("failed to load runtime OAuth config: {error}"))
-    })?;
-    Ok(config.oauth().cloned())
 }
 
 pub(crate) fn open_browser(url: &str) -> io::Result<()> {

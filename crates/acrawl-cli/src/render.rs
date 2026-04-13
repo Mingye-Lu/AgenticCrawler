@@ -270,36 +270,6 @@ impl TerminalRenderer {
     }
 
     #[must_use]
-    #[allow(dead_code)]
-    pub fn render_markdown_fragment(&self, markdown: &str) -> String {
-        let mut output = String::new();
-        let mut state = RenderState::default();
-        let mut code_language = String::new();
-        let mut code_buffer = String::new();
-        let mut in_code_block = false;
-
-        for event in Parser::new_ext(markdown, Options::all()) {
-            match event {
-                // For fragments, we don't want the mandatory document-level spacing
-                Event::End(TagEnd::Paragraph) => {}
-                Event::End(TagEnd::Heading(..)) => {
-                    state.heading_level = None;
-                }
-                _ => self.render_event(
-                    event,
-                    &mut state,
-                    &mut output,
-                    &mut code_buffer,
-                    &mut code_language,
-                    &mut in_code_block,
-                ),
-            }
-        }
-
-        output
-    }
-
-    #[must_use]
     pub fn markdown_to_ansi(&self, markdown: &str) -> String {
         self.render_markdown(markdown)
     }
