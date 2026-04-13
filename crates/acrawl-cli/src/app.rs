@@ -43,7 +43,6 @@ use crate::tui::ReplTuiEvent;
 
 pub(crate) type AllowedToolSet = BTreeSet<String>;
 
-pub(crate) const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +70,10 @@ fn provider_for_model(model: &str) -> Provider {
 
 pub(crate) fn max_tokens_for_model(model: &str) -> u32 {
     match provider_for_model(model) {
-        Provider::OpenAi | Provider::Other => 16_384,
+        Provider::OpenAi => 16_384,
+        // OpenAI-compatible endpoints vary widely; keep a conservative default
+        // to avoid immediate 400s on providers capped at 8192 (e.g. DeepSeek-compatible setups).
+        Provider::Other => 8_192,
         Provider::Anthropic => {
             if model.contains("opus") {
                 32_000
@@ -94,32 +96,19 @@ pub(crate) fn resolve_model_alias(model: &str) -> &str {
     }
 }
 
-pub(crate) fn initial_model_from_credentials() -> String {
+pub(crate) fn initial_model_from_credentials() -> Option<String> {
+    if let Some(model) = initial_model_from_env() {
+        return Some(model);
+    }
     let store = api::load_credentials().unwrap_or_default();
     if let Some(provider_name) = &store.active_provider {
         if let Some(config) = store.providers.get(provider_name) {
             if let Some(model) = &config.default_model {
-                return resolve_model_alias(model).to_string();
+                return Some(resolve_model_alias(model).to_string());
             }
         }
-        if let Some(model) = initial_model_for_provider(provider_name) {
-            return model;
-        }
     }
-    initial_model_from_env().unwrap_or_else(|| DEFAULT_MODEL.to_string())
-}
-
-fn initial_model_for_provider(provider_name: &str) -> Option<String> {
-    match provider_name.to_ascii_lowercase().as_str() {
-        "anthropic" => {
-            read_env_non_empty("CLAUDE_MODEL").map(|m| resolve_model_alias(&m).to_string())
-        }
-        "openai" | "other" => read_env_non_empty("OPENAI_MODEL")
-            .map(|m| resolve_model_alias(&m).to_string())
-            .or_else(|| Some("gpt-4o".to_string())),
-        "codex" => read_env_non_empty("CODEX_MODEL").map(|m| resolve_model_alias(&m).to_string()),
-        _ => None,
-    }
+    None
 }
 
 fn initial_model_from_env() -> Option<String> {

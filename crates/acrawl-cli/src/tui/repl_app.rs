@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use crate::render::PredictiveMarkdownBuffer;
 use ansi_to_tui::IntoText;
 use commands::{slash_command_specs, SlashCommand};
+use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
@@ -40,6 +41,7 @@ const MAX_INPUT_LINES: usize = 5;
 const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
 const WELCOME_BOX_MAX_WIDTH: u16 = 82;
 const WELCOME_BOX_MIN_WIDTH: u16 = 30;
+const INPUT_CARET_MARKER: char = '\u{E000}';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppUiState {
@@ -209,16 +211,41 @@ fn has_env_credentials_for(provider: &str) -> bool {
     }
 }
 
+fn has_credentials_for_provider(provider: &str) -> bool {
+    has_store_credentials_for(provider) || has_env_credentials_for(provider)
+}
+
+fn active_provider_from_store() -> Option<String> {
+    api::credentials::load_credentials()
+        .ok()
+        .and_then(|store| store.active_provider)
+}
+
 fn detect_missing_auth_provider(model: &str) -> Option<String> {
-    let any_store = has_store_credentials_for("anthropic")
-        || has_store_credentials_for("openai")
-        || has_store_credentials_for("other");
-    let any_env =
-        has_env_credentials_for("anthropic") || has_env_credentials_for("openai");
-    if any_store || any_env {
-        return None;
+    if model.trim().is_empty() {
+        if let Some(active) = active_provider_from_store() {
+            if has_credentials_for_provider(&active) {
+                return Some(active);
+            }
+        }
+        if has_credentials_for_provider("openai") {
+            return Some("openai".to_string());
+        }
+        if has_credentials_for_provider("anthropic") {
+            return Some("anthropic".to_string());
+        }
+        if has_credentials_for_provider("other") {
+            return Some("other".to_string());
+        }
+        return Some("not-selected".to_string());
     }
-    required_provider_for_model(model).map(str::to_string)
+
+    let provider = required_provider_for_model(model).unwrap_or("other");
+    if has_credentials_for_provider(provider) {
+        None
+    } else {
+        Some(provider.to_string())
+    }
 }
 
 fn wrap_plain_text(input: &str, width: u16) -> Vec<String> {
@@ -1071,6 +1098,8 @@ struct ReplTuiState {
     last_input_rect: Rect,
     input_scroll_offset: usize,
     input: String,
+    input_cursor: usize,
+    input_preferred_col: Option<usize>,
     status_line: String,
     busy: bool,
     pending_permission: Option<(PermissionRequest, Sender<PermissionPromptDecision>)>,
@@ -1120,6 +1149,8 @@ impl ReplTuiState {
             last_input_rect: Rect::default(),
             input_scroll_offset: 0,
             input: String::new(),
+            input_cursor: 0,
+            input_preferred_col: None,
             status_line: String::new(),
             busy: false,
             pending_permission: None,
@@ -1154,7 +1185,7 @@ impl ReplTuiState {
         let now = Instant::now();
         let advance_spinner = now >= self.spinner_deadline;
         if now >= self.cursor_blink_deadline {
-            self.cursor_on = !self.cursor_on;
+            self.cursor_on = true;
             self.cursor_blink_deadline = now + Duration::from_millis(530);
         }
         if advance_spinner {
@@ -1238,6 +1269,148 @@ impl ReplTuiState {
         self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
     }
 
+    fn input_char_len(&self) -> usize {
+        self.input.chars().count()
+    }
+
+    fn input_char_to_byte(&self, char_idx: usize) -> usize {
+        self.input
+            .char_indices()
+            .nth(char_idx)
+            .map_or(self.input.len(), |(idx, _)| idx)
+    }
+
+    fn clamp_input_cursor(&mut self) {
+        self.input_cursor = self.input_cursor.min(self.input_char_len());
+    }
+
+    fn insert_input_char(&mut self, ch: char) {
+        self.clamp_input_cursor();
+        let idx = self.input_char_to_byte(self.input_cursor);
+        self.input.insert(idx, ch);
+        self.input_cursor = self.input_cursor.saturating_add(1);
+        self.input_preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn backspace_input_char(&mut self) {
+        self.clamp_input_cursor();
+        if self.input_cursor == 0 {
+            return;
+        }
+        let prev = self.input_cursor - 1;
+        let start = self.input_char_to_byte(prev);
+        let end = self.input_char_to_byte(prev + 1);
+        self.input.replace_range(start..end, "");
+        self.input_cursor -= 1;
+        self.input_preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn delete_input_char(&mut self) {
+        self.clamp_input_cursor();
+        if self.input_cursor >= self.input_char_len() {
+            return;
+        }
+        let start = self.input_char_to_byte(self.input_cursor);
+        let end = self.input_char_to_byte(self.input_cursor + 1);
+        self.input.replace_range(start..end, "");
+        self.input_preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn input_cursor_line_col(&self) -> (usize, usize) {
+        let mut line = 0usize;
+        let mut col = 0usize;
+        for (idx, ch) in self.input.chars().enumerate() {
+            if idx == self.input_cursor {
+                break;
+            }
+            if ch == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    fn line_lengths(&self) -> Vec<usize> {
+        let mut lengths = vec![0usize];
+        for ch in self.input.chars() {
+            if ch == '\n' {
+                lengths.push(0);
+            } else if let Some(last) = lengths.last_mut() {
+                *last += 1;
+            }
+        }
+        lengths
+    }
+
+    fn set_input_cursor_line_col(&mut self, target_line: usize, target_col: usize) {
+        let lengths = self.line_lengths();
+        let line = target_line.min(lengths.len().saturating_sub(1));
+        let col = target_col.min(lengths[line]);
+        let mut cursor = 0usize;
+        for len in lengths.iter().take(line) {
+            cursor += *len + 1;
+        }
+        cursor += col;
+        self.input_cursor = cursor.min(self.input_char_len());
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn move_input_cursor_left(&mut self) {
+        self.input_cursor = self.input_cursor.saturating_sub(1);
+        self.input_preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn move_input_cursor_right(&mut self) {
+        self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
+        self.input_preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn move_input_cursor_home(&mut self) {
+        let (line, _) = self.input_cursor_line_col();
+        self.set_input_cursor_line_col(line, 0);
+        self.input_preferred_col = Some(0);
+    }
+
+    fn move_input_cursor_end(&mut self) {
+        let (line, _) = self.input_cursor_line_col();
+        let target = self.line_lengths().get(line).copied().unwrap_or_default();
+        self.set_input_cursor_line_col(line, target);
+        self.input_preferred_col = Some(target);
+    }
+
+    fn move_input_cursor_up(&mut self) {
+        let (line, col) = self.input_cursor_line_col();
+        if line == 0 {
+            self.set_input_cursor_line_col(0, 0);
+            self.input_preferred_col = Some(0);
+            return;
+        }
+        let target_col = self.input_preferred_col.unwrap_or(col);
+        self.set_input_cursor_line_col(line - 1, target_col);
+        self.input_preferred_col = Some(target_col);
+    }
+
+    fn move_input_cursor_down(&mut self) {
+        let lengths = self.line_lengths();
+        let (line, col) = self.input_cursor_line_col();
+        if line + 1 >= lengths.len() {
+            self.set_input_cursor_line_col(line, lengths[line]);
+            self.input_preferred_col = Some(lengths[line]);
+            return;
+        }
+        let target_col = self.input_preferred_col.unwrap_or(col);
+        self.set_input_cursor_line_col(line + 1, target_col);
+        self.input_preferred_col = Some(target_col);
+    }
+
     fn handle_tool_call_start(&mut self, name: String, input: &str) {
         if !self.typewriter_chars.is_empty() {
             let count = self.typewriter_chars.len();
@@ -1293,27 +1466,34 @@ impl ReplTuiState {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn calculate_input_dimensions(&mut self, width: u16) -> (u16, Vec<Line<'static>>, usize) {
+    fn calculate_input_dimensions(
+        &mut self,
+        width: u16,
+    ) -> (u16, Vec<Line<'static>>, usize, Option<(u16, u16)>) {
+        self.clamp_input_cursor();
         let is_placeholder = self.input.is_empty();
         let placeholder_text = self.input_placeholder();
-        let mut lines_data = self
-            .input
-            .split('\n')
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
+        let mut input_with_caret = self.input.clone();
+        if !is_placeholder {
+            let caret_idx = self.input_char_to_byte(self.input_cursor);
+            input_with_caret.insert(caret_idx, INPUT_CARET_MARKER);
+        }
+        let source = if is_placeholder {
+            placeholder_text.to_owned()
+        } else {
+            input_with_caret
+        };
+        let mut lines_data = source.split('\n').map(ToOwned::to_owned).collect::<Vec<_>>();
         if lines_data.is_empty() {
             lines_data.push(String::new());
         }
-        let logical_lines = if is_placeholder {
-            vec![placeholder_text.to_owned()]
-        } else {
-            lines_data
-        };
 
         let safe_width = width.saturating_sub(5).max(5) as usize;
         let mut visual_lines = Vec::new();
+        let mut caret_row_idx = 0usize;
+        let mut seen_caret = false;
 
-        for (logical_idx, line) in logical_lines.into_iter().enumerate() {
+        for (logical_idx, line) in lines_data.into_iter().enumerate() {
             let offset = if logical_idx == 0 { 2 } else { 0 };
             let first_line_width = safe_width.saturating_sub(offset);
 
@@ -1336,6 +1516,10 @@ impl ReplTuiState {
                     safe_width
                 };
                 if w >= target {
+                    if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
+                        caret_row_idx = visual_lines.len();
+                        seen_caret = true;
+                    }
                     visual_lines.push((logical_idx == 0 && is_first_chunk, current));
                     current = String::new();
                     w = 0;
@@ -1346,6 +1530,10 @@ impl ReplTuiState {
                 }
             }
             if !current.is_empty() || pushed_last {
+                if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
+                    caret_row_idx = visual_lines.len();
+                    seen_caret = true;
+                }
                 visual_lines.push((logical_idx == 0 && is_first_chunk, current));
             }
         }
@@ -1353,6 +1541,18 @@ impl ReplTuiState {
         let max_text_lines = MAX_INPUT_LINES;
         let total_visual = visual_lines.len();
         let max_scroll = total_visual.saturating_sub(max_text_lines);
+        if self.input_scroll_offset == usize::MAX {
+            self.input_scroll_offset = max_scroll;
+        } else {
+            self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
+        }
+        if !is_placeholder && seen_caret {
+            if caret_row_idx < self.input_scroll_offset {
+                self.input_scroll_offset = caret_row_idx;
+            } else if caret_row_idx >= self.input_scroll_offset + max_text_lines {
+                self.input_scroll_offset = caret_row_idx.saturating_sub(max_text_lines - 1);
+            }
+        }
         self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
 
         let skip = self.input_scroll_offset;
@@ -1362,8 +1562,8 @@ impl ReplTuiState {
             .take(max_text_lines)
             .collect::<Vec<_>>();
         let total_sliced = sliced.len();
+        let mut cursor_pos: Option<(u16, u16)> = None;
 
-        let caret = if self.cursor_on { "|" } else { " " };
         let text_style = if is_placeholder {
             Style::default().fg(Color::DarkGray)
         } else if self.busy {
@@ -1376,7 +1576,6 @@ impl ReplTuiState {
         render_lines.push(Line::from(""));
 
         for (i, (has_prompt, row)) in sliced.into_iter().enumerate() {
-            let is_last = i == total_sliced.saturating_sub(1);
             let mut spans = Vec::new();
 
             if has_prompt {
@@ -1385,23 +1584,33 @@ impl ReplTuiState {
                 // If skipped first line with prompt, no visual space pad needed per standard terminal behavior
             }
 
-            if is_last && is_placeholder {
-                spans.push(Span::styled(
-                    caret,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ));
+            if is_placeholder && i == 0 {
                 spans.push(Span::styled(row, text_style));
+                let prompt_width = if has_prompt { 2 } else { 0 };
+                cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
             } else {
-                spans.push(Span::styled(row, text_style));
-                if is_last && !is_placeholder {
-                    spans.push(Span::styled(
-                        caret,
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD),
-                    ));
+                let mut marker_idx = None;
+                for (idx, ch) in row.chars().enumerate() {
+                    if ch == INPUT_CARET_MARKER {
+                        marker_idx = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(marker_char_idx) = marker_idx {
+                    let left = row.chars().take(marker_char_idx).collect::<String>();
+                    let right = row.chars().skip(marker_char_idx + 1).collect::<String>();
+                    if !left.is_empty() {
+                        spans.push(Span::styled(left, text_style));
+                    }
+                    if !right.is_empty() {
+                        spans.push(Span::styled(right, text_style));
+                    }
+                    let prompt_width = if has_prompt { 2 } else { 0 };
+                    let cursor_col =
+                        prompt_width + u16::try_from(marker_char_idx).unwrap_or(u16::MAX);
+                    cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
+                } else {
+                    spans.push(Span::styled(row, text_style));
                 }
             }
             render_lines.push(Line::from(spans));
@@ -1411,7 +1620,7 @@ impl ReplTuiState {
 
         #[allow(clippy::cast_possible_truncation)]
         let box_height = (total_sliced as u16) + 4;
-        (box_height, render_lines, max_scroll)
+        (box_height, render_lines, max_scroll, cursor_pos)
     }
 
     fn push_user_line(&mut self, text: &str) {
@@ -1762,6 +1971,7 @@ fn draw_auth_onboarding_panel(frame: &mut ratatui::Frame<'_>, area: Rect, provid
     let provider_label = match provider {
         "anthropic" => "Anthropic",
         "openai" => "OpenAI",
+        "not-selected" => "Not selected",
         other => other,
     };
     let text = Text::from(vec![
@@ -1862,7 +2072,8 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
         .width
         .saturating_sub(WELCOME_BOX_SIDE_GUTTER)
         .clamp(WELCOME_BOX_MIN_WIDTH, WELCOME_BOX_MAX_WIDTH);
-    let (box_height, render_lines, max_scroll) = state.calculate_input_dimensions(input_w);
+    let (box_height, render_lines, max_scroll, cursor_pos) =
+        state.calculate_input_dimensions(input_w);
     let input_h = box_height;
 
     let input_x = area.x + area.width.saturating_sub(input_w) / 2;
@@ -1889,6 +2100,9 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     frame.render_widget(block, input_area);
 
     frame.render_widget(Paragraph::new(Text::from(render_lines)), inner);
+    if let Some((row, col)) = cursor_pos {
+        frame.set_cursor_position((inner.x.saturating_add(col), inner.y.saturating_add(row)));
+    }
     if max_scroll > 0 {
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
@@ -1987,7 +2201,8 @@ fn draw_slash_overlay(
 #[allow(clippy::too_many_lines)]
 fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &HeaderSnapshot) {
     let area = frame.area();
-    let (footer_h, render_lines, max_scroll) = state.calculate_input_dimensions(area.width);
+    let (footer_h, render_lines, max_scroll, cursor_pos) =
+        state.calculate_input_dimensions(area.width);
 
     // Layout: 1-row header | transcript | 1-row spacer | input footer
     let chunks = Layout::default()
@@ -2170,6 +2385,12 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
     frame.render_widget(footer_block, input_area);
 
     frame.render_widget(Paragraph::new(Text::from(render_lines)), footer_inner);
+    if let Some((row, col)) = cursor_pos {
+        frame.set_cursor_position((
+            footer_inner.x.saturating_add(col),
+            footer_inner.y.saturating_add(row),
+        ));
+    }
     if max_scroll > 0 {
         let scrollbar = Scrollbar::default()
             .orientation(ScrollbarOrientation::VerticalRight)
@@ -2566,6 +2787,7 @@ fn run_loop(
     cancel_flag: &Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute!(io::stdout(), event::EnableMouseCapture);
+    let _ = execute!(io::stdout(), SetCursorStyle::SteadyBar);
     let _mouse_guard = MouseCaptureGuard;
 
     let mut state = ReplTuiState::new();
@@ -2769,10 +2991,12 @@ fn run_loop(
                             if modal_succeeded {
                                 match cli.lock() {
                                     Ok(mut guard) => {
-                                        let preferred_model =
-                                            crate::app::initial_model_from_credentials();
-                                        if preferred_model != guard.model_name() {
-                                            let _ = guard.model_command(Some(preferred_model));
+                                        if let Some(preferred_model) =
+                                            crate::app::initial_model_from_credentials()
+                                        {
+                                            if preferred_model != guard.model_name() {
+                                                let _ = guard.model_command(Some(preferred_model));
+                                            }
                                         }
                                         if let Err(error) = guard.refresh_runtime_auth() {
                                             state.push_system(&format!(
@@ -2848,8 +3072,7 @@ fn run_loop(
 
                 match key.code {
                     KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                        state.input.push('\n');
-                        state.input_scroll_offset = usize::MAX;
+                        state.insert_input_char('\n');
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
@@ -2862,7 +3085,27 @@ fn run_loop(
                         }
                         if state.auth_onboarding_required && state.active_modal.is_none() {
                             if state.input.trim().is_empty() {
-                                state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
+                                let parsed_provider = state
+                                    .auth_onboarding_provider
+                                    .as_deref()
+                                    .and_then(|p| crate::app::parse_provider_arg(p).ok());
+                                let model_empty = cli
+                                    .lock()
+                                    .ok()
+                                    .is_some_and(|g| g.model_name().trim().is_empty());
+                                let model_only = model_empty
+                                    && state
+                                        .auth_onboarding_provider
+                                        .as_deref()
+                                        .is_some_and(|p| p != "not-selected" && has_credentials_for_provider(p));
+                                state.active_modal = Some(if model_only {
+                                    parsed_provider.map_or_else(
+                                        || AuthModal::new(ui_tx.clone(), None),
+                                        |provider| AuthModal::new_model_only(ui_tx.clone(), provider),
+                                    )
+                                } else {
+                                    AuthModal::new(ui_tx.clone(), parsed_provider)
+                                });
                                 continue;
                             }
                         }
@@ -2873,6 +3116,8 @@ fn run_loop(
                                 if selected != trimmed {
                                     state.input = selected;
                                     state.input.push(' ');
+                                    state.input_cursor = state.input.chars().count();
+                                    state.input_preferred_col = None;
                                     state.input_scroll_offset = usize::MAX;
                                     state.wake_input_caret();
                                     state.refresh_slash_overlay();
@@ -2882,6 +3127,8 @@ fn run_loop(
                         }
 
                         let line = std::mem::take(&mut state.input);
+                        state.input_cursor = 0;
+                        state.input_preferred_col = None;
                         state.input_scroll_offset = 0;
                         let trimmed = line.trim().to_string();
                         state.refresh_slash_overlay();
@@ -2905,7 +3152,27 @@ fn run_loop(
                             state.push_system(
                                 "Authentication is required before the first turn. Opening setup…",
                             );
-                            state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
+                            let parsed_provider = state
+                                .auth_onboarding_provider
+                                .as_deref()
+                                .and_then(|p| crate::app::parse_provider_arg(p).ok());
+                            let model_empty = cli
+                                .lock()
+                                .ok()
+                                .is_some_and(|g| g.model_name().trim().is_empty());
+                            let model_only = model_empty
+                                && state
+                                    .auth_onboarding_provider
+                                    .as_deref()
+                                    .is_some_and(|p| p != "not-selected" && has_credentials_for_provider(p));
+                            state.active_modal = Some(if model_only {
+                                parsed_provider.map_or_else(
+                                    || AuthModal::new(ui_tx.clone(), None),
+                                    |provider| AuthModal::new_model_only(ui_tx.clone(), provider),
+                                )
+                            } else {
+                                AuthModal::new(ui_tx.clone(), parsed_provider)
+                            });
                             continue;
                         }
                         state.push_user_line(&trimmed);
@@ -2913,22 +3180,48 @@ fn run_loop(
                         state.wake_input_caret();
                     }
                     KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        state.input.push('\n');
-                        state.input_scroll_offset = usize::MAX;
+                        state.insert_input_char('\n');
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Char(c) => {
-                        state.input.push(c);
-                        state.input_scroll_offset = usize::MAX;
+                        state.insert_input_char(c);
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Backspace => {
-                        state.input.pop();
-                        state.input_scroll_offset = usize::MAX;
+                        state.backspace_input_char();
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
+                    }
+                    KeyCode::Delete => {
+                        state.delete_input_char();
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
+                    KeyCode::Left => {
+                        state.move_input_cursor_left();
+                        state.wake_input_caret();
+                    }
+                    KeyCode::Right => {
+                        state.move_input_cursor_right();
+                        state.wake_input_caret();
+                    }
+                    KeyCode::Home => {
+                        state.move_input_cursor_home();
+                        state.wake_input_caret();
+                    }
+                    KeyCode::End => {
+                        state.move_input_cursor_end();
+                        state.wake_input_caret();
+                    }
+                    KeyCode::Up => {
+                        state.move_input_cursor_up();
+                        state.wake_input_caret();
+                    }
+                    KeyCode::Down => {
+                        state.move_input_cursor_down();
+                        state.wake_input_caret();
                     }
                     KeyCode::Tab => {
                         if state.busy || !state.input.trim_start().starts_with('/') {
@@ -2937,6 +3230,8 @@ fn run_loop(
                         if let Some(selected) = state.selected_slash_command() {
                             state.input = selected;
                             state.input.push(' ');
+                            state.input_cursor = state.input.chars().count();
+                            state.input_preferred_col = None;
                             state.input_scroll_offset = usize::MAX;
                             state.wake_input_caret();
                             state.refresh_slash_overlay();
@@ -2950,6 +3245,8 @@ fn run_loop(
                             if matches.len() == 1 {
                                 state.input.clone_from(&matches[0]);
                                 state.input.push(' ');
+                                state.input_cursor = state.input.chars().count();
+                                state.input_preferred_col = None;
                                 state.input_scroll_offset = usize::MAX;
                                 state.wake_input_caret();
                                 state.refresh_slash_overlay();

@@ -47,12 +47,14 @@ pub(crate) enum AuthModalStep {
     },
     BaseUrlInput {
         input: String,
+        cursor: usize,
         error: Option<String>,
     },
     ApiKeyInput {
         provider: ProviderKind,
         base_url: Option<String>,
         key_buffer: String,
+        cursor: usize,
         masked: bool,
         error: Option<String>,
     },
@@ -86,6 +88,43 @@ pub(crate) struct AuthModal {
 }
 
 impl AuthModal {
+    fn char_len(value: &str) -> usize {
+        value.chars().count()
+    }
+
+    fn char_to_byte(value: &str, char_idx: usize) -> usize {
+        value
+            .char_indices()
+            .nth(char_idx)
+            .map_or(value.len(), |(idx, _)| idx)
+    }
+
+    fn insert_char_at(value: &mut String, cursor: &mut usize, ch: char) {
+        let idx = Self::char_to_byte(value, *cursor);
+        value.insert(idx, ch);
+        *cursor = cursor.saturating_add(1);
+    }
+
+    fn remove_prev_char(value: &mut String, cursor: &mut usize) {
+        if *cursor == 0 {
+            return;
+        }
+        let remove_char = *cursor - 1;
+        let start = Self::char_to_byte(value, remove_char);
+        let end = Self::char_to_byte(value, remove_char + 1);
+        value.replace_range(start..end, "");
+        *cursor -= 1;
+    }
+
+    fn remove_current_char(value: &mut String, cursor: usize) {
+        if cursor >= Self::char_len(value) {
+            return;
+        }
+        let start = Self::char_to_byte(value, cursor);
+        let end = Self::char_to_byte(value, cursor + 1);
+        value.replace_range(start..end, "");
+    }
+
     pub(crate) fn new(ui_tx: Sender<ReplTuiEvent>, provider: Option<crate::app::Provider>) -> Self {
         let step = if let Some(p) = provider {
             match p {
@@ -93,6 +132,7 @@ impl AuthModal {
                     provider: ProviderKind::OpenAi,
                     base_url: None,
                     key_buffer: String::new(),
+                    cursor: 0,
                     masked: true,
                     error: None,
                 },
@@ -104,6 +144,7 @@ impl AuthModal {
                 },
                 crate::app::Provider::Other => AuthModalStep::BaseUrlInput {
                     input: String::new(),
+                    cursor: 0,
                     error: None,
                 },
             }
@@ -112,6 +153,20 @@ impl AuthModal {
         };
 
         Self { step, ui_tx }
+    }
+
+    pub(crate) fn new_model_only(
+        ui_tx: Sender<ReplTuiEvent>,
+        provider: crate::app::Provider,
+    ) -> Self {
+        let provider: ProviderKind = provider.into();
+        Self {
+            step: AuthModalStep::ModelFetchLoading {
+                provider,
+                base_url: None,
+            },
+            ui_tx,
+        }
     }
 
     fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: String) {
@@ -134,6 +189,27 @@ impl AuthModal {
         if let Some(url) = base_url {
             config.base_url = Some(url);
         }
+        store.active_provider = Some(provider_str.to_string());
+        api::credentials::set_provider_config(&mut store, provider_str, config);
+        let _ = api::credentials::save_credentials(&store);
+    }
+
+    fn save_default_model(provider: ProviderKind, model_id: &str) {
+        if model_id.trim().is_empty() {
+            return;
+        }
+        let mut store = api::credentials::load_credentials().unwrap_or_default();
+        let provider_str = match provider {
+            ProviderKind::Anthropic => "anthropic",
+            ProviderKind::OpenAi => "openai",
+            ProviderKind::Other => "other",
+        };
+        let mut config = store
+            .providers
+            .get(provider_str)
+            .cloned()
+            .unwrap_or_default();
+        config.default_model = Some(model_id.trim().to_string());
         store.active_provider = Some(provider_str.to_string());
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
@@ -177,26 +253,34 @@ impl AuthModal {
                 }
                 ProviderKind::OpenAi => {
                     let auth = if config.auth_method == "oauth" {
-                        if let Some(oauth) = config.oauth {
-                            api::AuthSource::BearerToken(oauth.access_token)
-                        } else {
-                            api::AuthSource::None
-                        }
+                        config
+                            .oauth
+                            .map(|oauth| api::AuthSource::BearerToken(oauth.access_token))
                     } else {
-                        api::AuthSource::ApiKey(config.api_key.unwrap_or_default())
-                    };
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(api::models::list_openai_models(&auth))
-                        .map(|models| {
-                            models
-                                .into_iter()
-                                .map(|m| crate::tui::model_list::ModelInfo {
-                                    id: m.id,
-                                    display_name: None,
-                                })
-                                .collect()
+                        config.api_key.and_then(|key| {
+                            if key.trim().is_empty() {
+                                None
+                            } else {
+                                Some(api::AuthSource::ApiKey(key))
+                            }
                         })
+                    };
+                    if let Some(auth) = auth {
+                        tokio::runtime::Runtime::new()
+                            .unwrap()
+                            .block_on(api::models::list_openai_models(&auth))
+                            .map(|models| {
+                                models
+                                    .into_iter()
+                                    .map(|m| crate::tui::model_list::ModelInfo {
+                                        id: m.id,
+                                        display_name: None,
+                                    })
+                                    .collect()
+                            })
+                    } else {
+                        Ok(vec![])
+                    }
                 }
                 ProviderKind::Other => Ok(vec![]),
             };
@@ -220,40 +304,12 @@ impl AuthModal {
         }
     }
 
-    fn cursor_position(&self, inner: Rect) -> Option<(u16, u16)> {
-        match &self.step {
-            AuthModalStep::BaseUrlInput { input, .. } => {
-                let x = inner
-                    .x
-                    .saturating_add(4)
-                    .saturating_add(u16::try_from(input.chars().count()).unwrap_or(u16::MAX));
-                let y = inner.y.saturating_add(3);
-                Some((x, y))
-            }
-            AuthModalStep::ApiKeyInput {
-                key_buffer, masked, ..
-            } => {
-                let display_len = if *masked {
-                    key_buffer.chars().count()
-                } else {
-                    key_buffer.chars().count()
-                };
-                let x = inner
-                    .x
-                    .saturating_add(3)
-                    .saturating_add(u16::try_from(display_len).unwrap_or(u16::MAX));
-                let y = inner.y.saturating_add(3);
-                Some((x, y))
-            }
-            _ => None,
-        }
-    }
 }
 
 impl Modal for AuthModal {
     #[allow(clippy::too_many_lines)]
     fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let (border_color, text) = match &self.step {
+        let (border_color, text, cursor_pos) = match &self.step {
             AuthModalStep::ProviderSelect { selected } => {
                 let providers = [
                     ProviderKind::Anthropic,
@@ -270,7 +326,7 @@ impl Modal for AuthModal {
                     .collect::<Vec<_>>();
                 lines.push(Line::default());
                 lines.push(Line::from("Up/Down navigate  Enter select  Esc cancel"));
-                (Color::Cyan, Text::from(lines))
+                (Color::Cyan, Text::from(lines), None)
             }
             AuthModalStep::AuthMethodSelect { provider, selected } => {
                 let methods = match provider {
@@ -288,9 +344,13 @@ impl Modal for AuthModal {
                 }
                 lines.push(Line::default());
                 lines.push(Line::from("Up/Down navigate  Enter select  Esc back"));
-                (Color::Cyan, Text::from(lines))
+                (Color::Cyan, Text::from(lines), None)
             }
-            AuthModalStep::BaseUrlInput { input, error } => {
+            AuthModalStep::BaseUrlInput {
+                input,
+                cursor,
+                error,
+            } => {
                 let mut lines = vec![
                     Line::from("Enter base URL for Other provider:"),
                     Line::default(),
@@ -304,11 +364,16 @@ impl Modal for AuthModal {
                     )));
                     lines.push(Line::default());
                 }
-                lines.push(Line::from("Enter confirm  Esc back"));
-                (Color::Yellow, Text::from(lines))
+                lines.push(Line::from("←/→ move  Enter confirm  Esc back"));
+                (
+                    Color::Yellow,
+                    Text::from(lines),
+                    Some((3u16, 4u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)))),
+                )
             }
             AuthModalStep::ApiKeyInput {
                 key_buffer,
+                cursor,
                 masked,
                 error,
                 ..
@@ -331,8 +396,12 @@ impl Modal for AuthModal {
                     )));
                     lines.push(Line::default());
                 }
-                lines.push(Line::from("Enter confirm  Esc back"));
-                (Color::Yellow, Text::from(lines))
+                lines.push(Line::from("←/→ move  Enter confirm  Esc back"));
+                (
+                    Color::Yellow,
+                    Text::from(lines),
+                    Some((3u16, 3u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)))),
+                )
             }
             AuthModalStep::OAuthWaiting { status, tick, .. } => {
                 const FRAMES: [char; 8] = ['|', '/', '-', '\\', '|', '/', '-', '\\'];
@@ -342,7 +411,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Esc cancel"),
                 ];
-                (Color::Blue, Text::from(lines))
+                (Color::Blue, Text::from(lines), None)
             }
             AuthModalStep::ModelFetchLoading { provider, .. } => {
                 let lines = vec![
@@ -350,13 +419,13 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Please wait..."),
                 ];
-                (Color::Blue, Text::from(lines))
+                (Color::Blue, Text::from(lines), None)
             }
             AuthModalStep::ModelSelect { provider, state } => {
                 let mut lines = vec![
                     Line::from(format!("Select default model for {}:", provider.label())),
                     Line::default(),
-                    Line::from(format!("  Search: {}_", state.filter)),
+                    Line::from(format!("  Search: {}", state.filter)),
                     Line::default(),
                 ];
 
@@ -392,8 +461,17 @@ impl Modal for AuthModal {
                 }
 
                 lines.push(Line::default());
-                lines.push(Line::from("Up/Down navigate  Enter select  Esc skip"));
-                (Color::Cyan, Text::from(lines))
+                lines.push(Line::from("↑/↓ list  ←/→ search  Enter select/input  Esc skip"));
+                (
+                    Color::Cyan,
+                    Text::from(lines),
+                    Some((
+                        3u16,
+                        10u16.saturating_add(
+                            u16::try_from(state.filter_cursor).unwrap_or(u16::MAX),
+                        ),
+                    )),
+                )
             }
             AuthModalStep::Success { message, .. } => {
                 let lines = vec![
@@ -401,7 +479,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Press any key to continue"),
                 ];
-                (Color::Green, Text::from(lines))
+                (Color::Green, Text::from(lines), None)
             }
             AuthModalStep::Error { message } => {
                 let lines = vec![
@@ -409,7 +487,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Press any key to dismiss"),
                 ];
-                (Color::Red, Text::from(lines))
+                (Color::Red, Text::from(lines), None)
             }
         };
 
@@ -440,15 +518,15 @@ impl Modal for AuthModal {
             lines.push(Line::from(""));
             let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
             frame.render_widget(paragraph, inner);
-            if let Some((x, y)) = self.cursor_position(inner) {
-                frame.set_cursor_position((x, y));
+            if let Some((row, col)) = cursor_pos {
+                frame.set_cursor_position((inner.x.saturating_add(col), inner.y.saturating_add(row)));
             }
         } else {
             let inner = draw_modal_frame(frame, area, self.title(), border_color);
             let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
             frame.render_widget(paragraph, inner);
-            if let Some((x, y)) = self.cursor_position(inner) {
-                frame.set_cursor_position((x, y));
+            if let Some((row, col)) = cursor_pos {
+                frame.set_cursor_position((inner.x.saturating_add(col), inner.y.saturating_add(row)));
             }
         }
     }
@@ -474,6 +552,7 @@ impl Modal for AuthModal {
                     if provider == ProviderKind::Other {
                         self.step = AuthModalStep::BaseUrlInput {
                             input: String::new(),
+                            cursor: 0,
                             error: None,
                         };
                     } else {
@@ -512,6 +591,7 @@ impl Modal for AuthModal {
                                 provider: *provider,
                                 base_url: None,
                                 key_buffer: String::new(),
+                                cursor: 0,
                                 masked: true,
                                 error: None,
                             };
@@ -538,14 +618,38 @@ impl Modal for AuthModal {
                     _ => ModalAction::Consumed,
                 }
             }
-            AuthModalStep::BaseUrlInput { input, error } => match key.code {
+            AuthModalStep::BaseUrlInput {
+                input,
+                cursor,
+                error,
+            } => match key.code {
                 KeyCode::Char(ch) => {
-                    input.push(ch);
+                    Self::insert_char_at(input, cursor, ch);
                     *error = None;
                     ModalAction::Consumed
                 }
                 KeyCode::Backspace => {
-                    input.pop();
+                    Self::remove_prev_char(input, cursor);
+                    ModalAction::Consumed
+                }
+                KeyCode::Delete => {
+                    Self::remove_current_char(input, *cursor);
+                    ModalAction::Consumed
+                }
+                KeyCode::Left => {
+                    *cursor = cursor.saturating_sub(1);
+                    ModalAction::Consumed
+                }
+                KeyCode::Right => {
+                    *cursor = (*cursor + 1).min(Self::char_len(input));
+                    ModalAction::Consumed
+                }
+                KeyCode::Home | KeyCode::Up => {
+                    *cursor = 0;
+                    ModalAction::Consumed
+                }
+                KeyCode::End | KeyCode::Down => {
+                    *cursor = Self::char_len(input);
                     ModalAction::Consumed
                 }
                 KeyCode::Enter => {
@@ -556,6 +660,7 @@ impl Modal for AuthModal {
                             provider: ProviderKind::Other,
                             base_url: Some(input.clone()),
                             key_buffer: String::new(),
+                            cursor: 0,
                             masked: true,
                             error: None,
                         };
@@ -572,16 +677,37 @@ impl Modal for AuthModal {
                 provider,
                 base_url,
                 key_buffer,
+                cursor,
                 error,
                 ..
             } => match key.code {
                 KeyCode::Char(ch) => {
-                    key_buffer.push(ch);
+                    Self::insert_char_at(key_buffer, cursor, ch);
                     *error = None;
                     ModalAction::Consumed
                 }
                 KeyCode::Backspace => {
-                    key_buffer.pop();
+                    Self::remove_prev_char(key_buffer, cursor);
+                    ModalAction::Consumed
+                }
+                KeyCode::Delete => {
+                    Self::remove_current_char(key_buffer, *cursor);
+                    ModalAction::Consumed
+                }
+                KeyCode::Left => {
+                    *cursor = cursor.saturating_sub(1);
+                    ModalAction::Consumed
+                }
+                KeyCode::Right => {
+                    *cursor = (*cursor + 1).min(Self::char_len(key_buffer));
+                    ModalAction::Consumed
+                }
+                KeyCode::Home | KeyCode::Up => {
+                    *cursor = 0;
+                    ModalAction::Consumed
+                }
+                KeyCode::End | KeyCode::Down => {
+                    *cursor = Self::char_len(key_buffer);
                     ModalAction::Consumed
                 }
                 KeyCode::Enter => {
@@ -598,8 +724,11 @@ impl Modal for AuthModal {
                 }
                 KeyCode::Esc => {
                     if *provider == ProviderKind::Other {
+                        let previous = base_url.clone().unwrap_or_default();
+                        let previous_len = Self::char_len(&previous);
                         self.step = AuthModalStep::BaseUrlInput {
-                            input: base_url.clone().unwrap_or_default(),
+                            input: previous,
+                            cursor: previous_len,
                             error: None,
                         };
                     } else {
@@ -623,6 +752,14 @@ impl Modal for AuthModal {
             },
             AuthModalStep::ModelFetchLoading { .. } => ModalAction::Consumed,
             AuthModalStep::ModelSelect { provider, state } => match key.code {
+                KeyCode::Left => {
+                    state.move_cursor_left();
+                    ModalAction::Consumed
+                }
+                KeyCode::Right => {
+                    state.move_cursor_right();
+                    ModalAction::Consumed
+                }
                 KeyCode::Up => {
                     state.handle_up();
                     ModalAction::Consumed
@@ -639,18 +776,27 @@ impl Modal for AuthModal {
                     state.handle_backspace();
                     ModalAction::Consumed
                 }
+                KeyCode::Delete => {
+                    state.handle_delete();
+                    ModalAction::Consumed
+                }
+                KeyCode::Home => {
+                    state.move_cursor_home();
+                    ModalAction::Consumed
+                }
+                KeyCode::End => {
+                    state.move_cursor_end();
+                    ModalAction::Consumed
+                }
                 KeyCode::Enter => {
                     if let Some(model) = state.selected_model() {
-                        let mut store = api::credentials::load_credentials().unwrap_or_default();
-                        let provider_str = match provider {
-                            ProviderKind::Anthropic => "anthropic",
-                            ProviderKind::OpenAi => "openai",
-                            ProviderKind::Other => "other",
-                        };
-                        if let Some(config) = store.providers.get_mut(provider_str) {
-                            config.default_model = Some(model.id.clone());
-                            let _ = api::credentials::save_credentials(&store);
-                        }
+                        Self::save_default_model(*provider, &model.id);
+                    } else if matches!(*provider, ProviderKind::OpenAi | ProviderKind::Other)
+                        && !state.filter.trim().is_empty()
+                    {
+                        // Allow manual model entry for OpenAI-compatible providers
+                        // when remote model listing is not available.
+                        Self::save_default_model(*provider, &state.filter);
                     }
                     self.step = AuthModalStep::Success {
                         provider: *provider,
@@ -659,6 +805,11 @@ impl Modal for AuthModal {
                     ModalAction::Consumed
                 }
                 KeyCode::Esc => {
+                    if matches!(*provider, ProviderKind::OpenAi | ProviderKind::Other)
+                        && !state.filter.trim().is_empty()
+                    {
+                        Self::save_default_model(*provider, &state.filter);
+                    }
                     self.step = AuthModalStep::Success {
                         provider: *provider,
                         message: format!("Authenticated as {}", provider.label()),
@@ -734,7 +885,7 @@ mod tests {
         let _ = modal.handle_key(key(KeyCode::Down));
         assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Consumed);
         match &modal.step {
-            AuthModalStep::BaseUrlInput { input, error } => {
+            AuthModalStep::BaseUrlInput { input, error, .. } => {
                 assert!(input.is_empty());
                 assert_eq!(error, &None);
             }
