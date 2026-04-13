@@ -1470,25 +1470,56 @@ pub(crate) fn provider_label(provider: Provider) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
     match provider {
         Provider::Anthropic => {
-            run_login()?;
-            let oauth = load_oauth_credentials()?
-                .ok_or("Anthropic OAuth completed, but no saved token was found")?;
-            persist_provider_credentials(
-                Provider::Anthropic,
-                api::StoredProviderConfig {
-                    auth_method: "oauth".to_string(),
-                    oauth: Some(api::StoredOAuthTokens {
-                        access_token: oauth.access_token,
-                        refresh_token: oauth.refresh_token,
-                        expires_at: oauth.expires_at.and_then(|value| i64::try_from(value).ok()),
-                        scopes: oauth.scopes,
-                    }),
-                    ..Default::default()
-                },
-            )
+            eprintln!("Anthropic authentication:");
+            eprintln!("  1) API key  (sk-ant-...)");
+            eprintln!("  2) OAuth    (PKCE browser flow)");
+            eprint!("Choice [1/2]: ");
+            io::stderr().flush()?;
+            let mut choice = String::new();
+            io::stdin().read_line(&mut choice)?;
+            match choice.trim() {
+                "2" | "oauth" => {
+                    run_login()?;
+                    let oauth = load_oauth_credentials()?
+                        .ok_or("Anthropic OAuth completed, but no saved token was found")?;
+                    persist_provider_credentials(
+                        Provider::Anthropic,
+                        api::StoredProviderConfig {
+                            auth_method: "oauth".to_string(),
+                            oauth: Some(api::StoredOAuthTokens {
+                                access_token: oauth.access_token,
+                                refresh_token: oauth.refresh_token,
+                                expires_at: oauth.expires_at.and_then(|v| i64::try_from(v).ok()),
+                                scopes: oauth.scopes,
+                            }),
+                            ..Default::default()
+                        },
+                    )?;
+                }
+                _ => {
+                    eprint!("Paste your Anthropic API key (sk-ant-...): ");
+                    io::stderr().flush()?;
+                    let mut key = String::new();
+                    io::stdin().read_line(&mut key)?;
+                    let key = key.trim().to_string();
+                    if key.is_empty() {
+                        return Err("API key is required for Anthropic".into());
+                    }
+                    persist_provider_credentials(
+                        Provider::Anthropic,
+                        api::StoredProviderConfig {
+                            auth_method: "api_key".to_string(),
+                            api_key: Some(key),
+                            ..Default::default()
+                        },
+                    )?;
+                }
+            }
+            Ok(())
         }
         Provider::OpenAi => {
             eprintln!("OpenAI authentication:");

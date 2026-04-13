@@ -2144,6 +2144,7 @@ fn handle_slash_command_tui(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
     if let Some(ref mut modal) = active_modal {
@@ -2163,8 +2164,8 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
             };
             use api::{AnthropicClient, AuthSource};
             use runtime::{
-                generate_pkce_pair, generate_state, loopback_redirect_uri, save_oauth_credentials,
-                OAuthAuthorizationRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
+                generate_pkce_pair, generate_state, loopback_redirect_uri,
+                OAuthAuthorizationRequest, OAuthTokenExchangeRequest,
             };
 
             let oauth = default_oauth_config();
@@ -2228,13 +2229,24 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
             let token_set = rt
                 .block_on(client.exchange_oauth_code(&oauth, &exchange))
                 .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
-            save_oauth_credentials(&OAuthTokenSet {
-                access_token: token_set.access_token,
-                refresh_token: token_set.refresh_token,
-                expires_at: token_set.expires_at,
-                scopes: token_set.scopes,
-            })
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            let mut store = api::credentials::load_credentials().unwrap_or_default();
+            store.active_provider = Some("anthropic".to_string());
+            api::credentials::set_provider_config(
+                &mut store,
+                "anthropic",
+                api::StoredProviderConfig {
+                    auth_method: "oauth".to_string(),
+                    oauth: Some(api::StoredOAuthTokens {
+                        access_token: token_set.access_token.clone(),
+                        refresh_token: token_set.refresh_token.clone(),
+                        expires_at: token_set.expires_at.and_then(|v| i64::try_from(v).ok()),
+                        scopes: token_set.scopes.clone(),
+                    }),
+                    ..Default::default()
+                },
+            );
+            api::credentials::save_credentials(&store)
+                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
             Ok(())
         })();
         let _ = ui_tx.send(ReplTuiEvent::AuthOAuthComplete {
@@ -2244,8 +2256,8 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
     });
 }
 
-#[allow(dead_code)]
-fn spawn_codex_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
+#[allow(clippy::too_many_lines)]
+fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
     if let Some(ref mut modal) = active_modal {
         if let AuthModalStep::OAuthWaiting {
@@ -2261,7 +2273,7 @@ fn spawn_codex_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opti
         let result: Result<(), Box<dyn std::error::Error + Send>> = (|| {
             use crate::app::{open_browser, wait_for_oauth_callback_cancellable};
             use api::{AnthropicClient, AuthSource};
-            use runtime::{OAuthTokenExchangeRequest, OAuthTokenSet};
+            use runtime::OAuthTokenExchangeRequest;
 
             let login_request = api::codex_login().map_err(|e| {
                 Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error + Send>
@@ -2271,7 +2283,7 @@ fn spawn_codex_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opti
                 .callback_port
                 .unwrap_or(api::CODEX_CALLBACK_PORT);
             let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
-                message: "Opening browser for Codex login...".to_string(),
+                message: "Opening browser for OpenAI login...".to_string(),
             });
             if let Err(err) = open_browser(&login_request.authorization_url) {
                 let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
@@ -2320,17 +2332,24 @@ fn spawn_codex_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opti
             let token_set = rt
                 .block_on(client.exchange_oauth_code(&login_request.config, &exchange))
                 .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
-            api::save_codex_credentials(&OAuthTokenSet {
+            let oauth_tokens = api::StoredOAuthTokens {
                 access_token: token_set.access_token,
                 refresh_token: token_set.refresh_token,
-                expires_at: token_set.expires_at,
+                expires_at: token_set.expires_at.and_then(|v| i64::try_from(v).ok()),
                 scopes: token_set.scopes,
-            })
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            };
+            let mut store = api::credentials::load_credentials().unwrap_or_default();
+            store.active_provider = Some("openai".to_string());
+            let mut cfg = store.providers.get("openai").cloned().unwrap_or_default();
+            cfg.auth_method = "oauth".to_string();
+            cfg.oauth = Some(oauth_tokens);
+            api::credentials::set_provider_config(&mut store, "openai", cfg);
+            api::credentials::save_credentials(&store)
+                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
             Ok(())
         })();
         let _ = ui_tx.send(ReplTuiEvent::AuthOAuthComplete {
-            provider: "codex".to_string(),
+            provider: "openai".to_string(),
             result: result.map_err(|e| e.to_string()),
         });
     });
@@ -2583,8 +2602,10 @@ fn run_loop(
                                     &mut state.active_modal,
                                 );
                             }
-                            crate::tui::auth_modal::ProviderKind::OpenAi
-                            | crate::tui::auth_modal::ProviderKind::Other => {}
+                            crate::tui::auth_modal::ProviderKind::OpenAi => {
+                                spawn_openai_oauth_thread(ui_tx.clone(), &mut state.active_modal);
+                            }
+                            crate::tui::auth_modal::ProviderKind::Other => {}
                         }
                     }
 
