@@ -4,6 +4,7 @@ pub mod codex;
 pub mod credentials;
 mod error;
 pub mod openai;
+pub mod responses;
 mod sse;
 mod types;
 
@@ -25,6 +26,10 @@ pub use credentials::{
 pub use error::ApiError;
 pub use openai::{OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
 pub use sse::{parse_frame, SseParser};
+pub use responses::{
+    ResponsesMessageStream, ResponsesStreamState, build_responses_request,
+    convert_responses_messages, convert_responses_tool, responses_tool_choice,
+};
 pub use provider_types::{AuthMethod, Provider, ProviderConfig};
 pub use types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
