@@ -22,7 +22,6 @@ Thumbs.db
 
 # Node (Playwright runtime dependency)
 node_modules/
-package-lock.json
 
 # Workspace (for file downloads)
 workspace/

@@ -1012,7 +1012,10 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
 pub(crate) fn run_openai_login() -> Result<(), Box<dyn std::error::Error>> {
     use runtime::OAuthTokenExchangeRequest;
     let login_req = api::codex_login()?;
-    let port = login_req.config.callback_port.unwrap_or(api::CODEX_CALLBACK_PORT);
+    let port = login_req
+        .config
+        .callback_port
+        .unwrap_or(api::CODEX_CALLBACK_PORT);
     println!("Starting OpenAI OAuth login...");
     println!("Listening for callback on {}", login_req.redirect_uri);
     if let Err(error) = open_browser(&login_req.authorization_url) {
@@ -1044,7 +1047,8 @@ pub(crate) fn run_openai_login() -> Result<(), Box<dyn std::error::Error>> {
         login_req.redirect_uri,
     );
     let rt = tokio::runtime::Runtime::new()?;
-    let token_set = rt.block_on(client.exchange_oauth_code(&login_req.config, &exchange_request))?;
+    let token_set =
+        rt.block_on(client.exchange_oauth_code(&login_req.config, &exchange_request))?;
     persist_provider_credentials(
         Provider::OpenAi,
         api::StoredProviderConfig {
@@ -1384,10 +1388,7 @@ impl LlmRuntimeClient {
                     let auth = credential_config_to_auth_source(config);
                     let mut client = OpenAiResponsesClient::new(auth, &model);
                     if config.auth_method == "oauth" {
-                        let account_id = config
-                            .oauth
-                            .as_ref()
-                            .and_then(|o| o.account_id.clone());
+                        let account_id = config.oauth.as_ref().and_then(|o| o.account_id.clone());
                         client = client.with_codex_endpoint(account_id);
                     }
                     LlmProvider::OpenAi(client)
