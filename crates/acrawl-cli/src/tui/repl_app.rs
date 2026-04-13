@@ -1536,9 +1536,9 @@ impl ReplTuiState {
                                 );
                                 let _ = api::credentials::save_credentials(&store);
 
-                                AuthModalStep::Success {
+                                AuthModalStep::ModelFetchLoading {
                                     provider: provider_kind,
-                                    message: format!("Authenticated as {provider}"),
+                                    base_url: None,
                                 }
                             }
                             Err(e) => AuthModalStep::Error { message: e },
