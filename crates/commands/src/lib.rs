@@ -119,7 +119,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         name: "auth",
-        summary: "Authenticate interactively with a provider",
+        summary: "Authenticate with a provider (auto-launched if no credentials)",
         argument_hint: Some("[anthropic|openai|codex]"),
         resume_supported: false,
     },
