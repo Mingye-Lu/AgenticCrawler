@@ -1,29 +1,23 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::io::{self, IsTerminal, Read, Write};
-use std::net::TcpListener;
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
-use std::process::Command;
 use std::sync::mpsc;
 
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
-    provider::{ProviderClient, ProviderRegistry}, AnthropicClient, AuthSource,
-    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
-    OutputContentBlock, StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition,
-    ToolResultContentBlock,
+    provider::{ProviderClient, ProviderRegistry}, ContentBlockDelta, InputContentBlock,
+    InputMessage, MessageRequest, MessageResponse, OutputContentBlock,
+    StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
 use runtime::{
-    clear_oauth_credentials, generate_pkce_pair, generate_state, load_oauth_credentials,
-    load_system_prompt, parse_oauth_callback_request_target, save_oauth_credentials, ApiClient,
-    ApiRequest, AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage,
-    ConversationRuntime, MessageRole, OAuthAuthorizationRequest, OAuthConfig,
-    OAuthTokenExchangeRequest, PermissionMode, PermissionPolicy, PermissionPromptDecision,
-    PermissionPrompter, PermissionRequest, RuntimeError, Session, TokenUsage, ToolError,
-    ToolExecutor,
+    load_system_prompt, ApiClient, ApiRequest, AssistantEvent, CompactionConfig, ConfigLoader,
+    ConversationMessage, ConversationRuntime, MessageRole, PermissionMode, PermissionPolicy,
+    PermissionPromptDecision, PermissionPrompter, PermissionRequest, RuntimeError, Session,
+    TokenUsage, ToolError, ToolExecutor,
 };
 use serde_json::json;
 
@@ -41,9 +35,16 @@ use crate::session_mgr::{
 use crate::tui::tool_panel::{format_tool_call_start, format_tool_result};
 use crate::tui::ReplTuiEvent;
 
-pub(crate) type AllowedToolSet = BTreeSet<String>;
+#[path = "auth/mod.rs"]
+mod auth;
 
-const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
+pub(crate) use self::auth::{
+    default_oauth_config, open_browser, parse_provider_arg, provider_label, run_auth_cli,
+    run_login, run_logout, wait_for_oauth_callback_cancellable,
+};
+use self::auth::{interactive_login_prompt, prompt_provider_choice};
+
+pub(crate) type AllowedToolSet = BTreeSet<String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Provider {
@@ -919,258 +920,6 @@ pub(crate) fn run_resume_command(
     }
 }
 
-pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
-    let cwd = env::current_dir()?;
-    let config = ConfigLoader::default_for(&cwd).load()?;
-    let default_oauth = default_oauth_config();
-    let oauth = config.oauth().unwrap_or(&default_oauth);
-    let callback_port = oauth.callback_port.unwrap_or(DEFAULT_OAUTH_CALLBACK_PORT);
-    let redirect_uri = runtime::loopback_redirect_uri(callback_port);
-    let pkce = generate_pkce_pair()?;
-    let state = generate_state()?;
-    let authorize_url =
-        OAuthAuthorizationRequest::from_config(oauth, redirect_uri.clone(), state.clone(), &pkce)
-            .build_url();
-    println!("Starting OAuth login...");
-    println!("Listening for callback on {redirect_uri}");
-    if let Err(error) = open_browser(&authorize_url) {
-        eprintln!("warning: failed to open browser automatically: {error}");
-        println!("Open this URL manually:\n{authorize_url}");
-    }
-    let callback = wait_for_oauth_callback(callback_port)?;
-    if let Some(error) = callback.error {
-        let description = callback
-            .error_description
-            .unwrap_or_else(|| "authorization failed".to_string());
-        return Err(io::Error::other(format!("{error}: {description}")).into());
-    }
-    let code = callback.code.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "callback did not include code")
-    })?;
-    let returned_state = callback.state.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "callback did not include state")
-    })?;
-    if returned_state != state {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "oauth state mismatch").into());
-    }
-    let client = AnthropicClient::from_auth(AuthSource::None);
-    let exchange_request =
-        OAuthTokenExchangeRequest::from_config(oauth, code, state, pkce.verifier, redirect_uri);
-    let rt = tokio::runtime::Runtime::new()?;
-    let token_set = rt.block_on(client.exchange_oauth_code(oauth, &exchange_request))?;
-    save_oauth_credentials(&runtime::OAuthTokenSet {
-        access_token: token_set.access_token,
-        refresh_token: token_set.refresh_token,
-        expires_at: token_set.expires_at,
-        scopes: token_set.scopes,
-    })?;
-    println!("OAuth login complete.");
-    Ok(())
-}
-
-pub(crate) fn run_openai_login() -> Result<(), Box<dyn std::error::Error>> {
-    use runtime::OAuthTokenExchangeRequest;
-    let login_req = api::codex_login()?;
-    let port = login_req
-        .config
-        .callback_port
-        .unwrap_or(api::CODEX_CALLBACK_PORT);
-    println!("Starting OpenAI OAuth login...");
-    println!("Listening for callback on {}", login_req.redirect_uri);
-    if let Err(error) = open_browser(&login_req.authorization_url) {
-        eprintln!("warning: failed to open browser automatically: {error}");
-        println!("Open this URL manually:\n{}", login_req.authorization_url);
-    }
-    let callback = wait_for_oauth_callback(port)?;
-    if let Some(error) = callback.error {
-        let description = callback
-            .error_description
-            .unwrap_or_else(|| "authorization failed".to_string());
-        return Err(io::Error::other(format!("{error}: {description}")).into());
-    }
-    let code = callback
-        .code
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "callback missing code"))?;
-    let returned_state = callback
-        .state
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "callback missing state"))?;
-    if returned_state != login_req.state {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "oauth state mismatch").into());
-    }
-    let client = AnthropicClient::from_auth(AuthSource::None);
-    let exchange_request = OAuthTokenExchangeRequest::from_config(
-        &login_req.config,
-        code,
-        login_req.state,
-        login_req.pkce.verifier,
-        login_req.redirect_uri,
-    );
-    let rt = tokio::runtime::Runtime::new()?;
-    let token_set =
-        rt.block_on(client.exchange_oauth_code(&login_req.config, &exchange_request))?;
-    persist_provider_credentials(
-        Provider::OpenAi,
-        api::StoredProviderConfig {
-            auth_method: "oauth".to_string(),
-            oauth: Some(api::StoredOAuthTokens {
-                access_token: token_set.access_token,
-                refresh_token: token_set.refresh_token,
-                expires_at: token_set.expires_at.and_then(|v| i64::try_from(v).ok()),
-                scopes: token_set.scopes,
-                account_id: None,
-            }),
-            ..Default::default()
-        },
-    )?;
-    println!("OpenAI OAuth login complete.");
-    Ok(())
-}
-
-pub(crate) fn run_logout() -> Result<(), Box<dyn std::error::Error>> {
-    clear_oauth_credentials()?;
-    println!("OAuth credentials cleared.");
-    Ok(())
-}
-
-pub(crate) fn default_oauth_config() -> OAuthConfig {
-    OAuthConfig {
-        client_id: String::from("9d1c250a-e61b-44d9-88ed-5944d1962f5e"),
-        authorize_url: String::from("https://platform.claude.com/oauth/authorize"),
-        token_url: String::from("https://platform.claude.com/v1/oauth/token"),
-        callback_port: None,
-        manual_redirect_url: None,
-        scopes: vec![
-            String::from("user:profile"),
-            String::from("user:inference"),
-            String::from("user:sessions:claude_code"),
-        ],
-    }
-}
-
-pub(crate) fn open_browser(url: &str) -> io::Result<()> {
-    let escaped;
-    let commands = if cfg!(target_os = "macos") {
-        vec![("open", vec![url])]
-    } else if cfg!(target_os = "windows") {
-        escaped = url.replace('&', "^&");
-        vec![("cmd", vec!["/C", "start", "", &escaped])]
-    } else {
-        vec![("xdg-open", vec![url])]
-    };
-    for (program, args) in commands {
-        match Command::new(program).args(args).spawn() {
-            Ok(_) => return Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "no supported browser opener command found",
-    ))
-}
-
-fn wait_for_oauth_callback(
-    port: u16,
-) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(("127.0.0.1", port))?;
-    let (mut stream, _) = listener.accept()?;
-    let mut buffer = [0_u8; 4096];
-    let bytes_read = stream.read(&mut buffer)?;
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let request_line = request.lines().next().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "missing callback request line")
-    })?;
-    let target = request_line.split_whitespace().nth(1).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "missing callback request target",
-        )
-    })?;
-    let callback = parse_oauth_callback_request_target(target)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let body = if callback.error.is_some() {
-        "OAuth login failed. You can close this window."
-    } else {
-        "OAuth login succeeded. You can close this window."
-    };
-    let response = format!("HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body);
-    stream.write_all(response.as_bytes())?;
-    Ok(callback)
-}
-
-#[allow(dead_code, clippy::needless_pass_by_value)]
-pub(crate) fn wait_for_oauth_callback_cancellable(
-    port: u16,
-    cancel_rx: mpsc::Receiver<()>,
-) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error + Send>> {
-    let listener = TcpListener::bind(("127.0.0.1", port))
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-    loop {
-        if std::time::Instant::now() >= deadline {
-            return Err(Box::new(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "OAuth callback timed out after 5 minutes",
-            )));
-        }
-        if cancel_rx.try_recv().is_ok() {
-            return Err(Box::new(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "OAuth cancelled by user",
-            )));
-        }
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                let mut buffer = [0_u8; 4096];
-                let bytes_read = stream
-                    .read(&mut buffer)
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-                let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-                let request_line = request.lines().next().ok_or_else(|| {
-                    Box::new(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "missing callback request line",
-                    )) as Box<dyn std::error::Error + Send>
-                })?;
-                let target = request_line.split_whitespace().nth(1).ok_or_else(|| {
-                    Box::new(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "missing callback request target",
-                    )) as Box<dyn std::error::Error + Send>
-                })?;
-                let callback = parse_oauth_callback_request_target(target).map_err(|error| {
-                    Box::new(io::Error::new(io::ErrorKind::InvalidData, error))
-                        as Box<dyn std::error::Error + Send>
-                })?;
-                let body = if callback.error.is_some() {
-                    "OAuth login failed. You can close this window."
-                } else {
-                    "OAuth login succeeded. You can close this window."
-                };
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: text/plain; charset=utf-8\r\n\
-                     content-length: {}\r\nconnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                stream
-                    .write_all(response.as_bytes())
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
-                return Ok(callback);
-            }
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(e) => return Err(Box::new(e) as Box<dyn std::error::Error + Send>),
-        }
-    }
-}
-
 fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut sections = crawler::prompt::build_system_prompt(&mvp_tool_specs());
     sections.extend(load_system_prompt(
@@ -1330,214 +1079,6 @@ impl LlmRuntimeClient {
     fn send_ui_stream(&self, chunk: impl Into<String>) {
         if let Some(tx) = &self.ui_tx {
             let _ = tx.send(ReplTuiEvent::StreamAnsi(chunk.into()));
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn load_oauth_config_from_cwd() -> Result<Option<OAuthConfig>, api::ApiError> {
-    let cwd = env::current_dir().map_err(api::ApiError::from)?;
-    let config = ConfigLoader::default_for(&cwd).load().map_err(|error| {
-        api::ApiError::Auth(format!("failed to load runtime OAuth config: {error}"))
-    })?;
-    Ok(config.oauth().cloned())
-}
-
-pub(crate) fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
-    match value.to_ascii_lowercase().as_str() {
-        "anthropic" | "claude" => Ok(Provider::Anthropic),
-        "openai" | "gpt" => Ok(Provider::OpenAi),
-        "other" => Ok(Provider::Other),
-        other => {
-            Err(format!("unknown provider '{other}'. Use anthropic, openai, or other.").into())
-        }
-    }
-}
-
-fn prompt_provider_choice() -> Result<Provider, Box<dyn std::error::Error>> {
-    eprintln!("Select a provider to authenticate:");
-    eprintln!("  1) Anthropic (OAuth)");
-    eprintln!("  2) OpenAI   (API key)");
-    eprintln!("  3) Other    (local/OpenAI-compatible)");
-    eprint!("Choice [1/2/3]: ");
-    io::stderr().flush()?;
-    let mut choice = String::new();
-    io::stdin().read_line(&mut choice)?;
-    match choice.trim() {
-        "1" | "anthropic" => Ok(Provider::Anthropic),
-        "2" | "openai" => Ok(Provider::OpenAi),
-        "3" | "other" => Ok(Provider::Other),
-        other => Err(format!("invalid choice '{other}'").into()),
-    }
-}
-
-pub(crate) fn provider_label(provider: Provider) -> &'static str {
-    match provider {
-        Provider::Anthropic => "anthropic",
-        Provider::OpenAi => "openai",
-        Provider::Other => "other",
-    }
-}
-
-#[allow(clippy::too_many_lines)]
-fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
-    match provider {
-        Provider::Anthropic => {
-            eprintln!("Anthropic authentication:");
-            eprintln!("  1) API key  (sk-ant-...)");
-            eprintln!("  2) OAuth    (PKCE browser flow)");
-            eprint!("Choice [1/2]: ");
-            io::stderr().flush()?;
-            let mut choice = String::new();
-            io::stdin().read_line(&mut choice)?;
-            match choice.trim() {
-                "2" | "oauth" => {
-                    run_login()?;
-                    let oauth = load_oauth_credentials()?
-                        .ok_or("Anthropic OAuth completed, but no saved token was found")?;
-                    persist_provider_credentials(
-                        Provider::Anthropic,
-                        api::StoredProviderConfig {
-                            auth_method: "oauth".to_string(),
-                            oauth: Some(api::StoredOAuthTokens {
-                                access_token: oauth.access_token,
-                                refresh_token: oauth.refresh_token,
-                                expires_at: oauth.expires_at.and_then(|v| i64::try_from(v).ok()),
-                                scopes: oauth.scopes,
-                                account_id: None,
-                            }),
-                            ..Default::default()
-                        },
-                    )?;
-                }
-                _ => {
-                    eprint!("Paste your Anthropic API key (sk-ant-...): ");
-                    io::stderr().flush()?;
-                    let mut key = String::new();
-                    io::stdin().read_line(&mut key)?;
-                    let key = key.trim().to_string();
-                    if key.is_empty() {
-                        return Err("API key is required for Anthropic".into());
-                    }
-                    persist_provider_credentials(
-                        Provider::Anthropic,
-                        api::StoredProviderConfig {
-                            auth_method: "api_key".to_string(),
-                            api_key: Some(key),
-                            ..Default::default()
-                        },
-                    )?;
-                }
-            }
-            Ok(())
-        }
-        Provider::OpenAi => {
-            eprintln!("OpenAI authentication:");
-            eprintln!("  1) API key  (sk-...)");
-            eprintln!("  2) OAuth    (PKCE browser flow)");
-            eprint!("Choice [1/2]: ");
-            io::stderr().flush()?;
-            let mut choice = String::new();
-            io::stdin().read_line(&mut choice)?;
-            match choice.trim() {
-                "2" | "oauth" => run_openai_login()?,
-                _ => {
-                    eprint!("Paste your OpenAI API key (sk-...): ");
-                    io::stderr().flush()?;
-                    let mut key = String::new();
-                    io::stdin().read_line(&mut key)?;
-                    let key = key.trim().to_string();
-                    if key.is_empty() {
-                        return Err("API key is required for OpenAI".into());
-                    }
-                    persist_provider_credentials(
-                        Provider::OpenAi,
-                        api::StoredProviderConfig {
-                            auth_method: "openai_key".to_string(),
-                            api_key: Some(key),
-                            ..Default::default()
-                        },
-                    )?;
-                }
-            }
-            Ok(())
-        }
-        Provider::Other => {
-            let existing = api::load_credentials()
-                .unwrap_or_default()
-                .providers
-                .get("other")
-                .cloned()
-                .unwrap_or_default();
-            eprint!(
-                "Base URL [{}]: ",
-                existing
-                    .base_url
-                    .as_deref()
-                    .unwrap_or("http://localhost:11434/v1")
-            );
-            io::stderr().flush()?;
-            let mut base_url = String::new();
-            io::stdin().read_line(&mut base_url)?;
-            let base_url = match base_url.trim() {
-                "" => existing
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| "http://localhost:11434/v1".to_string()),
-                value => value.to_string(),
-            };
-
-            eprint!("API key (optional, press Enter to skip): ");
-            io::stderr().flush()?;
-            let mut key = String::new();
-            io::stdin().read_line(&mut key)?;
-            let key = key.trim().to_string();
-
-            persist_provider_credentials(
-                Provider::Other,
-                api::StoredProviderConfig {
-                    auth_method: if key.is_empty() {
-                        "none".to_string()
-                    } else {
-                        "api_key".to_string()
-                    },
-                    api_key: (!key.is_empty()).then_some(key),
-                    base_url: Some(base_url),
-                    default_model: existing.default_model,
-                    ..Default::default()
-                },
-            )
-        }
-    }
-}
-
-fn interactive_login_prompt(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
-    match provider {
-        Provider::Anthropic => {
-            eprint!("No Anthropic credentials found. Log in via OAuth? [Y/n] ");
-            io::stderr().flush()?;
-            let mut answer = String::new();
-            io::stdin().read_line(&mut answer)?;
-            let answer = answer.trim();
-            if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err("authentication required — run `acrawl auth anthropic`".into());
-            }
-            run_auth_for_provider(Provider::Anthropic)
-        }
-        Provider::OpenAi => {
-            eprintln!("No OpenAI credentials found.");
-            run_auth_for_provider(Provider::OpenAi)
-        }
-        Provider::Other => {
-            eprint!("No Other provider credentials found. Configure now? [Y/n] ");
-            io::stderr().flush()?;
-            let mut answer = String::new();
-            io::stdin().read_line(&mut answer)?;
-            let answer = answer.trim();
-            if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err("authentication required — run `acrawl auth other`".into());
-            }
-            run_auth_for_provider(Provider::Other)
         }
     }
 }
@@ -1708,37 +1249,6 @@ impl ApiClient for LlmRuntimeClient {
             }
         })
     }
-}
-
-pub(crate) fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let target = match provider {
-        Some(p) => parse_provider_arg(p)?,
-        None => prompt_provider_choice()?,
-    };
-    run_auth_for_provider(target)?;
-    eprintln!(
-        "✅ {} credentials configured successfully.",
-        provider_label(target)
-    );
-    Ok(())
-}
-
-fn persist_provider_credentials(
-    provider: Provider,
-    mut config: api::StoredProviderConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut store = api::load_credentials().unwrap_or_default();
-    let provider_name = provider_label(provider).to_string();
-    if config.default_model.is_none() {
-        config.default_model = store
-            .providers
-            .get(&provider_name)
-            .and_then(|existing| existing.default_model.clone());
-    }
-    api::set_provider_config(&mut store, &provider_name, config);
-    store.active_provider = Some(provider_name);
-    api::save_credentials(&store)?;
-    Ok(())
 }
 
 pub(crate) fn final_assistant_text(summary: &runtime::TurnSummary) -> String {
