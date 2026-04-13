@@ -76,19 +76,19 @@ pub fn credentials_file_path() -> PathBuf {
     }
 }
 
-/// Load credentials from disk
+/// Load credentials from a specific path
 ///
 /// Returns empty `CredentialStore` if file doesn't exist.
 /// Returns error if file is corrupt or uses old format.
-pub fn load_credentials() -> Result<CredentialStore, CredentialError> {
-    let path = credentials_file_path();
-
+pub fn load_credentials_from_path(
+    path: &std::path::Path,
+) -> Result<CredentialStore, CredentialError> {
     // Missing file is not an error - return empty store
     if !path.exists() {
         return Ok(CredentialStore::default());
     }
 
-    let content = std::fs::read_to_string(&path).map_err(|e| CredentialError::Io(e.to_string()))?;
+    let content = std::fs::read_to_string(path).map_err(|e| CredentialError::Io(e.to_string()))?;
 
     // Try to parse as JSON
     let json: serde_json::Value =
@@ -106,13 +106,22 @@ pub fn load_credentials() -> Result<CredentialStore, CredentialError> {
         .map_err(|e| CredentialError::Json { msg: e.to_string() })
 }
 
-/// Save credentials to disk
+/// Load credentials from disk
+///
+/// Returns empty `CredentialStore` if file doesn't exist.
+/// Returns error if file is corrupt or uses old format.
+pub fn load_credentials() -> Result<CredentialStore, CredentialError> {
+    load_credentials_from_path(&credentials_file_path())
+}
+
+/// Save credentials to a specific path
 ///
 /// Creates parent directory if it doesn't exist.
 /// Writes atomically (temp file + rename).
-pub fn save_credentials(store: &CredentialStore) -> Result<(), CredentialError> {
-    let path = credentials_file_path();
-
+pub fn save_credentials_to_path(
+    store: &CredentialStore,
+    path: &std::path::Path,
+) -> Result<(), CredentialError> {
     // Create parent directory if needed
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| CredentialError::Io(e.to_string()))?;
@@ -127,9 +136,17 @@ pub fn save_credentials(store: &CredentialStore) -> Result<(), CredentialError> 
     std::fs::write(&temp_path, json).map_err(|e| CredentialError::Io(e.to_string()))?;
 
     // Atomic rename
-    std::fs::rename(&temp_path, &path).map_err(|e| CredentialError::Io(e.to_string()))?;
+    std::fs::rename(&temp_path, path).map_err(|e| CredentialError::Io(e.to_string()))?;
 
     Ok(())
+}
+
+/// Save credentials to disk
+///
+/// Creates parent directory if it doesn't exist.
+/// Writes atomically (temp file + rename).
+pub fn save_credentials(store: &CredentialStore) -> Result<(), CredentialError> {
+    save_credentials_to_path(store, &credentials_file_path())
 }
 
 /// Set or update a provider's configuration
@@ -165,15 +182,22 @@ pub fn get_active_config(store: &CredentialStore) -> Option<&StoredProviderConfi
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn test_temp_dir(test_name: &str) -> PathBuf {
+        let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!("acrawl-test-{test_name}-{counter}"))
+    }
 
     #[test]
     fn test_save_and_load_round_trip() {
-        let _lock = crate::test_env_lock();
-        let temp_dir = std::env::temp_dir().join("acrawl_test_round_trip");
+        let temp_dir = test_temp_dir("round_trip");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+        let cred_path = temp_dir.join("credentials.json");
 
         let mut store = CredentialStore {
             active_provider: Some("anthropic".to_string()),
@@ -212,9 +236,9 @@ mod tests {
         store.providers.insert("openai".to_string(), openai_config);
         store.providers.insert("other".to_string(), other_config);
 
-        save_credentials(&store).unwrap();
+        save_credentials_to_path(&store, &cred_path).unwrap();
 
-        let loaded = load_credentials().unwrap();
+        let loaded = load_credentials_from_path(&cred_path).unwrap();
         assert_eq!(loaded, store);
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -222,13 +246,12 @@ mod tests {
 
     #[test]
     fn test_missing_file_returns_empty_store() {
-        let _lock = crate::test_env_lock();
-        let temp_dir = std::env::temp_dir().join("acrawl_test_missing");
+        let temp_dir = test_temp_dir("missing");
         let _ = fs::remove_dir_all(&temp_dir);
 
-        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+        let cred_path = temp_dir.join("credentials.json");
 
-        let store = load_credentials().unwrap();
+        let store = load_credentials_from_path(&cred_path).unwrap();
         assert_eq!(store, CredentialStore::default());
     }
 
@@ -315,17 +338,14 @@ mod tests {
 
     #[test]
     fn test_corrupt_json_returns_error() {
-        let _lock = crate::test_env_lock();
-        let temp_dir = std::env::temp_dir().join("acrawl_test_corrupt");
+        let temp_dir = test_temp_dir("corrupt");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
-
-        let cred_path = credentials_file_path();
+        let cred_path = temp_dir.join("credentials.json");
         fs::write(&cred_path, "{ invalid json }").unwrap();
 
-        let result = load_credentials();
+        let result = load_credentials_from_path(&cred_path);
         assert!(matches!(result, Err(CredentialError::Json { .. })));
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -333,18 +353,15 @@ mod tests {
 
     #[test]
     fn test_old_format_oauth_key_returns_error() {
-        let _lock = crate::test_env_lock();
-        let temp_dir = std::env::temp_dir().join("acrawl_test_old_format");
+        let temp_dir = test_temp_dir("old_format");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
 
-        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
-
-        let cred_path = credentials_file_path();
+        let cred_path = temp_dir.join("credentials.json");
         let old_format = r#"{"oauth": {"accessToken": "token123"}}"#;
         fs::write(&cred_path, old_format).unwrap();
 
-        let result = load_credentials();
+        let result = load_credentials_from_path(&cred_path);
         assert!(
             matches!(result, Err(CredentialError::InvalidFormat { msg }) if msg.contains("acrawl auth"))
         );

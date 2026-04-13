@@ -156,10 +156,7 @@ mod tests {
     use std::path::Path;
 
     fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        crate::test_env_lock()
     }
 
     fn setup_temp_dir() -> PathBuf {
@@ -341,7 +338,7 @@ mod tests {
 
         // Write invalid JSON
         let settings_path = temp_dir.join("settings.json");
-        fs::write(&settings_path, r#"{ invalid json }"#).expect("Failed to write test settings");
+        fs::write(&settings_path, r"{ invalid json }").expect("Failed to write test settings");
 
         let settings = load_settings();
 

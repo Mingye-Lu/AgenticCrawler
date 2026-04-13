@@ -103,8 +103,7 @@ fn convert_responses_assistant_message(message: &InputMessage, out: &mut Vec<Val
                 }));
             }
             InputContentBlock::ToolResult { .. } => {}
-            #[allow(unreachable_patterns)]
-            _ => {
+            InputContentBlock::Reasoning { .. } => {
                 if !text_parts.is_empty() {
                     push_responses_message_text(
                         "assistant",
@@ -161,8 +160,7 @@ fn convert_responses_user_message(message: &InputMessage, out: &mut Vec<Value>) 
                 }));
             }
             InputContentBlock::ToolUse { .. } => {}
-            #[allow(unreachable_patterns)]
-            _ => {
+            InputContentBlock::Reasoning { .. } => {
                 if !text_parts.is_empty() {
                     push_responses_message_text("user", "input_text", &text_parts.join("\n"), out);
                     text_parts.clear();

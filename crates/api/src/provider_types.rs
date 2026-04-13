@@ -122,7 +122,7 @@ mod tests {
         let auth = AuthMethod::OAuth {
             access_token: "access-123".to_string(),
             refresh_token: Some("refresh-456".to_string()),
-            expires_at: Some(1704067200i64),
+            expires_at: Some(1_704_067_200_i64),
             scopes: vec!["read".to_string(), "write".to_string()],
         };
 
