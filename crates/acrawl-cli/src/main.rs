@@ -98,7 +98,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             model,
             allowed_tools,
             permission_mode,
-        } => run_repl(model, allowed_tools, permission_mode)?,
+        } => {
+            // When model is missing, start REPL and let inline TUI auth onboarding
+            // collect provider/model instead of falling back to CLI auth prompts.
+            let model = model.unwrap_or_default();
+            run_repl(model, allowed_tools, permission_mode)?;
+        }
         CliAction::Help => print_help(),
     }
     Ok(())
@@ -129,7 +134,7 @@ enum CliAction {
     Logout,
     Init,
     Repl {
-        model: String,
+        model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
         permission_mode: PermissionMode,
     },
@@ -174,11 +179,11 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 let value = args
                     .get(index + 1)
                     .ok_or_else(|| "missing value for --model".to_string())?;
-                model = resolve_model_alias(value).to_string();
+                model = Some(resolve_model_alias(value).to_string());
                 index += 2;
             }
             flag if flag.starts_with("--model=") => {
-                model = resolve_model_alias(&flag[8..]).to_string();
+                model = Some(resolve_model_alias(&flag[8..]).to_string());
                 index += 1;
             }
             "--output-format" => {
@@ -226,6 +231,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 if prompt.trim().is_empty() {
                     return Err("-p requires a prompt string".to_string());
                 }
+                let model = model.clone().ok_or_else(|| {
+                    "missing model: set --model, set env model vars, or run `acrawl auth` to configure a default model".to_string()
+                })?;
                 return Ok(CliAction::Prompt {
                     prompt,
                     model: resolve_model_alias(&model).to_string(),
@@ -294,6 +302,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             if prompt.trim().is_empty() {
                 return Err("prompt subcommand requires a prompt string".to_string());
             }
+            let model = model.ok_or_else(|| {
+                "missing model: set --model, set env model vars, or run `acrawl auth` to configure a default model".to_string()
+            })?;
             Ok(CliAction::Prompt {
                 prompt,
                 model,
@@ -304,7 +315,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         }
         other if !other.starts_with('/') => Ok(CliAction::Prompt {
             prompt: rest.join(" "),
-            model,
+            model: model.ok_or_else(|| {
+                "missing model: set --model, set env model vars, or run `acrawl auth` to configure a default model".to_string()
+            })?,
             output_format,
             allowed_tools,
             permission_mode,
@@ -588,7 +601,6 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
-    use crate::app::DEFAULT_MODEL;
     use runtime::PermissionMode;
 
     static MODEL_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -624,7 +636,7 @@ mod tests {
             assert_eq!(
                 parse_args(&[]).expect("args should parse"),
                 CliAction::Repl {
-                    model: DEFAULT_MODEL.to_string(),
+                    model: None,
                     allowed_tools: None,
                     permission_mode: PermissionMode::ReadOnly,
                 }
@@ -636,6 +648,8 @@ mod tests {
     fn parses_prompt_subcommand() {
         with_clean_config_env(|| {
             let args = vec![
+                "--model".to_string(),
+                "claude-sonnet-4-6".to_string(),
                 "prompt".to_string(),
                 "hello".to_string(),
                 "world".to_string(),
@@ -644,7 +658,7 @@ mod tests {
                 parse_args(&args).expect("args should parse"),
                 CliAction::Prompt {
                     prompt: "hello world".to_string(),
-                    model: DEFAULT_MODEL.to_string(),
+                    model: "claude-sonnet-4-6".to_string(),
                     output_format: CliOutputFormat::Text,
                     allowed_tools: None,
                     permission_mode: PermissionMode::ReadOnly,
@@ -713,11 +727,15 @@ mod tests {
     #[test]
     fn parses_permission_mode_flag() {
         with_clean_config_env(|| {
-            let args = vec!["--permission-mode=read-only".to_string()];
+            let args = vec![
+                "--permission-mode=read-only".to_string(),
+                "--model".to_string(),
+                "claude-sonnet-4-6".to_string(),
+            ];
             assert_eq!(
                 parse_args(&args).expect("args should parse"),
                 CliAction::Repl {
-                    model: DEFAULT_MODEL.to_string(),
+                    model: Some("claude-sonnet-4-6".to_string()),
                     allowed_tools: None,
                     permission_mode: PermissionMode::ReadOnly,
                 }
@@ -728,7 +746,7 @@ mod tests {
     #[test]
     fn initial_model_defaults_without_credentials() {
         with_clean_config_env(|| {
-            assert_eq!(initial_model_from_credentials(), DEFAULT_MODEL.to_string());
+            assert_eq!(initial_model_from_credentials(), None);
         });
     }
 

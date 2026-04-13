@@ -14,10 +14,26 @@ impl ModelInfo {
 pub struct ModelListState {
     pub models: Vec<ModelInfo>,
     pub filter: String,
+    pub filter_cursor: usize,
     pub selected_idx: usize,
 }
 
 impl ModelListState {
+    fn filter_len(&self) -> usize {
+        self.filter.chars().count()
+    }
+
+    fn cursor_byte_index(&self) -> usize {
+        self.filter
+            .char_indices()
+            .nth(self.filter_cursor)
+            .map_or(self.filter.len(), |(idx, _)| idx)
+    }
+
+    fn clamp_cursor(&mut self) {
+        self.filter_cursor = self.filter_cursor.min(self.filter_len());
+    }
+
     pub fn filtered(&self) -> Vec<&ModelInfo> {
         if self.filter.is_empty() {
             self.models.iter().collect()
@@ -36,13 +52,60 @@ impl ModelListState {
     }
 
     pub fn handle_char(&mut self, c: char) {
-        self.filter.push(c);
+        let idx = self.cursor_byte_index();
+        self.filter.insert(idx, c);
+        self.filter_cursor = self.filter_cursor.saturating_add(1);
         self.selected_idx = 0;
     }
 
     pub fn handle_backspace(&mut self) {
-        self.filter.pop();
+        if self.filter_cursor == 0 {
+            return;
+        }
+        let remove_char = self.filter_cursor - 1;
+        if let Some((start, _)) = self.filter.char_indices().nth(remove_char) {
+            let end = self
+                .filter
+                .char_indices()
+                .nth(remove_char + 1)
+                .map_or(self.filter.len(), |(idx, _)| idx);
+            self.filter.replace_range(start..end, "");
+            self.filter_cursor -= 1;
+        }
+        self.clamp_cursor();
         self.selected_idx = 0;
+    }
+
+    pub fn handle_delete(&mut self) {
+        if self.filter_cursor >= self.filter_len() {
+            return;
+        }
+        if let Some((start, _)) = self.filter.char_indices().nth(self.filter_cursor) {
+            let end = self
+                .filter
+                .char_indices()
+                .nth(self.filter_cursor + 1)
+                .map_or(self.filter.len(), |(idx, _)| idx);
+            self.filter.replace_range(start..end, "");
+        }
+        self.clamp_cursor();
+        self.selected_idx = 0;
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        self.filter_cursor = self.filter_cursor.saturating_sub(1);
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        self.filter_cursor = (self.filter_cursor + 1).min(self.filter_len());
+    }
+
+    pub fn move_cursor_home(&mut self) {
+        self.filter_cursor = 0;
+    }
+
+    pub fn move_cursor_end(&mut self) {
+        self.filter_cursor = self.filter_len();
     }
 
     pub fn handle_up(&mut self) {
@@ -80,6 +143,7 @@ mod tests {
                 },
             ],
             filter: String::new(),
+            filter_cursor: 0,
             selected_idx: 0,
         }
     }
@@ -107,7 +171,9 @@ mod tests {
         state.handle_char('o');
         state.handle_char('n');
         assert_eq!(state.filter, "son");
+        assert_eq!(state.filter_cursor, 3);
         state.handle_backspace();
         assert_eq!(state.filter, "so");
+        assert_eq!(state.filter_cursor, 2);
     }
 }

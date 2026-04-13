@@ -43,7 +43,6 @@ use crate::tui::ReplTuiEvent;
 
 pub(crate) type AllowedToolSet = BTreeSet<String>;
 
-pub(crate) const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +70,10 @@ fn provider_for_model(model: &str) -> Provider {
 
 pub(crate) fn max_tokens_for_model(model: &str) -> u32 {
     match provider_for_model(model) {
-        Provider::OpenAi | Provider::Other => 16_384,
+        Provider::OpenAi => 16_384,
+        // OpenAI-compatible endpoints vary widely; keep a conservative default
+        // to avoid immediate 400s on providers capped at 8192 (e.g. DeepSeek-compatible setups).
+        Provider::Other => 8_192,
         Provider::Anthropic => {
             if model.contains("opus") {
                 32_000
@@ -94,16 +96,37 @@ pub(crate) fn resolve_model_alias(model: &str) -> &str {
     }
 }
 
-pub(crate) fn initial_model_from_credentials() -> String {
+pub(crate) fn initial_model_from_credentials() -> Option<String> {
+    if let Some(model) = initial_model_from_env() {
+        return Some(model);
+    }
     let store = api::load_credentials().unwrap_or_default();
     if let Some(provider_name) = &store.active_provider {
         if let Some(config) = store.providers.get(provider_name) {
             if let Some(model) = &config.default_model {
-                return resolve_model_alias(model).to_string();
+                return Some(resolve_model_alias(model).to_string());
             }
         }
     }
-    DEFAULT_MODEL.to_string()
+    None
+}
+
+fn initial_model_from_env() -> Option<String> {
+    let provider = env::var("LLM_PROVIDER")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let env_model = match provider.as_str() {
+        "openai" => env::var("OPENAI_MODEL").ok(),
+        "codex" => env::var("CODEX_MODEL").ok(),
+        _ => env::var("CLAUDE_MODEL").ok(),
+    }?;
+    let trimmed = env_model.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(resolve_model_alias(trimmed).to_string())
+    }
 }
 
 pub(crate) fn default_permission_mode() -> PermissionMode {
@@ -807,6 +830,21 @@ impl LiveCli {
             "Auth\n  Provider         {}\n  Result           authenticated",
             provider_label(target)
         );
+        Ok(())
+    }
+
+    pub(crate) fn refresh_runtime_auth(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let session = self.runtime.session().clone();
+        self.runtime = build_runtime(
+            session,
+            self.model.clone(),
+            self.system_prompt.clone(),
+            true,
+            true,
+            self.allowed_tools.clone(),
+            self.permission_mode,
+            self.ui_sender(),
+        )?;
         Ok(())
     }
 
