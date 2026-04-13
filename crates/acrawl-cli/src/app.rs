@@ -1801,6 +1801,19 @@ fn run_codex_login() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub(crate) fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let target = match provider {
+        Some(p) => parse_provider_arg(p)?,
+        None => prompt_provider_choice()?,
+    };
+    run_auth_for_provider(target)?;
+    eprintln!(
+        "✅ {} credentials configured successfully.",
+        provider_label(target)
+    );
+    Ok(())
+}
+
 fn persist_provider_credentials(
     provider: Provider,
     mut config: api::StoredProviderConfig,

@@ -17,8 +17,8 @@ use runtime::{load_system_prompt, PermissionMode, Session};
 
 use app::{
     default_permission_mode, initial_model_from_env, permission_mode_from_label,
-    resolve_model_alias, run_login, run_logout, run_repl, run_resume_command, AllowedToolSet,
-    LiveCli,
+    resolve_model_alias, run_auth_cli, run_login, run_logout, run_repl, run_resume_command,
+    AllowedToolSet, LiveCli,
 };
 use format::{normalize_permission_mode, render_version_report, DEFAULT_DATE, VERSION};
 
@@ -62,8 +62,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             LiveCli::new(model, true, allowed_tools, permission_mode)?
                 .run_turn_with_output(&prompt, output_format)?;
         }
-        CliAction::Login => run_login()?,
-        CliAction::Logout => run_logout()?,
+        CliAction::Auth { provider } => run_auth_cli(provider.as_deref())?,
+        CliAction::Login => {
+            eprintln!(
+                "\x1b[33m⚠️  `acrawl login` is deprecated. Please use `acrawl auth` instead.\x1b[0m"
+            );
+            run_login()?;
+        }
+        CliAction::Logout => {
+            eprintln!(
+                "\x1b[33m⚠️  `acrawl logout` is deprecated. Please use `acrawl auth` instead.\x1b[0m"
+            );
+            run_logout()?;
+        }
         CliAction::Init => {
             let cwd = env::current_dir()?;
             println!("{}", crate::init::initialize_repo(&cwd)?.render());
@@ -95,6 +106,9 @@ enum CliAction {
         output_format: CliOutputFormat,
         allowed_tools: Option<AllowedToolSet>,
         permission_mode: PermissionMode,
+    },
+    Auth {
+        provider: Option<String>,
     },
     Login,
     Logout,
@@ -253,6 +267,10 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
 
     match rest[0].as_str() {
         "system-prompt" => parse_system_prompt_args(&rest[1..]),
+        "auth" => {
+            let provider = rest.get(1).cloned();
+            Ok(CliAction::Auth { provider })
+        }
         "login" => Ok(CliAction::Login),
         "logout" => Ok(CliAction::Logout),
         "init" => Ok(CliAction::Init),
@@ -438,6 +456,7 @@ fn resume_session(session_path: &Path, commands: &[String]) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "acrawl v{VERSION}")?;
     writeln!(out)?;
@@ -469,8 +488,12 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "  acrawl system-prompt [--cwd PATH] [--date YYYY-MM-DD]"
     )?;
+    writeln!(out, "  acrawl auth [anthropic|openai|other]")?;
+    writeln!(out, "      Configure credentials for a provider interactively")?;
     writeln!(out, "  acrawl login")?;
+    writeln!(out, "      (deprecated — use `acrawl auth`)")?;
     writeln!(out, "  acrawl logout")?;
+    writeln!(out, "      (deprecated — use `acrawl auth`)")?;
     writeln!(out, "  acrawl init")?;
     writeln!(out)?;
     writeln!(out, "Flags:")?;
@@ -847,5 +870,33 @@ mod tests {
         let rendered = crate::init::render_init_agents_md(std::path::Path::new("."));
         assert!(rendered.contains("# AGENTS.md"));
         assert!(rendered.contains("cargo clippy --workspace --all-targets -- -D warnings"));
+    }
+
+    #[test]
+    fn auth_subcommand_parses_without_provider() {
+        assert_eq!(
+            parse_args(&["auth".to_string()]).expect("auth should parse"),
+            CliAction::Auth { provider: None }
+        );
+    }
+
+    #[test]
+    fn auth_subcommand_parses_with_provider() {
+        assert_eq!(
+            parse_args(&["auth".to_string(), "anthropic".to_string()]).expect("auth anthropic"),
+            CliAction::Auth {
+                provider: Some("anthropic".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn auth_subcommand_parses_openai() {
+        assert_eq!(
+            parse_args(&["auth".to_string(), "openai".to_string()]).expect("auth openai"),
+            CliAction::Auth {
+                provider: Some("openai".to_string())
+            }
+        );
     }
 }
