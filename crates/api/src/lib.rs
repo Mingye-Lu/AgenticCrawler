@@ -4,6 +4,7 @@ pub mod credentials;
 mod error;
 pub mod models;
 pub mod openai;
+pub mod provider;
 pub mod provider_types;
 pub mod responses;
 mod sse;

@@ -162,20 +162,13 @@ fn read_env_non_empty(key: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn required_provider_for_model(model: &str) -> Option<&'static str> {
-    if model.starts_with("claude") {
-        Some("anthropic")
-    } else if model.starts_with("gpt-")
-        || model.starts_with("o1")
-        || model.starts_with("o3")
-        || model.starts_with("o4")
-        || model.starts_with("codex-")
-        || model.starts_with("chatgpt-")
-    {
-        Some("openai")
-    } else {
-        None
+fn required_provider_for_model(model: &str) -> Option<String> {
+    if model.trim().is_empty() {
+        return None;
     }
+    let store = api::credentials::load_credentials().unwrap_or_default();
+    let registry = api::provider::ProviderRegistry::from_credentials(&store);
+    Some(registry.provider_for_model(model).to_string())
 }
 
 fn has_store_credentials_for(provider: &str) -> bool {
@@ -240,11 +233,11 @@ fn detect_missing_auth_provider(model: &str) -> Option<String> {
         return Some("not-selected".to_string());
     }
 
-    let provider = required_provider_for_model(model).unwrap_or("other");
-    if has_credentials_for_provider(provider) {
+    let provider = required_provider_for_model(model).unwrap_or_else(|| "other".to_string());
+    if has_credentials_for_provider(&provider) {
         None
     } else {
-        Some(provider.to_string())
+        Some(provider)
     }
 }
 

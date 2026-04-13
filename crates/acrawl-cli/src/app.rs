@@ -9,10 +9,10 @@ use std::sync::mpsc;
 
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
-    AnthropicClient, AuthSource, ChatCompletionsClient, ContentBlockDelta, InputContentBlock,
-    InputMessage, MessageRequest, MessageResponse, OpenAiMessageStream, OpenAiResponsesClient,
-    OutputContentBlock, ResponsesMessageStream, StreamEvent as ApiStreamEvent, ToolChoice,
-    ToolDefinition, ToolResultContentBlock,
+    provider::{ProviderClient, ProviderRegistry}, AnthropicClient, AuthSource,
+    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
+    OutputContentBlock, StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition,
+    ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
@@ -52,56 +52,13 @@ pub(crate) enum Provider {
     Other,
 }
 
-fn provider_for_model(model: &str) -> Provider {
-    if model.starts_with("claude") {
-        Provider::Anthropic
-    } else if model.starts_with("gpt-")
-        || model.starts_with("o1")
-        || model.starts_with("o3")
-        || model.starts_with("o4")
-        || model.starts_with("codex-")
-        || model.starts_with("chatgpt-")
-    {
-        Provider::OpenAi
-    } else {
-        Provider::Other
-    }
-}
-
-pub(crate) fn max_tokens_for_model(model: &str) -> u32 {
-    match provider_for_model(model) {
-        Provider::OpenAi => 16_384,
-        // OpenAI-compatible endpoints vary widely; keep a conservative default
-        // to avoid immediate 400s on providers capped at 8192 (e.g. DeepSeek-compatible setups).
-        Provider::Other => 8_192,
-        Provider::Anthropic => {
-            if model.contains("opus") {
-                32_000
-            } else {
-                64_000
-            }
-        }
-    }
-}
-
-pub(crate) fn resolve_model_alias(model: &str) -> &str {
-    match model {
-        "opus" => "claude-opus-4-6",
-        "sonnet" => "claude-sonnet-4-6",
-        "haiku" => "claude-haiku-4-5-20251213",
-        "gpt4o" | "4o" => "gpt-4o",
-        "gpt4" => "gpt-4-turbo",
-        "codex" => "codex-mini-latest",
-        _ => model,
-    }
-}
-
 pub(crate) fn initial_model_from_credentials() -> Option<String> {
     let store = api::load_credentials().unwrap_or_default();
+    let registry = ProviderRegistry::from_credentials(&store);
     if let Some(provider_name) = &store.active_provider {
         if let Some(config) = store.providers.get(provider_name) {
             if let Some(model) = &config.default_model {
-                return Some(resolve_model_alias(model).to_string());
+                return Some(registry.resolve_alias(model).to_string());
             }
         }
     }
@@ -568,7 +525,9 @@ impl LiveCli {
                 persist_after: false,
             });
         };
-        let model = resolve_model_alias(&model).to_string();
+        let store = api::load_credentials().unwrap_or_default();
+        let registry = ProviderRegistry::from_credentials(&store);
+        let model = registry.resolve_alias(&model).to_string();
         if model == self.model {
             return Ok(CommandUiResult {
                 message: format_model_report(
@@ -1328,18 +1287,13 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
 
 pub(crate) struct LlmRuntimeClient {
     runtime: tokio::runtime::Runtime,
-    provider: LlmProvider,
+    registry: ProviderRegistry,
+    provider: ProviderClient,
     model: String,
     enable_tools: bool,
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-}
-
-enum LlmProvider {
-    Anthropic(AnthropicClient),
-    OpenAi(OpenAiResponsesClient),
-    Other(ChatCompletionsClient),
 }
 
 impl LlmRuntimeClient {
@@ -1351,72 +1305,19 @@ impl LlmRuntimeClient {
         ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let store = api::load_credentials().unwrap_or_default();
-
-        // If no credentials at all, create a no-auth placeholder so the TUI can
-        // still launch and show the auth modal. The error surfaces on the first
-        // actual API call, not at startup.
-        let provider = if store.providers.is_empty() {
-            LlmProvider::Anthropic(AnthropicClient::from_auth(AuthSource::None))
+        let registry = ProviderRegistry::from_credentials(&store);
+        let resolved_model = registry.resolve_alias(model.as_str());
+        let model = if resolved_model == model {
+            model
         } else {
-            // Prefer the active_provider over model-based routing so that e.g.
-            // a user who configured openai isn't blocked by the default claude model.
-            let effective_provider = store
-                .active_provider
-                .as_deref()
-                .and_then(|name| match name {
-                    "anthropic" => Some(Provider::Anthropic),
-                    "openai" => Some(Provider::OpenAi),
-                    "other" => Some(Provider::Other),
-                    _ => None,
-                })
-                .unwrap_or_else(|| provider_for_model(&model));
-
-            match effective_provider {
-                Provider::Anthropic => {
-                    let config = store
-                        .providers
-                        .get("anthropic")
-                        .ok_or("No Anthropic credentials found. Run `acrawl auth`.")?;
-                    let auth = credential_config_to_auth_source(config);
-                    LlmProvider::Anthropic(AnthropicClient::from_auth(auth))
-                }
-                Provider::OpenAi => {
-                    let config = store
-                        .providers
-                        .get("openai")
-                        .ok_or("No OpenAI credentials found. Run `acrawl auth`.")?;
-                    let auth = credential_config_to_auth_source(config);
-                    let mut client = OpenAiResponsesClient::new(auth, &model);
-                    if config.auth_method == "oauth" {
-                        let account_id = config.oauth.as_ref().and_then(|o| o.account_id.clone());
-                        client = client.with_codex_endpoint(account_id);
-                    }
-                    LlmProvider::OpenAi(client)
-                }
-                Provider::Other => {
-                    let default_base_url = "http://localhost:11434/v1".to_string();
-                    let (auth, base_url) = store
-                        .providers
-                        .get("other")
-                        .map(|config| {
-                            (
-                                credential_config_to_auth_source(config),
-                                config
-                                    .base_url
-                                    .clone()
-                                    .unwrap_or_else(|| default_base_url.clone()),
-                            )
-                        })
-                        .unwrap_or((AuthSource::None, default_base_url));
-                    LlmProvider::Other(
-                        ChatCompletionsClient::with_no_auth(&model, &base_url)
-                            .with_optional_auth(auth),
-                    )
-                }
-            }
+            resolved_model.to_string()
         };
+        let provider = registry
+            .build_client(&model, &store)
+            .unwrap_or_else(|_| ProviderClient::no_auth_placeholder());
         Ok(Self {
             runtime: tokio::runtime::Runtime::new()?,
+            registry,
             provider,
             model,
             enable_tools,
@@ -1431,25 +1332,6 @@ impl LlmRuntimeClient {
             let _ = tx.send(ReplTuiEvent::StreamAnsi(chunk.into()));
         }
     }
-}
-
-fn credential_config_to_auth_source(config: &api::StoredProviderConfig) -> AuthSource {
-    if config.auth_method == "oauth" {
-        if let Some(oauth) = &config.oauth {
-            return AuthSource::BearerToken(oauth.access_token.clone());
-        }
-    }
-    if let Some(key) = &config.api_key {
-        if !key.is_empty() {
-            if config.auth_method == "oauth"
-                || matches!(config.auth_method.as_str(), "openai" | "openai_key")
-            {
-                return AuthSource::BearerToken(key.clone());
-            }
-            return AuthSource::ApiKey(key.clone());
-        }
-    }
-    AuthSource::None
 }
 
 #[allow(dead_code)]
@@ -1665,7 +1547,7 @@ impl ApiClient for LlmRuntimeClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         let message_request = MessageRequest {
             model: self.model.clone(),
-            max_tokens: max_tokens_for_model(&self.model),
+            max_tokens: self.registry.max_tokens(&self.model),
             messages: convert_messages(&request.messages),
             system: (!request.system_prompt.is_empty()).then(|| request.system_prompt.join("\n\n")),
             tools: self.enable_tools.then(|| {
@@ -1695,31 +1577,13 @@ impl ApiClient for LlmRuntimeClient {
             let mut pending_tool: Option<(String, String, String)> = None;
             let mut saw_stop = false;
 
-            let mut unified = match &self.provider {
-                LlmProvider::Anthropic(client) => {
-                    let s = client
-                        .stream_message(&message_request)
-                        .await
-                        .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    UnifiedStream::Anthropic(s)
-                }
-                LlmProvider::OpenAi(client) => {
-                    let s = client
-                        .stream_message(&message_request)
-                        .await
-                        .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    UnifiedStream::OpenAi(s)
-                }
-                LlmProvider::Other(client) => {
-                    let s = client
-                        .stream_message(&message_request)
-                        .await
-                        .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    UnifiedStream::Other(s)
-                }
-            };
+            let mut stream = self
+                .provider
+                .stream_message(&message_request)
+                .await
+                .map_err(|error| RuntimeError::new(error.to_string()))?;
 
-            while let Some(event) = unified
+            while let Some(event) = stream
                 .next_event()
                 .await
                 .map_err(|error| RuntimeError::new(error.to_string()))?
@@ -1829,36 +1693,20 @@ impl ApiClient for LlmRuntimeClient {
             {
                 return Ok(events);
             }
-            match &self.provider {
-                LlmProvider::Anthropic(client) => {
-                    let response = client
-                        .send_message(&MessageRequest {
-                            stream: false,
-                            ..message_request.clone()
-                        })
-                        .await
-                        .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    response_to_events(response, out, self.ui_tx.as_ref())
-                }
-                LlmProvider::OpenAi(_) | LlmProvider::Other(_) => Ok(events),
+            if self.provider.is_anthropic() {
+                let response = self
+                    .provider
+                    .send_message(&MessageRequest {
+                        stream: false,
+                        ..message_request.clone()
+                    })
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
+                response_to_events(response, out, self.ui_tx.as_ref())
+            } else {
+                Ok(events)
             }
         })
-    }
-}
-
-enum UnifiedStream {
-    Anthropic(api::MessageStream),
-    OpenAi(ResponsesMessageStream),
-    Other(OpenAiMessageStream),
-}
-
-impl UnifiedStream {
-    async fn next_event(&mut self) -> Result<Option<ApiStreamEvent>, api::ApiError> {
-        match self {
-            Self::Anthropic(s) => s.next_event().await,
-            Self::OpenAi(s) => s.next_event().await,
-            Self::Other(s) => s.next_event().await,
-        }
     }
 }
 
@@ -2137,40 +1985,47 @@ mod tests {
 
     #[test]
     fn resolves_known_model_aliases() {
-        assert_eq!(resolve_model_alias("opus"), "claude-opus-4-6");
-        assert_eq!(resolve_model_alias("sonnet"), "claude-sonnet-4-6");
-        assert_eq!(resolve_model_alias("haiku"), "claude-haiku-4-5-20251213");
-        assert_eq!(resolve_model_alias("claude-opus"), "claude-opus");
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert_eq!(registry.resolve_alias("opus"), "claude-opus-4-6");
+        assert_eq!(registry.resolve_alias("sonnet"), "claude-sonnet-4-6");
+        assert_eq!(registry.resolve_alias("haiku"), "claude-haiku-4-5-20251213");
+        assert_eq!(registry.resolve_alias("claude-opus"), "claude-opus");
     }
 
     #[test]
     fn routes_claude_models_to_anthropic() {
-        assert_eq!(provider_for_model("claude-sonnet-4-6"), Provider::Anthropic);
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert_eq!(registry.provider_for_model("claude-sonnet-4-6"), "anthropic");
     }
 
     #[test]
     fn routes_gpt_models_to_openai() {
-        assert_eq!(provider_for_model("gpt-4o"), Provider::OpenAi);
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert_eq!(registry.provider_for_model("gpt-4o"), "openai");
     }
 
     #[test]
     fn routes_codex_models_to_openai() {
-        assert_eq!(provider_for_model("codex-mini-latest"), Provider::OpenAi);
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert_eq!(registry.provider_for_model("codex-mini-latest"), "openai");
     }
 
     #[test]
     fn routes_o_series_models_to_openai() {
-        assert_eq!(provider_for_model("o3"), Provider::OpenAi);
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert_eq!(registry.provider_for_model("o3"), "openai");
     }
 
     #[test]
     fn routes_llama_models_to_other() {
-        assert_eq!(provider_for_model("llama3.2"), Provider::Other);
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert_eq!(registry.provider_for_model("llama3.2"), "other");
     }
 
     #[test]
     fn routes_qwen_models_to_other() {
-        assert_eq!(provider_for_model("qwen2"), Provider::Other);
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert_eq!(registry.provider_for_model("qwen2"), "other");
     }
 
     #[test]

@@ -17,8 +17,7 @@ use runtime::{load_system_prompt, PermissionMode, Session};
 
 use app::{
     default_permission_mode, initial_model_from_credentials, permission_mode_from_label,
-    resolve_model_alias, run_auth_cli, run_login, run_logout, run_repl, run_resume_command,
-    AllowedToolSet, LiveCli,
+    run_auth_cli, run_login, run_logout, run_repl, run_resume_command, AllowedToolSet, LiveCli,
 };
 use format::{normalize_permission_mode, render_version_report, DEFAULT_DATE, VERSION};
 
@@ -179,11 +178,15 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 let value = args
                     .get(index + 1)
                     .ok_or_else(|| "missing value for --model".to_string())?;
-                model = Some(resolve_model_alias(value).to_string());
+                let store = api::load_credentials().unwrap_or_default();
+                let registry = api::provider::ProviderRegistry::from_credentials(&store);
+                model = Some(registry.resolve_alias(value).to_string());
                 index += 2;
             }
             flag if flag.starts_with("--model=") => {
-                model = Some(resolve_model_alias(&flag[8..]).to_string());
+                let store = api::load_credentials().unwrap_or_default();
+                let registry = api::provider::ProviderRegistry::from_credentials(&store);
+                model = Some(registry.resolve_alias(&flag[8..]).to_string());
                 index += 1;
             }
             "--output-format" => {
@@ -234,9 +237,11 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 let model = model.clone().ok_or_else(|| {
                     "missing model: set --model, set env model vars, or run `acrawl auth` to configure a default model".to_string()
                 })?;
+                let store = api::load_credentials().unwrap_or_default();
+                let registry = api::provider::ProviderRegistry::from_credentials(&store);
                 return Ok(CliAction::Prompt {
                     prompt,
-                    model: resolve_model_alias(&model).to_string(),
+                    model: registry.resolve_alias(&model).to_string(),
                     output_format,
                     allowed_tools: normalize_allowed_tools(&allowed_tool_values)?,
                     permission_mode,
