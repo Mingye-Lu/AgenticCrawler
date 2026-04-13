@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{Map, Value};
 
+use crate::client::AuthSource;
 use crate::error::ApiError;
 use crate::types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
@@ -9,6 +10,92 @@ use crate::types::{
     MessageResponse, MessageStartEvent, MessageStopEvent, OutputContentBlock, StreamEvent,
     ToolChoice, ToolResultContentBlock, Usage,
 };
+
+const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com";
+
+#[derive(Debug, Clone)]
+pub struct OpenAiResponsesClient {
+    http: reqwest::Client,
+    auth: AuthSource,
+    base_url: String,
+    model: String,
+}
+
+impl OpenAiResponsesClient {
+    #[must_use]
+    pub fn new(auth: AuthSource, model: impl Into<String>) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            auth,
+            base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
+            model: model.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
+    }
+
+    pub async fn stream_message(
+        &self,
+        request: &MessageRequest,
+    ) -> Result<ResponsesMessageStream, ApiError> {
+        let model = if request.model.is_empty() {
+            &self.model
+        } else {
+            &request.model
+        };
+
+        let mut body = build_responses_request(request, model);
+        if is_reasoning_model(model) {
+            body["reasoning"] = serde_json::json!({"effort": "high", "summary": "auto"});
+            body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
+        }
+
+        let url = format!("{}/v1/responses", self.base_url.trim_end_matches('/'));
+        let mut req = self
+            .http
+            .post(&url)
+            .header("content-type", "application/json")
+            .header("accept", "text/event-stream");
+
+        if let Some(token) = self.auth.bearer_token().or_else(|| self.auth.api_key()) {
+            req = req.bearer_auth(token);
+        }
+
+        let response = req.json(&body).send().await.map_err(ApiError::from)?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(ApiError::Api {
+                status,
+                error_type: None,
+                message: None,
+                body,
+                retryable: matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504),
+            });
+        }
+
+        Ok(ResponsesMessageStream {
+            response,
+            buffer: Vec::new(),
+            state: ResponsesStreamState::new(),
+            pending: VecDeque::new(),
+            done: false,
+        })
+    }
+}
+
+#[must_use]
+fn is_reasoning_model(model: &str) -> bool {
+    model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.starts_with("codex-")
+        || model.starts_with("gpt-5")
+}
 
 #[must_use]
 pub fn build_responses_request(request: &MessageRequest, model: &str) -> Value {
@@ -816,7 +903,13 @@ fn responses_stream_error(data: &Value) -> ApiError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+
     use super::*;
+    use crate::AuthSource;
     use crate::types::{ToolDefinition, ToolResultContentBlock};
 
     const TEXT_ONLY_STREAM_FIXTURE: &str = concat!(
@@ -899,6 +992,67 @@ mod tests {
         Ok(events)
     }
 
+    fn spawn_test_server(response: &'static str) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("local addr");
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            let mut headers_end = None;
+            let mut content_length = 0_usize;
+
+            loop {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+
+                if headers_end.is_none() {
+                    headers_end = buffer
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|position| position + 4);
+
+                    if let Some(end) = headers_end {
+                        let headers = String::from_utf8_lossy(&buffer[..end]).to_lowercase();
+                        content_length = headers
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length: "))
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                    }
+                }
+
+                if let Some(end) = headers_end {
+                    let body_len = buffer.len().saturating_sub(end);
+                    if body_len >= content_length {
+                        break;
+                    }
+                }
+            }
+
+            tx.send(String::from_utf8(buffer).expect("utf8 request"))
+                .expect("send request bytes");
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+
+        (format!("http://{address}"), rx)
+    }
+
+    fn request_body_from_raw_http(raw_request: &str) -> Value {
+        let body = raw_request
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .expect("request body separator");
+        serde_json::from_str(body).expect("json body")
+    }
+
     #[test]
     fn request_has_input_not_messages() {
         let body = build_responses_request(&sample_request(), "gpt-4.1");
@@ -937,6 +1091,97 @@ mod tests {
         let body = build_responses_request(&sample_request(), "gpt-4.1");
         assert!(body.get("reasoning").is_none());
         assert!(body.get("include").is_none());
+    }
+
+    #[test]
+    fn test_is_reasoning_model_o3() {
+        assert!(is_reasoning_model("o3"));
+    }
+
+    #[test]
+    fn test_is_reasoning_model_o4_mini() {
+        assert!(is_reasoning_model("o4-mini"));
+    }
+
+    #[test]
+    fn test_is_reasoning_model_codex_mini() {
+        assert!(is_reasoning_model("codex-mini-latest"));
+    }
+
+    #[test]
+    fn test_is_reasoning_model_gpt5() {
+        assert!(is_reasoning_model("gpt-5"));
+    }
+
+    #[test]
+    fn test_non_reasoning_model_gpt4o() {
+        assert!(!is_reasoning_model("gpt-4o"));
+    }
+
+    #[test]
+    fn test_non_reasoning_model_gpt4_turbo() {
+        assert!(!is_reasoning_model("gpt-4-turbo"));
+    }
+
+    #[tokio::test]
+    async fn request_body_has_reasoning_params_for_o3_model() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: text/event-stream\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "data: [DONE]\n\n"
+        );
+        let (base_url, requests) = spawn_test_server(response);
+        let client = OpenAiResponsesClient::new(AuthSource::ApiKey("sk-test".to_string()), "o3")
+            .with_base_url(base_url);
+
+        let _stream = client
+            .stream_message(&sample_request())
+            .await
+            .expect("request should succeed");
+
+        let raw_request = requests.recv().expect("captured request");
+        let raw_request_lower = raw_request.to_lowercase();
+        assert!(raw_request.starts_with("POST /v1/responses HTTP/1.1"));
+        assert!(raw_request_lower.contains("authorization: bearer sk-test\r\n"));
+        assert!(raw_request_lower.contains("accept: text/event-stream\r\n"));
+
+        let body = request_body_from_raw_http(&raw_request);
+        assert_eq!(body["model"], "o3");
+        assert_eq!(body["reasoning"], serde_json::json!({"effort": "high", "summary": "auto"}));
+        assert_eq!(body["include"], serde_json::json!(["reasoning.encrypted_content"]));
+        assert_eq!(body["store"], false);
+    }
+
+    #[tokio::test]
+    async fn request_body_has_no_reasoning_params_for_gpt4o_model() {
+        let response = concat!(
+            "HTTP/1.1 200 OK\r\n",
+            "Content-Type: text/event-stream\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "data: [DONE]\n\n"
+        );
+        let (base_url, requests) = spawn_test_server(response);
+        let client = OpenAiResponsesClient::new(AuthSource::BearerToken("oauth-test".to_string()), "gpt-4o")
+            .with_base_url(base_url);
+
+        let _stream = client
+            .stream_message(&sample_request())
+            .await
+            .expect("request should succeed");
+
+        let raw_request = requests.recv().expect("captured request");
+        assert!(raw_request
+            .to_lowercase()
+            .contains("authorization: bearer oauth-test\r\n"));
+
+        let body = request_body_from_raw_http(&raw_request);
+        assert_eq!(body["model"], "gpt-4o");
+        assert!(body.get("reasoning").is_none());
+        assert!(body.get("include").is_none());
+        assert_eq!(body["store"], false);
     }
 
     #[test]
