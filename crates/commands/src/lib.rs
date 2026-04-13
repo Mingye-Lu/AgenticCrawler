@@ -120,7 +120,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         name: "auth",
         summary: "Authenticate with a provider (auto-launched if no credentials)",
-        argument_hint: Some("[anthropic|openai|codex]"),
+        argument_hint: Some("[anthropic|openai|other]"),
         resume_supported: false,
     },
     SlashCommandSpec {
@@ -438,7 +438,7 @@ mod tests {
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));
         assert!(help.contains("/session [list|switch <session-id>]"));
-        assert!(help.contains("/auth [anthropic|openai|codex]"));
+        assert!(help.contains("/auth [anthropic|openai|other]"));
         assert!(help.contains("/headed"));
         assert!(help.contains("/headless"));
         assert_eq!(slash_command_specs().len(), 17);
