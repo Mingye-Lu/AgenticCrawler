@@ -29,10 +29,10 @@ pub use models::{
     AnthropicModel, AnthropicModelList, OpenAiModel, OpenAiModelList, list_anthropic_models,
     list_openai_models,
 };
-pub use openai::{OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
+pub use openai::{ChatCompletionsClient, OpenAiClient, OpenAiMessageStream, DEFAULT_OPENAI_MODEL};
 pub use sse::{parse_frame, SseParser};
 pub use responses::{
-    ResponsesMessageStream, ResponsesStreamState, build_responses_request,
+    OpenAiResponsesClient, ResponsesMessageStream, ResponsesStreamState, build_responses_request,
     convert_responses_messages, convert_responses_tool, responses_tool_choice,
 };
 pub use provider_types::{AuthMethod, Provider, ProviderConfig};
