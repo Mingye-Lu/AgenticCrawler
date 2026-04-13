@@ -1715,60 +1715,6 @@ impl UnifiedStream {
     }
 }
 
-#[allow(dead_code)]
-fn run_codex_login() -> Result<(), Box<dyn std::error::Error>> {
-    let login_request = api::codex_login()?;
-    println!("Starting Codex OAuth login...");
-    let redirect_uri = &login_request.redirect_uri;
-    let port = login_request
-        .config
-        .callback_port
-        .unwrap_or(api::CODEX_CALLBACK_PORT);
-    println!("Listening for callback on {redirect_uri}");
-    if let Err(error) = open_browser(&login_request.authorization_url) {
-        eprintln!("warning: failed to open browser automatically: {error}");
-        println!(
-            "Open this URL manually:\n{}",
-            login_request.authorization_url
-        );
-    }
-    let callback = wait_for_oauth_callback(port)?;
-    if let Some(error) = callback.error {
-        let description = callback
-            .error_description
-            .unwrap_or_else(|| "authorization failed".to_string());
-        return Err(io::Error::other(format!("{error}: {description}")).into());
-    }
-    let code = callback.code.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "callback did not include code")
-    })?;
-    let returned_state = callback.state.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "callback did not include state")
-    })?;
-    if returned_state != login_request.state {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "oauth state mismatch").into());
-    }
-    let client = AnthropicClient::from_auth(AuthSource::None);
-    let exchange_request = OAuthTokenExchangeRequest::from_config(
-        &login_request.config,
-        code,
-        login_request.state,
-        login_request.pkce.verifier,
-        login_request.redirect_uri,
-    );
-    let rt = tokio::runtime::Runtime::new()?;
-    let token_set =
-        rt.block_on(client.exchange_oauth_code(&login_request.config, &exchange_request))?;
-    api::save_codex_credentials(&runtime::OAuthTokenSet {
-        access_token: token_set.access_token,
-        refresh_token: token_set.refresh_token,
-        expires_at: token_set.expires_at,
-        scopes: token_set.scopes,
-    })?;
-    println!("Codex OAuth login complete.");
-    Ok(())
-}
-
 pub(crate) fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let target = match provider {
         Some(p) => parse_provider_arg(p)?,

@@ -14,9 +14,9 @@ pub use client::{
     AnthropicClient, AuthSource, MessageStream, OAuthTokenSet,
 };
 pub use codex::{
-    codex_oauth_config, codex_redirect_uri, login as codex_login, read_codex_model,
-    save_codex_credentials, CodexLoginRequest, CODEX_CALLBACK_PORT, CODEX_SCOPES,
-    DEFAULT_CODEX_MODEL, OPENAI_AUTH_URL, OPENAI_CLIENT_ID, OPENAI_TOKEN_URL,
+    codex_oauth_config, codex_redirect_uri, login as codex_login, save_codex_credentials,
+    CodexLoginRequest, CODEX_CALLBACK_PORT, CODEX_SCOPES, DEFAULT_CODEX_MODEL, OPENAI_AUTH_URL,
+    OPENAI_CLIENT_ID, OPENAI_TOKEN_URL,
 };
 pub use credentials::{
     credentials_file_path, get_active_config, load_credentials, load_credentials_from_path,
