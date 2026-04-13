@@ -29,6 +29,9 @@ pub enum AssistantEvent {
         name: String,
         input: String,
     },
+    Reasoning {
+        data: String,
+    },
     Usage(TokenUsage),
     MessageStop,
 }
@@ -387,6 +390,10 @@ fn build_assistant_message(
             AssistantEvent::ToolUse { id, name, input } => {
                 flush_text_block(&mut text, &mut blocks);
                 blocks.push(ContentBlock::ToolUse { id, name, input });
+            }
+            AssistantEvent::Reasoning { data } => {
+                flush_text_block(&mut text, &mut blocks);
+                blocks.push(ContentBlock::Reasoning { data });
             }
             AssistantEvent::Usage(value) => usage = Some(value),
             AssistantEvent::MessageStop => {
@@ -992,5 +999,26 @@ mod tests {
             parse_auto_compaction_threshold(Some("not-a-number")),
             DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD
         );
+    }
+
+    #[test]
+    fn reasoning_event_stored_in_message() {
+        use super::build_assistant_message;
+
+        let events = vec![
+            AssistantEvent::Reasoning {
+                data: r#"{"id":"rs_123","content":[]}"#.to_string(),
+            },
+            AssistantEvent::TextDelta("answer".to_string()),
+            AssistantEvent::MessageStop,
+        ];
+        let (message, _usage) = build_assistant_message(events).expect("build should succeed");
+
+        assert_eq!(message.blocks.len(), 2);
+        assert!(matches!(
+            &message.blocks[0],
+            ContentBlock::Reasoning { data } if data == r#"{"id":"rs_123","content":[]}"#
+        ));
+        assert!(matches!(&message.blocks[1], ContentBlock::Text { text } if text == "answer"));
     }
 }

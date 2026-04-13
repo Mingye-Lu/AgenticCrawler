@@ -393,6 +393,7 @@ pub(crate) fn render_export_text(session: &Session) -> String {
                         "[tool_result id={tool_use_id} name={tool_name} error={is_error}] {output}"
                     ));
                 }
+                ContentBlock::Reasoning { .. } => {}
             }
         }
         lines.push(String::new());

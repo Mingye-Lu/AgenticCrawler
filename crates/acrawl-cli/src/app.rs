@@ -9,20 +9,22 @@ use std::sync::mpsc;
 
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
-    resolve_startup_auth_source, AnthropicClient, AuthSource, CodexClient, CodexMessageStream,
-    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
-    OpenAiClient, OpenAiMessageStream, OutputContentBlock, StreamEvent as ApiStreamEvent,
-    ToolChoice, ToolDefinition, ToolResultContentBlock, DEFAULT_CODEX_MODEL, DEFAULT_OPENAI_MODEL,
+    AnthropicClient, AuthSource, ChatCompletionsClient, ContentBlockDelta, InputContentBlock,
+    InputMessage, MessageRequest, MessageResponse, OpenAiMessageStream,
+    OpenAiResponsesClient, OutputContentBlock, ResponsesMessageStream,
+    StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
+    DEFAULT_CODEX_MODEL, DEFAULT_OPENAI_MODEL,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
 use runtime::{
-    clear_oauth_credentials, generate_pkce_pair, generate_state, load_system_prompt,
-    parse_oauth_callback_request_target, save_oauth_credentials, ApiClient, ApiRequest,
-    AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage, ConversationRuntime,
-    MessageRole, OAuthAuthorizationRequest, OAuthConfig, OAuthTokenExchangeRequest, PermissionMode,
-    PermissionPolicy, PermissionPromptDecision, PermissionPrompter, PermissionRequest,
-    RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
+    clear_oauth_credentials, generate_pkce_pair, generate_state, load_oauth_credentials,
+    load_system_prompt, parse_oauth_callback_request_target, save_oauth_credentials, ApiClient,
+    ApiRequest, AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage,
+    ConversationRuntime, MessageRole, OAuthAuthorizationRequest, OAuthConfig,
+    OAuthTokenExchangeRequest, PermissionMode, PermissionPolicy, PermissionPromptDecision,
+    PermissionPrompter, PermissionRequest, RuntimeError, Session, TokenUsage, ToolError,
+    ToolExecutor,
 };
 use serde_json::json;
 
@@ -49,28 +51,28 @@ const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 pub(crate) enum Provider {
     Anthropic,
     OpenAi,
-    Codex,
+    Other,
 }
 
 fn provider_for_model(model: &str) -> Provider {
-    // Check for "codex" anywhere in the model name first — models like
-    // "gpt-5.3-codex" need Codex OAuth routing even though they start with "gpt-".
-    if model.contains("codex") {
-        Provider::Codex
+    if model.starts_with("claude") {
+        Provider::Anthropic
     } else if model.starts_with("gpt-")
         || model.starts_with("o1")
         || model.starts_with("o3")
         || model.starts_with("o4")
+        || model.starts_with("codex-")
+        || model.starts_with("chatgpt-")
     {
         Provider::OpenAi
     } else {
-        Provider::Anthropic
+        Provider::Other
     }
 }
 
 pub(crate) fn max_tokens_for_model(model: &str) -> u32 {
     match provider_for_model(model) {
-        Provider::OpenAi | Provider::Codex => 16_384,
+        Provider::OpenAi | Provider::Other => 16_384,
         Provider::Anthropic => {
             if model.contains("opus") {
                 32_000
@@ -121,6 +123,19 @@ pub(crate) fn initial_model_from_env() -> String {
         ),
         _ => DEFAULT_MODEL.to_string(),
     }
+}
+
+#[allow(dead_code)]
+pub(crate) fn initial_model_from_credentials() -> String {
+    let store = api::load_credentials().unwrap_or_default();
+    if let Some(provider_name) = &store.active_provider {
+        if let Some(config) = store.providers.get(provider_name) {
+            if let Some(model) = &config.default_model {
+                return resolve_model_alias(model).to_string();
+            }
+        }
+    }
+    DEFAULT_MODEL.to_string()
 }
 
 pub(crate) fn default_permission_mode() -> PermissionMode {
@@ -806,7 +821,7 @@ impl LiveCli {
             Some(p) => parse_provider_arg(p)?,
             None => prompt_provider_choice()?,
         };
-        run_auth_for_provider(target)?;
+        interactive_login_prompt(target)?;
         let session = self.runtime.session().clone();
         self.runtime = build_runtime(
             session,
@@ -1278,8 +1293,8 @@ pub(crate) struct LlmRuntimeClient {
 
 enum LlmProvider {
     Anthropic(AnthropicClient),
-    OpenAi(OpenAiClient),
-    Codex(CodexClient),
+    OpenAi(OpenAiResponsesClient),
+    Other(ChatCompletionsClient),
 }
 
 impl LlmRuntimeClient {
@@ -1290,20 +1305,44 @@ impl LlmRuntimeClient {
         allowed_tools: Option<AllowedToolSet>,
         ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let store = api::load_credentials().unwrap_or_default();
         let provider = match provider_for_model(&model) {
             Provider::Anthropic => {
-                let auth = resolve_anthropic_auth()?;
+                let config = store
+                    .providers
+                    .get("anthropic")
+                    .ok_or("No Anthropic credentials found. Run `acrawl auth`.")?;
+                let auth = credential_config_to_auth_source(config);
                 LlmProvider::Anthropic(
                     AnthropicClient::from_auth(auth).with_base_url(api::read_base_url()),
                 )
             }
             Provider::OpenAi => {
-                let auth = resolve_openai_auth()?;
-                LlmProvider::OpenAi(OpenAiClient::with_auth(auth).with_model(&model))
+                let config = store
+                    .providers
+                    .get("openai")
+                    .ok_or("No OpenAI credentials found. Run `acrawl auth`.")?;
+                let auth = credential_config_to_auth_source(config);
+                LlmProvider::OpenAi(OpenAiResponsesClient::new(auth, &model))
             }
-            Provider::Codex => {
-                let auth = resolve_codex_auth_interactive()?;
-                LlmProvider::Codex(CodexClient::new(auth, &model))
+            Provider::Other => {
+                let default_base_url = "http://localhost:11434/v1".to_string();
+                let (auth, base_url) = store
+                    .providers
+                    .get("other")
+                    .map(|config| {
+                        (
+                            credential_config_to_auth_source(config),
+                            config
+                                .base_url
+                                .clone()
+                                .unwrap_or_else(|| default_base_url.clone()),
+                        )
+                    })
+                    .unwrap_or((AuthSource::None, default_base_url));
+                LlmProvider::Other(
+                    ChatCompletionsClient::with_no_auth(&model, &base_url).with_optional_auth(auth),
+                )
             }
         };
         Ok(Self {
@@ -1324,40 +1363,26 @@ impl LlmRuntimeClient {
     }
 }
 
-fn resolve_anthropic_auth() -> Result<AuthSource, Box<dyn std::error::Error>> {
-    match resolve_startup_auth_source(load_oauth_config_from_cwd) {
-        Ok(auth) => Ok(auth),
-        Err(api::ApiError::MissingApiKey | api::ApiError::ExpiredOAuthToken) => {
-            interactive_login_prompt(Provider::Anthropic)?;
-            Ok(resolve_startup_auth_source(load_oauth_config_from_cwd)?)
+fn credential_config_to_auth_source(config: &api::StoredProviderConfig) -> AuthSource {
+    if config.auth_method == "oauth" {
+        if let Some(oauth) = &config.oauth {
+            return AuthSource::BearerToken(oauth.access_token.clone());
         }
-        Err(error) => Err(error.into()),
     }
-}
-
-fn resolve_openai_auth() -> Result<AuthSource, Box<dyn std::error::Error>> {
-    if let Ok(key) = env::var("OPENAI_API_KEY") {
+    if let Some(key) = &config.api_key {
         if !key.is_empty() {
-            return Ok(AuthSource::BearerToken(key));
+            if config.auth_method == "oauth"
+                || matches!(config.auth_method.as_str(), "openai" | "openai_key")
+            {
+                return AuthSource::BearerToken(key.clone());
+            }
+            return AuthSource::ApiKey(key.clone());
         }
     }
-    interactive_login_prompt(Provider::OpenAi)?;
-    if let Ok(key) = env::var("OPENAI_API_KEY") {
-        if !key.is_empty() {
-            return Ok(AuthSource::BearerToken(key));
-        }
-    }
-    Err("OPENAI_API_KEY still not set after login prompt".into())
+    AuthSource::None
 }
 
-fn resolve_codex_auth_interactive() -> Result<AuthSource, Box<dyn std::error::Error>> {
-    if let Ok(auth) = api::resolve_codex_auth() {
-        return Ok(auth);
-    }
-    interactive_login_prompt(Provider::Codex)?;
-    Ok(api::resolve_codex_auth()?)
-}
-
+#[allow(dead_code)]
 fn load_oauth_config_from_cwd() -> Result<Option<OAuthConfig>, api::ApiError> {
     let cwd = env::current_dir().map_err(api::ApiError::from)?;
     let config = ConfigLoader::default_for(&cwd).load().map_err(|error| {
@@ -1370,9 +1395,9 @@ pub(crate) fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::e
     match value.to_ascii_lowercase().as_str() {
         "anthropic" | "claude" => Ok(Provider::Anthropic),
         "openai" | "gpt" => Ok(Provider::OpenAi),
-        "codex" => Ok(Provider::Codex),
+        "other" => Ok(Provider::Other),
         other => {
-            Err(format!("unknown provider '{other}'. Use anthropic, openai, or codex.").into())
+            Err(format!("unknown provider '{other}'. Use anthropic, openai, or other.").into())
         }
     }
 }
@@ -1381,7 +1406,7 @@ fn prompt_provider_choice() -> Result<Provider, Box<dyn std::error::Error>> {
     eprintln!("Select a provider to authenticate:");
     eprintln!("  1) Anthropic (OAuth)");
     eprintln!("  2) OpenAI   (API key)");
-    eprintln!("  3) Codex    (OAuth)");
+    eprintln!("  3) Other    (local/OpenAI-compatible)");
     eprint!("Choice [1/2/3]: ");
     io::stderr().flush()?;
     let mut choice = String::new();
@@ -1389,7 +1414,7 @@ fn prompt_provider_choice() -> Result<Provider, Box<dyn std::error::Error>> {
     match choice.trim() {
         "1" | "anthropic" => Ok(Provider::Anthropic),
         "2" | "openai" => Ok(Provider::OpenAi),
-        "3" | "codex" => Ok(Provider::Codex),
+        "3" | "other" => Ok(Provider::Other),
         other => Err(format!("invalid choice '{other}'").into()),
     }
 }
@@ -1398,13 +1423,30 @@ pub(crate) fn provider_label(provider: Provider) -> &'static str {
     match provider {
         Provider::Anthropic => "anthropic",
         Provider::OpenAi => "openai",
-        Provider::Codex => "codex",
+        Provider::Other => "other",
     }
 }
 
 fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
     match provider {
-        Provider::Anthropic => run_login(),
+        Provider::Anthropic => {
+            run_login()?;
+            let oauth = load_oauth_credentials()?
+                .ok_or("Anthropic OAuth completed, but no saved token was found")?;
+            persist_provider_credentials(
+                Provider::Anthropic,
+                api::StoredProviderConfig {
+                    auth_method: "oauth".to_string(),
+                    oauth: Some(api::StoredOAuthTokens {
+                        access_token: oauth.access_token,
+                        refresh_token: oauth.refresh_token,
+                        expires_at: oauth.expires_at.and_then(|value| i64::try_from(value).ok()),
+                        scopes: oauth.scopes,
+                    }),
+                    ..Default::default()
+                },
+            )
+        }
         Provider::OpenAi => {
             eprint!("Paste your OpenAI API key (sk-...): ");
             io::stderr().flush()?;
@@ -1414,10 +1456,61 @@ fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::E
             if key.is_empty() {
                 return Err("OPENAI_API_KEY is required for OpenAI models".into());
             }
-            env::set_var("OPENAI_API_KEY", &key);
-            Ok(())
+            persist_provider_credentials(
+                Provider::OpenAi,
+                api::StoredProviderConfig {
+                    auth_method: "openai_key".to_string(),
+                    api_key: Some(key),
+                    ..Default::default()
+                },
+            )
         }
-        Provider::Codex => run_codex_login(),
+        Provider::Other => {
+            let existing = api::load_credentials()
+                .unwrap_or_default()
+                .providers
+                .get("other")
+                .cloned()
+                .unwrap_or_default();
+            eprint!(
+                "Base URL [{}]: ",
+                existing
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("http://localhost:11434/v1")
+            );
+            io::stderr().flush()?;
+            let mut base_url = String::new();
+            io::stdin().read_line(&mut base_url)?;
+            let base_url = match base_url.trim() {
+                "" => existing
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| "http://localhost:11434/v1".to_string()),
+                value => value.to_string(),
+            };
+
+            eprint!("API key (optional, press Enter to skip): ");
+            io::stderr().flush()?;
+            let mut key = String::new();
+            io::stdin().read_line(&mut key)?;
+            let key = key.trim().to_string();
+
+            persist_provider_credentials(
+                Provider::Other,
+                api::StoredProviderConfig {
+                    auth_method: if key.is_empty() {
+                        "none".to_string()
+                    } else {
+                        "api_key".to_string()
+                    },
+                    api_key: (!key.is_empty()).then_some(key),
+                    base_url: Some(base_url),
+                    default_model: existing.default_model,
+                    ..Default::default()
+                },
+            )
+        }
     }
 }
 
@@ -1430,35 +1523,24 @@ fn interactive_login_prompt(provider: Provider) -> Result<(), Box<dyn std::error
             io::stdin().read_line(&mut answer)?;
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err(
-                    "authentication required — set ANTHROPIC_API_KEY or run `acrawl login`".into(),
-                );
+                return Err("authentication required — run `acrawl auth anthropic`".into());
             }
-            run_login()
+            run_auth_for_provider(Provider::Anthropic)
         }
         Provider::OpenAi => {
             eprintln!("No OpenAI credentials found.");
-            eprint!("Paste your OpenAI API key (sk-...): ");
-            io::stderr().flush()?;
-            let mut key = String::new();
-            io::stdin().read_line(&mut key)?;
-            let key = key.trim().to_string();
-            if key.is_empty() {
-                return Err("OPENAI_API_KEY is required for OpenAI models".into());
-            }
-            env::set_var("OPENAI_API_KEY", &key);
-            Ok(())
+            run_auth_for_provider(Provider::OpenAi)
         }
-        Provider::Codex => {
-            eprint!("No Codex credentials found. Log in via OAuth? [Y/n] ");
+        Provider::Other => {
+            eprint!("No Other provider credentials found. Configure now? [Y/n] ");
             io::stderr().flush()?;
             let mut answer = String::new();
             io::stdin().read_line(&mut answer)?;
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err("authentication required — run `acrawl login` for Codex OAuth".into());
+                return Err("authentication required — run `acrawl auth other`".into());
             }
-            run_codex_login()
+            run_auth_for_provider(Provider::Other)
         }
     }
 }
@@ -1513,12 +1595,12 @@ impl ApiClient for LlmRuntimeClient {
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
                     UnifiedStream::OpenAi(s)
                 }
-                LlmProvider::Codex(client) => {
+                LlmProvider::Other(client) => {
                     let s = client
                         .stream_message(&message_request)
                         .await
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    UnifiedStream::Codex(s)
+                    UnifiedStream::Other(s)
                 }
             };
 
@@ -1643,7 +1725,7 @@ impl ApiClient for LlmRuntimeClient {
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
                     response_to_events(response, out, self.ui_tx.as_ref())
                 }
-                LlmProvider::OpenAi(_) | LlmProvider::Codex(_) => Ok(events),
+                LlmProvider::OpenAi(_) | LlmProvider::Other(_) => Ok(events),
             }
         })
     }
@@ -1651,8 +1733,8 @@ impl ApiClient for LlmRuntimeClient {
 
 enum UnifiedStream {
     Anthropic(api::MessageStream),
-    OpenAi(OpenAiMessageStream),
-    Codex(CodexMessageStream),
+    OpenAi(ResponsesMessageStream),
+    Other(OpenAiMessageStream),
 }
 
 impl UnifiedStream {
@@ -1660,11 +1742,12 @@ impl UnifiedStream {
         match self {
             Self::Anthropic(s) => s.next_event().await,
             Self::OpenAi(s) => s.next_event().await,
-            Self::Codex(s) => s.next_event().await,
+            Self::Other(s) => s.next_event().await,
         }
     }
 }
 
+#[allow(dead_code)]
 fn run_codex_login() -> Result<(), Box<dyn std::error::Error>> {
     let login_request = api::codex_login()?;
     println!("Starting Codex OAuth login...");
@@ -1715,6 +1798,24 @@ fn run_codex_login() -> Result<(), Box<dyn std::error::Error>> {
         scopes: token_set.scopes,
     })?;
     println!("Codex OAuth login complete.");
+    Ok(())
+}
+
+fn persist_provider_credentials(
+    provider: Provider,
+    mut config: api::StoredProviderConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = api::load_credentials().unwrap_or_default();
+    let provider_name = provider_label(provider).to_string();
+    if config.default_model.is_none() {
+        config.default_model = store
+            .providers
+            .get(&provider_name)
+            .and_then(|existing| existing.default_model.clone());
+    }
+    api::set_provider_config(&mut store, &provider_name, config);
+    store.active_provider = Some(provider_name);
+    api::save_credentials(&store)?;
     Ok(())
 }
 
@@ -1938,6 +2039,11 @@ pub(crate) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMes
                         }],
                         is_error: *is_error,
                     },
+                    runtime::ContentBlock::Reasoning { data } => {
+                        let parsed = serde_json::from_str::<serde_json::Value>(data)
+                            .unwrap_or_else(|_| json!({}));
+                        InputContentBlock::Reasoning { data: parsed }
+                    }
                 })
                 .collect::<Vec<_>>();
             (!content.is_empty()).then(|| InputMessage {
@@ -1961,6 +2067,36 @@ mod tests {
         assert_eq!(resolve_model_alias("sonnet"), "claude-sonnet-4-6");
         assert_eq!(resolve_model_alias("haiku"), "claude-haiku-4-5-20251213");
         assert_eq!(resolve_model_alias("claude-opus"), "claude-opus");
+    }
+
+    #[test]
+    fn routes_claude_models_to_anthropic() {
+        assert_eq!(provider_for_model("claude-sonnet-4-6"), Provider::Anthropic);
+    }
+
+    #[test]
+    fn routes_gpt_models_to_openai() {
+        assert_eq!(provider_for_model("gpt-4o"), Provider::OpenAi);
+    }
+
+    #[test]
+    fn routes_codex_models_to_openai() {
+        assert_eq!(provider_for_model("codex-mini-latest"), Provider::OpenAi);
+    }
+
+    #[test]
+    fn routes_o_series_models_to_openai() {
+        assert_eq!(provider_for_model("o3"), Provider::OpenAi);
+    }
+
+    #[test]
+    fn routes_llama_models_to_other() {
+        assert_eq!(provider_for_model("llama3.2"), Provider::Other);
+    }
+
+    #[test]
+    fn routes_qwen_models_to_other() {
+        assert_eq!(provider_for_model("qwen2"), Provider::Other);
     }
 
     #[test]
@@ -2001,6 +2137,33 @@ mod tests {
         assert_eq!(converted.len(), 3);
         assert_eq!(converted[1].role, "assistant");
         assert_eq!(converted[2].role, "user");
+    }
+
+    #[test]
+    fn reasoning_block_converts_to_input_content_block() {
+        use api::InputContentBlock;
+
+        let messages = vec![ConversationMessage::assistant(vec![
+            ContentBlock::Reasoning {
+                data: r#"{"id":"rs_xyz","content":[]}"#.to_string(),
+            },
+            ContentBlock::Text {
+                text: "done".to_string(),
+            },
+        ])];
+        let converted = convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].content.len(), 2);
+        match &converted[0].content[0] {
+            InputContentBlock::Reasoning { data } => {
+                assert_eq!(data["id"], "rs_xyz");
+            }
+            other => panic!("expected Reasoning, got {other:?}"),
+        }
+        assert!(matches!(
+            &converted[0].content[1],
+            InputContentBlock::Text { text } if text == "done"
+        ));
     }
 
     #[test]

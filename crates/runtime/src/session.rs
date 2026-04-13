@@ -30,6 +30,9 @@ pub enum ContentBlock {
         output: String,
         is_error: bool,
     },
+    Reasoning {
+        data: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,6 +303,13 @@ impl ContentBlock {
                 object.insert("output".to_string(), JsonValue::String(output.clone()));
                 object.insert("is_error".to_string(), JsonValue::Bool(*is_error));
             }
+            Self::Reasoning { data } => {
+                object.insert(
+                    "type".to_string(),
+                    JsonValue::String("reasoning".to_string()),
+                );
+                object.insert("data".to_string(), JsonValue::String(data.clone()));
+            }
         }
         JsonValue::Object(object)
     }
@@ -329,6 +339,9 @@ impl ContentBlock {
                     .get("is_error")
                     .and_then(JsonValue::as_bool)
                     .ok_or_else(|| SessionError::Format("missing is_error".to_string()))?,
+            }),
+            "reasoning" => Ok(Self::Reasoning {
+                data: required_string(object, "data")?,
             }),
             other => Err(SessionError::Format(format!(
                 "unsupported block type: {other}"
@@ -441,5 +454,31 @@ mod tests {
             restored.messages[1].usage.expect("usage").total_tokens(),
             17
         );
+    }
+
+    #[test]
+    fn reasoning_items_survive_session_roundtrip() {
+        let mut session = Session::new();
+        session.messages.push(ConversationMessage::assistant(vec![
+            ContentBlock::Reasoning {
+                data: r#"{"id":"rs_abc","content":[]}"#.to_string(),
+            },
+            ContentBlock::Text {
+                text: "result".to_string(),
+            },
+        ]));
+
+        let json = session.to_json();
+        let restored = Session::from_json(&json).expect("session should deserialize");
+
+        assert_eq!(restored, session);
+        assert!(matches!(
+            &restored.messages[0].blocks[0],
+            ContentBlock::Reasoning { data } if data == r#"{"id":"rs_abc","content":[]}"#
+        ));
+        assert!(matches!(
+            &restored.messages[0].blocks[1],
+            ContentBlock::Text { text } if text == "result"
+        ));
     }
 }
