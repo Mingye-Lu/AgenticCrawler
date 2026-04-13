@@ -2393,6 +2393,16 @@ fn run_loop(
 
     let mut state = ReplTuiState::new();
 
+    // Auto-launch auth modal if no credentials are configured
+    if let Ok(store) = api::credentials::load_credentials() {
+        if store.active_provider.is_none() || store.providers.is_empty() {
+            state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
+        }
+    } else {
+        // If credentials file doesn't exist or can't be read, launch auth modal
+        state.active_modal = Some(AuthModal::new(ui_tx.clone(), None));
+    }
+
     loop {
         state.drain_events(ui_rx);
 

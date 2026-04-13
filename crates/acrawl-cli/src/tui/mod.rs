@@ -6,6 +6,7 @@ pub mod auth_modal;
 )]
 pub mod events;
 pub mod modal;
+pub mod model_list;
 pub mod repl_app;
 pub mod tool_panel;
 
