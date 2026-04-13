@@ -1425,6 +1425,7 @@ impl ReplTuiState {
         *self.list_state.offset_mut() = max_offset;
     }
 
+    #[allow(clippy::too_many_lines)]
     fn drain_events(&mut self, rx: &Receiver<ReplTuiEvent>) {
         while let Ok(ev) = rx.try_recv() {
             match ev {
@@ -1499,11 +1500,47 @@ impl ReplTuiState {
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
                     if let Some(ref mut modal) = self.active_modal {
                         modal.step = match result {
-                            Ok(()) => AuthModalStep::Success {
-                                provider: crate::app::parse_provider_arg(&provider)
-                                    .unwrap_or(crate::app::Provider::Anthropic),
-                                message: format!("Authenticated as {provider}"),
-                            },
+                            Ok(()) => {
+                                let provider_kind = match crate::app::parse_provider_arg(&provider)
+                                    .unwrap_or(crate::app::Provider::Anthropic)
+                                {
+                                    crate::app::Provider::Anthropic => {
+                                        crate::tui::auth_modal::ProviderKind::Anthropic
+                                    }
+                                    crate::app::Provider::OpenAi => {
+                                        crate::tui::auth_modal::ProviderKind::OpenAi
+                                    }
+                                    crate::app::Provider::Other => {
+                                        crate::tui::auth_modal::ProviderKind::Other
+                                    }
+                                };
+
+                                let mut store =
+                                    api::credentials::load_credentials().unwrap_or_default();
+                                let provider_str = match provider_kind {
+                                    crate::tui::auth_modal::ProviderKind::Anthropic => "anthropic",
+                                    crate::tui::auth_modal::ProviderKind::OpenAi => "openai",
+                                    crate::tui::auth_modal::ProviderKind::Other => "other",
+                                };
+                                let mut config = store
+                                    .providers
+                                    .get(provider_str)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                config.auth_method = "oauth".to_string();
+                                store.active_provider = Some(provider_str.to_string());
+                                api::credentials::set_provider_config(
+                                    &mut store,
+                                    provider_str,
+                                    config,
+                                );
+                                let _ = api::credentials::save_credentials(&store);
+
+                                AuthModalStep::Success {
+                                    provider: provider_kind,
+                                    message: format!("Authenticated as {provider}"),
+                                }
+                            }
                             Err(e) => AuthModalStep::Error { message: e },
                         };
                     }
@@ -2092,14 +2129,8 @@ fn handle_slash_command_tui(
                 .as_deref()
                 .and_then(|p| crate::app::parse_provider_arg(p).ok());
             state.active_modal = Some(AuthModal::new(ui_tx.clone(), parsed_provider));
-            match parsed_provider {
-                Some(crate::app::Provider::Anthropic) => {
-                    spawn_anthropic_oauth_thread(ui_tx.clone(), &mut state.active_modal);
-                }
-                Some(crate::app::Provider::Codex) => {
-                    spawn_codex_oauth_thread(ui_tx.clone(), &mut state.active_modal);
-                }
-                _ => {}
+            if let Some(crate::app::Provider::Anthropic) = parsed_provider {
+                spawn_anthropic_oauth_thread(ui_tx.clone(), &mut state.active_modal);
             }
         }
         other @ SlashCommand::Unknown(_) => {
@@ -2214,6 +2245,7 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
     });
 }
 
+#[allow(dead_code)]
 fn spawn_codex_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
     if let Some(ref mut modal) = active_modal {
@@ -2524,7 +2556,7 @@ fn run_loop(
                 if let Some(ref mut modal) = state.active_modal {
                     let api_key_to_set: Option<String> = if key.code == KeyCode::Enter {
                         if let AuthModalStep::ApiKeyInput {
-                            provider: crate::app::Provider::OpenAi,
+                            provider: crate::tui::auth_modal::ProviderKind::OpenAi,
                             ref key_buffer,
                             ..
                         } = modal.step
@@ -2557,16 +2589,14 @@ fn run_loop(
                     {
                         let prov = *provider;
                         match prov {
-                            crate::app::Provider::Anthropic => {
+                            crate::tui::auth_modal::ProviderKind::Anthropic => {
                                 spawn_anthropic_oauth_thread(
                                     ui_tx.clone(),
                                     &mut state.active_modal,
                                 );
                             }
-                            crate::app::Provider::Codex => {
-                                spawn_codex_oauth_thread(ui_tx.clone(), &mut state.active_modal);
-                            }
-                            crate::app::Provider::OpenAi => {}
+                            crate::tui::auth_modal::ProviderKind::OpenAi
+                            | crate::tui::auth_modal::ProviderKind::Other => {}
                         }
                     }
 
@@ -2767,7 +2797,7 @@ mod tests {
     use std::sync::mpsc;
 
     use crate::app::Provider;
-    use crate::tui::auth_modal::{AuthModal, AuthModalStep};
+    use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::ReplTuiEvent;
 
     use super::{
@@ -2792,7 +2822,7 @@ mod tests {
         assert!(matches!(
             modal.step,
             AuthModalStep::ApiKeyInput {
-                provider: Provider::OpenAi,
+                provider: ProviderKind::OpenAi,
                 ..
             }
         ));
@@ -2800,7 +2830,7 @@ mod tests {
         assert!(matches!(
             modal2.step,
             AuthModalStep::OAuthWaiting {
-                provider: Provider::Anthropic,
+                provider: ProviderKind::Anthropic,
                 ..
             }
         ));

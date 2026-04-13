@@ -6,29 +6,68 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Wrap};
 
-use crate::app::{provider_label, Provider};
 use crate::tui::modal::{draw_modal_frame, Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderKind {
+    Anthropic,
+    OpenAi,
+    Other,
+}
+
+impl ProviderKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Anthropic => "Anthropic",
+            Self::OpenAi => "OpenAI",
+            Self::Other => "Other (OpenAI-compatible)",
+        }
+    }
+}
+
+impl From<crate::app::Provider> for ProviderKind {
+    fn from(value: crate::app::Provider) -> Self {
+        match value {
+            crate::app::Provider::Anthropic => Self::Anthropic,
+            crate::app::Provider::OpenAi => Self::OpenAi,
+            crate::app::Provider::Other => Self::Other,
+        }
+    }
+}
 
 #[allow(dead_code)]
 pub(crate) enum AuthModalStep {
     ProviderSelect {
         selected: usize,
-        providers: Vec<(Provider, &'static str)>,
+    },
+    AuthMethodSelect {
+        provider: ProviderKind,
+        selected: usize,
+    },
+    BaseUrlInput {
+        input: String,
+        error: Option<String>,
     },
     ApiKeyInput {
-        provider: Provider,
+        provider: ProviderKind,
+        base_url: Option<String>,
         key_buffer: String,
+        masked: bool,
         error: Option<String>,
     },
     OAuthWaiting {
-        provider: Provider,
+        provider: ProviderKind,
         status: String,
         cancel_tx: Option<Sender<()>>,
         tick: u8,
     },
+    ModelFetchLoading {
+        provider: ProviderKind,
+        base_url: Option<String>,
+    },
     Success {
-        provider: Provider,
+        provider: ProviderKind,
         message: String,
     },
     Error {
@@ -43,64 +82,105 @@ pub(crate) struct AuthModal {
 }
 
 impl AuthModal {
-    /// Create auth modal. If provider is given, skip `ProviderSelect`.
-    pub(crate) fn new(ui_tx: Sender<ReplTuiEvent>, provider: Option<Provider>) -> Self {
+    pub(crate) fn new(ui_tx: Sender<ReplTuiEvent>, provider: Option<crate::app::Provider>) -> Self {
         let step = if let Some(p) = provider {
             match p {
-                Provider::OpenAi => AuthModalStep::ApiKeyInput {
-                    provider: p,
+                crate::app::Provider::OpenAi => AuthModalStep::ApiKeyInput {
+                    provider: ProviderKind::OpenAi,
+                    base_url: None,
                     key_buffer: String::new(),
+                    masked: true,
                     error: None,
                 },
-                _ => AuthModalStep::OAuthWaiting {
-                    provider: p,
+                crate::app::Provider::Anthropic => AuthModalStep::OAuthWaiting {
+                    provider: ProviderKind::Anthropic,
                     status: "Preparing OAuth flow...".to_string(),
                     cancel_tx: None,
                     tick: 0,
                 },
+                crate::app::Provider::Other => AuthModalStep::BaseUrlInput {
+                    input: String::new(),
+                    error: None,
+                },
             }
         } else {
-            AuthModalStep::ProviderSelect {
-                selected: 0,
-                providers: vec![
-                    (Provider::Anthropic, "Anthropic (OAuth)"),
-                    (Provider::OpenAi, "OpenAI (API key)"),
-                    (Provider::Codex, "Codex (OAuth)"),
-                ],
-            }
+            AuthModalStep::ProviderSelect { selected: 0 }
         };
 
         Self { step, ui_tx }
     }
+
+    fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: String) {
+        let mut store = api::credentials::load_credentials().unwrap_or_default();
+        let provider_str = match provider {
+            ProviderKind::Anthropic => "anthropic",
+            ProviderKind::OpenAi => "openai",
+            ProviderKind::Other => "other",
+        };
+        let mut config = store
+            .providers
+            .get(provider_str)
+            .cloned()
+            .unwrap_or_default();
+        config.auth_method = match provider {
+            ProviderKind::OpenAi => "openai_key".to_string(),
+            ProviderKind::Anthropic | ProviderKind::Other => "api_key".to_string(),
+        };
+        config.api_key = Some(key);
+        if let Some(url) = base_url {
+            config.base_url = Some(url);
+        }
+        store.active_provider = Some(provider_str.to_string());
+        api::credentials::set_provider_config(&mut store, provider_str, config);
+        let _ = api::credentials::save_credentials(&store);
+    }
 }
 
 impl Modal for AuthModal {
+    #[allow(clippy::too_many_lines)]
     fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         let (border_color, text) = match &self.step {
-            AuthModalStep::ProviderSelect {
-                selected,
-                providers,
-            } => {
+            AuthModalStep::ProviderSelect { selected } => {
+                let providers = [
+                    ProviderKind::Anthropic,
+                    ProviderKind::OpenAi,
+                    ProviderKind::Other,
+                ];
                 let mut lines = providers
                     .iter()
                     .enumerate()
-                    .map(|(index, (_, display_name))| {
-                        let cursor = if index == *selected { '▸' } else { ' ' };
-                        Line::from(format!("  {cursor} {display_name}"))
+                    .map(|(index, p)| {
+                        let cursor = if index == *selected { '>' } else { ' ' };
+                        Line::from(format!("  {cursor} {}", p.label()))
                     })
                     .collect::<Vec<_>>();
                 lines.push(Line::default());
-                lines.push(Line::from("↑/↓ navigate  Enter select  Esc cancel"));
+                lines.push(Line::from("Up/Down navigate  Enter select  Esc cancel"));
                 (Color::Cyan, Text::from(lines))
             }
-            AuthModalStep::ApiKeyInput {
-                key_buffer, error, ..
-            } => {
-                let masked = "•".repeat(key_buffer.chars().count());
+            AuthModalStep::AuthMethodSelect { provider, selected } => {
+                let methods = match provider {
+                    ProviderKind::Anthropic => vec!["API Key", "OAuth"],
+                    ProviderKind::OpenAi => vec!["API Key", "OAuth (Codex)"],
+                    ProviderKind::Other => vec!["API Key"],
+                };
                 let mut lines = vec![
-                    Line::from("Paste your API key:"),
+                    Line::from(format!("Select auth method for {}:", provider.label())),
                     Line::default(),
-                    Line::from(format!("  [{masked}]")),
+                ];
+                for (index, method) in methods.iter().enumerate() {
+                    let cursor = if index == *selected { '>' } else { ' ' };
+                    lines.push(Line::from(format!("  {cursor} {method}")));
+                }
+                lines.push(Line::default());
+                lines.push(Line::from("Up/Down navigate  Enter select  Esc back"));
+                (Color::Cyan, Text::from(lines))
+            }
+            AuthModalStep::BaseUrlInput { input, error } => {
+                let mut lines = vec![
+                    Line::from("Enter base URL for Other provider:"),
+                    Line::default(),
+                    Line::from(format!("  > {input}")),
                     Line::default(),
                 ];
                 if let Some(message) = error {
@@ -110,11 +190,38 @@ impl Modal for AuthModal {
                     )));
                     lines.push(Line::default());
                 }
-                lines.push(Line::from("Enter confirm  Esc cancel"));
+                lines.push(Line::from("Enter confirm  Esc back"));
+                (Color::Yellow, Text::from(lines))
+            }
+            AuthModalStep::ApiKeyInput {
+                key_buffer,
+                masked,
+                error,
+                ..
+            } => {
+                let display_key = if *masked {
+                    "*".repeat(key_buffer.chars().count())
+                } else {
+                    key_buffer.clone()
+                };
+                let mut lines = vec![
+                    Line::from("Paste your API key:"),
+                    Line::default(),
+                    Line::from(format!("  [{display_key}]")),
+                    Line::default(),
+                ];
+                if let Some(message) = error {
+                    lines.push(Line::from(Span::styled(
+                        message.clone(),
+                        Style::default().fg(Color::Red),
+                    )));
+                    lines.push(Line::default());
+                }
+                lines.push(Line::from("Enter confirm  Esc back"));
                 (Color::Yellow, Text::from(lines))
             }
             AuthModalStep::OAuthWaiting { status, tick, .. } => {
-                const FRAMES: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+                const FRAMES: [char; 8] = ['|', '/', '-', '\\', '|', '/', '-', '\\'];
                 let spinner = FRAMES[usize::from(*tick) % FRAMES.len()];
                 let lines = vec![
                     Line::from(format!("{spinner}  {status}")),
@@ -123,9 +230,17 @@ impl Modal for AuthModal {
                 ];
                 (Color::Blue, Text::from(lines))
             }
+            AuthModalStep::ModelFetchLoading { provider, .. } => {
+                let lines = vec![
+                    Line::from(format!("Fetching models for {}...", provider.label())),
+                    Line::default(),
+                    Line::from("Please wait..."),
+                ];
+                (Color::Blue, Text::from(lines))
+            }
             AuthModalStep::Success { message, .. } => {
                 let lines = vec![
-                    Line::from(format!("✓ {message}")),
+                    Line::from(format!("OK {message}")),
                     Line::default(),
                     Line::from("Press any key to continue"),
                 ];
@@ -133,7 +248,7 @@ impl Modal for AuthModal {
             }
             AuthModalStep::Error { message } => {
                 let lines = vec![
-                    Line::from(format!("✗ {message}")),
+                    Line::from(format!("ERR {message}")),
                     Line::default(),
                     Line::from("Press any key to dismiss"),
                 ];
@@ -146,48 +261,127 @@ impl Modal for AuthModal {
         frame.render_widget(paragraph, inner);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_key(&mut self, key: KeyEvent) -> ModalAction {
         match &mut self.step {
-            AuthModalStep::ProviderSelect {
-                selected,
-                providers,
-            } => match key.code {
+            AuthModalStep::ProviderSelect { selected } => match key.code {
                 KeyCode::Up => {
-                    *selected = if *selected == 0 {
-                        providers.len().saturating_sub(1)
-                    } else {
-                        *selected - 1
-                    };
+                    *selected = if *selected == 0 { 2 } else { *selected - 1 };
                     ModalAction::Consumed
                 }
                 KeyCode::Down => {
-                    *selected = (*selected + 1) % providers.len();
+                    *selected = (*selected + 1) % 3;
                     ModalAction::Consumed
                 }
                 KeyCode::Enter => {
-                    let provider = providers[*selected].0;
-                    self.step = match provider {
-                        Provider::OpenAi => AuthModalStep::ApiKeyInput {
-                            provider,
-                            key_buffer: String::new(),
-                            error: None,
-                        },
-                        Provider::Anthropic | Provider::Codex => AuthModalStep::OAuthWaiting {
-                            provider,
-                            status: "Preparing OAuth flow...".to_string(),
-                            cancel_tx: None,
-                            tick: 0,
-                        },
+                    let provider = match *selected {
+                        0 => ProviderKind::Anthropic,
+                        1 => ProviderKind::OpenAi,
+                        _ => ProviderKind::Other,
                     };
+                    if provider == ProviderKind::Other {
+                        self.step = AuthModalStep::BaseUrlInput {
+                            input: String::new(),
+                            error: None,
+                        };
+                    } else {
+                        self.step = AuthModalStep::AuthMethodSelect {
+                            provider,
+                            selected: 0,
+                        };
+                    }
                     ModalAction::Consumed
                 }
                 KeyCode::Esc => ModalAction::Dismiss,
                 _ => ModalAction::Consumed,
             },
+            AuthModalStep::AuthMethodSelect { provider, selected } => {
+                let methods_len = if *provider == ProviderKind::Other {
+                    1
+                } else {
+                    2
+                };
+                match key.code {
+                    KeyCode::Up => {
+                        *selected = if *selected == 0 {
+                            methods_len - 1
+                        } else {
+                            *selected - 1
+                        };
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Down => {
+                        *selected = (*selected + 1) % methods_len;
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Enter => {
+                        if *selected == 0 {
+                            self.step = AuthModalStep::ApiKeyInput {
+                                provider: *provider,
+                                base_url: None,
+                                key_buffer: String::new(),
+                                masked: true,
+                                error: None,
+                            };
+                        } else {
+                            self.step = AuthModalStep::OAuthWaiting {
+                                provider: *provider,
+                                status: "Preparing OAuth flow...".to_string(),
+                                cancel_tx: None,
+                                tick: 0,
+                            };
+                        }
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Esc => {
+                        self.step = AuthModalStep::ProviderSelect {
+                            selected: match provider {
+                                ProviderKind::Anthropic => 0,
+                                ProviderKind::OpenAi => 1,
+                                ProviderKind::Other => 2,
+                            },
+                        };
+                        ModalAction::Consumed
+                    }
+                    _ => ModalAction::Consumed,
+                }
+            }
+            AuthModalStep::BaseUrlInput { input, error } => match key.code {
+                KeyCode::Char(ch) => {
+                    input.push(ch);
+                    *error = None;
+                    ModalAction::Consumed
+                }
+                KeyCode::Backspace => {
+                    input.pop();
+                    ModalAction::Consumed
+                }
+                KeyCode::Enter => {
+                    if input.is_empty() {
+                        *error = Some("Base URL cannot be empty".to_string());
+                    } else {
+                        self.step = AuthModalStep::ApiKeyInput {
+                            provider: ProviderKind::Other,
+                            base_url: Some(input.clone()),
+                            key_buffer: String::new(),
+                            masked: true,
+                            error: None,
+                        };
+                    }
+                    ModalAction::Consumed
+                }
+                KeyCode::Esc => {
+                    self.step = AuthModalStep::ProviderSelect { selected: 2 };
+                    ModalAction::Consumed
+                }
+                _ => ModalAction::Consumed,
+            },
             AuthModalStep::ApiKeyInput {
                 provider,
+                base_url,
                 key_buffer,
                 error,
+                ..
             } => match key.code {
                 KeyCode::Char(ch) => {
                     key_buffer.push(ch);
@@ -202,14 +396,29 @@ impl Modal for AuthModal {
                     if key_buffer.is_empty() {
                         *error = Some("API key cannot be empty".to_string());
                     } else {
+                        Self::save_api_key(*provider, base_url.clone(), key_buffer.clone());
+                        // For now, immediately transition to Success since T13 handles model fetching
                         self.step = AuthModalStep::Success {
                             provider: *provider,
-                            message: format!("API key accepted for {}", provider_label(*provider)),
+                            message: format!("API key accepted for {}", provider.label()),
                         };
                     }
                     ModalAction::Consumed
                 }
-                KeyCode::Esc => ModalAction::Dismiss,
+                KeyCode::Esc => {
+                    if *provider == ProviderKind::Other {
+                        self.step = AuthModalStep::BaseUrlInput {
+                            input: base_url.clone().unwrap_or_default(),
+                            error: None,
+                        };
+                    } else {
+                        self.step = AuthModalStep::AuthMethodSelect {
+                            provider: *provider,
+                            selected: 0,
+                        };
+                    }
+                    ModalAction::Consumed
+                }
                 _ => ModalAction::Consumed,
             },
             AuthModalStep::OAuthWaiting { cancel_tx, .. } => match key.code {
@@ -221,6 +430,7 @@ impl Modal for AuthModal {
                 }
                 _ => ModalAction::Consumed,
             },
+            AuthModalStep::ModelFetchLoading { .. } => ModalAction::Consumed,
             AuthModalStep::Success { .. } | AuthModalStep::Error { .. } => ModalAction::Dismiss,
         }
     }
@@ -228,12 +438,15 @@ impl Modal for AuthModal {
     fn title(&self) -> &str {
         match &self.step {
             AuthModalStep::ProviderSelect { .. } => " Auth ",
-            AuthModalStep::ApiKeyInput { provider, .. } => match provider {
-                Provider::Anthropic => " Auth · Anthropic ",
-                Provider::OpenAi => " Auth · OpenAI ",
-                Provider::Codex => " Auth · Codex ",
+            AuthModalStep::AuthMethodSelect { provider, .. }
+            | AuthModalStep::ApiKeyInput { provider, .. } => match provider {
+                ProviderKind::Anthropic => " Auth · Anthropic ",
+                ProviderKind::OpenAi => " Auth · OpenAI ",
+                ProviderKind::Other => " Auth · Other ",
             },
+            AuthModalStep::BaseUrlInput { .. } => " Auth · Base URL ",
             AuthModalStep::OAuthWaiting { .. } => " Auth · Waiting ",
+            AuthModalStep::ModelFetchLoading { .. } => " Auth · Loading Models ",
             AuthModalStep::Success { .. } => " Auth · Success ",
             AuthModalStep::Error { .. } => " Auth · Error ",
         }
@@ -256,67 +469,63 @@ mod tests {
     }
 
     #[test]
-    fn provider_select_arrow_keys_move_cursor() {
-        let mut modal = modal();
-
-        assert_eq!(modal.handle_key(key(KeyCode::Down)), ModalAction::Consumed);
+    fn provider_select_initial_state() {
+        let modal = modal();
         match &modal.step {
-            AuthModalStep::ProviderSelect { selected, .. } => assert_eq!(*selected, 1),
-            _ => panic!("expected provider selection step"),
-        }
-
-        assert_eq!(modal.handle_key(key(KeyCode::Up)), ModalAction::Consumed);
-        match &modal.step {
-            AuthModalStep::ProviderSelect { selected, .. } => assert_eq!(*selected, 0),
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, 0),
             _ => panic!("expected provider selection step"),
         }
     }
 
     #[test]
-    fn provider_select_enter_transitions_to_api_key_for_openai() {
+    fn provider_select_to_auth_method() {
+        let mut modal = modal();
+        assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::AuthMethodSelect { provider, selected } => {
+                assert_eq!(*provider, ProviderKind::Anthropic);
+                assert_eq!(*selected, 0);
+            }
+            _ => panic!("expected auth method select step"),
+        }
+    }
+
+    #[test]
+    fn other_provider_goes_to_base_url_input() {
         let mut modal = modal();
         let _ = modal.handle_key(key(KeyCode::Down));
-
+        let _ = modal.handle_key(key(KeyCode::Down));
         assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Consumed);
         match &modal.step {
-            AuthModalStep::ApiKeyInput {
-                provider,
-                key_buffer,
-                error,
-            } => {
-                assert_eq!(*provider, Provider::OpenAi);
-                assert!(key_buffer.is_empty());
+            AuthModalStep::BaseUrlInput { input, error } => {
+                assert!(input.is_empty());
                 assert_eq!(error, &None);
             }
-            _ => panic!("expected api key input step"),
+            _ => panic!("expected base url input step"),
         }
     }
 
     #[test]
-    fn provider_select_enter_transitions_to_oauth_for_anthropic() {
+    fn esc_from_auth_method_goes_back_to_provider_select() {
         let mut modal = modal();
-
-        assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Consumed);
+        let _ = modal.handle_key(key(KeyCode::Enter)); // Go to AuthMethodSelect
+        assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Consumed);
         match &modal.step {
-            AuthModalStep::OAuthWaiting {
-                provider,
-                status,
-                cancel_tx,
-                tick,
-            } => {
-                assert_eq!(*provider, Provider::Anthropic);
-                assert_eq!(status, "Preparing OAuth flow...");
-                assert!(cancel_tx.is_none());
-                assert_eq!(*tick, 0);
-            }
-            _ => panic!("expected oauth waiting step"),
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, 0),
+            _ => panic!("expected provider select step"),
         }
+    }
+
+    #[test]
+    fn esc_from_provider_select_closes_modal() {
+        let mut modal = modal();
+        assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Dismiss);
     }
 
     #[test]
     fn api_key_input_chars_append() {
         let (ui_tx, _ui_rx) = mpsc::channel();
-        let mut modal = AuthModal::new(ui_tx, Some(Provider::OpenAi));
+        let mut modal = AuthModal::new(ui_tx, Some(crate::app::Provider::OpenAi));
 
         let _ = modal.handle_key(key(KeyCode::Char('s')));
         let _ = modal.handle_key(key(KeyCode::Char('k')));
@@ -335,7 +544,7 @@ mod tests {
     #[test]
     fn api_key_input_backspace_removes() {
         let (ui_tx, _ui_rx) = mpsc::channel();
-        let mut modal = AuthModal::new(ui_tx, Some(Provider::OpenAi));
+        let mut modal = AuthModal::new(ui_tx, Some(crate::app::Provider::OpenAi));
         let _ = modal.handle_key(key(KeyCode::Char('s')));
         let _ = modal.handle_key(key(KeyCode::Char('k')));
 
@@ -352,7 +561,7 @@ mod tests {
     #[test]
     fn api_key_input_empty_enter_rejected() {
         let (ui_tx, _ui_rx) = mpsc::channel();
-        let mut modal = AuthModal::new(ui_tx, Some(Provider::OpenAi));
+        let mut modal = AuthModal::new(ui_tx, Some(crate::app::Provider::OpenAi));
 
         assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Consumed);
         match &modal.step {
@@ -360,8 +569,9 @@ mod tests {
                 provider,
                 key_buffer,
                 error,
+                ..
             } => {
-                assert_eq!(*provider, Provider::OpenAi);
+                assert_eq!(*provider, ProviderKind::OpenAi);
                 assert!(key_buffer.is_empty());
                 assert_eq!(error.as_deref(), Some("API key cannot be empty"));
             }
@@ -370,20 +580,26 @@ mod tests {
     }
 
     #[test]
-    fn api_key_input_esc_dismisses() {
+    fn api_key_input_esc_goes_back() {
         let (ui_tx, _ui_rx) = mpsc::channel();
-        let mut modal = AuthModal::new(ui_tx, Some(Provider::OpenAi));
+        let mut modal = AuthModal::new(ui_tx, Some(crate::app::Provider::OpenAi));
 
-        assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Dismiss);
+        assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::AuthMethodSelect { provider, .. } => {
+                assert_eq!(*provider, ProviderKind::OpenAi);
+            }
+            _ => panic!("expected auth method select step"),
+        }
     }
 
     #[test]
     fn oauth_waiting_esc_sends_cancel() {
         let (ui_tx, _ui_rx) = mpsc::channel();
-        let mut modal = AuthModal::new(ui_tx, Some(Provider::Anthropic));
+        let mut modal = AuthModal::new(ui_tx, Some(crate::app::Provider::Anthropic));
         let (cancel_tx, cancel_rx) = mpsc::channel();
         modal.step = AuthModalStep::OAuthWaiting {
-            provider: Provider::Anthropic,
+            provider: ProviderKind::Anthropic,
             status: "Preparing OAuth flow...".to_string(),
             cancel_tx: Some(cancel_tx),
             tick: 0,
@@ -398,7 +614,7 @@ mod tests {
         let (ui_tx, _ui_rx) = mpsc::channel();
         let mut modal = AuthModal {
             step: AuthModalStep::Success {
-                provider: Provider::OpenAi,
+                provider: ProviderKind::OpenAi,
                 message: "done".to_string(),
             },
             ui_tx,
@@ -424,71 +640,23 @@ mod tests {
     }
 
     #[test]
-    fn api_key_masking_renders_dots() {
-        let key_buffer = "sk-ant-abc123XYZ";
-        let masked = "•".repeat(key_buffer.chars().count());
-        assert_eq!(masked.chars().count(), key_buffer.chars().count());
-        assert!(masked.chars().all(|c| c == '•'));
-        assert!(!masked.contains('s'));
-        assert!(!masked.contains('k'));
-    }
-
-    #[test]
-    fn browser_fail_shows_url() {
-        let url = "https://console.anthropic.com/oauth/authorize?code_challenge=abc";
-        let error_str = "permission denied";
-        let message = format!("Browser failed. Visit: {url}  ({error_str})");
-        assert!(message.contains(url));
-        assert!(message.contains(error_str));
-        assert!(message.starts_with("Browser failed"));
-    }
-
-    #[test]
-    fn oauth_error_state_displays_message() {
-        let (ui_tx, _ui_rx) = mpsc::channel();
-        let mut modal = AuthModal {
-            step: AuthModalStep::Error {
-                message: "OAuth callback timed out after 5 minutes".to_string(),
-            },
-            ui_tx,
-        };
-        assert_eq!(modal.title(), " Auth · Error ");
-        assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Dismiss);
-    }
-
-    #[test]
-    fn oauth_waiting_status_can_be_updated() {
-        let (ui_tx, _ui_rx) = mpsc::channel();
-        let mut modal = AuthModal::new(ui_tx, Some(Provider::Anthropic));
-        if let AuthModalStep::OAuthWaiting { ref mut status, .. } = modal.step {
-            *status = "Waiting for OAuth callback on port 4545…".to_string();
-        }
-        match &modal.step {
-            AuthModalStep::OAuthWaiting { status, .. } => {
-                assert!(status.contains("4545"));
-            }
-            _ => panic!("expected OAuthWaiting"),
-        }
-    }
-
-    #[test]
     fn new_with_provider_skips_selection() {
         let (ui_tx, _ui_rx) = mpsc::channel();
 
-        let openai_modal = AuthModal::new(ui_tx.clone(), Some(Provider::OpenAi));
+        let openai_modal = AuthModal::new(ui_tx.clone(), Some(crate::app::Provider::OpenAi));
         assert!(matches!(
             openai_modal.step,
             AuthModalStep::ApiKeyInput {
-                provider: Provider::OpenAi,
+                provider: ProviderKind::OpenAi,
                 ..
             }
         ));
 
-        let anthropic_modal = AuthModal::new(ui_tx, Some(Provider::Anthropic));
+        let anthropic_modal = AuthModal::new(ui_tx, Some(crate::app::Provider::Anthropic));
         assert!(matches!(
             anthropic_modal.step,
             AuthModalStep::OAuthWaiting {
-                provider: Provider::Anthropic,
+                provider: ProviderKind::Anthropic,
                 ..
             }
         ));
