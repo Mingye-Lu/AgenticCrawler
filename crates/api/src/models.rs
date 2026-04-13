@@ -79,7 +79,10 @@ pub async fn list_anthropic_models(api_key: &str) -> Result<Vec<AnthropicModel>,
         });
     }
 
-    let model_list: AnthropicModelList = response.json().await.map_err(ApiError::Http)?;
+    let model_list: AnthropicModelList = response
+        .json()
+        .await
+        .map_err(ApiError::Http)?;
 
     Ok(model_list.data)
 }
@@ -100,7 +103,10 @@ pub async fn list_openai_models(auth: &AuthSource) -> Result<Vec<OpenAiModel>, A
         request = request.bearer_auth(api_key);
     }
 
-    let response = request.send().await.map_err(ApiError::Http)?;
+    let response = request
+        .send()
+        .await
+        .map_err(ApiError::Http)?;
 
     let status = response.status();
     if !status.is_success() {
@@ -114,7 +120,10 @@ pub async fn list_openai_models(auth: &AuthSource) -> Result<Vec<OpenAiModel>, A
         });
     }
 
-    let model_list: OpenAiModelList = response.json().await.map_err(ApiError::Http)?;
+    let model_list: OpenAiModelList = response
+        .json()
+        .await
+        .map_err(ApiError::Http)?;
 
     Ok(model_list.data)
 }
@@ -133,18 +142,11 @@ mod tests {
             "has_more": false
         }"#;
 
-        let model_list: AnthropicModelList =
-            serde_json::from_str(json).expect("failed to deserialize");
+        let model_list: AnthropicModelList = serde_json::from_str(json).expect("failed to deserialize");
         assert_eq!(model_list.data.len(), 2);
         assert_eq!(model_list.data[0].id, "claude-opus-4-6");
-        assert_eq!(
-            model_list.data[0].display_name,
-            Some("Claude Opus 4.6".to_string())
-        );
-        assert_eq!(
-            model_list.data[0].created_at,
-            Some("2024-01-01T00:00:00Z".to_string())
-        );
+        assert_eq!(model_list.data[0].display_name, Some("Claude Opus 4.6".to_string()));
+        assert_eq!(model_list.data[0].created_at, Some("2024-01-01T00:00:00Z".to_string()));
     }
 
     #[test]
@@ -177,8 +179,7 @@ mod tests {
             ]
         }"#;
 
-        let model_list: OpenAiModelList =
-            serde_json::from_str(json).expect("failed to deserialize");
+        let model_list: OpenAiModelList = serde_json::from_str(json).expect("failed to deserialize");
         assert_eq!(model_list.data.len(), 2);
         assert_eq!(model_list.data[0].id, "gpt-4o");
         assert_eq!(model_list.data[0].created, Some(1_715_367_049));
@@ -225,3 +226,4 @@ mod tests {
         assert_eq!(model.created, Some(1_715_367_049));
     }
 }
+

@@ -111,7 +111,8 @@ pub fn resolve_codex_auth() -> Result<AuthSource, ApiError> {
     }
 
     Err(ApiError::Auth(
-        "no Codex OAuth credentials found; run `acrawl auth` to authenticate".to_string(),
+        "no Codex OAuth credentials found; run `acrawl auth` to authenticate"
+            .to_string(),
     ))
 }
 
@@ -812,7 +813,11 @@ impl CodexStreamState {
         }));
     }
 
-    fn emit_function_call_arguments_done(&mut self, data: &Value, events: &mut Vec<StreamEvent>) {
+    fn emit_function_call_arguments_done(
+        &mut self,
+        data: &Value,
+        events: &mut Vec<StreamEvent>,
+    ) {
         let call_id = data
             .get("call_id")
             .and_then(Value::as_str)

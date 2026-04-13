@@ -10,9 +10,9 @@ use std::sync::mpsc;
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
     AnthropicClient, AuthSource, ChatCompletionsClient, ContentBlockDelta, InputContentBlock,
-    InputMessage, MessageRequest, MessageResponse, OpenAiMessageStream, OpenAiResponsesClient,
-    OutputContentBlock, ResponsesMessageStream, StreamEvent as ApiStreamEvent, ToolChoice,
-    ToolDefinition, ToolResultContentBlock,
+    InputMessage, MessageRequest, MessageResponse, OpenAiMessageStream,
+    OpenAiResponsesClient, OutputContentBlock, ResponsesMessageStream,
+    StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
@@ -102,42 +102,8 @@ pub(crate) fn initial_model_from_credentials() -> String {
                 return resolve_model_alias(model).to_string();
             }
         }
-        if let Some(model) = initial_model_for_provider(provider_name) {
-            return model;
-        }
     }
-    initial_model_from_env().unwrap_or_else(|| DEFAULT_MODEL.to_string())
-}
-
-fn initial_model_for_provider(provider_name: &str) -> Option<String> {
-    match provider_name.to_ascii_lowercase().as_str() {
-        "anthropic" => {
-            read_env_non_empty("CLAUDE_MODEL").map(|m| resolve_model_alias(&m).to_string())
-        }
-        "openai" | "other" => read_env_non_empty("OPENAI_MODEL")
-            .map(|m| resolve_model_alias(&m).to_string())
-            .or_else(|| Some("gpt-4o".to_string())),
-        "codex" => read_env_non_empty("CODEX_MODEL").map(|m| resolve_model_alias(&m).to_string()),
-        _ => None,
-    }
-}
-
-fn initial_model_from_env() -> Option<String> {
-    let provider = env::var("LLM_PROVIDER")
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    let env_model = match provider.as_str() {
-        "openai" => env::var("OPENAI_MODEL").ok(),
-        "codex" => env::var("CODEX_MODEL").ok(),
-        _ => env::var("CLAUDE_MODEL").ok(),
-    }?;
-    let trimmed = env_model.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(resolve_model_alias(trimmed).to_string())
-    }
+    DEFAULT_MODEL.to_string()
 }
 
 pub(crate) fn default_permission_mode() -> PermissionMode {
@@ -177,8 +143,10 @@ pub(crate) fn run_repl(
     allowed_tools: Option<AllowedToolSet>,
     permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let classic =
-        runtime::load_settings().classic_repl.unwrap_or(false) || !io::stdout().is_terminal();
+    let classic = runtime::load_settings()
+        .classic_repl
+        .unwrap_or(false)
+        || !io::stdout().is_terminal();
     if classic {
         run_repl_classic(model, allowed_tools, permission_mode)
     } else {
@@ -826,15 +794,6 @@ impl LiveCli {
             None => prompt_provider_choice()?,
         };
         interactive_login_prompt(target)?;
-        self.refresh_runtime_auth()?;
-        println!(
-            "Auth\n  Provider         {}\n  Result           authenticated",
-            provider_label(target)
-        );
-        Ok(())
-    }
-
-    pub(crate) fn refresh_runtime_auth(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let session = self.runtime.session().clone();
         self.runtime = build_runtime(
             session,
@@ -846,6 +805,10 @@ impl LiveCli {
             self.permission_mode,
             self.ui_sender(),
         )?;
+        println!(
+            "Auth\n  Provider         {}\n  Result           authenticated",
+            provider_label(target)
+        );
         Ok(())
     }
 
@@ -1293,7 +1256,6 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
 pub(crate) struct LlmRuntimeClient {
     runtime: tokio::runtime::Runtime,
     provider: LlmProvider,
-    missing_auth_message: Option<String>,
     model: String,
     enable_tools: bool,
     emit_output: bool,
@@ -1316,48 +1278,24 @@ impl LlmRuntimeClient {
         ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let store = api::load_credentials().unwrap_or_default();
-        let (provider, missing_auth_message) = match provider_for_model(&model) {
+        let provider = match provider_for_model(&model) {
             Provider::Anthropic => {
-                let auth = store
+                let config = store
                     .providers
                     .get("anthropic")
-                    .map(credential_config_to_auth_source)
-                    .filter(|auth| !matches!(auth, AuthSource::None))
-                    .or_else(auth_source_from_anthropic_env);
-                match auth {
-                    Some(auth) => (
-                        LlmProvider::Anthropic(AnthropicClient::from_auth(auth)),
-                        None,
-                    ),
-                    None => (
-                        LlmProvider::Anthropic(AnthropicClient::from_auth(AuthSource::None)),
-                        Some(
-                            "No Anthropic credentials found. Configure via /auth or run `acrawl auth anthropic`."
-                                .to_string(),
-                        ),
-                    ),
-                }
+                    .ok_or("No Anthropic credentials found. Run `acrawl auth`.")?;
+                let auth = credential_config_to_auth_source(config);
+                LlmProvider::Anthropic(
+                    AnthropicClient::from_auth(auth),
+                )
             }
             Provider::OpenAi => {
-                let auth = store
+                let config = store
                     .providers
                     .get("openai")
-                    .map(credential_config_to_auth_source)
-                    .filter(|auth| !matches!(auth, AuthSource::None))
-                    .or_else(auth_source_from_openai_env);
-                match auth {
-                    Some(auth) => (
-                        LlmProvider::OpenAi(OpenAiResponsesClient::new(auth, &model)),
-                        None,
-                    ),
-                    None => (
-                        LlmProvider::OpenAi(OpenAiResponsesClient::new(AuthSource::None, &model)),
-                        Some(
-                            "No OpenAI credentials found. Configure via /auth or run `acrawl auth openai`."
-                                .to_string(),
-                        ),
-                    ),
-                }
+                    .ok_or("No OpenAI credentials found. Run `acrawl auth`.")?;
+                let auth = credential_config_to_auth_source(config);
+                LlmProvider::OpenAi(OpenAiResponsesClient::new(auth, &model))
             }
             Provider::Other => {
                 let default_base_url = "http://localhost:11434/v1".to_string();
@@ -1374,19 +1312,14 @@ impl LlmRuntimeClient {
                         )
                     })
                     .unwrap_or((AuthSource::None, default_base_url));
-                (
-                    LlmProvider::Other(
-                        ChatCompletionsClient::with_no_auth(&model, &base_url)
-                            .with_optional_auth(auth),
-                    ),
-                    None,
+                LlmProvider::Other(
+                    ChatCompletionsClient::with_no_auth(&model, &base_url).with_optional_auth(auth),
                 )
             }
         };
         Ok(Self {
             runtime: tokio::runtime::Runtime::new()?,
             provider,
-            missing_auth_message,
             model,
             enable_tools,
             emit_output,
@@ -1419,28 +1352,6 @@ fn credential_config_to_auth_source(config: &api::StoredProviderConfig) -> AuthS
         }
     }
     AuthSource::None
-}
-
-fn read_env_non_empty(key: &str) -> Option<String> {
-    env::var(key).ok().filter(|value| !value.trim().is_empty())
-}
-
-fn auth_source_from_anthropic_env() -> Option<AuthSource> {
-    let api_key = read_env_non_empty("ANTHROPIC_API_KEY");
-    let auth_token = read_env_non_empty("ANTHROPIC_AUTH_TOKEN");
-    match (api_key, auth_token) {
-        (Some(api_key), Some(bearer_token)) => Some(AuthSource::ApiKeyAndBearer {
-            api_key,
-            bearer_token,
-        }),
-        (Some(api_key), None) => Some(AuthSource::ApiKey(api_key)),
-        (None, Some(bearer_token)) => Some(AuthSource::BearerToken(bearer_token)),
-        (None, None) => None,
-    }
-}
-
-fn auth_source_from_openai_env() -> Option<AuthSource> {
-    read_env_non_empty("OPENAI_API_KEY").map(AuthSource::BearerToken)
 }
 
 #[allow(dead_code)]
@@ -1609,9 +1520,6 @@ fn interactive_login_prompt(provider: Provider) -> Result<(), Box<dyn std::error
 impl ApiClient for LlmRuntimeClient {
     #[allow(clippy::too_many_lines)]
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-        if let Some(message) = &self.missing_auth_message {
-            return Err(RuntimeError::new(message.clone()));
-        }
         let message_request = MessageRequest {
             model: self.model.clone(),
             max_tokens: max_tokens_for_model(&self.model),
