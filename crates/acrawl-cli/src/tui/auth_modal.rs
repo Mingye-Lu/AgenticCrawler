@@ -9,6 +9,17 @@ use ratatui::widgets::{Paragraph, Wrap};
 use crate::tui::modal::{draw_modal_frame, Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
 
+const KNOWN_OPENAI_MODELS: &[&str] = &[
+    "gpt-4o",
+    "gpt-4o-mini",
+    "o1",
+    "o1-mini",
+    "o3",
+    "o3-mini",
+    "o4-mini",
+    "codex-mini-latest",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderKind {
     Anthropic,
@@ -176,27 +187,44 @@ impl AuthModal {
                         })
                 }
                 ProviderKind::OpenAi => {
-                    let auth = if config.auth_method == "oauth" {
-                        if let Some(oauth) = config.oauth {
-                            api::AuthSource::BearerToken(oauth.access_token)
-                        } else {
-                            api::AuthSource::None
-                        }
+                    // OAuth tokens from the ChatGPT/Codex PKCE flow do not carry
+                    // API-level scopes, so /v1/models returns 401 for oauth auth.
+                    // Fall back to a curated list; API-key users get live results.
+                    if config.auth_method == "oauth" {
+                        Ok(KNOWN_OPENAI_MODELS
+                            .iter()
+                            .map(|id| crate::tui::model_list::ModelInfo {
+                                id: (*id).to_string(),
+                                display_name: None,
+                            })
+                            .collect())
                     } else {
-                        api::AuthSource::ApiKey(config.api_key.unwrap_or_default())
-                    };
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(api::models::list_openai_models(&auth))
-                        .map(|models| {
-                            models
-                                .into_iter()
-                                .map(|m| crate::tui::model_list::ModelInfo {
-                                    id: m.id,
-                                    display_name: None,
-                                })
-                                .collect()
-                        })
+                        let key = config.api_key.clone().unwrap_or_default();
+                        let auth = api::AuthSource::BearerToken(key);
+                        tokio::runtime::Runtime::new()
+                            .unwrap()
+                            .block_on(api::models::list_openai_models(&auth))
+                            .map(|models| {
+                                models
+                                    .into_iter()
+                                    .map(|m| crate::tui::model_list::ModelInfo {
+                                        id: m.id,
+                                        display_name: None,
+                                    })
+                                    .collect()
+                            })
+                            .or_else(|_| {
+                                Ok::<_, api::ApiError>(
+                                    KNOWN_OPENAI_MODELS
+                                        .iter()
+                                        .map(|id| crate::tui::model_list::ModelInfo {
+                                            id: (*id).to_string(),
+                                            display_name: None,
+                                        })
+                                        .collect(),
+                                )
+                            })
+                    }
                 }
                 ProviderKind::Other => Ok(vec![]),
             };

@@ -11,15 +11,7 @@ pub const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 pub const OPENAI_AUTH_URL: &str = "https://auth.openai.com/oauth/authorize";
 pub const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 pub const CODEX_CALLBACK_PORT: u16 = 1455;
-pub const CODEX_SCOPES: &[&str] = &[
-    "openid",
-    "profile",
-    "email",
-    "offline_access",
-    "model.request",
-    "api.model.read",
-    "api.responses.write",
-];
+pub const CODEX_SCOPES: &[&str] = &["openid", "profile", "email", "offline_access"];
 pub const DEFAULT_CODEX_MODEL: &str = "codex-mini-latest";
 
 #[must_use]
