@@ -92,32 +92,12 @@ pub struct ChatCompletionsClient {
 pub type OpenAiClient = ChatCompletionsClient;
 
 impl ChatCompletionsClient {
-    pub fn from_env() -> Result<Self, ApiError> {
-        let api_key = match std::env::var("OPENAI_API_KEY") {
-            Ok(key) if !key.is_empty() => key,
-            Ok(_) | Err(std::env::VarError::NotPresent) => {
-                return Err(ApiError::Auth(
-                    "OPENAI_API_KEY is not set; export it before calling the OpenAI API"
-                        .to_string(),
-                ));
-            }
-            Err(error) => return Err(ApiError::from(error)),
-        };
-
-        Ok(Self {
-            http: reqwest::Client::new(),
-            auth: Some(AuthSource::BearerToken(api_key)),
-            base_url: read_openai_base_url(),
-            default_model: DEFAULT_OPENAI_MODEL.to_string(),
-        })
-    }
-
     #[must_use]
     pub fn with_auth(auth: AuthSource) -> Self {
         Self {
             http: reqwest::Client::new(),
             auth: Some(auth),
-            base_url: read_openai_base_url(),
+            base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             default_model: DEFAULT_OPENAI_MODEL.to_string(),
         }
     }
@@ -211,15 +191,6 @@ impl ChatCompletionsClient {
             done: false,
         })
     }
-}
-
-#[must_use]
-fn read_openai_base_url() -> String {
-    std::env::var("OPENAI_BASE_URL")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string())
 }
 
 /// Streaming response that yields [`StreamEvent`] values from `OpenAI` SSE chunks.
@@ -691,49 +662,6 @@ fn convert_tool(tool: &crate::types::ToolDefinition) -> Value {
 mod tests {
     use super::*;
     use crate::types::{InputContentBlock, InputMessage, ToolDefinition};
-
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::test_env_lock()
-    }
-
-    #[test]
-    fn from_env_reads_api_key() {
-        let _guard = env_lock();
-        std::env::set_var("OPENAI_API_KEY", "sk-test-key-123");
-        std::env::remove_var("OPENAI_BASE_URL");
-
-        let client = OpenAiClient::from_env().expect("should read API key");
-        assert_eq!(
-            client.auth,
-            Some(AuthSource::BearerToken("sk-test-key-123".to_string()))
-        );
-        assert_eq!(client.base_url, DEFAULT_OPENAI_BASE_URL);
-        assert_eq!(client.default_model, DEFAULT_OPENAI_MODEL);
-
-        std::env::remove_var("OPENAI_API_KEY");
-    }
-
-    #[test]
-    fn from_env_errors_when_api_key_missing() {
-        let _guard = env_lock();
-        std::env::remove_var("OPENAI_API_KEY");
-
-        let error = OpenAiClient::from_env().expect_err("should error without key");
-        assert!(matches!(error, ApiError::Auth(ref msg) if msg.contains("OPENAI_API_KEY")));
-    }
-
-    #[test]
-    fn from_env_reads_custom_base_url() {
-        let _guard = env_lock();
-        std::env::set_var("OPENAI_API_KEY", "sk-proxy");
-        std::env::set_var("OPENAI_BASE_URL", "https://my-proxy.example.com");
-
-        let client = OpenAiClient::from_env().expect("should read API key");
-        assert_eq!(client.base_url, "https://my-proxy.example.com");
-
-        std::env::remove_var("OPENAI_API_KEY");
-        std::env::remove_var("OPENAI_BASE_URL");
-    }
 
     #[test]
     fn with_auth_creates_client() {

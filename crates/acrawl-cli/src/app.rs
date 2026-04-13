@@ -97,9 +97,6 @@ pub(crate) fn resolve_model_alias(model: &str) -> &str {
 }
 
 pub(crate) fn initial_model_from_credentials() -> Option<String> {
-    if let Some(model) = initial_model_from_env() {
-        return Some(model);
-    }
     let store = api::load_credentials().unwrap_or_default();
     if let Some(provider_name) = &store.active_provider {
         if let Some(config) = store.providers.get(provider_name) {
@@ -109,24 +106,6 @@ pub(crate) fn initial_model_from_credentials() -> Option<String> {
         }
     }
     None
-}
-
-fn initial_model_from_env() -> Option<String> {
-    let provider = env::var("LLM_PROVIDER")
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase();
-    let env_model = match provider.as_str() {
-        "openai" => env::var("OPENAI_MODEL").ok(),
-        "codex" => env::var("CODEX_MODEL").ok(),
-        _ => env::var("CLAUDE_MODEL").ok(),
-    }?;
-    let trimmed = env_model.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(resolve_model_alias(trimmed).to_string())
-    }
 }
 
 pub(crate) fn default_permission_mode() -> PermissionMode {
