@@ -407,21 +407,17 @@ mod tests {
 
     #[test]
     fn test_parse_provider_arg_groq() {
-        assert!(api::find_preset("groq").is_none());
+        assert!(api::find_preset("groq").is_some());
         let result = resolve_provider_arg("groq");
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("unknown provider"),
-            "expected 'unknown provider' in error, got: {err_msg}"
-        );
+        assert!(result.is_ok(), "groq should resolve via preset lookup");
+        assert!(matches!(result.unwrap(), ProviderChoice::Preset(_)));
     }
 
     #[test]
     fn test_parse_provider_arg_mistral() {
-        assert!(api::find_preset("mistral").is_none());
+        assert!(api::find_preset("mistral").is_some());
         let result = resolve_provider_arg("mistral");
-        assert!(result.is_err());
+        assert!(result.is_ok(), "mistral should resolve via preset lookup");
     }
 
     #[test]
