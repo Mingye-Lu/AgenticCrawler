@@ -763,6 +763,22 @@ fn venice_models() -> Vec<ModelInfo> {
             },
             pricing: None,
         },
+        ModelInfo {
+            id: "mistral-nemo".into(),
+            display_name: "Mistral Nemo (Venice)".into(),
+            aliases: vec![],
+            provider_id: "venice".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
     ]
 }
 
@@ -869,6 +885,22 @@ fn cloudflare_models() -> Vec<ModelInfo> {
             },
             pricing: None,
         },
+        ModelInfo {
+            id: "@cf/google/gemma-7b-it".into(),
+            display_name: "Gemma 7B (Cloudflare)".into(),
+            aliases: vec![],
+            provider_id: "cloudflare".into(),
+            max_output_tokens: 8_192,
+            context_window: 8_192,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: false,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
     ]
 }
 
@@ -897,6 +929,22 @@ fn sap_models() -> Vec<ModelInfo> {
             provider_id: "sap".into(),
             max_output_tokens: 4_096,
             context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "claude-3.5-sonnet".into(),
+            display_name: "Claude 3.5 Sonnet (SAP)".into(),
+            aliases: vec![],
+            provider_id: "sap".into(),
+            max_output_tokens: 8_192,
+            context_window: 200_000,
             capabilities: ModelCapabilities {
                 reasoning: false,
                 tool_use: true,
@@ -1081,6 +1129,22 @@ fn azure_models() -> Vec<ModelInfo> {
             },
             pricing: None,
         },
+        ModelInfo {
+            id: "gpt-4o-mini".into(),
+            display_name: "GPT-4o Mini (Azure)".into(),
+            aliases: vec![],
+            provider_id: "azure".into(),
+            max_output_tokens: 16_384,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
     ]
 }
 
@@ -1109,6 +1173,22 @@ fn vertex_models() -> Vec<ModelInfo> {
             provider_id: "vertex".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "gemini-1.5-flash-002".into(),
+            display_name: "Gemini 1.5 Flash 002 (Vertex)".into(),
+            aliases: vec![],
+            provider_id: "vertex".into(),
+            max_output_tokens: 8_192,
+            context_window: 1_048_576,
             capabilities: ModelCapabilities {
                 reasoning: false,
                 tool_use: true,
@@ -1152,6 +1232,22 @@ fn copilot_models() -> Vec<ModelInfo> {
                 vision: true,
                 streaming: true,
                 reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "o1-mini".into(),
+            display_name: "o1 Mini (Copilot)".into(),
+            aliases: vec![],
+            provider_id: "copilot".into(),
+            max_output_tokens: 65_536,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: true,
+                tool_use: false,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: ReasoningEffort::OPENAI.to_vec(),
             },
             pricing: None,
         },
@@ -1472,7 +1568,8 @@ mod tests {
             assert!(
                 has_models || routes_via_prefix,
                 "preset '{}' has model_prefixes {:?} but no catalog models route to it",
-                preset.id, preset.model_prefixes
+                preset.id,
+                preset.model_prefixes
             );
         }
     }

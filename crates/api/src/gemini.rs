@@ -573,7 +573,10 @@ mod tests {
         assert_eq!(contents[0]["parts"][0]["text"], "Hello Gemini");
         assert_eq!(body["generationConfig"]["maxOutputTokens"], 512);
         assert_eq!(body["systemInstruction"]["parts"][0]["text"], "Be concise.");
-        assert_eq!(body["tools"][0]["functionDeclarations"][0]["name"], "navigate");
+        assert_eq!(
+            body["tools"][0]["functionDeclarations"][0]["name"],
+            "navigate"
+        );
         assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
     }
 

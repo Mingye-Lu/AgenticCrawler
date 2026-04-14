@@ -79,12 +79,102 @@ pub(crate) fn persist_preset_credentials(
     Ok(())
 }
 
+/// Specialized auth flow for AWS Bedrock (access key + secret + region).
+fn run_bedrock_auth() -> Result<(), Box<dyn std::error::Error>> {
+    eprint!("AWS Access Key ID: ");
+    io::stderr().flush()?;
+    let mut access_key = String::new();
+    io::stdin().read_line(&mut access_key)?;
+    let access_key = access_key.trim().to_string();
+    if access_key.is_empty() {
+        return Err("AWS Access Key ID is required".into());
+    }
+
+    eprint!("AWS Secret Access Key: ");
+    io::stderr().flush()?;
+    let mut secret_key = String::new();
+    io::stdin().read_line(&mut secret_key)?;
+    let secret_key = secret_key.trim().to_string();
+    if secret_key.is_empty() {
+        return Err("AWS Secret Access Key is required".into());
+    }
+
+    eprint!("AWS Region [us-east-1]: ");
+    io::stderr().flush()?;
+    let mut region = String::new();
+    io::stdin().read_line(&mut region)?;
+    let region = region.trim().to_string();
+    let region = if region.is_empty() {
+        "us-east-1".to_string()
+    } else {
+        region
+    };
+
+    persist_preset_credentials(
+        "bedrock",
+        api::StoredProviderConfig {
+            auth_method: "api_key".to_string(),
+            api_key: Some(access_key),
+            aws_secret_access_key: Some(secret_key),
+            region: Some(region),
+            ..Default::default()
+        },
+    )
+}
+
+/// Specialized auth flow for Azure `OpenAI` (resource name + deployment + API key).
+fn run_azure_auth() -> Result<(), Box<dyn std::error::Error>> {
+    eprint!("Azure Resource Name (e.g. myresource): ");
+    io::stderr().flush()?;
+    let mut resource_name = String::new();
+    io::stdin().read_line(&mut resource_name)?;
+    let resource_name = resource_name.trim().to_string();
+    if resource_name.is_empty() {
+        return Err("Azure Resource Name is required".into());
+    }
+
+    eprint!("Deployment Name (e.g. gpt-4o): ");
+    io::stderr().flush()?;
+    let mut deployment_name = String::new();
+    io::stdin().read_line(&mut deployment_name)?;
+    let deployment_name = deployment_name.trim().to_string();
+    if deployment_name.is_empty() {
+        return Err("Deployment Name is required".into());
+    }
+
+    eprint!("Azure API Key: ");
+    io::stderr().flush()?;
+    let mut api_key = String::new();
+    io::stdin().read_line(&mut api_key)?;
+    let api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        return Err("Azure API Key is required".into());
+    }
+
+    persist_preset_credentials(
+        "azure",
+        api::StoredProviderConfig {
+            auth_method: "api_key".to_string(),
+            api_key: Some(api_key),
+            resource_name: Some(resource_name),
+            deployment_name: Some(deployment_name),
+            ..Default::default()
+        },
+    )
+}
+
 /// Generic API key auth flow for preset providers.
 pub(crate) fn run_preset_auth(
     preset: &api::ProviderPreset,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if preset.id == "copilot" {
         return run_copilot_device_code_auth();
+    }
+    if preset.id == "bedrock" {
+        return run_bedrock_auth();
+    }
+    if preset.id == "azure" {
+        return run_azure_auth();
     }
     if let Some(env_var) = preset.api_key_env_var {
         eprintln!("(Hint: also readable from {env_var} env var)");
@@ -550,7 +640,11 @@ mod tests {
     #[test]
     fn test_direct_provider_arg_still_works() {
         let result = resolve_provider_arg("groq");
-        assert!(result.is_ok(), "direct groq arg should work: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "direct groq arg should work: {:?}",
+            result.err()
+        );
     }
 
     #[test]

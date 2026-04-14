@@ -81,7 +81,9 @@ impl BedrockClient {
     ) -> Result<String, ApiError> {
         let mut payload = serde_json::to_value(request).map_err(ApiError::from)?;
         let Some(map) = payload.as_object_mut() else {
-            return Err(ApiError::Auth("bedrock request payload must be a JSON object".into()));
+            return Err(ApiError::Auth(
+                "bedrock request payload must be a JSON object".into(),
+            ));
         };
 
         map.insert(
@@ -126,7 +128,9 @@ impl BedrockClient {
                 value
                     .to_str()
                     .map(|value| (name.as_str().to_string(), value.to_string()))
-                    .map_err(|error| ApiError::Auth(format!("bedrock header is not valid UTF-8: {error}")))
+                    .map_err(|error| {
+                        ApiError::Auth(format!("bedrock header is not valid UTF-8: {error}"))
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -138,15 +142,23 @@ impl BedrockClient {
             .time(time)
             .settings(SigningSettings::default())
             .build()
-            .map_err(|error| ApiError::Auth(format!("failed to build Bedrock signing params: {error}")))?;
+            .map_err(|error| {
+                ApiError::Auth(format!("failed to build Bedrock signing params: {error}"))
+            })?;
 
         let signable_request = SignableRequest::new(
             request.method().as_str(),
             request.url().as_str(),
-            signable_headers.iter().map(|(name, value)| (name.as_str(), value.as_str())),
+            signable_headers
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
             SignableBody::Bytes(body.as_bytes()),
         )
-        .map_err(|error| ApiError::Auth(format!("failed to create Bedrock signable request: {error}")))?;
+        .map_err(|error| {
+            ApiError::Auth(format!(
+                "failed to create Bedrock signable request: {error}"
+            ))
+        })?;
 
         let (instructions, _signature) = sign(signable_request, &signing_params.into())
             .map_err(|error| ApiError::Auth(format!("failed to sign Bedrock request: {error}")))?
@@ -296,15 +308,15 @@ mod tests {
 
     #[test]
     fn test_bedrock_event_stream_parse() {
-        let payload = serde_json::to_vec(&StreamEvent::MessageStop(crate::types::MessageStopEvent {}))
-            .expect("serialize stream event");
+        let payload =
+            serde_json::to_vec(&StreamEvent::MessageStop(crate::types::MessageStopEvent {}))
+                .expect("serialize stream event");
         let frame = build_frame(&payload);
         let (parsed_payload, consumed) = parse_event_frame(&frame).expect("parse frame");
 
         assert_eq!(consumed, frame.len());
         assert_eq!(parsed_payload, payload);
-        let parsed_event = parse_stream_event_payload(&parsed_payload)
-            .expect("stream event");
+        let parsed_event = parse_stream_event_payload(&parsed_payload).expect("stream event");
         assert!(matches!(parsed_event, StreamEvent::MessageStop(_)));
     }
 }

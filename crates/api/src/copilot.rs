@@ -10,8 +10,7 @@ use crate::error::ApiError;
 pub const COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 pub const COPILOT_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 pub const COPILOT_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-pub const COPILOT_TOKEN_EXCHANGE_URL: &str =
-    "https://api.github.com/copilot_internal/v2/token";
+pub const COPILOT_TOKEN_EXCHANGE_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
 #[derive(Debug, serde::Deserialize)]
 pub struct DeviceCodeResponse {
@@ -29,9 +28,7 @@ pub struct AccessTokenResponse {
 }
 
 /// Request a device code from GitHub for the Copilot OAuth flow.
-pub async fn request_device_code(
-    client: &reqwest::Client,
-) -> Result<DeviceCodeResponse, ApiError> {
+pub async fn request_device_code(client: &reqwest::Client) -> Result<DeviceCodeResponse, ApiError> {
     let response = client
         .post(COPILOT_DEVICE_CODE_URL)
         .header("Accept", "application/json")
@@ -60,16 +57,12 @@ pub async fn poll_for_access_token(
             .form(&[
                 ("client_id", COPILOT_CLIENT_ID),
                 ("device_code", device_code),
-                (
-                    "grant_type",
-                    "urn:ietf:params:oauth:grant-type:device_code",
-                ),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
             .send()
             .await
             .map_err(ApiError::Http)?;
-        let token_response: AccessTokenResponse =
-            response.json().await.map_err(ApiError::Http)?;
+        let token_response: AccessTokenResponse = response.json().await.map_err(ApiError::Http)?;
         if let Some(token) = &token_response.access_token {
             if !token.is_empty() {
                 return Ok(token.clone());
@@ -115,7 +108,13 @@ pub struct DeviceCodeFlowResult {
     pub github_token: String,
 }
 
-pub async fn run_device_code_flow() -> Result<(DeviceCodeResponse, impl std::future::Future<Output = Result<DeviceCodeFlowResult, ApiError>>), ApiError> {
+pub async fn run_device_code_flow() -> Result<
+    (
+        DeviceCodeResponse,
+        impl std::future::Future<Output = Result<DeviceCodeFlowResult, ApiError>>,
+    ),
+    ApiError,
+> {
     let http = reqwest::Client::new();
     let device = request_device_code(&http).await?;
     let device_code = device.device_code.clone();
