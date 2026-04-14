@@ -284,9 +284,7 @@ impl LiveCli {
             None => *available.last().unwrap_or(&api::ReasoningEffort::High),
         };
         self.reasoning_effort = Some(next);
-        self.runtime
-            .api_client_mut()
-            .reasoning_effort = Some(next);
+        self.runtime.api_client_mut().reasoning_effort = Some(next);
         Some(next)
     }
 
@@ -819,9 +817,7 @@ impl LiveCli {
             self.permission_mode,
             self.ui_sender(),
         )?;
-        println!(
-            "Auth\n  Provider         {label}\n  Result           authenticated"
-        );
+        println!("Auth\n  Provider         {label}\n  Result           authenticated");
         Ok(())
     }
 
@@ -1006,7 +1002,10 @@ fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bo
     CACHE.get_or_init(|| {
         tokio::runtime::Runtime::new()
             .ok()
-            .and_then(|rt| rt.block_on(api::provider::catalog::fetch_models_dev_reasoning()).ok())
+            .and_then(|rt| {
+                rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
+                    .ok()
+            })
             .unwrap_or_default()
     })
 }
