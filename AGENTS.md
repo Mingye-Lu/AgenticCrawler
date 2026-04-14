@@ -19,7 +19,7 @@ npx playwright install chromium                              # required for the 
 ./target/release/acrawl --resume session.json /status /compact        # non-interactive session maintenance
 ```
 
-The CLI loads `.env` from the process cwd on startup. Copy `.env.example` → `.env` and set at least one of `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, or run `acrawl login` for Codex OAuth.
+The CLI reads LLM credentials from `~/.acrawl/credentials.json` (managed by `acrawl auth`) and runtime settings from `~/.acrawl/settings.json`. Both paths respect the `ACRAWL_CONFIG_HOME` env var override. Run `acrawl auth [anthropic|openai|other]` to configure a provider.
 
 ## Workspace layout
 
@@ -33,7 +33,7 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 
 ## Architecture: how a turn actually flows
 
-1. `acrawl-cli::app::LiveCli` builds an `ApiClient` (Anthropic / OpenAI / Codex) based on the resolved model + `LLM_PROVIDER`, plus a `ToolExecutor` backed by `crawler::ToolRegistry`.
+1. `acrawl-cli::app::LiveCli` builds a `ProviderClient` via `ProviderRegistry` from the persisted `CredentialStore` (`credentials.json`), plus a `ToolExecutor` backed by `crawler::ToolRegistry`.
 2. `runtime::ConversationRuntime::run_turn` drives the loop: call `ApiClient::stream` → feed `AssistantEvent`s (text deltas, tool_use, usage, stop) → execute tools through `ToolExecutor` → append results → repeat until the model emits `MessageStop` with no tool calls or `MAX_STEPS` is hit.
 3. The crawler tool handlers (`crates/crawler/src/tools/*.rs`) take JSON input, consult `CrawlState`, and act through a `BrowserContext` that wraps either the `FetchRouter` (reqwest HTTP path) or the `PlaywrightBridge` (headless Chromium). The router auto-escalates from HTTP to the browser when JS is needed.
 4. `runtime::PermissionPolicy` gates every tool call against the current `PermissionMode`. Each of the 15 `ToolSpec`s declares `required_permission` — extraction/listing are `ReadOnly`, `save_file` is `WorkspaceWrite`, the rest require `DangerFullAccess`.
@@ -43,15 +43,14 @@ The Playwright bridge is notable: it is a **single embedded Node script** launch
 
 ## Provider routing
 
-`provider_for_model` in `acrawl-cli/src/app.rs` decides the client:
+`ProviderRegistry` (in `crates/api/src/provider/mod.rs`) owns the model catalog and routes to the correct client:
 
-- contains `"codex"` → Codex (OAuth; requires `acrawl login`)
-- starts with `gpt-` / `o1` / `o3` / `o4` → OpenAI (uses `OPENAI_BASE_URL` if set)
-- otherwise → Anthropic
+- If `credentials.json` has an `active_provider`, that provider is used regardless of model name.
+- Otherwise the registry infers the provider from the model id: models in the built-in catalog map to their declared `provider_id`; unknown models fall back to `"other"`.
+- `resolve_alias` expands short names (`sonnet` → `claude-sonnet-4-6`, `4o` → `gpt-4o`, etc.) before routing.
+- `build_client` constructs an `Anthropic`, `OpenAi`, or `Custom` (OpenAI-compatible chat/completions) client from the stored `StoredProviderConfig` for that provider.
 
-Default model comes from `LLM_PROVIDER` + the matching `*_MODEL` env var (`CLAUDE_MODEL` / `OPENAI_MODEL` / `CODEX_MODEL`). An unset or empty `LLM_PROVIDER` behaves like `claude`. The tests in `acrawl-cli/src/main.rs` lock `LLM_PROVIDER`/`*_MODEL` env vars via a shared mutex (`MODEL_ENV_LOCK`) — preserve that pattern when adding tests that touch provider env.
-
-Short aliases (`sonnet`, `opus`, `haiku`, `gpt-4o`, …) are resolved in `app::resolve_model_alias` before the provider is picked.
+Default model comes from the `default_model` field in the active provider's `StoredProviderConfig` inside `credentials.json`. `--model` on the CLI overrides it.
 
 ## Tool surface
 

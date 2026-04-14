@@ -11,9 +11,7 @@ cargo build --release
 
 npm install          # installs Playwright and downloads Chromium automatically
 
-cp .env.example .env
-# set ANTHROPIC_API_KEY or OPENAI_API_KEY
-
+./target/release/acrawl auth   # configure provider credentials (API key or OAuth)
 ./target/release/acrawl
 ```
 
@@ -56,6 +54,7 @@ acrawl [OPTIONS] [COMMAND]
 
 Commands:
   prompt <text>   One-shot (non-interactive)
+  auth [provider] Configure provider credentials (anthropic, openai, other)
   login           Authenticate via OAuth for Codex
   logout          Clear stored credentials
   init            Initialize project config
@@ -81,20 +80,33 @@ Options:
 
 ## Configuration
 
-All settings come from environment variables or `.env`:
+All configuration is stored in `~/.acrawl/` (override with `ACRAWL_CONFIG_HOME`).
 
-| Variable           | Default              | Description                        |
-|--------------------|----------------------|------------------------------------|
-| `ANTHROPIC_API_KEY`| —                    | Required for Claude                |
-| `OPENAI_API_KEY`   | —                    | Required for OpenAI                |
-| `OPENAI_BASE_URL`  | `https://api.openai.com` | OpenAI-compatible API origin when using OpenAI |
-| `LLM_PROVIDER`     | —                    | `claude` / `openai` / `codex`; unset = Claude path |
-| `CLAUDE_MODEL`     | `claude-sonnet-4-6`  | Claude model                       |
-| `OPENAI_MODEL`     | `gpt-4o`             | OpenAI model                       |
-| `CODEX_MODEL`      | `codex-mini-latest`  | Codex model (requires `acrawl login`) |
-| `MAX_STEPS`        | `50`                 | Max agent loop iterations          |
-| `HEADLESS`         | `true`               | Run browser headless               |
-| `WORKSPACE_DIR`    | `workspace`          | Directory for saved files          |
+### `credentials.json` — LLM provider credentials
+
+Managed via `acrawl auth [anthropic|openai|other]`. Stores per-provider:
+
+| Field            | Description                                      |
+|------------------|--------------------------------------------------|
+| `active_provider`| Which provider is currently selected              |
+| `auth_method`    | `api_key` or `oauth`                              |
+| `api_key`        | API key (Anthropic, OpenAI, or custom)            |
+| `oauth`          | OAuth tokens (access, refresh, expiry, scopes)    |
+| `default_model`  | Default model for this provider                   |
+| `base_url`       | Custom API origin (e.g. local Ollama endpoint)    |
+
+### `settings.json` — runtime settings
+
+Created automatically with defaults; edit directly or via `acrawl init`.
+
+| Field                      | Default       | Description                        |
+|----------------------------|---------------|------------------------------------|
+| `headless`                 | `true`        | Run browser headless               |
+| `max_steps`                | `50`          | Max agent loop iterations          |
+| `workspace_dir`            | `"workspace"` | Directory for saved files          |
+| `permission_mode`          | `"read-only"` | `read-only` / `workspace-write` / `danger-full-access` |
+| `classic_repl`             | `false`       | Use classic REPL instead of TUI    |
+| `auto_compact_input_tokens`| `200000`      | Auto-compact threshold in tokens   |
 
 ## Architecture
 
