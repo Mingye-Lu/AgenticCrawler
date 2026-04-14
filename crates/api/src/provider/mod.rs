@@ -113,6 +113,7 @@ impl ProviderClient {
                         model,
                         base_url,
                         preset.chat_path,
+                        preset.transform_id,
                     )));
                 }
                 ProviderProtocol::Gemini | ProviderProtocol::Bedrock => {}
@@ -133,8 +134,10 @@ fn build_chat_completions_from_config(
     model: &str,
     base_url: &str,
     chat_path: &str,
+    transform_id: Option<&str>,
 ) -> crate::ChatCompletionsClient {
     use crate::client::AuthSource;
+    use crate::provider::transform::{MistralTransform, NoOpTransform};
 
     let auth = config
         .api_key
@@ -144,9 +147,15 @@ fn build_chat_completions_from_config(
             AuthSource::BearerToken(key.to_string())
         });
 
+    let transform: Box<dyn transform::ProviderTransform> = match transform_id {
+        Some("mistral") => Box::new(MistralTransform),
+        _ => Box::new(NoOpTransform),
+    };
+
     crate::ChatCompletionsClient::with_no_auth(model, base_url)
         .with_optional_auth(auth)
         .with_chat_path(chat_path)
+        .with_transform(transform)
 }
 
 pub struct ProviderRegistry {

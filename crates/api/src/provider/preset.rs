@@ -39,9 +39,10 @@ pub struct ProviderPreset {
     pub model_prefixes: &'static [&'static str],
     pub protocol: ProviderProtocol,
     pub category: ProviderCategory,
+    pub transform_id: Option<&'static str>,
 }
 
-static BUILTIN_PRESETS: [ProviderPreset; 15] = [
+static BUILTIN_PRESETS: [ProviderPreset; 18] = [
     ProviderPreset {
         id: "anthropic",
         display_name: "Anthropic",
@@ -55,6 +56,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["claude"],
         protocol: ProviderProtocol::Anthropic,
         category: ProviderCategory::Popular,
+        transform_id: None,
     },
     ProviderPreset {
         id: "openai",
@@ -69,6 +71,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["gpt-", "o1", "o3", "o4", "codex-", "chatgpt-"],
         protocol: ProviderProtocol::OpenAiResponses,
         category: ProviderCategory::Popular,
+        transform_id: None,
     },
     ProviderPreset {
         id: "other",
@@ -83,6 +86,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &[],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Other,
+        transform_id: None,
     },
     ProviderPreset {
         id: "groq",
@@ -97,6 +101,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["llama-3", "gemma2", "mixtral"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
+        transform_id: None,
     },
     ProviderPreset {
         id: "cerebras",
@@ -108,9 +113,10 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         supports_tools: true,
         supports_streaming_tools: true,
         supports_vision: false,
-        model_prefixes: &["llama3."],
+        model_prefixes: &["llama3.1-"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
+        transform_id: None,
     },
     ProviderPreset {
         id: "deepinfra",
@@ -125,6 +131,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["meta-llama/", "mistralai/"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
+        transform_id: None,
     },
     ProviderPreset {
         id: "togetherai",
@@ -139,6 +146,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &[],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
+        transform_id: None,
     },
     ProviderPreset {
         id: "perplexity",
@@ -153,6 +161,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["llama-3.1-sonar"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
+        transform_id: None,
     },
     ProviderPreset {
         id: "xai",
@@ -167,6 +176,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["grok-"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
+        transform_id: None,
     },
     ProviderPreset {
         id: "cohere",
@@ -181,6 +191,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["command-"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
+        transform_id: None,
     },
     ProviderPreset {
         id: "vercel",
@@ -195,6 +206,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &[],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Gateway,
+        transform_id: None,
     },
     ProviderPreset {
         id: "openrouter",
@@ -209,6 +221,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &[],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Gateway,
+        transform_id: None,
     },
     ProviderPreset {
         id: "venice",
@@ -223,6 +236,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["dolphin-"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Other,
+        transform_id: None,
     },
     ProviderPreset {
         id: "alibaba",
@@ -237,6 +251,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &["qwen-"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Other,
+        transform_id: None,
     },
     ProviderPreset {
         id: "sap",
@@ -251,6 +266,52 @@ static BUILTIN_PRESETS: [ProviderPreset; 15] = [
         model_prefixes: &[],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Enterprise,
+        transform_id: None,
+    },
+    ProviderPreset {
+        id: "mistral",
+        display_name: "Mistral AI",
+        base_url: "https://api.mistral.ai/v1",
+        chat_path: "/chat/completions",
+        api_key_env_var: Some("MISTRAL_API_KEY"),
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: false,
+        model_prefixes: &["mistral-", "codestral-"],
+        protocol: ProviderProtocol::ChatCompletions,
+        category: ProviderCategory::Specialized,
+        transform_id: Some("mistral"),
+    },
+    ProviderPreset {
+        id: "cloudflare",
+        display_name: "Cloudflare Workers AI",
+        base_url: "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1",
+        chat_path: "/chat/completions",
+        api_key_env_var: Some("CLOUDFLARE_API_TOKEN"),
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: false,
+        model_prefixes: &["@cf/"],
+        protocol: ProviderProtocol::ChatCompletions,
+        category: ProviderCategory::Gateway,
+        transform_id: None,
+    },
+    ProviderPreset {
+        id: "cloudflare-gateway",
+        display_name: "Cloudflare AI Gateway",
+        base_url: "https://gateway.ai.cloudflare.com/v1/{account_id}/{gateway_id}",
+        chat_path: "/chat/completions",
+        api_key_env_var: Some("CLOUDFLARE_API_TOKEN"),
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: false,
+        model_prefixes: &[],
+        protocol: ProviderProtocol::ChatCompletions,
+        category: ProviderCategory::Gateway,
+        transform_id: None,
     },
 ];
 
@@ -418,5 +479,35 @@ mod tests {
     fn test_groq_routes_through_chat_completions() {
         let p = find_preset("groq").expect("groq preset should exist");
         assert!(matches!(p.protocol, ProviderProtocol::ChatCompletions));
+    }
+
+    #[test]
+    fn test_mistral_preset_exists() {
+        let p = find_preset("mistral").expect("mistral preset should exist");
+        assert_eq!(p.base_url, "https://api.mistral.ai/v1");
+    }
+
+    #[test]
+    fn test_mistral_uses_transform() {
+        let p = find_preset("mistral").expect("mistral preset should exist");
+        assert_eq!(p.transform_id, Some("mistral"));
+    }
+
+    #[test]
+    fn test_cloudflare_preset_exists() {
+        let p = find_preset("cloudflare").expect("cloudflare preset should exist");
+        assert!(p.base_url.contains("cloudflare.com"));
+    }
+
+    #[test]
+    fn test_cloudflare_requires_account_id() {
+        let p = find_preset("cloudflare").expect("cloudflare preset should exist");
+        assert!(p.base_url.contains("{account_id}"));
+    }
+
+    #[test]
+    fn test_cloudflare_gateway_preset_exists() {
+        let p = find_preset("cloudflare-gateway").expect("cloudflare-gateway preset should exist");
+        assert!(p.base_url.contains("gateway.ai.cloudflare.com"));
     }
 }
