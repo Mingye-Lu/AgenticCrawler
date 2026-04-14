@@ -405,6 +405,13 @@ static BUILTIN_PRESETS: [ProviderPreset; 24] = [
     },
 ];
 
+/// How to add a new provider:
+/// 1. Add a `ProviderPreset` entry to `BUILTIN_PRESETS` and keep the array size in sync.
+/// 2. Add matching catalog entries in `catalog.rs` so aliases, pricing, and provider IDs line up.
+/// 3. Wire auth prompts in `acrawl-cli` if the provider needs anything beyond the default API-key flow.
+/// 4. Add or extend `ProviderProtocol` and client builders for non-standard transports.
+/// 5. Give the preset clear `model_prefixes` so inference stays predictable.
+/// 6. Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check`.
 #[must_use]
 pub fn builtin_presets() -> Vec<ProviderPreset> {
     BUILTIN_PRESETS.to_vec()

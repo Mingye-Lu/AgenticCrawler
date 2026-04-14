@@ -389,6 +389,33 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_credentials_load() {
+        let json = r#"{
+            "active_provider": "anthropic",
+            "providers": {
+                "anthropic": {
+                    "auth_method": "api_key",
+                    "api_key": "sk-ant-test"
+                },
+                "openai": {
+                    "auth_method": "api_key",
+                    "api_key": "sk-openai-test"
+                }
+            }
+        }"#;
+
+        let store: crate::CredentialStore = serde_json::from_str(json)
+            .expect("legacy credentials should deserialize without error");
+
+        assert_eq!(store.active_provider.as_deref(), Some("anthropic"));
+        let anthropic = &store.providers["anthropic"];
+        assert_eq!(anthropic.api_key.as_deref(), Some("sk-ant-test"));
+        assert!(anthropic.region.is_none());
+        assert!(anthropic.resource_name.is_none());
+        assert!(anthropic.gcp_project_id.is_none());
+    }
+
+    #[test]
     fn test_credentials_file_path_respects_env_var() {
         let _lock = crate::test_env_lock();
         let custom_path = "/custom/config/path";

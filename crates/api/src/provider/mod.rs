@@ -98,7 +98,9 @@ impl ProviderClient {
             Self::Bedrock(_) => Err(ApiError::Auth(
                 "send_message not supported for Bedrock streaming client".into(),
             )),
-            Self::Gemini(_) => Err(ApiError::Auth("send_message not supported for Gemini".into())),
+            Self::Gemini(_) => Err(ApiError::Auth(
+                "send_message not supported for Gemini".into(),
+            )),
             _ => Err(ApiError::Auth(
                 "send_message only supported for Anthropic".into(),
             )),
@@ -180,14 +182,8 @@ impl ProviderClient {
                             .as_deref()
                             .unwrap_or("https://api.githubcopilot.com");
                         let copilot_headers = vec![
-                            (
-                                "Copilot-Integration-Id".to_string(),
-                                "acrawl".to_string(),
-                            ),
-                            (
-                                "editor-version".to_string(),
-                                "acrawl/1.0.0".to_string(),
-                            ),
+                            ("Copilot-Integration-Id".to_string(), "acrawl".to_string()),
+                            ("editor-version".to_string(), "acrawl/1.0.0".to_string()),
                         ];
                         return Ok(Self::Custom(
                             build_copilot_chat_completions(
@@ -288,10 +284,7 @@ fn build_copilot_chat_completions(
         .with_chat_path(chat_path)
 }
 
-fn build_vertex_client(
-    config: &StoredProviderConfig,
-    model: &str,
-) -> ProviderClient {
+fn build_vertex_client(config: &StoredProviderConfig, model: &str) -> ProviderClient {
     let project = config.gcp_project_id.as_deref().unwrap_or("my-project");
     let region = config.gcp_region.as_deref().unwrap_or("us-central1");
     let api_key = config.api_key.clone().unwrap_or_default();
@@ -377,6 +370,20 @@ impl ProviderRegistry {
             return Ok(ProviderClient::no_auth_placeholder());
         }
 
+        if self
+            .active_provider_id()
+            .filter(|id| store.providers.contains_key(*id))
+            .is_none()
+        {
+            let matching = self.ambiguous_provider_matches(model);
+            if matching.len() > 1 {
+                return Err(ApiError::Auth(format!(
+                    "Model '{model}' matches multiple configured providers ({}). Set active provider with `acrawl auth <provider>`.",
+                    matching.join(", ")
+                )));
+            }
+        }
+
         let provider_id = self
             .active_provider_id()
             .filter(|id| store.providers.contains_key(*id))
@@ -395,12 +402,33 @@ impl ProviderRegistry {
     pub fn configured_providers(&self) -> &[String] {
         &self.configured_providers
     }
+
+    fn ambiguous_provider_matches(&self, model: &str) -> Vec<&'static str> {
+        Self::matching_provider_ids(model, &self.configured_providers)
+    }
+
+    fn matching_provider_ids(model: &str, configured_providers: &[String]) -> Vec<&'static str> {
+        let mut matching = Vec::new();
+        for preset in preset::builtin_presets() {
+            if preset.model_prefixes.is_empty()
+                || !configured_providers.iter().any(|id| id == preset.id)
+                || !preset
+                    .model_prefixes
+                    .iter()
+                    .any(|prefix| model.starts_with(prefix))
+            {
+                continue;
+            }
+            matching.push(preset.id);
+        }
+        matching
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credentials::CredentialStore;
+    use crate::credentials::{CredentialStore, StoredProviderConfig};
 
     #[test]
     fn registry_resolves_alias_to_canonical_id() {
@@ -477,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn test_preset_routes_to_chat_completions() {
+    fn test_auth_other_still_works() {
         let config = StoredProviderConfig {
             auth_method: "api_key".into(),
             api_key: Some("test-key".into()),
@@ -489,6 +517,63 @@ mod tests {
 
         assert!(client.is_ok());
         assert!(matches!(client.unwrap(), ProviderClient::Custom(_)));
+    }
+
+    #[test]
+    fn test_active_provider_overrides_model_inference() {
+        let mut store = CredentialStore {
+            active_provider: Some("other".into()),
+            ..Default::default()
+        };
+        store.providers.insert(
+            "other".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("test-key".into()),
+                base_url: Some("https://api.example.com/v1".into()),
+                ..Default::default()
+            },
+        );
+
+        let registry = ProviderRegistry::from_credentials(&store);
+        let client = registry.build_client("claude-sonnet-4-6", &store);
+
+        assert!(client.is_ok());
+        assert!(matches!(client.unwrap(), ProviderClient::Custom(_)));
+    }
+
+    #[test]
+    fn test_ambiguous_model_without_active_provider_returns_error() {
+        let mut store = CredentialStore::default();
+        store.providers.insert(
+            "groq".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("test-key".into()),
+                ..Default::default()
+            },
+        );
+        store.providers.insert(
+            "perplexity".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("test-key".into()),
+                ..Default::default()
+            },
+        );
+
+        let registry = ProviderRegistry::from_credentials(&store);
+        let result = registry.build_client("llama-3.1-sonar-preview", &store);
+
+        match result {
+            Err(ApiError::Auth(message)) => {
+                assert!(message.contains("matches multiple configured providers"));
+                assert!(message.contains("groq"));
+                assert!(message.contains("perplexity"));
+                assert!(message.contains("acrawl auth <provider>"));
+            }
+            _ => panic!("expected ambiguous provider auth error"),
+        }
     }
 
     #[test]
@@ -679,12 +764,9 @@ mod tests {
             gcp_region: Some("us-central1".into()),
             ..Default::default()
         };
-        let client = ProviderClient::from_stored_config(
-            "vertex",
-            &config,
-            "claude-sonnet-4-6@20250514",
-        )
-        .unwrap();
+        let client =
+            ProviderClient::from_stored_config("vertex", &config, "claude-sonnet-4-6@20250514")
+                .unwrap();
         assert!(matches!(client, ProviderClient::Anthropic(_)));
     }
 
@@ -748,8 +830,7 @@ mod tests {
             let inferred = infer_provider(model);
             assert_eq!(
                 inferred, expected_provider,
-                "model '{}' should infer to '{}', got '{}'",
-                model, expected_provider, inferred
+                "model '{model}' should infer to '{expected_provider}', got '{inferred}'"
             );
         }
     }
