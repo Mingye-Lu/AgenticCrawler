@@ -2084,9 +2084,9 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
         input_h,
     );
     let goal_title = if let Some(ref effort) = state.cached_header.reasoning_effort {
-        format!(" Goal * {} * {effort} ", state.cached_header.model)
+        format!(" Goal · {} · {effort} ", state.cached_header.model)
     } else {
-        format!(" Goal * {} ", state.cached_header.model)
+        format!(" Goal · {} ", state.cached_header.model)
     };
     let block = Block::default()
         .title(goal_title)
@@ -2342,9 +2342,9 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
     } else if state.pending_permission.is_some() {
         " ⚠ Permission ".to_string()
     } else if let Some(ref effort) = header.reasoning_effort {
-        format!(" Input * {} * {effort} ", header.model)
+        format!(" Input · {} · {effort} ", header.model)
     } else {
-        format!(" Input * {} ", header.model)
+        format!(" Input · {} ", header.model)
     };
 
     let footer_title_style = if state.busy {
@@ -3792,11 +3792,11 @@ mod tests {
         state.cached_header = header;
 
         let title = if let Some(ref effort) = state.cached_header.reasoning_effort {
-            format!(" Goal * {} * {effort} ", state.cached_header.model)
+            format!(" Goal · {} · {effort} ", state.cached_header.model)
         } else {
-            format!(" Goal * {} ", state.cached_header.model)
+            format!(" Goal · {} ", state.cached_header.model)
         };
-        assert_eq!(title, " Goal * gpt-5.3-codex * high ");
+        assert_eq!(title, " Goal · gpt-5.3-codex · high ");
     }
 
     #[test]
@@ -3810,11 +3810,11 @@ mod tests {
         state.cached_header = header;
 
         let title = if let Some(ref effort) = state.cached_header.reasoning_effort {
-            format!(" Goal * {} * {effort} ", state.cached_header.model)
+            format!(" Goal · {} · {effort} ", state.cached_header.model)
         } else {
-            format!(" Goal * {} ", state.cached_header.model)
+            format!(" Goal · {} ", state.cached_header.model)
         };
-        assert_eq!(title, " Goal * claude-sonnet-4-6 ");
+        assert_eq!(title, " Goal · claude-sonnet-4-6 ");
     }
 
     #[test]
@@ -3826,9 +3826,9 @@ mod tests {
                 reasoning_effort: Some(effort.to_string()),
                 ..Default::default()
             };
-            let title = format!(" Goal * {} * {} ", header.model, effort);
+            let title = format!(" Goal · {} · {} ", header.model, effort);
             assert!(
-                title.contains(&format!("* {effort} ")),
+                title.contains(&format!("· {effort} ")),
                 "title should contain effort level '{effort}': {title}"
             );
         }
