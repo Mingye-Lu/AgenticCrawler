@@ -262,44 +262,54 @@ pub(crate) fn interactive_login_prompt(
 }
 
 pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::error::Error>> {
-    eprintln!("Select a provider to authenticate:");
-    eprintln!("  1) Anthropic (OAuth)");
-    eprintln!("  2) OpenAI   (API key)");
-    eprintln!("  3) Other    (local/OpenAI-compatible)");
+    use api::ProviderCategory;
 
-    let extra_presets: Vec<_> = api::builtin_presets()
-        .into_iter()
-        .filter(|p| !matches!(p.id, "anthropic" | "openai" | "other"))
-        .collect();
+    let all_presets = api::builtin_presets();
+    let mut counter = 1_usize;
+    let mut indexed: Vec<api::ProviderPreset> = Vec::new();
 
-    for (i, preset) in extra_presets.iter().enumerate() {
-        eprintln!("  {}) {} (API key)", i + 4, preset.display_name);
+    let categories: &[(ProviderCategory, &str)] = &[
+        (ProviderCategory::Popular, "=== Popular ==="),
+        (ProviderCategory::OssHosting, "=== Open Source Hosting ==="),
+        (ProviderCategory::Specialized, "=== Specialized ==="),
+        (ProviderCategory::Enterprise, "=== Enterprise ==="),
+        (ProviderCategory::Gateway, "=== Routing/Gateway ==="),
+        (ProviderCategory::Other, "=== Other ==="),
+    ];
+
+    eprintln!("\nSelect a provider to authenticate:");
+    for (cat, label) in categories {
+        let presets_in_cat: Vec<_> = all_presets.iter().filter(|p| p.category == *cat).collect();
+        if presets_in_cat.is_empty() {
+            continue;
+        }
+        eprintln!("\n{label}");
+        for p in presets_in_cat {
+            eprintln!("  {counter}) {}", p.display_name);
+            indexed.push(p.clone());
+            counter += 1;
+        }
     }
 
-    let max = 3 + extra_presets.len();
-    eprint!("Choice [1-{max}]: ");
+    eprint!("\nChoice [1-{}]: ", indexed.len());
     io::stderr().flush()?;
-
     let mut choice = String::new();
     io::stdin().read_line(&mut choice)?;
     let trimmed = choice.trim();
 
-    match trimmed {
-        "1" | "anthropic" => Ok(ProviderChoice::Legacy(Provider::Anthropic)),
-        "2" | "openai" => Ok(ProviderChoice::Legacy(Provider::OpenAi)),
-        "3" | "other" => Ok(ProviderChoice::Legacy(Provider::Other)),
-        other => {
-            if let Ok(n) = other.parse::<usize>() {
-                if n >= 4 && n <= max {
-                    return Ok(ProviderChoice::Preset(extra_presets[n - 4].clone()));
-                }
-            }
-            if let Some(preset) = extra_presets.iter().find(|p| p.id == other) {
-                return Ok(ProviderChoice::Preset(preset.clone()));
-            }
-            Err(format!("invalid choice '{other}'").into())
+    if let Ok(n) = trimmed.parse::<usize>() {
+        if n >= 1 && n <= indexed.len() {
+            let preset = indexed[n - 1].clone();
+            return Ok(ProviderChoice::Preset(preset));
         }
     }
+
+    // Try by id
+    if let Some(p) = indexed.iter().find(|p| p.id == trimmed) {
+        return Ok(ProviderChoice::Preset(p.clone()));
+    }
+
+    Err(format!("invalid choice '{trimmed}'").into())
 }
 
 pub(crate) fn open_browser(url: &str) -> io::Result<()> {
@@ -500,5 +510,52 @@ mod tests {
         let result = resolve_provider_arg("copilot");
         assert!(result.is_ok(), "copilot should resolve via preset lookup");
         assert!(matches!(result.unwrap(), ProviderChoice::Preset(p) if p.id == "copilot"));
+    }
+
+    #[test]
+    fn test_all_presets_have_category() {
+        let presets = api::builtin_presets();
+        assert!(!presets.is_empty(), "should have presets");
+        for p in &presets {
+            // Every preset has some category — verify it compiles and returns a value
+            let _ = format!("{:?}", p.category);
+        }
+    }
+
+    #[test]
+    fn test_prompt_provider_choice_lists_all() {
+        // Verify the grouped menu would include every preset:
+        // build the same indexed vec the function builds and check count.
+        use api::ProviderCategory;
+        let all_presets = api::builtin_presets();
+        let categories = [
+            ProviderCategory::Popular,
+            ProviderCategory::OssHosting,
+            ProviderCategory::Specialized,
+            ProviderCategory::Enterprise,
+            ProviderCategory::Gateway,
+            ProviderCategory::Other,
+        ];
+        let mut count = 0_usize;
+        for cat in &categories {
+            count += all_presets.iter().filter(|p| p.category == *cat).count();
+        }
+        assert_eq!(
+            count,
+            all_presets.len(),
+            "every preset must belong to exactly one known category"
+        );
+    }
+
+    #[test]
+    fn test_direct_provider_arg_still_works() {
+        let result = resolve_provider_arg("groq");
+        assert!(result.is_ok(), "direct groq arg should work: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_direct_provider_arg_anthropic_still_works() {
+        let result = resolve_provider_arg("anthropic");
+        assert!(result.is_ok());
     }
 }

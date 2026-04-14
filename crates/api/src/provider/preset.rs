@@ -14,7 +14,7 @@ pub enum ProviderProtocol {
     Bedrock,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderCategory {
     Popular,
     OssHosting,
@@ -651,5 +651,93 @@ mod tests {
         assert!(matches!(p.auth_header_format, AuthHeaderFormat::Bearer));
         assert!(p.supports_tools);
         assert!(p.supports_vision);
+    }
+
+    #[test]
+    fn test_all_presets_have_valid_base_url() {
+        for p in builtin_presets() {
+            assert!(
+                p.base_url.is_empty()
+                    || p.base_url.starts_with("https://")
+                    || p.base_url.contains('{'),
+                "preset {} has invalid base_url: {}",
+                p.id,
+                p.base_url
+            );
+        }
+    }
+
+    #[test]
+    fn test_total_preset_count() {
+        let presets = builtin_presets();
+        assert!(
+            presets.len() >= 22,
+            "should have at least 22 presets, got {}",
+            presets.len()
+        );
+    }
+
+    #[test]
+    fn test_all_preset_ids_are_unique() {
+        let presets = builtin_presets();
+        let ids: std::collections::HashSet<&str> = presets.iter().map(|p| p.id).collect();
+        assert_eq!(ids.len(), presets.len(), "preset IDs must be unique");
+    }
+
+    #[test]
+    fn test_all_presets_have_env_var_or_are_special() {
+        let no_env_allowed = ["other", "copilot"];
+        for p in builtin_presets() {
+            if no_env_allowed.contains(&p.id) {
+                continue;
+            }
+            assert!(
+                p.api_key_env_var.is_some(),
+                "preset '{}' should have an api_key_env_var",
+                p.id
+            );
+            let env = p.api_key_env_var.unwrap();
+            assert!(
+                !env.is_empty(),
+                "preset '{}' has empty api_key_env_var",
+                p.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_preset_protocol_matches_routing() {
+        for p in builtin_presets() {
+            match p.protocol {
+                ProviderProtocol::Anthropic => {
+                    assert_eq!(
+                        p.id, "anthropic",
+                        "only anthropic should use Anthropic protocol"
+                    );
+                }
+                ProviderProtocol::OpenAiResponses => {
+                    assert_eq!(
+                        p.id, "openai",
+                        "only openai should use OpenAiResponses protocol"
+                    );
+                }
+                ProviderProtocol::Bedrock => {
+                    assert_eq!(p.id, "bedrock", "only bedrock should use Bedrock protocol");
+                }
+                ProviderProtocol::Gemini => {
+                    assert!(
+                        p.id == "google" || p.id == "vertex",
+                        "only google/vertex should use Gemini protocol, got '{}'",
+                        p.id
+                    );
+                }
+                ProviderProtocol::ChatCompletions => {
+                    assert_ne!(
+                        p.id, "anthropic",
+                        "anthropic should not use ChatCompletions"
+                    );
+                }
+            }
+        }
     }
 }
