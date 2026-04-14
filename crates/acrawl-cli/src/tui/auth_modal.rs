@@ -341,11 +341,12 @@ impl AuthModal {
 impl Modal for AuthModal {
     #[allow(clippy::too_many_lines)]
     fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let (border_color, text, cursor_pos) = match &self.step {
+        let (border_color, text, cursor_pos, scroll_row) = match &self.step {
             AuthModalStep::ProviderSelect { selected } => {
                 let presets = flat_preset_list();
                 let mut lines: Vec<Line<'_>> = Vec::new();
                 let mut idx = 0usize;
+                let mut selected_line: usize = 0;
                 let categories: &[(api::ProviderCategory, &str)] = &[
                     (
                         api::ProviderCategory::Popular,
@@ -382,6 +383,9 @@ impl Modal for AuthModal {
                         Style::default().fg(Color::DarkGray),
                     )));
                     for p in &group {
+                        if idx == *selected {
+                            selected_line = lines.len();
+                        }
                         let cursor = if idx == *selected { '▶' } else { ' ' };
                         let style = if idx == *selected {
                             Style::default()
@@ -399,7 +403,17 @@ impl Modal for AuthModal {
                 }
                 lines.push(Line::default());
                 lines.push(Line::from("↑/↓ navigate  Enter select  Esc cancel"));
-                (Color::Cyan, Text::from(lines), None)
+
+                // Compute scroll: keep selected_line centred in the available viewport.
+                // Subtract 4 from area height for borders (2) + top/bottom padding (1 each).
+                let viewport_h = usize::from(area.height.saturating_sub(4));
+                let scroll_row: u16 = if selected_line < viewport_h {
+                    0
+                } else {
+                    u16::try_from(selected_line.saturating_sub(viewport_h / 2)).unwrap_or(u16::MAX)
+                };
+
+                (Color::Cyan, Text::from(lines), None, scroll_row)
             }
             AuthModalStep::AuthMethodSelect { provider, selected } => {
                 let methods = match provider {
@@ -417,7 +431,7 @@ impl Modal for AuthModal {
                 }
                 lines.push(Line::default());
                 lines.push(Line::from("Up/Down navigate  Enter select  Esc back"));
-                (Color::Cyan, Text::from(lines), None)
+                (Color::Cyan, Text::from(lines), None, 0u16)
             }
             AuthModalStep::BaseUrlInput {
                 input,
@@ -445,6 +459,7 @@ impl Modal for AuthModal {
                         3u16,
                         4u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)),
                     )),
+                    0u16,
                 )
             }
             AuthModalStep::ApiKeyInput {
@@ -480,6 +495,7 @@ impl Modal for AuthModal {
                         3u16,
                         3u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)),
                     )),
+                    0u16,
                 )
             }
             AuthModalStep::OAuthWaiting { status, tick, .. } => {
@@ -490,7 +506,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Esc cancel"),
                 ];
-                (Color::Blue, Text::from(lines), None)
+                (Color::Blue, Text::from(lines), None, 0u16)
             }
             AuthModalStep::ModelFetchLoading { provider, .. } => {
                 let lines = vec![
@@ -498,7 +514,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Please wait..."),
                 ];
-                (Color::Blue, Text::from(lines), None)
+                (Color::Blue, Text::from(lines), None, 0u16)
             }
             AuthModalStep::ModelSelect { provider, state } => {
                 let mut lines = vec![
@@ -551,6 +567,7 @@ impl Modal for AuthModal {
                         10u16
                             .saturating_add(u16::try_from(state.filter_cursor).unwrap_or(u16::MAX)),
                     )),
+                    0u16,
                 )
             }
             AuthModalStep::Success { message, .. } => {
@@ -559,7 +576,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Press any key to continue"),
                 ];
-                (Color::Green, Text::from(lines), None)
+                (Color::Green, Text::from(lines), None, 0u16)
             }
             AuthModalStep::Error { message } => {
                 let lines = vec![
@@ -567,7 +584,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Press any key to dismiss"),
                 ];
-                (Color::Red, Text::from(lines), None)
+                (Color::Red, Text::from(lines), None, 0u16)
             }
         };
 
@@ -597,7 +614,9 @@ impl Modal for AuthModal {
             lines.push(Line::from(""));
             lines.extend(content_lines);
             lines.push(Line::from(""));
-            let paragraph = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
+            let paragraph = Paragraph::new(Text::from(lines))
+                .wrap(Wrap { trim: false })
+                .scroll((scroll_row, 0));
             frame.render_widget(paragraph, inner);
             if let Some((row, col)) = cursor_pos {
                 frame.set_cursor_position((
@@ -607,7 +626,9 @@ impl Modal for AuthModal {
             }
         } else {
             let inner = draw_modal_frame(frame, area, self.title(), border_color);
-            let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
+            let paragraph = Paragraph::new(text)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll_row, 0));
             frame.render_widget(paragraph, inner);
             if let Some((row, col)) = cursor_pos {
                 frame.set_cursor_position((
