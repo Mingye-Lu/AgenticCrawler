@@ -3,6 +3,7 @@ pub mod catalog;
 pub mod custom;
 pub mod openai;
 pub mod preset;
+pub mod transform;
 
 use serde::{Deserialize, Serialize};
 

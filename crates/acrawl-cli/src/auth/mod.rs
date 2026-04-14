@@ -13,6 +13,13 @@ use super::Provider;
 
 pub(crate) use anthropic::{default_oauth_config, run_login};
 
+/// Result of provider selection — either a legacy enum variant or a preset provider.
+#[derive(Debug, Clone)]
+pub(crate) enum ProviderChoice {
+    Legacy(Provider),
+    Preset(api::ProviderPreset),
+}
+
 pub(crate) fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
     match provider {
         Provider::Anthropic => anthropic::run_auth(),
@@ -22,15 +29,16 @@ pub(crate) fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn st
 }
 
 pub(crate) fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let target = match provider {
-        Some(p) => parse_provider_arg(p)?,
+    let choice = match provider {
+        Some(p) => resolve_provider_arg(p)?,
         None => prompt_provider_choice()?,
     };
-    run_auth_for_provider(target)?;
-    eprintln!(
-        "✅ {} credentials configured successfully.",
-        provider_label(target)
-    );
+    let label = provider_choice_label(&choice).to_string();
+    match choice {
+        ProviderChoice::Legacy(target) => run_auth_for_provider(target)?,
+        ProviderChoice::Preset(ref preset) => run_preset_auth(preset)?,
+    }
+    eprintln!("✅ {label} credentials configured successfully.");
     Ok(())
 }
 
@@ -52,20 +60,90 @@ pub(crate) fn persist_provider_credentials(
     Ok(())
 }
 
+/// Persist credentials for a preset provider (uses preset ID as key).
+pub(crate) fn persist_preset_credentials(
+    preset_id: &str,
+    mut config: api::StoredProviderConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut store = api::load_credentials().unwrap_or_default();
+    let key = preset_id.to_string();
+    if config.default_model.is_none() {
+        config.default_model = store
+            .providers
+            .get(&key)
+            .and_then(|existing| existing.default_model.clone());
+    }
+    api::set_provider_config(&mut store, &key, config);
+    store.active_provider = Some(key);
+    api::save_credentials(&store)?;
+    Ok(())
+}
+
+/// Generic API key auth flow for preset providers.
+pub(crate) fn run_preset_auth(
+    preset: &api::ProviderPreset,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(env_var) = preset.api_key_env_var {
+        eprintln!("(Hint: also readable from {env_var} env var)");
+    }
+    eprint!("Enter {} API key: ", preset.display_name);
+    io::stderr().flush()?;
+    let mut key = String::new();
+    io::stdin().read_line(&mut key)?;
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err(format!("API key is required for {}", preset.display_name).into());
+    }
+    persist_preset_credentials(
+        preset.id,
+        api::StoredProviderConfig {
+            auth_method: "api_key".to_string(),
+            api_key: Some(key),
+            base_url: Some(preset.base_url.to_string()),
+            ..Default::default()
+        },
+    )
+}
+
 pub(crate) fn run_logout() -> Result<(), Box<dyn std::error::Error>> {
     clear_oauth_credentials()?;
     println!("OAuth credentials cleared.");
     Ok(())
 }
 
-pub(crate) fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
-    match value.to_ascii_lowercase().as_str() {
-        "anthropic" | "claude" => Ok(Provider::Anthropic),
-        "openai" | "gpt" => Ok(Provider::OpenAi),
-        "other" => Ok(Provider::Other),
-        other => {
-            Err(format!("unknown provider '{other}'. Use anthropic, openai, or other.").into())
+/// Resolve a provider argument to either a legacy `Provider` or a preset.
+///
+/// Tries the legacy enum first (anthropic/claude, openai/gpt, other),
+/// then falls back to preset lookup by ID.
+pub(crate) fn resolve_provider_arg(
+    value: &str,
+) -> Result<ProviderChoice, Box<dyn std::error::Error>> {
+    let lower = value.to_ascii_lowercase();
+    match lower.as_str() {
+        "anthropic" | "claude" => Ok(ProviderChoice::Legacy(Provider::Anthropic)),
+        "openai" | "gpt" => Ok(ProviderChoice::Legacy(Provider::OpenAi)),
+        "other" => Ok(ProviderChoice::Legacy(Provider::Other)),
+        _ => {
+            if let Some(preset) = api::find_preset(&lower) {
+                Ok(ProviderChoice::Preset(preset.clone()))
+            } else {
+                Err(format!(
+                    "unknown provider '{value}'. Use 'acrawl auth' to see available providers."
+                )
+                .into())
+            }
         }
+    }
+}
+
+/// Parse a provider argument into the legacy `Provider` enum.
+///
+/// Accepts all preset provider IDs in addition to the legacy aliases.
+/// Preset providers are mapped to `Provider::Other`.
+pub(crate) fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
+    match resolve_provider_arg(value)? {
+        ProviderChoice::Legacy(p) => Ok(p),
+        ProviderChoice::Preset(_) => Ok(Provider::Other),
     }
 }
 
@@ -77,11 +155,18 @@ pub(crate) fn provider_label(provider: Provider) -> &'static str {
     }
 }
 
+pub(crate) fn provider_choice_label(choice: &ProviderChoice) -> &str {
+    match choice {
+        ProviderChoice::Legacy(p) => provider_label(*p),
+        ProviderChoice::Preset(preset) => preset.display_name,
+    }
+}
+
 pub(crate) fn interactive_login_prompt(
-    provider: Provider,
+    choice: ProviderChoice,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match provider {
-        Provider::Anthropic => {
+    match choice {
+        ProviderChoice::Legacy(Provider::Anthropic) => {
             eprint!("No Anthropic credentials found. Log in via OAuth? [Y/n] ");
             io::stderr().flush()?;
             let mut answer = String::new();
@@ -92,11 +177,11 @@ pub(crate) fn interactive_login_prompt(
             }
             run_auth_for_provider(Provider::Anthropic)
         }
-        Provider::OpenAi => {
+        ProviderChoice::Legacy(Provider::OpenAi) => {
             eprintln!("No OpenAI credentials found.");
             run_auth_for_provider(Provider::OpenAi)
         }
-        Provider::Other => {
+        ProviderChoice::Legacy(Provider::Other) => {
             eprint!("No Other provider credentials found. Configure now? [Y/n] ");
             io::stderr().flush()?;
             let mut answer = String::new();
@@ -107,23 +192,63 @@ pub(crate) fn interactive_login_prompt(
             }
             run_auth_for_provider(Provider::Other)
         }
+        ProviderChoice::Preset(ref preset) => {
+            eprint!(
+                "No {} credentials found. Configure now? [Y/n] ",
+                preset.display_name
+            );
+            io::stderr().flush()?;
+            let mut answer = String::new();
+            io::stdin().read_line(&mut answer)?;
+            let answer = answer.trim();
+            if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
+                return Err(
+                    format!("authentication required — run `acrawl auth {}`", preset.id).into(),
+                );
+            }
+            run_preset_auth(preset)
+        }
     }
 }
 
-pub(crate) fn prompt_provider_choice() -> Result<Provider, Box<dyn std::error::Error>> {
+pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::error::Error>> {
     eprintln!("Select a provider to authenticate:");
     eprintln!("  1) Anthropic (OAuth)");
     eprintln!("  2) OpenAI   (API key)");
     eprintln!("  3) Other    (local/OpenAI-compatible)");
-    eprint!("Choice [1/2/3]: ");
+
+    let extra_presets: Vec<_> = api::builtin_presets()
+        .into_iter()
+        .filter(|p| !matches!(p.id, "anthropic" | "openai" | "other"))
+        .collect();
+
+    for (i, preset) in extra_presets.iter().enumerate() {
+        eprintln!("  {}) {} (API key)", i + 4, preset.display_name);
+    }
+
+    let max = 3 + extra_presets.len();
+    eprint!("Choice [1-{max}]: ");
     io::stderr().flush()?;
+
     let mut choice = String::new();
     io::stdin().read_line(&mut choice)?;
-    match choice.trim() {
-        "1" | "anthropic" => Ok(Provider::Anthropic),
-        "2" | "openai" => Ok(Provider::OpenAi),
-        "3" | "other" => Ok(Provider::Other),
-        other => Err(format!("invalid choice '{other}'").into()),
+    let trimmed = choice.trim();
+
+    match trimmed {
+        "1" | "anthropic" => Ok(ProviderChoice::Legacy(Provider::Anthropic)),
+        "2" | "openai" => Ok(ProviderChoice::Legacy(Provider::OpenAi)),
+        "3" | "other" => Ok(ProviderChoice::Legacy(Provider::Other)),
+        other => {
+            if let Ok(n) = other.parse::<usize>() {
+                if n >= 4 && n <= max {
+                    return Ok(ProviderChoice::Preset(extra_presets[n - 4].clone()));
+                }
+            }
+            if let Some(preset) = extra_presets.iter().find(|p| p.id == other) {
+                return Ok(ProviderChoice::Preset(preset.clone()));
+            }
+            Err(format!("invalid choice '{other}'").into())
+        }
     }
 }
 
@@ -252,5 +377,75 @@ pub(crate) fn wait_for_oauth_callback_cancellable(
             }
             Err(e) => return Err(Box::new(e) as Box<dyn std::error::Error + Send>),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_provider_arg_anthropic() {
+        let result = parse_provider_arg("anthropic");
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), Provider::Anthropic));
+    }
+
+    #[test]
+    fn test_parse_provider_arg_openai() {
+        let result = parse_provider_arg("openai");
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), Provider::OpenAi));
+    }
+
+    #[test]
+    fn test_auth_other_still_works() {
+        let result = parse_provider_arg("other");
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), Provider::Other));
+    }
+
+    #[test]
+    fn test_parse_provider_arg_groq() {
+        assert!(api::find_preset("groq").is_none());
+        let result = resolve_provider_arg("groq");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("unknown provider"),
+            "expected 'unknown provider' in error, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_provider_arg_mistral() {
+        assert!(api::find_preset("mistral").is_none());
+        let result = resolve_provider_arg("mistral");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_provider_arg_legacy_aliases() {
+        assert!(matches!(
+            resolve_provider_arg("claude").unwrap(),
+            ProviderChoice::Legacy(Provider::Anthropic)
+        ));
+        assert!(matches!(
+            resolve_provider_arg("gpt").unwrap(),
+            ProviderChoice::Legacy(Provider::OpenAi)
+        ));
+    }
+
+    #[test]
+    fn test_provider_choice_label_legacy() {
+        let choice = ProviderChoice::Legacy(Provider::Anthropic);
+        assert_eq!(provider_choice_label(&choice), "anthropic");
+    }
+
+    #[test]
+    fn test_provider_choice_label_preset() {
+        let preset = api::find_preset("openai").expect("openai preset exists");
+        let choice = ProviderChoice::Preset(preset.clone());
+        assert_eq!(provider_choice_label(&choice), "OpenAI");
     }
 }

@@ -15,6 +15,7 @@ use serde_json::Value;
 
 use crate::client::AuthSource;
 use crate::error::ApiError;
+use crate::provider::transform::{NoOpTransform, ProviderTransform};
 use crate::types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
     InputContentBlock, InputMessage, MessageDelta, MessageDeltaEvent, MessageRequest,
@@ -80,12 +81,25 @@ struct OpenAiUsage {
     completion_tokens: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
 pub struct ChatCompletionsClient {
     http: reqwest::Client,
     auth: Option<AuthSource>,
     base_url: String,
     default_model: String,
+    #[allow(clippy::box_collection)]
+    transform: Box<dyn ProviderTransform>,
+}
+
+impl Clone for ChatCompletionsClient {
+    fn clone(&self) -> Self {
+        Self {
+            http: self.http.clone(),
+            auth: self.auth.clone(),
+            base_url: self.base_url.clone(),
+            default_model: self.default_model.clone(),
+            transform: Box::new(NoOpTransform),
+        }
+    }
 }
 
 /// Backwards-compatible alias.
@@ -99,6 +113,7 @@ impl ChatCompletionsClient {
             auth: Some(auth),
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             default_model: DEFAULT_OPENAI_MODEL.to_string(),
+            transform: Box::new(NoOpTransform),
         }
     }
 
@@ -109,6 +124,7 @@ impl ChatCompletionsClient {
             auth: None,
             base_url: base_url.into(),
             default_model: model.into(),
+            transform: Box::new(NoOpTransform),
         }
     }
 
@@ -130,6 +146,12 @@ impl ChatCompletionsClient {
             AuthSource::None => None,
             other => Some(other),
         };
+        self
+    }
+
+    #[must_use]
+    pub fn with_transform(mut self, transform: Box<dyn ProviderTransform>) -> Self {
+        self.transform = transform;
         self
     }
 
@@ -157,7 +179,7 @@ impl ChatCompletionsClient {
             &request.model
         };
 
-        let body = build_openai_request(request, model);
+        let body = build_openai_request(request, model, self.transform.as_ref());
         let url = format!(
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
@@ -492,8 +514,12 @@ impl OpenAiStreamState {
     }
 }
 
-fn build_openai_request(request: &MessageRequest, model: &str) -> Value {
-    let messages = convert_messages(request);
+fn build_openai_request(
+    request: &MessageRequest,
+    model: &str,
+    transform: &dyn ProviderTransform,
+) -> Value {
+    let messages = convert_messages(request, transform);
 
     let mut body = serde_json::json!({
         "model": model,
@@ -524,7 +550,7 @@ fn build_openai_request(request: &MessageRequest, model: &str) -> Value {
     body
 }
 
-fn convert_messages(request: &MessageRequest) -> Vec<Value> {
+fn convert_messages(request: &MessageRequest, transform: &dyn ProviderTransform) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
 
     if let Some(system) = &request.system {
@@ -535,16 +561,20 @@ fn convert_messages(request: &MessageRequest) -> Vec<Value> {
     }
 
     for msg in &request.messages {
-        convert_input_message(msg, &mut messages);
+        convert_input_message(msg, &mut messages, transform);
     }
 
     messages
 }
 
-fn convert_input_message(msg: &InputMessage, out: &mut Vec<Value>) {
+fn convert_input_message(
+    msg: &InputMessage,
+    out: &mut Vec<Value>,
+    transform: &dyn ProviderTransform,
+) {
     match msg.role.as_str() {
-        "assistant" => convert_assistant_message(msg, out),
-        "user" => convert_user_message(msg, out),
+        "assistant" => convert_assistant_message(msg, out, transform),
+        "user" => convert_user_message(msg, out, transform),
         other => {
             for block in &msg.content {
                 if let InputContentBlock::Text { text } = block {
@@ -558,7 +588,11 @@ fn convert_input_message(msg: &InputMessage, out: &mut Vec<Value>) {
     }
 }
 
-fn convert_assistant_message(msg: &InputMessage, out: &mut Vec<Value>) {
+fn convert_assistant_message(
+    msg: &InputMessage,
+    out: &mut Vec<Value>,
+    transform: &dyn ProviderTransform,
+) {
     let mut text_parts: Vec<String> = Vec::new();
     let mut tool_calls: Vec<Value> = Vec::new();
 
@@ -568,8 +602,9 @@ fn convert_assistant_message(msg: &InputMessage, out: &mut Vec<Value>) {
                 text_parts.push(text.clone());
             }
             InputContentBlock::ToolUse { id, name, input } => {
+                let transformed_id = transform.transform_tool_call_id(id);
                 tool_calls.push(serde_json::json!({
-                    "id": id,
+                    "id": transformed_id,
                     "type": "function",
                     "function": {
                         "name": name,
@@ -599,7 +634,11 @@ fn convert_assistant_message(msg: &InputMessage, out: &mut Vec<Value>) {
     out.push(msg_obj);
 }
 
-fn convert_user_message(msg: &InputMessage, out: &mut Vec<Value>) {
+fn convert_user_message(
+    msg: &InputMessage,
+    out: &mut Vec<Value>,
+    transform: &dyn ProviderTransform,
+) {
     let mut text_parts: Vec<String> = Vec::new();
 
     for block in &msg.content {
@@ -620,6 +659,7 @@ fn convert_user_message(msg: &InputMessage, out: &mut Vec<Value>) {
                     text_parts.clear();
                 }
 
+                let transformed_id = transform.transform_tool_call_id(tool_use_id);
                 let content_text = content
                     .iter()
                     .map(|b| match b {
@@ -631,7 +671,7 @@ fn convert_user_message(msg: &InputMessage, out: &mut Vec<Value>) {
 
                 out.push(serde_json::json!({
                     "role": "tool",
-                    "tool_call_id": tool_use_id,
+                    "tool_call_id": transformed_id,
                     "content": content_text,
                 }));
             }
@@ -685,7 +725,7 @@ mod tests {
             reasoning_effort: None,
         };
 
-        let body = build_openai_request(&request, "gpt-4o");
+        let body = build_openai_request(&request, "gpt-4o", &NoOpTransform);
         let messages = body["messages"].as_array().expect("messages array");
 
         assert_eq!(messages.len(), 2);
@@ -726,7 +766,7 @@ mod tests {
             reasoning_effort: None,
         };
 
-        let body = build_openai_request(&request, "gpt-4o");
+        let body = build_openai_request(&request, "gpt-4o", &NoOpTransform);
         let messages = body["messages"].as_array().expect("messages array");
 
         assert_eq!(messages.len(), 3);
@@ -901,7 +941,7 @@ mod tests {
             stream: false,
             reasoning_effort: None,
         };
-        let body = build_openai_request(&request, "gpt-4o");
+        let body = build_openai_request(&request, "gpt-4o", &NoOpTransform);
         assert_eq!(body["tool_choice"], "required");
 
         let request2 = MessageRequest {
@@ -910,7 +950,7 @@ mod tests {
             }),
             ..request
         };
-        let body2 = build_openai_request(&request2, "gpt-4o");
+        let body2 = build_openai_request(&request2, "gpt-4o", &NoOpTransform);
         assert_eq!(body2["tool_choice"]["type"], "function");
         assert_eq!(body2["tool_choice"]["function"]["name"], "navigate");
     }

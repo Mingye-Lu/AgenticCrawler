@@ -33,6 +33,7 @@ pub use provider::preset::{
     builtin_presets, find_preset, AuthHeaderFormat, ProviderCategory, ProviderPreset,
     ProviderProtocol,
 };
+pub use provider::transform::{MistralTransform, NoOpTransform, ProviderTransform};
 pub use responses::{
     build_responses_request, convert_responses_messages, convert_responses_tool,
     responses_tool_choice, OpenAiResponsesClient, ResponsesMessageStream, ResponsesStreamState,
