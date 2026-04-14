@@ -2081,7 +2081,7 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
         input_h,
     );
     let block = Block::default()
-        .title(" Goal ")
+        .title(format!(" Goal · {} ", state.cached_header.model))
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -2334,7 +2334,7 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
     } else if state.pending_permission.is_some() {
         " ⚠ Permission ".to_string()
     } else {
-        " Input ".to_string()
+        format!(" Input · {} ", header.model)
     };
 
     let footer_title_style = if state.busy {
