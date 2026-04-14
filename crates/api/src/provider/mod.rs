@@ -121,6 +121,9 @@ impl ProviderClient {
                 ProviderProtocol::Bedrock => return bedrock::build_client(config, model),
                 ProviderProtocol::OpenAiResponses => return openai::build_client(config, model),
                 ProviderProtocol::Gemini => {
+                    if preset.id == "vertex" {
+                        return Ok(build_vertex_client(config, model));
+                    }
                     let api_key = config.api_key.clone().unwrap_or_default();
                     let client = config.base_url.as_ref().map_or_else(
                         || crate::gemini::GeminiClient::new(api_key.clone()),
@@ -283,6 +286,34 @@ fn build_copilot_chat_completions(
     crate::ChatCompletionsClient::with_no_auth(model, base_url)
         .with_optional_auth(auth)
         .with_chat_path(chat_path)
+}
+
+fn build_vertex_client(
+    config: &StoredProviderConfig,
+    model: &str,
+) -> ProviderClient {
+    let project = config.gcp_project_id.as_deref().unwrap_or("my-project");
+    let region = config.gcp_region.as_deref().unwrap_or("us-central1");
+    let api_key = config.api_key.clone().unwrap_or_default();
+
+    if model.starts_with("claude") {
+        let vertex_base = format!(
+            "https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/anthropic"
+        );
+        return ProviderClient::Anthropic(
+            crate::AnthropicClient::from_auth(crate::client::AuthSource::BearerToken(api_key))
+                .with_base_url(vertex_base),
+        );
+    }
+
+    let vertex_base = format!(
+        "https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/google"
+    );
+    ProviderClient::Gemini(
+        crate::gemini::GeminiClient::new(api_key)
+            .with_base_url(vertex_base)
+            .with_bearer_auth(),
+    )
 }
 
 pub struct ProviderRegistry {
@@ -623,5 +654,51 @@ mod tests {
         assert!(cc
             .extra_headers
             .contains(&("editor-version".to_string(), "acrawl/1.0.0".to_string())));
+    }
+
+    #[test]
+    fn test_vertex_gemini_url() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("token".into()),
+            gcp_project_id: Some("my-project".into()),
+            gcp_region: Some("us-central1".into()),
+            ..Default::default()
+        };
+        let client =
+            ProviderClient::from_stored_config("vertex", &config, "gemini-2.0-flash").unwrap();
+        assert!(matches!(client, ProviderClient::Gemini(_)));
+    }
+
+    #[test]
+    fn test_vertex_anthropic_url() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("token".into()),
+            gcp_project_id: Some("my-project".into()),
+            gcp_region: Some("us-central1".into()),
+            ..Default::default()
+        };
+        let client = ProviderClient::from_stored_config(
+            "vertex",
+            &config,
+            "claude-sonnet-4-6@20250514",
+        )
+        .unwrap();
+        assert!(matches!(client, ProviderClient::Anthropic(_)));
+    }
+
+    #[test]
+    fn test_vertex_routes_by_model() {
+        let config = StoredProviderConfig {
+            api_key: Some("tok".into()),
+            ..Default::default()
+        };
+        let gemini =
+            ProviderClient::from_stored_config("vertex", &config, "gemini-1.5-pro").unwrap();
+        let claude =
+            ProviderClient::from_stored_config("vertex", &config, "claude-sonnet-4-6").unwrap();
+        assert!(matches!(gemini, ProviderClient::Gemini(_)));
+        assert!(matches!(claude, ProviderClient::Anthropic(_)));
     }
 }

@@ -42,7 +42,7 @@ pub struct ProviderPreset {
     pub transform_id: Option<&'static str>,
 }
 
-static BUILTIN_PRESETS: [ProviderPreset; 23] = [
+static BUILTIN_PRESETS: [ProviderPreset; 24] = [
     ProviderPreset {
         id: "anthropic",
         display_name: "Anthropic",
@@ -388,6 +388,21 @@ static BUILTIN_PRESETS: [ProviderPreset; 23] = [
         category: ProviderCategory::Enterprise,
         transform_id: None,
     },
+    ProviderPreset {
+        id: "vertex",
+        display_name: "Google Vertex AI",
+        base_url: "https://{region}-aiplatform.googleapis.com/v1/projects/{project_id}/locations/{region}/publishers",
+        chat_path: "",
+        api_key_env_var: Some("GOOGLE_APPLICATION_CREDENTIALS"),
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: true,
+        model_prefixes: &[],
+        protocol: ProviderProtocol::Gemini,
+        category: ProviderCategory::Enterprise,
+        transform_id: None,
+    },
 ];
 
 #[must_use]
@@ -625,5 +640,16 @@ mod tests {
         assert!(matches!(p.category, ProviderCategory::Enterprise));
         assert!(p.supports_tools);
         assert!(p.api_key_env_var.is_none());
+    }
+
+    #[test]
+    fn test_vertex_preset_exists() {
+        let p = find_preset("vertex").expect("vertex preset should exist");
+        assert!(p.base_url.contains("aiplatform.googleapis.com"));
+        assert!(matches!(p.protocol, ProviderProtocol::Gemini));
+        assert!(matches!(p.category, ProviderCategory::Enterprise));
+        assert!(matches!(p.auth_header_format, AuthHeaderFormat::Bearer));
+        assert!(p.supports_tools);
+        assert!(p.supports_vision);
     }
 }

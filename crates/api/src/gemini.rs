@@ -20,6 +20,7 @@ pub struct GeminiClient {
     http: reqwest::Client,
     base_url: String,
     api_key: String,
+    use_bearer_auth: bool,
 }
 
 impl GeminiClient {
@@ -29,12 +30,19 @@ impl GeminiClient {
             http: reqwest::Client::new(),
             base_url: DEFAULT_BASE_URL.to_string(),
             api_key: api_key.into(),
+            use_bearer_auth: false,
         }
     }
 
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_bearer_auth(mut self) -> Self {
+        self.use_bearer_auth = true;
         self
     }
 
@@ -47,21 +55,31 @@ impl GeminiClient {
         }
 
         let body = build_gemini_request(request);
-        let url = format!(
-            "{}/models/{}:streamGenerateContent?alt=sse&key={}",
-            self.base_url.trim_end_matches('/'),
-            request.model,
-            self.api_key,
-        );
+        let url = if self.use_bearer_auth {
+            format!(
+                "{}/models/{}:streamGenerateContent?alt=sse",
+                self.base_url.trim_end_matches('/'),
+                request.model,
+            )
+        } else {
+            format!(
+                "{}/models/{}:streamGenerateContent?alt=sse&key={}",
+                self.base_url.trim_end_matches('/'),
+                request.model,
+                self.api_key,
+            )
+        };
 
-        let response = self
+        let mut req = self
             .http
             .post(&url)
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(ApiError::from)?;
+            .header("content-type", "application/json");
+
+        if self.use_bearer_auth {
+            req = req.bearer_auth(&self.api_key);
+        }
+
+        let response = req.json(&body).send().await.map_err(ApiError::from)?;
         let response = expect_success(response).await?;
 
         Ok(GeminiMessageStream {

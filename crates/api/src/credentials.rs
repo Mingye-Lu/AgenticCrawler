@@ -66,6 +66,10 @@ pub struct StoredProviderConfig {
     pub resource_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deployment_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gcp_project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gcp_region: Option<String>,
 }
 
 /// Multi-provider credential store
