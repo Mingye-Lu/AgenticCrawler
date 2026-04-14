@@ -338,6 +338,12 @@ mod tests {
     }
 
     #[test]
+    fn test_xai_preset_exists() {
+        let p = find_preset("xai").expect("xai preset should exist");
+        assert_eq!(p.base_url, "https://api.x.ai/v1");
+    }
+
+    #[test]
     fn test_sap_preset_exists() {
         let p = find_preset("sap").expect("sap preset should exist");
         assert_eq!(
