@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod catalog;
 pub mod custom;
 pub mod openai;
+pub mod preset;
 
 use serde::{Deserialize, Serialize};
 
