@@ -13,6 +13,23 @@ pub fn builtin_models() -> Vec<ModelInfo> {
     let mut models = Vec::new();
     models.extend(anthropic_models());
     models.extend(openai_models());
+    models.extend(groq_models());
+    models.extend(mistral_models());
+    models.extend(deepinfra_models());
+    models.extend(cerebras_models());
+    models.extend(cohere_models());
+    models.extend(togetherai_models());
+    models.extend(perplexity_models());
+    models.extend(xai_models());
+    models.extend(venice_models());
+    models.extend(alibaba_models());
+    models.extend(cloudflare_models());
+    models.extend(sap_models());
+    models.extend(gemini_models());
+    models.extend(bedrock_models());
+    models.extend(azure_models());
+    models.extend(vertex_models());
+    models.extend(copilot_models());
     models
 }
 
@@ -227,6 +244,911 @@ fn openai_models() -> Vec<ModelInfo> {
     ]
 }
 
+fn groq_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "llama-3.3-70b-versatile".into(),
+            display_name: "Llama 3.3 70B".into(),
+            aliases: vec![],
+            provider_id: "groq".into(),
+            max_output_tokens: 8_192,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: Some(ModelPricing {
+                input_per_mtok: 0.59,
+                output_per_mtok: 0.79,
+                cache_read_per_mtok: None,
+                cache_write_per_mtok: None,
+            }),
+        },
+        ModelInfo {
+            id: "llama-3.1-8b-instant".into(),
+            display_name: "Llama 3.1 8B Instant".into(),
+            aliases: vec![],
+            provider_id: "groq".into(),
+            max_output_tokens: 8_192,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: Some(ModelPricing {
+                input_per_mtok: 0.05,
+                output_per_mtok: 0.08,
+                cache_read_per_mtok: None,
+                cache_write_per_mtok: None,
+            }),
+        },
+        ModelInfo {
+            id: "gemma2-9b-it".into(),
+            display_name: "Gemma 2 9B".into(),
+            aliases: vec![],
+            provider_id: "groq".into(),
+            max_output_tokens: 8_192,
+            context_window: 8_192,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "mixtral-8x7b-32768".into(),
+            display_name: "Mixtral 8x7B".into(),
+            aliases: vec![],
+            provider_id: "groq".into(),
+            max_output_tokens: 32_768,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn mistral_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "mistral-large-latest".into(),
+            display_name: "Mistral Large".into(),
+            aliases: vec![],
+            provider_id: "mistral".into(),
+            max_output_tokens: 131_072,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "mistral-small-latest".into(),
+            display_name: "Mistral Small".into(),
+            aliases: vec![],
+            provider_id: "mistral".into(),
+            max_output_tokens: 32_768,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "codestral-latest".into(),
+            display_name: "Codestral".into(),
+            aliases: vec![],
+            provider_id: "mistral".into(),
+            max_output_tokens: 32_768,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "mistral-medium-latest".into(),
+            display_name: "Mistral Medium".into(),
+            aliases: vec![],
+            provider_id: "mistral".into(),
+            max_output_tokens: 32_768,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn deepinfra_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "meta-llama/Meta-Llama-3.1-70B-Instruct".into(),
+            display_name: "Llama 3.1 70B Instruct".into(),
+            aliases: vec![],
+            provider_id: "deepinfra".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "meta-llama/Meta-Llama-3.1-8B-Instruct".into(),
+            display_name: "Llama 3.1 8B Instruct".into(),
+            aliases: vec![],
+            provider_id: "deepinfra".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "mistralai/Mixtral-8x7B-Instruct-v0.1".into(),
+            display_name: "Mixtral 8x7B Instruct".into(),
+            aliases: vec![],
+            provider_id: "deepinfra".into(),
+            max_output_tokens: 8_192,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn cerebras_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "llama3.1-70b".into(),
+            display_name: "Llama 3.1 70B (Cerebras)".into(),
+            aliases: vec![],
+            provider_id: "cerebras".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "llama3.1-8b".into(),
+            display_name: "Llama 3.1 8B (Cerebras)".into(),
+            aliases: vec![],
+            provider_id: "cerebras".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "llama-3.3-70b".into(),
+            display_name: "Llama 3.3 70B (Cerebras)".into(),
+            aliases: vec![],
+            provider_id: "cerebras".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn cohere_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "command-r-plus".into(),
+            display_name: "Command R+".into(),
+            aliases: vec![],
+            provider_id: "cohere".into(),
+            max_output_tokens: 4_096,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: Some(ModelPricing {
+                input_per_mtok: 3.0,
+                output_per_mtok: 15.0,
+                cache_read_per_mtok: None,
+                cache_write_per_mtok: None,
+            }),
+        },
+        ModelInfo {
+            id: "command-r".into(),
+            display_name: "Command R".into(),
+            aliases: vec![],
+            provider_id: "cohere".into(),
+            max_output_tokens: 4_096,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: Some(ModelPricing {
+                input_per_mtok: 0.15,
+                output_per_mtok: 0.60,
+                cache_read_per_mtok: None,
+                cache_write_per_mtok: None,
+            }),
+        },
+        ModelInfo {
+            id: "command-light".into(),
+            display_name: "Command Light".into(),
+            aliases: vec![],
+            provider_id: "cohere".into(),
+            max_output_tokens: 4_096,
+            context_window: 4_096,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: false,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn togetherai_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".into(),
+            display_name: "Llama 3.1 70B Turbo".into(),
+            aliases: vec![],
+            provider_id: "togetherai".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo".into(),
+            display_name: "Llama 3.1 8B Turbo".into(),
+            aliases: vec![],
+            provider_id: "togetherai".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "mistralai/Mixtral-8x7B-Instruct-v0.1".into(),
+            display_name: "Mixtral 8x7B Instruct".into(),
+            aliases: vec![],
+            provider_id: "togetherai".into(),
+            max_output_tokens: 8_192,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn perplexity_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "llama-3.1-sonar-large-128k-online".into(),
+            display_name: "Sonar Large Online".into(),
+            aliases: vec![],
+            provider_id: "perplexity".into(),
+            max_output_tokens: 8_192,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: false,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "llama-3.1-sonar-small-128k-online".into(),
+            display_name: "Sonar Small Online".into(),
+            aliases: vec![],
+            provider_id: "perplexity".into(),
+            max_output_tokens: 8_192,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: false,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "llama-3.1-sonar-huge-128k-online".into(),
+            display_name: "Sonar Huge Online".into(),
+            aliases: vec![],
+            provider_id: "perplexity".into(),
+            max_output_tokens: 8_192,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: false,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn xai_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "grok-2".into(),
+            display_name: "Grok 2".into(),
+            aliases: vec![],
+            provider_id: "xai".into(),
+            max_output_tokens: 131_072,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "grok-2-mini".into(),
+            display_name: "Grok 2 Mini".into(),
+            aliases: vec![],
+            provider_id: "xai".into(),
+            max_output_tokens: 131_072,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "grok-beta".into(),
+            display_name: "Grok Beta".into(),
+            aliases: vec![],
+            provider_id: "xai".into(),
+            max_output_tokens: 131_072,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn venice_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "llama-3.3-70b".into(),
+            display_name: "Llama 3.3 70B (Venice)".into(),
+            aliases: vec![],
+            provider_id: "venice".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "dolphin-2.9.2-qwen2-72b".into(),
+            display_name: "Dolphin 2.9.2 Qwen2 72B".into(),
+            aliases: vec![],
+            provider_id: "venice".into(),
+            max_output_tokens: 8_192,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn alibaba_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "qwen-max".into(),
+            display_name: "Qwen Max".into(),
+            aliases: vec![],
+            provider_id: "alibaba".into(),
+            max_output_tokens: 8_192,
+            context_window: 32_768,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "qwen-plus".into(),
+            display_name: "Qwen Plus".into(),
+            aliases: vec![],
+            provider_id: "alibaba".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "qwen-turbo".into(),
+            display_name: "Qwen Turbo".into(),
+            aliases: vec![],
+            provider_id: "alibaba".into(),
+            max_output_tokens: 8_192,
+            context_window: 1_000_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "qwen-long".into(),
+            display_name: "Qwen Long".into(),
+            aliases: vec![],
+            provider_id: "alibaba".into(),
+            max_output_tokens: 8_192,
+            context_window: 10_000_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn cloudflare_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "@cf/meta/llama-3.1-70b-instruct".into(),
+            display_name: "Llama 3.1 70B (Cloudflare)".into(),
+            aliases: vec![],
+            provider_id: "cloudflare".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "@cf/meta/llama-3.1-8b-instruct".into(),
+            display_name: "Llama 3.1 8B (Cloudflare)".into(),
+            aliases: vec![],
+            provider_id: "cloudflare".into(),
+            max_output_tokens: 8_192,
+            context_window: 131_072,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn sap_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "gpt-4o".into(),
+            display_name: "GPT-4o (SAP)".into(),
+            aliases: vec![],
+            provider_id: "sap".into(),
+            max_output_tokens: 16_384,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "gpt-4-turbo".into(),
+            display_name: "GPT-4 Turbo (SAP)".into(),
+            aliases: vec![],
+            provider_id: "sap".into(),
+            max_output_tokens: 4_096,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn gemini_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "gemini-2.0-flash".into(),
+            display_name: "Gemini 2.0 Flash".into(),
+            aliases: vec![],
+            provider_id: "google".into(),
+            max_output_tokens: 8_192,
+            context_window: 1_048_576,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "gemini-2.0-pro".into(),
+            display_name: "Gemini 2.0 Pro".into(),
+            aliases: vec![],
+            provider_id: "google".into(),
+            max_output_tokens: 8_192,
+            context_window: 1_048_576,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "gemini-1.5-pro".into(),
+            display_name: "Gemini 1.5 Pro".into(),
+            aliases: vec![],
+            provider_id: "google".into(),
+            max_output_tokens: 8_192,
+            context_window: 2_097_152,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "gemini-1.5-flash".into(),
+            display_name: "Gemini 1.5 Flash".into(),
+            aliases: vec![],
+            provider_id: "google".into(),
+            max_output_tokens: 8_192,
+            context_window: 1_048_576,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn bedrock_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "anthropic.claude-sonnet-4-6-20250514-v1:0".into(),
+            display_name: "Claude Sonnet 4.6 (Bedrock)".into(),
+            aliases: vec![],
+            provider_id: "bedrock".into(),
+            max_output_tokens: 64_000,
+            context_window: 200_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "anthropic.claude-haiku-4-5-20251213-v1:0".into(),
+            display_name: "Claude Haiku 4.5 (Bedrock)".into(),
+            aliases: vec![],
+            provider_id: "bedrock".into(),
+            max_output_tokens: 64_000,
+            context_window: 200_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "amazon.nova-pro-v1:0".into(),
+            display_name: "Amazon Nova Pro".into(),
+            aliases: vec![],
+            provider_id: "bedrock".into(),
+            max_output_tokens: 5_120,
+            context_window: 300_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "amazon.nova-lite-v1:0".into(),
+            display_name: "Amazon Nova Lite".into(),
+            aliases: vec![],
+            provider_id: "bedrock".into(),
+            max_output_tokens: 5_120,
+            context_window: 300_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn azure_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "gpt-4o".into(),
+            display_name: "GPT-4o (Azure)".into(),
+            aliases: vec![],
+            provider_id: "azure".into(),
+            max_output_tokens: 16_384,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "gpt-4-turbo".into(),
+            display_name: "GPT-4 Turbo (Azure)".into(),
+            aliases: vec![],
+            provider_id: "azure".into(),
+            max_output_tokens: 4_096,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn vertex_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "gemini-2.0-flash".into(),
+            display_name: "Gemini 2.0 Flash (Vertex)".into(),
+            aliases: vec![],
+            provider_id: "vertex".into(),
+            max_output_tokens: 8_192,
+            context_window: 1_048_576,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "claude-sonnet-4-6@20250514".into(),
+            display_name: "Claude Sonnet 4.6 (Vertex)".into(),
+            aliases: vec![],
+            provider_id: "vertex".into(),
+            max_output_tokens: 64_000,
+            context_window: 200_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
+fn copilot_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "gpt-4o".into(),
+            display_name: "GPT-4o (Copilot)".into(),
+            aliases: vec![],
+            provider_id: "copilot".into(),
+            max_output_tokens: 16_384,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+        ModelInfo {
+            id: "claude-sonnet-4-6".into(),
+            display_name: "Claude Sonnet 4.6 (Copilot)".into(),
+            aliases: vec![],
+            provider_id: "copilot".into(),
+            max_output_tokens: 64_000,
+            context_window: 200_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: true,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: None,
+        },
+    ]
+}
+
 pub async fn fetch_models_dev(provider_id: &str) -> Result<Vec<ModelInfo>, ApiError> {
     let client = reqwest::Client::new();
     let response = client
@@ -420,6 +1342,55 @@ mod tests {
         assert_eq!(default_max_tokens("claude-opus-4-6"), 32_000);
         assert_eq!(default_max_tokens("gpt-4o"), 16_384);
         assert_eq!(default_max_tokens("llama3.2"), 8_192);
+    }
+
+    #[test]
+    fn test_new_providers_have_models() {
+        let models = builtin_models();
+        let providers_with_models = [
+            "groq",
+            "mistral",
+            "deepinfra",
+            "cerebras",
+            "cohere",
+            "togetherai",
+            "perplexity",
+            "xai",
+            "venice",
+            "alibaba",
+            "cloudflare",
+            "sap",
+            "google",
+            "bedrock",
+            "azure",
+            "vertex",
+            "copilot",
+        ];
+        for pid in providers_with_models {
+            let count = models.iter().filter(|m| m.provider_id == pid).count();
+            assert!(
+                count >= 2,
+                "provider {pid} should have at least 2 models, found {count}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_duplicate_model_ids_within_provider() {
+        let models = builtin_models();
+        let mut by_provider: std::collections::HashMap<&str, Vec<&str>> =
+            std::collections::HashMap::new();
+        for m in &models {
+            by_provider.entry(&m.provider_id).or_default().push(&m.id);
+        }
+        for (pid, ids) in &by_provider {
+            let unique: std::collections::HashSet<_> = ids.iter().collect();
+            assert_eq!(
+                ids.len(),
+                unique.len(),
+                "provider {pid} has duplicate model IDs"
+            );
+        }
     }
 
     #[tokio::test]
