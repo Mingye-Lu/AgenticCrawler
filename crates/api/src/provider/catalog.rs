@@ -337,6 +337,46 @@ pub async fn fetch_models_dev(provider_id: &str) -> Result<Vec<ModelInfo>, ApiEr
     Ok(models)
 }
 
+pub async fn fetch_models_dev_reasoning() -> Result<std::collections::HashMap<String, bool>, ApiError> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://models.dev/api.json")
+        .header("User-Agent", "acrawl")
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(ApiError::Http)?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(ApiError::Api {
+            status,
+            error_type: None,
+            message: None,
+            body,
+            retryable: false,
+        });
+    }
+
+    let catalog: std::collections::HashMap<String, serde_json::Value> =
+        response.json().await.map_err(ApiError::Http)?;
+
+    let mut map = std::collections::HashMap::new();
+    for provider_data in catalog.values() {
+        if let Some(models) = provider_data.get("models").and_then(|v| v.as_object()) {
+            for (id, model_data) in models {
+                let reasoning = model_data
+                    .get("reasoning")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                map.insert(id.clone(), reasoning);
+            }
+        }
+    }
+    Ok(map)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

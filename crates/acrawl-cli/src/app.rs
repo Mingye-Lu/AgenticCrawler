@@ -973,9 +973,26 @@ pub(crate) fn run_resume_command(
 fn model_supports_reasoning(model: &str) -> bool {
     let store = api::load_credentials().unwrap_or_default();
     let registry = ProviderRegistry::from_credentials(&store);
-    registry
-        .resolve_model(model)
-        .is_some_and(|m| m.capabilities.reasoning)
+    if let Some(info) = registry.resolve_model(model) {
+        return info.capabilities.reasoning;
+    }
+    models_dev_reasoning_cache()
+        .get(model)
+        .copied()
+        .unwrap_or(false)
+}
+
+fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bool> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    static CACHE: OnceLock<HashMap<String, bool>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        tokio::runtime::Runtime::new()
+            .ok()
+            .and_then(|rt| rt.block_on(api::provider::catalog::fetch_models_dev_reasoning()).ok())
+            .unwrap_or_default()
+    })
 }
 
 fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -1813,6 +1830,27 @@ mod tests {
         assert!(
             msg.contains("cancelled") || msg.contains("Interrupted"),
             "expected cancellation error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn model_supports_reasoning_for_catalog_models() {
+        assert!(model_supports_reasoning("o3"));
+        assert!(model_supports_reasoning("o4-mini"));
+        assert!(model_supports_reasoning("codex-mini-latest"));
+    }
+
+    #[test]
+    fn model_supports_reasoning_false_for_non_reasoning_models() {
+        assert!(!model_supports_reasoning("gpt-4o"));
+        assert!(!model_supports_reasoning("claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn model_supports_reasoning_for_unknown_reasoning_models() {
+        assert!(
+            model_supports_reasoning("gpt-5.3-codex"),
+            "gpt-5.3-codex should be detected as a reasoning model"
         );
     }
 }

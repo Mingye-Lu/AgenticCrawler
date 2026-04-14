@@ -3780,4 +3780,57 @@ mod tests {
         ));
         assert!(state.tool_call_entry_index.is_none());
     }
+
+    #[test]
+    fn goal_title_shows_reasoning_effort_for_reasoning_model() {
+        let header = super::HeaderSnapshot {
+            model: "gpt-5.3-codex".to_string(),
+            reasoning_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+        let mut state = ReplTuiState::new();
+        state.cached_header = header;
+
+        let title = if let Some(ref effort) = state.cached_header.reasoning_effort {
+            format!(" Goal * {} * {effort} ", state.cached_header.model)
+        } else {
+            format!(" Goal * {} ", state.cached_header.model)
+        };
+        assert_eq!(title, " Goal * gpt-5.3-codex * high ");
+    }
+
+    #[test]
+    fn goal_title_omits_effort_for_non_reasoning_model() {
+        let header = super::HeaderSnapshot {
+            model: "claude-sonnet-4-6".to_string(),
+            reasoning_effort: None,
+            ..Default::default()
+        };
+        let mut state = ReplTuiState::new();
+        state.cached_header = header;
+
+        let title = if let Some(ref effort) = state.cached_header.reasoning_effort {
+            format!(" Goal * {} * {effort} ", state.cached_header.model)
+        } else {
+            format!(" Goal * {} ", state.cached_header.model)
+        };
+        assert_eq!(title, " Goal * claude-sonnet-4-6 ");
+    }
+
+    #[test]
+    fn goal_title_cycles_through_all_effort_levels() {
+        let efforts = ["low", "medium", "high"];
+        for effort in &efforts {
+            let header = super::HeaderSnapshot {
+                model: "gpt-5.3-codex".to_string(),
+                reasoning_effort: Some(effort.to_string()),
+                ..Default::default()
+            };
+            let title = format!(" Goal * {} * {} ", header.model, effort);
+            assert!(
+                title.contains(&format!("* {effort} ")),
+                "title should contain effort level '{effort}': {title}"
+            );
+        }
+    }
 }
