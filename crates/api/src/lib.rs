@@ -1,7 +1,10 @@
+pub mod bedrock;
 mod client;
 pub mod codex;
+pub mod copilot;
 pub mod credentials;
 mod error;
+pub mod gemini;
 pub mod models;
 pub mod openai;
 pub mod provider;
@@ -9,6 +12,7 @@ pub mod responses;
 mod sse;
 mod types;
 
+pub use bedrock::{BedrockClient, BedrockMessageStream};
 pub use client::{
     oauth_token_is_expired, read_base_url, resolve_saved_oauth_token, resolve_startup_auth_source,
     AnthropicClient, AuthSource, MessageStream, OAuthTokenSet,
@@ -24,6 +28,7 @@ pub use credentials::{
     CredentialError, CredentialStore, StoredOAuthTokens, StoredProviderConfig,
 };
 pub use error::ApiError;
+pub use gemini::{GeminiClient, GeminiMessageStream};
 pub use models::{
     list_anthropic_models, list_models_dev, list_openai_models, AnthropicModel, AnthropicModelList,
     OpenAiModel, OpenAiModelList,

@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+aws-sigv4 = { version = "1", features = ["sign-http"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }

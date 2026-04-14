@@ -13,10 +13,9 @@ impl SseParser {
     }
 
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ApiError> {
-        self.buffer.extend_from_slice(chunk);
         let mut events = Vec::new();
 
-        while let Some(frame) = self.next_frame() {
+        for frame in self.push_frames(chunk) {
             if let Some(event) = parse_frame(&frame)? {
                 events.push(event);
             }
@@ -25,16 +24,34 @@ impl SseParser {
         Ok(events)
     }
 
+    #[must_use]
+    pub fn push_frames(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.buffer.extend_from_slice(chunk);
+        let mut frames = Vec::new();
+
+        while let Some(frame) = self.next_frame() {
+            frames.push(frame);
+        }
+
+        frames
+    }
+
     pub fn finish(&mut self) -> Result<Vec<StreamEvent>, ApiError> {
+        self.finish_frames()
+            .into_iter()
+            .map(|frame| parse_frame(&frame))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|events| events.into_iter().flatten().collect())
+    }
+
+    #[must_use]
+    pub fn finish_frames(&mut self) -> Vec<String> {
         if self.buffer.is_empty() {
-            return Ok(Vec::new());
+            return Vec::new();
         }
 
         let trailing = std::mem::take(&mut self.buffer);
-        match parse_frame(&String::from_utf8_lossy(&trailing))? {
-            Some(event) => Ok(vec![event]),
-            None => Ok(Vec::new()),
-        }
+        vec![String::from_utf8_lossy(&trailing).into_owned()]
     }
 
     fn next_frame(&mut self) -> Option<String> {

@@ -83,6 +83,9 @@ pub(crate) fn persist_preset_credentials(
 pub(crate) fn run_preset_auth(
     preset: &api::ProviderPreset,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if preset.id == "copilot" {
+        return run_copilot_device_code_auth();
+    }
     if let Some(env_var) = preset.api_key_env_var {
         eprintln!("(Hint: also readable from {env_var} env var)");
     }
@@ -103,6 +106,53 @@ pub(crate) fn run_preset_auth(
             ..Default::default()
         },
     )
+}
+
+fn run_copilot_device_code_auth() -> Result<(), Box<dyn std::error::Error>> {
+    let rt = tokio::runtime::Handle::try_current()
+        .map_or_else(|_| tokio::runtime::Runtime::new().map(Some), |_| Ok(None))?;
+
+    let run = async {
+        eprintln!("To authenticate with GitHub Copilot:");
+        let (device, poll_future) = api::copilot::run_device_code_flow()
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        eprintln!(
+            "Visit {} and enter code: {}",
+            device.verification_uri, device.user_code
+        );
+
+        if let Err(e) = open_browser(&device.verification_uri) {
+            eprintln!("(Could not open browser: {e})");
+        }
+
+        eprintln!("Waiting for authorization…");
+        let result = poll_future
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
+        persist_preset_credentials(
+            "copilot",
+            api::StoredProviderConfig {
+                auth_method: "oauth".to_string(),
+                oauth: Some(api::StoredOAuthTokens {
+                    access_token: result.copilot_token,
+                    refresh_token: Some(result.github_token),
+                    ..Default::default()
+                }),
+                base_url: Some("https://api.githubcopilot.com".to_string()),
+                ..Default::default()
+            },
+        )?;
+
+        Ok::<(), Box<dyn std::error::Error>>(())
+    };
+
+    if let Some(runtime) = rt {
+        runtime.block_on(run)
+    } else {
+        tokio::runtime::Handle::current().block_on(run)
+    }
 }
 
 pub(crate) fn run_logout() -> Result<(), Box<dyn std::error::Error>> {
@@ -443,5 +493,12 @@ mod tests {
         let preset = api::find_preset("openai").expect("openai preset exists");
         let choice = ProviderChoice::Preset(preset.clone());
         assert_eq!(provider_choice_label(&choice), "OpenAI");
+    }
+
+    #[test]
+    fn test_resolve_copilot_provider() {
+        let result = resolve_provider_arg("copilot");
+        assert!(result.is_ok(), "copilot should resolve via preset lookup");
+        assert!(matches!(result.unwrap(), ProviderChoice::Preset(p) if p.id == "copilot"));
     }
 }

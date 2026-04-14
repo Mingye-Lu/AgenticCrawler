@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod bedrock;
 pub mod catalog;
 pub mod custom;
 pub mod openai;
@@ -45,24 +46,30 @@ pub struct ModelPricing {
 
 pub enum ProviderStream {
     Anthropic(crate::client::MessageStream),
+    Bedrock(crate::bedrock::BedrockMessageStream),
     OpenAi(crate::responses::ResponsesMessageStream),
     Custom(crate::openai::OpenAiMessageStream),
+    Gemini(crate::gemini::GeminiMessageStream),
 }
 
 impl ProviderStream {
     pub async fn next_event(&mut self) -> Result<Option<StreamEvent>, ApiError> {
         match self {
             Self::Anthropic(s) => s.next_event().await,
+            Self::Bedrock(s) => s.next_event().await,
             Self::OpenAi(s) => s.next_event().await,
             Self::Custom(s) => s.next_event().await,
+            Self::Gemini(s) => s.next_event().await,
         }
     }
 }
 
 pub enum ProviderClient {
     Anthropic(crate::AnthropicClient),
+    Bedrock(crate::bedrock::BedrockClient),
     OpenAi(crate::OpenAiResponsesClient),
     Custom(crate::ChatCompletionsClient),
+    Gemini(crate::gemini::GeminiClient),
 }
 
 impl ProviderClient {
@@ -75,8 +82,10 @@ impl ProviderClient {
                 .stream_message(request)
                 .await
                 .map(ProviderStream::Anthropic),
+            Self::Bedrock(c) => c.stream_message(request).await.map(ProviderStream::Bedrock),
             Self::OpenAi(c) => c.stream_message(request).await.map(ProviderStream::OpenAi),
             Self::Custom(c) => c.stream_message(request).await.map(ProviderStream::Custom),
+            Self::Gemini(c) => c.stream_message(request).await.map(ProviderStream::Gemini),
         }
     }
 
@@ -86,6 +95,10 @@ impl ProviderClient {
     ) -> Result<MessageResponse, ApiError> {
         match self {
             Self::Anthropic(c) => c.send_message(request).await,
+            Self::Bedrock(_) => Err(ApiError::Auth(
+                "send_message not supported for Bedrock streaming client".into(),
+            )),
+            Self::Gemini(_) => Err(ApiError::Auth("send_message not supported for Gemini".into())),
             _ => Err(ApiError::Auth(
                 "send_message only supported for Anthropic".into(),
             )),
@@ -94,7 +107,7 @@ impl ProviderClient {
 
     #[must_use]
     pub fn is_anthropic(&self) -> bool {
-        matches!(self, Self::Anthropic(_))
+        matches!(self, Self::Anthropic(_) | Self::Bedrock(_))
     }
 
     pub fn from_stored_config(
@@ -105,8 +118,84 @@ impl ProviderClient {
         if let Some(preset) = preset::find_preset(provider_id) {
             match preset.protocol {
                 ProviderProtocol::Anthropic => return anthropic::build_client(config),
+                ProviderProtocol::Bedrock => return bedrock::build_client(config, model),
                 ProviderProtocol::OpenAiResponses => return openai::build_client(config, model),
+                ProviderProtocol::Gemini => {
+                    let api_key = config.api_key.clone().unwrap_or_default();
+                    let client = config.base_url.as_ref().map_or_else(
+                        || crate::gemini::GeminiClient::new(api_key.clone()),
+                        |base_url| {
+                            crate::gemini::GeminiClient::new(api_key.clone())
+                                .with_base_url(base_url.clone())
+                        },
+                    );
+                    return Ok(Self::Gemini(client));
+                }
                 ProviderProtocol::ChatCompletions => {
+                    if preset.id == "azure" {
+                        let resource = config.resource_name.as_deref().unwrap_or("default");
+                        let deployment = config.deployment_name.as_deref().unwrap_or("gpt-4o");
+                        let base_url = format!(
+                            "https://{resource}.openai.azure.com/openai/deployments/{deployment}"
+                        );
+                        return Ok(Self::Custom(build_azure_chat_completions(
+                            config,
+                            model,
+                            &base_url,
+                            preset.chat_path,
+                        )));
+                    }
+                    if preset.id == "gitlab" {
+                        let base_url = config
+                            .base_url
+                            .as_deref()
+                            .unwrap_or("https://gitlab.com/api/v4/ai/v1");
+                        let gitlab_headers = vec![
+                            (
+                                "X-Gitlab-Authentication-Type".to_string(),
+                                "oidc".to_string(),
+                            ),
+                            (
+                                "X-Gitlab-Duo-Chat-Feature".to_string(),
+                                "code_suggestions".to_string(),
+                            ),
+                        ];
+                        return Ok(Self::Custom(
+                            build_chat_completions_from_config(
+                                config,
+                                model,
+                                base_url,
+                                preset.chat_path,
+                                preset.transform_id,
+                            )
+                            .with_extra_headers(gitlab_headers),
+                        ));
+                    }
+                    if preset.id == "copilot" {
+                        let base_url = config
+                            .base_url
+                            .as_deref()
+                            .unwrap_or("https://api.githubcopilot.com");
+                        let copilot_headers = vec![
+                            (
+                                "Copilot-Integration-Id".to_string(),
+                                "acrawl".to_string(),
+                            ),
+                            (
+                                "editor-version".to_string(),
+                                "acrawl/1.0.0".to_string(),
+                            ),
+                        ];
+                        return Ok(Self::Custom(
+                            build_copilot_chat_completions(
+                                config,
+                                model,
+                                base_url,
+                                preset.chat_path,
+                            )
+                            .with_extra_headers(copilot_headers),
+                        ));
+                    }
                     let base_url = config.base_url.as_deref().unwrap_or(preset.base_url);
                     return Ok(Self::Custom(build_chat_completions_from_config(
                         config,
@@ -116,7 +205,6 @@ impl ProviderClient {
                         preset.transform_id,
                     )));
                 }
-                ProviderProtocol::Gemini | ProviderProtocol::Bedrock => {}
             }
         }
 
@@ -156,6 +244,45 @@ fn build_chat_completions_from_config(
         .with_optional_auth(auth)
         .with_chat_path(chat_path)
         .with_transform(transform)
+}
+
+fn build_azure_chat_completions(
+    config: &StoredProviderConfig,
+    model: &str,
+    base_url: &str,
+    chat_path: &str,
+) -> crate::ChatCompletionsClient {
+    let extra_headers: Vec<(String, String)> = config
+        .api_key
+        .as_deref()
+        .filter(|key| !key.is_empty())
+        .map(|key| vec![("api-key".to_string(), key.to_string())])
+        .unwrap_or_default();
+
+    crate::ChatCompletionsClient::with_no_auth(model, base_url)
+        .with_chat_path(chat_path)
+        .with_extra_headers(extra_headers)
+}
+
+fn build_copilot_chat_completions(
+    config: &StoredProviderConfig,
+    model: &str,
+    base_url: &str,
+    chat_path: &str,
+) -> crate::ChatCompletionsClient {
+    use crate::client::AuthSource;
+
+    let auth = config
+        .oauth
+        .as_ref()
+        .filter(|o| !o.access_token.is_empty())
+        .map_or(AuthSource::None, |o| {
+            AuthSource::BearerToken(o.access_token.clone())
+        });
+
+    crate::ChatCompletionsClient::with_no_auth(model, base_url)
+        .with_optional_auth(auth)
+        .with_chat_path(chat_path)
 }
 
 pub struct ProviderRegistry {
@@ -349,6 +476,72 @@ mod tests {
     }
 
     #[test]
+    fn test_bedrock_preset_routes_to_bedrock_client() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("AKIDEXAMPLE".into()),
+            aws_secret_access_key: Some("secret".into()),
+            region: Some("us-east-1".into()),
+            ..Default::default()
+        };
+
+        let client = ProviderClient::from_stored_config(
+            "bedrock",
+            &config,
+            "anthropic.claude-sonnet-4-6-20250514-v1:0",
+        );
+
+        assert!(client.is_ok());
+        assert!(matches!(client.unwrap(), ProviderClient::Bedrock(_)));
+    }
+
+    #[test]
+    fn test_gitlab_custom_headers() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("glpat-test".into()),
+            ..Default::default()
+        };
+        let client =
+            ProviderClient::from_stored_config("gitlab", &config, "gitlab-default").unwrap();
+        let ProviderClient::Custom(c) = client else {
+            panic!("expected Custom variant");
+        };
+        let has_auth_type = c
+            .extra_headers
+            .iter()
+            .any(|(k, _)| k == "X-Gitlab-Authentication-Type");
+        assert!(
+            has_auth_type,
+            "GitLab client should have X-Gitlab-Authentication-Type header"
+        );
+        let has_feature = c
+            .extra_headers
+            .iter()
+            .any(|(k, _)| k == "X-Gitlab-Duo-Chat-Feature");
+        assert!(
+            has_feature,
+            "GitLab client should have X-Gitlab-Duo-Chat-Feature header"
+        );
+    }
+
+    #[test]
+    fn test_gitlab_self_hosted_url() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("token".into()),
+            base_url: Some("https://my-gitlab.example.com/api/v4/ai/v1".into()),
+            ..Default::default()
+        };
+        let client =
+            ProviderClient::from_stored_config("gitlab", &config, "gitlab-default").unwrap();
+        let ProviderClient::Custom(c) = client else {
+            panic!("expected Custom variant for gitlab");
+        };
+        assert!(c.base_url.contains("my-gitlab.example.com"));
+    }
+
+    #[test]
     fn registry_configured_providers_reflects_store() {
         let mut store = CredentialStore::default();
         store.providers.insert(
@@ -362,5 +555,73 @@ mod tests {
         let registry = ProviderRegistry::from_credentials(&store);
         let configured = registry.configured_providers();
         assert_eq!(configured.len(), 2);
+    }
+
+    #[test]
+    fn test_azure_url_template() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("azure-key-123".into()),
+            resource_name: Some("myresource".into()),
+            deployment_name: Some("gpt4".into()),
+            ..Default::default()
+        };
+
+        let client = ProviderClient::from_stored_config("azure", &config, "gpt-4o");
+        assert!(client.is_ok());
+
+        let ProviderClient::Custom(cc) = client.unwrap() else {
+            panic!("expected Custom variant");
+        };
+        assert!(cc.base_url.contains("myresource.openai.azure.com"));
+        assert!(cc.base_url.contains("/deployments/gpt4"));
+        assert!(cc.chat_path.contains("api-version=2024-02-01"));
+    }
+
+    #[test]
+    fn test_azure_api_key_header() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("azure-secret".into()),
+            resource_name: Some("res".into()),
+            deployment_name: Some("dep".into()),
+            ..Default::default()
+        };
+
+        let client = ProviderClient::from_stored_config("azure", &config, "gpt-4o");
+        let ProviderClient::Custom(cc) = client.unwrap() else {
+            panic!("expected Custom variant");
+        };
+        assert_eq!(
+            cc.extra_headers,
+            vec![("api-key".to_string(), "azure-secret".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_copilot_routes_to_chat_completions_with_oauth() {
+        let config = StoredProviderConfig {
+            auth_method: "oauth".into(),
+            oauth: Some(crate::credentials::StoredOAuthTokens {
+                access_token: "copilot-token-xyz".into(),
+                ..Default::default()
+            }),
+            base_url: Some("https://api.githubcopilot.com".into()),
+            ..Default::default()
+        };
+
+        let client = ProviderClient::from_stored_config("copilot", &config, "gpt-4o");
+        assert!(client.is_ok());
+
+        let ProviderClient::Custom(cc) = client.unwrap() else {
+            panic!("expected Custom variant");
+        };
+        assert_eq!(cc.base_url, "https://api.githubcopilot.com");
+        assert!(cc
+            .extra_headers
+            .contains(&("Copilot-Integration-Id".to_string(), "acrawl".to_string())));
+        assert!(cc
+            .extra_headers
+            .contains(&("editor-version".to_string(), "acrawl/1.0.0".to_string())));
     }
 }

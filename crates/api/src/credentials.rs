@@ -50,10 +50,22 @@ pub struct StoredOAuthTokens {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct StoredProviderConfig {
     pub auth_method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<StoredOAuthTokens>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aws_secret_access_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_name: Option<String>,
 }
 
 /// Multi-provider credential store

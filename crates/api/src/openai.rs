@@ -84,11 +84,12 @@ struct OpenAiUsage {
 pub struct ChatCompletionsClient {
     http: reqwest::Client,
     auth: Option<AuthSource>,
-    base_url: String,
-    chat_path: String,
+    pub base_url: String,
+    pub chat_path: String,
     default_model: String,
     #[allow(clippy::box_collection)]
     transform: Box<dyn ProviderTransform>,
+    pub extra_headers: Vec<(String, String)>,
 }
 
 impl Clone for ChatCompletionsClient {
@@ -100,6 +101,7 @@ impl Clone for ChatCompletionsClient {
             chat_path: self.chat_path.clone(),
             default_model: self.default_model.clone(),
             transform: Box::new(NoOpTransform),
+            extra_headers: self.extra_headers.clone(),
         }
     }
 }
@@ -117,6 +119,7 @@ impl ChatCompletionsClient {
             chat_path: "/chat/completions".to_string(),
             default_model: DEFAULT_OPENAI_MODEL.to_string(),
             transform: Box::new(NoOpTransform),
+            extra_headers: Vec::new(),
         }
     }
 
@@ -129,6 +132,7 @@ impl ChatCompletionsClient {
             chat_path: "/chat/completions".to_string(),
             default_model: model.into(),
             transform: Box::new(NoOpTransform),
+            extra_headers: Vec::new(),
         }
     }
 
@@ -165,8 +169,14 @@ impl ChatCompletionsClient {
         self
     }
 
+    #[must_use]
+    pub fn with_extra_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.extra_headers = headers;
+        self
+    }
+
     fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.auth {
+        let req = match &self.auth {
             Some(
                 AuthSource::BearerToken(token)
                 | AuthSource::ApiKey(token)
@@ -176,7 +186,12 @@ impl ChatCompletionsClient {
                 },
             ) => req.bearer_auth(token),
             Some(AuthSource::None) | None => req,
+        };
+        let mut req = req;
+        for (name, value) in &self.extra_headers {
+            req = req.header(name.as_str(), value.as_str());
         }
+        req
     }
 
     pub async fn stream_message(

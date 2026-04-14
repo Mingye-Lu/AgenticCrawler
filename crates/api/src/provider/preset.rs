@@ -42,7 +42,7 @@ pub struct ProviderPreset {
     pub transform_id: Option<&'static str>,
 }
 
-static BUILTIN_PRESETS: [ProviderPreset; 18] = [
+static BUILTIN_PRESETS: [ProviderPreset; 23] = [
     ProviderPreset {
         id: "anthropic",
         display_name: "Anthropic",
@@ -71,6 +71,36 @@ static BUILTIN_PRESETS: [ProviderPreset; 18] = [
         model_prefixes: &["gpt-", "o1", "o3", "o4", "codex-", "chatgpt-"],
         protocol: ProviderProtocol::OpenAiResponses,
         category: ProviderCategory::Popular,
+        transform_id: None,
+    },
+    ProviderPreset {
+        id: "google",
+        display_name: "Google Gemini",
+        base_url: "https://generativelanguage.googleapis.com/v1beta",
+        chat_path: "",
+        api_key_env_var: Some("GEMINI_API_KEY"),
+        auth_header_format: AuthHeaderFormat::XApiKey("x-goog-api-key"),
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: true,
+        model_prefixes: &["gemini-"],
+        protocol: ProviderProtocol::Gemini,
+        category: ProviderCategory::Popular,
+        transform_id: None,
+    },
+    ProviderPreset {
+        id: "bedrock",
+        display_name: "AWS Bedrock",
+        base_url: "",
+        chat_path: "",
+        api_key_env_var: Some("AWS_ACCESS_KEY_ID"),
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: true,
+        model_prefixes: &["anthropic.claude"],
+        protocol: ProviderProtocol::Bedrock,
+        category: ProviderCategory::Enterprise,
         transform_id: None,
     },
     ProviderPreset {
@@ -313,6 +343,51 @@ static BUILTIN_PRESETS: [ProviderPreset; 18] = [
         category: ProviderCategory::Gateway,
         transform_id: None,
     },
+    ProviderPreset {
+        id: "gitlab",
+        display_name: "GitLab Duo",
+        base_url: "https://gitlab.com/api/v4/ai/v1",
+        chat_path: "/chat/completions",
+        api_key_env_var: Some("GITLAB_TOKEN"),
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: false,
+        supports_streaming_tools: false,
+        supports_vision: false,
+        model_prefixes: &[],
+        protocol: ProviderProtocol::ChatCompletions,
+        category: ProviderCategory::Enterprise,
+        transform_id: None,
+    },
+    ProviderPreset {
+        id: "azure",
+        display_name: "Azure OpenAI",
+        base_url: "https://{resource_name}.openai.azure.com/openai/deployments/{deployment_name}",
+        chat_path: "/chat/completions?api-version=2024-02-01",
+        api_key_env_var: Some("AZURE_OPENAI_API_KEY"),
+        auth_header_format: AuthHeaderFormat::AzureApiKey,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: true,
+        model_prefixes: &[],
+        protocol: ProviderProtocol::ChatCompletions,
+        category: ProviderCategory::Enterprise,
+        transform_id: None,
+    },
+    ProviderPreset {
+        id: "copilot",
+        display_name: "GitHub Copilot",
+        base_url: "https://api.githubcopilot.com",
+        chat_path: "/chat/completions",
+        api_key_env_var: None,
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: false,
+        model_prefixes: &[],
+        protocol: ProviderProtocol::ChatCompletions,
+        category: ProviderCategory::Enterprise,
+        transform_id: None,
+    },
 ];
 
 #[must_use]
@@ -361,6 +436,17 @@ mod tests {
         assert_eq!(preset.base_url, "https://api.openai.com");
         assert_eq!(preset.chat_path, "/v1/responses");
         assert!(matches!(preset.protocol, ProviderProtocol::OpenAiResponses));
+    }
+
+    #[test]
+    fn test_builtin_presets_contains_bedrock() {
+        let preset = builtin_presets()
+            .into_iter()
+            .find(|preset| preset.id == "bedrock")
+            .expect("bedrock preset should exist");
+
+        assert_eq!(preset.api_key_env_var, Some("AWS_ACCESS_KEY_ID"));
+        assert!(matches!(preset.protocol, ProviderProtocol::Bedrock));
     }
 
     #[test]
@@ -509,5 +595,35 @@ mod tests {
     fn test_cloudflare_gateway_preset_exists() {
         let p = find_preset("cloudflare-gateway").expect("cloudflare-gateway preset should exist");
         assert!(p.base_url.contains("gateway.ai.cloudflare.com"));
+    }
+
+    #[test]
+    fn test_azure_routes_through_chat_completions() {
+        let p = find_preset("azure").expect("azure preset should exist");
+        assert!(matches!(p.protocol, ProviderProtocol::ChatCompletions));
+        assert!(matches!(
+            p.auth_header_format,
+            AuthHeaderFormat::AzureApiKey
+        ));
+        assert!(matches!(p.category, ProviderCategory::Enterprise));
+        assert!(p.chat_path.contains("api-version="));
+    }
+
+    #[test]
+    fn test_gitlab_preset_exists() {
+        let p = find_preset("gitlab").expect("gitlab preset should exist");
+        assert!(p.base_url.contains("gitlab.com"));
+        assert!(matches!(p.category, ProviderCategory::Enterprise));
+        assert!(!p.supports_tools);
+    }
+
+    #[test]
+    fn test_copilot_preset_exists() {
+        let p = find_preset("copilot").expect("copilot preset should exist");
+        assert_eq!(p.base_url, "https://api.githubcopilot.com");
+        assert!(matches!(p.protocol, ProviderProtocol::ChatCompletions));
+        assert!(matches!(p.category, ProviderCategory::Enterprise));
+        assert!(p.supports_tools);
+        assert!(p.api_key_env_var.is_none());
     }
 }
