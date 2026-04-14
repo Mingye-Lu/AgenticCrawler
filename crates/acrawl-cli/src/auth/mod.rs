@@ -163,7 +163,7 @@ pub(crate) fn provider_choice_label(choice: &ProviderChoice) -> &str {
 }
 
 pub(crate) fn interactive_login_prompt(
-    choice: ProviderChoice,
+    choice: &ProviderChoice,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match choice {
         ProviderChoice::Legacy(Provider::Anthropic) => {
@@ -192,7 +192,7 @@ pub(crate) fn interactive_login_prompt(
             }
             run_auth_for_provider(Provider::Other)
         }
-        ProviderChoice::Preset(ref preset) => {
+        ProviderChoice::Preset(preset) => {
             eprint!(
                 "No {} credentials found. Configure now? [Y/n] ",
                 preset.display_name

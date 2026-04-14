@@ -40,10 +40,12 @@ use crate::tui::ReplTuiEvent;
 mod auth;
 
 pub(crate) use self::auth::{
-    default_oauth_config, open_browser, parse_provider_arg, provider_label, run_auth_cli,
-    run_login, run_logout, wait_for_oauth_callback_cancellable,
+    default_oauth_config, open_browser, parse_provider_arg, run_auth_cli, run_login, run_logout,
+    wait_for_oauth_callback_cancellable,
 };
-use self::auth::{interactive_login_prompt, prompt_provider_choice};
+use self::auth::{
+    interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
+};
 
 pub(crate) type AllowedToolSet = BTreeSet<String>;
 
@@ -800,11 +802,12 @@ impl LiveCli {
     }
 
     fn run_auth(&mut self, provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-        let target = match provider {
-            Some(p) => parse_provider_arg(p)?,
+        let choice = match provider {
+            Some(p) => resolve_provider_arg(p)?,
             None => prompt_provider_choice()?,
         };
-        interactive_login_prompt(target)?;
+        let label = provider_choice_label(&choice).to_string();
+        interactive_login_prompt(&choice)?;
         let session = self.runtime.session().clone();
         self.runtime = build_runtime(
             session,
@@ -817,8 +820,7 @@ impl LiveCli {
             self.ui_sender(),
         )?;
         println!(
-            "Auth\n  Provider         {}\n  Result           authenticated",
-            provider_label(target)
+            "Auth\n  Provider         {label}\n  Result           authenticated"
         );
         Ok(())
     }
