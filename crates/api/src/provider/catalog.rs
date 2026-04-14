@@ -39,7 +39,7 @@ pub fn builtin_models() -> Vec<ModelInfo> {
 #[must_use]
 pub fn infer_provider(model: &str) -> &'static str {
     if model.starts_with("claude") {
-        "anthropic"
+        return "anthropic";
     } else if model.starts_with("gpt-")
         || model.starts_with("o1")
         || model.starts_with("o3")
@@ -47,10 +47,19 @@ pub fn infer_provider(model: &str) -> &'static str {
         || model.starts_with("codex-")
         || model.starts_with("chatgpt-")
     {
-        "openai"
-    } else {
-        "other"
+        return "openai";
     }
+
+    for (provider_id, prefixes) in crate::provider::preset::preset_model_prefixes() {
+        if provider_id == "anthropic" || provider_id == "openai" {
+            continue;
+        }
+        if prefixes.iter().any(|prefix| model.starts_with(prefix)) {
+            return provider_id;
+        }
+    }
+
+    "other"
 }
 
 /// Default max output tokens for unknown models (fallback when not in catalog).
@@ -1255,7 +1264,8 @@ pub async fn fetch_models_dev(provider_id: &str) -> Result<Vec<ModelInfo>, ApiEr
     Ok(models)
 }
 
-pub async fn fetch_models_dev_reasoning() -> Result<std::collections::HashMap<String, bool>, ApiError> {
+pub async fn fetch_models_dev_reasoning(
+) -> Result<std::collections::HashMap<String, bool>, ApiError> {
     let client = reqwest::Client::new();
     let response = client
         .get("https://models.dev/api.json")
@@ -1334,6 +1344,34 @@ mod tests {
         assert_eq!(infer_provider("o4-mini"), "openai");
         assert_eq!(infer_provider("codex-mini-latest"), "openai");
         assert_eq!(infer_provider("llama3.2"), "other");
+    }
+
+    #[test]
+    fn test_active_provider_overrides_inference() {
+        use crate::credentials::{CredentialStore, StoredProviderConfig};
+
+        let mut store = CredentialStore {
+            active_provider: Some("other".into()),
+            ..Default::default()
+        };
+        store.providers.insert(
+            "other".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("test-key".into()),
+                base_url: Some("https://api.example.com/v1".into()),
+                ..Default::default()
+            },
+        );
+
+        let registry = crate::provider::ProviderRegistry::from_credentials(&store);
+        let client = registry.build_client("claude-sonnet-4-6", &store);
+
+        assert!(client.is_ok());
+        assert!(matches!(
+            client.unwrap(),
+            crate::provider::ProviderClient::Custom(_)
+        ));
     }
 
     #[test]

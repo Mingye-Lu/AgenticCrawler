@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::{CredentialStore, StoredProviderConfig};
 use crate::error::ApiError;
+use crate::provider::preset::ProviderProtocol;
 use crate::types::{MessageRequest, MessageResponse, ReasoningEffort, StreamEvent};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,17 +102,51 @@ impl ProviderClient {
         config: &StoredProviderConfig,
         model: &str,
     ) -> Result<Self, ApiError> {
-        match provider_id {
-            "anthropic" => anthropic::build_client(config),
-            "openai" => openai::build_client(config, model),
-            _ => custom::build_client(config, model),
+        if let Some(preset) = preset::find_preset(provider_id) {
+            match preset.protocol {
+                ProviderProtocol::Anthropic => return anthropic::build_client(config),
+                ProviderProtocol::OpenAiResponses => return openai::build_client(config, model),
+                ProviderProtocol::ChatCompletions => {
+                    let base_url = config.base_url.as_deref().unwrap_or(preset.base_url);
+                    return Ok(Self::Custom(build_chat_completions_from_config(
+                        config,
+                        model,
+                        base_url,
+                        preset.chat_path,
+                    )));
+                }
+                ProviderProtocol::Gemini | ProviderProtocol::Bedrock => {}
+            }
         }
+
+        custom::build_client(config, model)
     }
 
     #[must_use]
     pub fn no_auth_placeholder() -> Self {
         Self::Anthropic(crate::AnthropicClient::from_auth(crate::AuthSource::None))
     }
+}
+
+fn build_chat_completions_from_config(
+    config: &StoredProviderConfig,
+    model: &str,
+    base_url: &str,
+    chat_path: &str,
+) -> crate::ChatCompletionsClient {
+    use crate::client::AuthSource;
+
+    let auth = config
+        .api_key
+        .as_deref()
+        .filter(|key| !key.is_empty())
+        .map_or(AuthSource::None, |key| {
+            AuthSource::BearerToken(key.to_string())
+        });
+
+    crate::ChatCompletionsClient::with_no_auth(model, base_url)
+        .with_optional_auth(auth)
+        .with_chat_path(chat_path)
 }
 
 pub struct ProviderRegistry {
@@ -272,6 +307,36 @@ mod tests {
         let registry = ProviderRegistry::from_credentials(&store);
         let client = registry.build_client("claude-sonnet-4-6", &store);
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_preset_routes_to_chat_completions() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("test-key".into()),
+            base_url: Some("https://api.example.com/v1".into()),
+            ..Default::default()
+        };
+
+        let client = ProviderClient::from_stored_config("other", &config, "llama3");
+
+        assert!(client.is_ok());
+        assert!(matches!(client.unwrap(), ProviderClient::Custom(_)));
+    }
+
+    #[test]
+    fn test_unknown_provider_falls_back_to_custom() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("test-key".into()),
+            base_url: Some("https://some-unknown-provider.com/v1".into()),
+            ..Default::default()
+        };
+
+        let client = ProviderClient::from_stored_config("unknown-provider", &config, "some-model");
+
+        assert!(client.is_ok());
+        assert!(matches!(client.unwrap(), ProviderClient::Custom(_)));
     }
 
     #[test]

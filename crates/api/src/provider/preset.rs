@@ -92,6 +92,14 @@ pub fn builtin_presets() -> Vec<ProviderPreset> {
 }
 
 #[must_use]
+pub fn preset_model_prefixes() -> Vec<(&'static str, &'static [&'static str])> {
+    BUILTIN_PRESETS
+        .iter()
+        .map(|preset| (preset.id, preset.model_prefixes))
+        .collect()
+}
+
+#[must_use]
 pub fn find_preset(provider_id: &str) -> Option<&'static ProviderPreset> {
     BUILTIN_PRESETS
         .iter()

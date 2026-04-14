@@ -85,6 +85,7 @@ pub struct ChatCompletionsClient {
     http: reqwest::Client,
     auth: Option<AuthSource>,
     base_url: String,
+    chat_path: String,
     default_model: String,
     #[allow(clippy::box_collection)]
     transform: Box<dyn ProviderTransform>,
@@ -96,6 +97,7 @@ impl Clone for ChatCompletionsClient {
             http: self.http.clone(),
             auth: self.auth.clone(),
             base_url: self.base_url.clone(),
+            chat_path: self.chat_path.clone(),
             default_model: self.default_model.clone(),
             transform: Box::new(NoOpTransform),
         }
@@ -112,6 +114,7 @@ impl ChatCompletionsClient {
             http: reqwest::Client::new(),
             auth: Some(auth),
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
+            chat_path: "/chat/completions".to_string(),
             default_model: DEFAULT_OPENAI_MODEL.to_string(),
             transform: Box::new(NoOpTransform),
         }
@@ -123,6 +126,7 @@ impl ChatCompletionsClient {
             http: reqwest::Client::new(),
             auth: None,
             base_url: base_url.into(),
+            chat_path: "/chat/completions".to_string(),
             default_model: model.into(),
             transform: Box::new(NoOpTransform),
         }
@@ -137,6 +141,12 @@ impl ChatCompletionsClient {
     #[must_use]
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.default_model = model.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_chat_path(mut self, path: impl Into<String>) -> Self {
+        self.chat_path = path.into();
         self
     }
 
@@ -180,10 +190,7 @@ impl ChatCompletionsClient {
         };
 
         let body = build_openai_request(request, model, self.transform.as_ref());
-        let url = format!(
-            "{}/v1/chat/completions",
-            self.base_url.trim_end_matches('/')
-        );
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), self.chat_path);
 
         let req = self
             .http
@@ -960,6 +967,7 @@ mod tests {
         let client = ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
         assert!(client.auth.is_none());
         assert_eq!(client.base_url, "http://localhost:11434/v1");
+        assert_eq!(client.chat_path, "/chat/completions");
         assert_eq!(client.default_model, "llama3");
     }
 
@@ -967,17 +975,32 @@ mod tests {
     fn custom_base_url_used_in_request_url() {
         let client = ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434/v1");
         let url = format!(
-            "{}/v1/chat/completions",
-            client.base_url.trim_end_matches('/')
+            "{}{}",
+            client.base_url.trim_end_matches('/'),
+            client.chat_path
         );
-        assert_eq!(url, "http://localhost:11434/v1/v1/chat/completions");
+        assert_eq!(url, "http://localhost:11434/v1/chat/completions");
 
         let client2 = ChatCompletionsClient::with_no_auth("llama3", "http://localhost:11434");
         let url2 = format!(
-            "{}/v1/chat/completions",
-            client2.base_url.trim_end_matches('/')
+            "{}{}",
+            client2.base_url.trim_end_matches('/'),
+            client2.chat_path
         );
-        assert_eq!(url2, "http://localhost:11434/v1/chat/completions");
+        assert_eq!(url2, "http://localhost:11434/chat/completions");
+    }
+
+    #[test]
+    fn test_chat_completions_url_uses_preset_chat_path() {
+        let client = ChatCompletionsClient::with_no_auth("grok-2", "https://api.x.ai/v1")
+            .with_chat_path("/chat/completions");
+        let url = format!(
+            "{}{}",
+            client.base_url.trim_end_matches('/'),
+            client.chat_path
+        );
+        assert_eq!(url, "https://api.x.ai/v1/chat/completions");
+        assert!(!url.contains("/v1/v1/"));
     }
 
     #[test]
