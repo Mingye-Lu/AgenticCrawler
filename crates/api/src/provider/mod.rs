@@ -701,4 +701,56 @@ mod tests {
         assert!(matches!(gemini, ProviderClient::Gemini(_)));
         assert!(matches!(claude, ProviderClient::Anthropic(_)));
     }
+
+    #[test]
+    fn test_every_chat_completions_preset_builds_client() {
+        use crate::provider::preset::{builtin_presets, ProviderProtocol};
+
+        for preset in builtin_presets() {
+            if !matches!(preset.protocol, ProviderProtocol::ChatCompletions) {
+                continue;
+            }
+            if preset.base_url.contains('{') {
+                continue;
+            }
+            let config = StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("test-key".into()),
+                base_url: Some(preset.base_url.to_string()),
+                ..Default::default()
+            };
+            let result = ProviderClient::from_stored_config(preset.id, &config, "test-model");
+            assert!(
+                result.is_ok(),
+                "ChatCompletions preset '{}' failed to build client: {:?}",
+                preset.id,
+                result.err()
+            );
+        }
+    }
+
+    #[test]
+    fn test_model_inference_covers_prefixed_providers() {
+        use crate::provider::catalog::infer_provider;
+
+        let cases = [
+            ("grok-2", "xai"),
+            ("command-r-plus", "cohere"),
+            ("qwen-max", "alibaba"),
+            ("mistral-large-latest", "mistral"),
+            ("codestral-latest", "mistral"),
+            ("gemma2-9b-it", "groq"),
+            ("@cf/meta/llama-3.1-70b-instruct", "cloudflare"),
+            ("dolphin-2.9.2-qwen2-72b", "venice"),
+            ("llama3.1-70b", "cerebras"),
+        ];
+        for (model, expected_provider) in cases {
+            let inferred = infer_provider(model);
+            assert_eq!(
+                inferred, expected_provider,
+                "model '{}' should infer to '{}', got '{}'",
+                model, expected_provider, inferred
+            );
+        }
+    }
 }

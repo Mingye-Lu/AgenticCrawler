@@ -1431,6 +1431,94 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_total_model_count() {
+        let models = builtin_models();
+        assert!(
+            models.len() >= 40,
+            "should have at least 40 models total, got {}",
+            models.len()
+        );
+    }
+
+    #[test]
+    fn test_all_providers_have_preset() {
+        use crate::provider::preset::find_preset;
+        let models = builtin_models();
+        let provider_ids: std::collections::HashSet<&str> =
+            models.iter().map(|m| m.provider_id.as_str()).collect();
+        for pid in &provider_ids {
+            assert!(
+                find_preset(pid).is_some(),
+                "provider '{pid}' has catalog models but no matching preset"
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_presets_with_prefixes_have_catalog_models() {
+        use crate::provider::preset::builtin_presets;
+        let models = builtin_models();
+        let presets = builtin_presets();
+        for preset in &presets {
+            if preset.model_prefixes.is_empty() {
+                continue;
+            }
+            let has_models = models.iter().any(|m| m.provider_id == preset.id);
+            let routes_via_prefix = preset
+                .model_prefixes
+                .iter()
+                .any(|pfx| models.iter().any(|m| m.id.starts_with(pfx)));
+            assert!(
+                has_models || routes_via_prefix,
+                "preset '{}' has model_prefixes {:?} but no catalog models route to it",
+                preset.id, preset.model_prefixes
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_models_have_valid_capabilities() {
+        for model in builtin_models() {
+            assert!(
+                model.max_output_tokens > 0,
+                "model {} has zero max_output_tokens",
+                model.id
+            );
+            assert!(
+                model.context_window > 0,
+                "model {} has zero context_window",
+                model.id
+            );
+            assert!(
+                model.context_window >= model.max_output_tokens,
+                "model {} has context_window ({}) < max_output_tokens ({})",
+                model.id,
+                model.context_window,
+                model.max_output_tokens
+            );
+            if model.capabilities.reasoning {
+                assert!(
+                    !model.capabilities.reasoning_efforts.is_empty(),
+                    "model {} is reasoning but has no reasoning_efforts",
+                    model.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_total_provider_count() {
+        let models = builtin_models();
+        let provider_ids: std::collections::HashSet<&str> =
+            models.iter().map(|m| m.provider_id.as_str()).collect();
+        assert!(
+            provider_ids.len() >= 19,
+            "should have at least 19 distinct providers, got {}",
+            provider_ids.len()
+        );
+    }
+
     #[tokio::test]
     async fn fetch_models_dev_compiles() {
         let result = fetch_models_dev("anthropic").await;
