@@ -265,7 +265,7 @@ pub(crate) fn resolve_provider_arg(
         "other" => Ok(ProviderChoice::Legacy(Provider::Other)),
         _ => {
             if let Some(preset) = api::find_preset(&lower) {
-                Ok(ProviderChoice::Preset(preset.clone()))
+                Ok(ProviderChoice::Preset(*preset))
             } else {
                 Err(format!(
                     "unknown provider '{value}'. Use 'acrawl auth' to see available providers."
@@ -376,7 +376,7 @@ pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::er
         eprintln!("\n{label}");
         for p in presets_in_cat {
             eprintln!("  {counter}) {}", p.display_name);
-            indexed.push(p.clone());
+            indexed.push(*p);
             counter += 1;
         }
     }
@@ -389,14 +389,14 @@ pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::er
 
     if let Ok(n) = trimmed.parse::<usize>() {
         if n >= 1 && n <= indexed.len() {
-            let preset = indexed[n - 1].clone();
+            let preset = indexed[n - 1];
             return Ok(ProviderChoice::Preset(preset));
         }
     }
 
     // Try by id
     if let Some(p) = indexed.iter().find(|p| p.id == trimmed) {
-        return Ok(ProviderChoice::Preset(p.clone()));
+        return Ok(ProviderChoice::Preset(*p));
     }
 
     Err(format!("invalid choice '{trimmed}'").into())
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn test_provider_choice_label_preset() {
         let preset = api::find_preset("openai").expect("openai preset exists");
-        let choice = ProviderChoice::Preset(preset.clone());
+        let choice = ProviderChoice::Preset(*preset);
         assert_eq!(provider_choice_label(&choice), "OpenAI");
     }
 

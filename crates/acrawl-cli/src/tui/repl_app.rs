@@ -1812,6 +1812,7 @@ impl ReplTuiState {
                                     crate::tui::auth_modal::ProviderKind::Anthropic => "anthropic",
                                     crate::tui::auth_modal::ProviderKind::OpenAi => "openai",
                                     crate::tui::auth_modal::ProviderKind::Other => "other",
+                                    crate::tui::auth_modal::ProviderKind::Preset(p) => p.id,
                                 };
                                 let mut config = store
                                     .providers
@@ -3061,7 +3062,8 @@ fn run_loop(
                             crate::tui::auth_modal::ProviderKind::OpenAi => {
                                 spawn_openai_oauth_thread(ui_tx.clone(), &mut state.active_modal);
                             }
-                            crate::tui::auth_modal::ProviderKind::Other => {}
+                            crate::tui::auth_modal::ProviderKind::Other
+                            | crate::tui::auth_modal::ProviderKind::Preset(_) => {}
                         }
                     }
 

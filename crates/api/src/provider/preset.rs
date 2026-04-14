@@ -1,11 +1,11 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthHeaderFormat {
     Bearer,
     XApiKey(&'static str),
     AzureApiKey,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderProtocol {
     Anthropic,
     OpenAiResponses,
@@ -14,7 +14,7 @@ pub enum ProviderProtocol {
     Bedrock,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderCategory {
     Popular,
     OssHosting,
@@ -24,7 +24,7 @@ pub enum ProviderCategory {
     Other,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct ProviderPreset {
     pub id: &'static str,

@@ -9,11 +9,32 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wr
 use crate::tui::modal::{draw_modal_frame, Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
 
+fn flat_preset_list() -> Vec<api::ProviderPreset> {
+    use api::ProviderCategory;
+    let order = [
+        ProviderCategory::Popular,
+        ProviderCategory::OssHosting,
+        ProviderCategory::Specialized,
+        ProviderCategory::Enterprise,
+        ProviderCategory::Gateway,
+        ProviderCategory::Other,
+    ];
+    let all = api::builtin_presets();
+    let mut out = Vec::new();
+    for cat in &order {
+        for p in all.iter().filter(|p| p.category == *cat) {
+            out.push(*p);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderKind {
     Anthropic,
     OpenAi,
     Other,
+    Preset(api::ProviderPreset),
 }
 
 impl ProviderKind {
@@ -22,6 +43,7 @@ impl ProviderKind {
             Self::Anthropic => "Anthropic",
             Self::OpenAi => "OpenAI",
             Self::Other => "Other (OpenAI-compatible)",
+            Self::Preset(p) => p.display_name,
         }
     }
 }
@@ -164,12 +186,20 @@ impl AuthModal {
     }
 
     fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: String) {
-        let mut store = api::credentials::load_credentials().unwrap_or_default();
-        let provider_str = match provider {
-            ProviderKind::Anthropic => "anthropic",
-            ProviderKind::OpenAi => "openai",
-            ProviderKind::Other => "other",
+        let (provider_str, preset_base_url): (&str, Option<String>) = match provider {
+            ProviderKind::Anthropic => ("anthropic", None),
+            ProviderKind::OpenAi => ("openai", None),
+            ProviderKind::Other => ("other", None),
+            ProviderKind::Preset(p) => {
+                let url = if p.base_url.is_empty() {
+                    None
+                } else {
+                    Some(p.base_url.to_string())
+                };
+                (p.id, url)
+            }
         };
+        let mut store = api::credentials::load_credentials().unwrap_or_default();
         let mut config = store
             .providers
             .get(provider_str)
@@ -177,12 +207,12 @@ impl AuthModal {
             .unwrap_or_default();
         config.auth_method = match provider {
             ProviderKind::OpenAi => "openai_key".to_string(),
-            ProviderKind::Anthropic | ProviderKind::Other => "api_key".to_string(),
+            ProviderKind::Anthropic | ProviderKind::Other | ProviderKind::Preset(_) => {
+                "api_key".to_string()
+            }
         };
         config.api_key = Some(key);
-        if let Some(url) = base_url {
-            config.base_url = Some(url);
-        }
+        config.base_url = base_url.or(preset_base_url);
         store.active_provider = Some(provider_str.to_string());
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
@@ -197,6 +227,7 @@ impl AuthModal {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::OpenAi => "openai",
             ProviderKind::Other => "other",
+            ProviderKind::Preset(p) => p.id,
         };
         let mut config = store
             .providers
@@ -220,6 +251,7 @@ impl AuthModal {
                 ProviderKind::Anthropic => "anthropic",
                 ProviderKind::OpenAi => "openai",
                 ProviderKind::Other => "other",
+                ProviderKind::Preset(p) => p.id,
             };
             let config = store
                 .providers
@@ -283,7 +315,7 @@ impl AuthModal {
                         }
                     }
                 }
-                ProviderKind::Other => Ok(vec![]),
+                ProviderKind::Other | ProviderKind::Preset(_) => Ok(vec![]),
             };
 
             match models_result {
@@ -311,28 +343,69 @@ impl Modal for AuthModal {
     fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
         let (border_color, text, cursor_pos) = match &self.step {
             AuthModalStep::ProviderSelect { selected } => {
-                let providers = [
-                    ProviderKind::Anthropic,
-                    ProviderKind::OpenAi,
-                    ProviderKind::Other,
+                let presets = flat_preset_list();
+                let mut lines: Vec<Line<'_>> = Vec::new();
+                let mut idx = 0usize;
+                let categories: &[(api::ProviderCategory, &str)] = &[
+                    (
+                        api::ProviderCategory::Popular,
+                        "─── Popular ───────────────────────────────",
+                    ),
+                    (
+                        api::ProviderCategory::OssHosting,
+                        "─── Open Source Hosting ───────────────────",
+                    ),
+                    (
+                        api::ProviderCategory::Specialized,
+                        "─── Specialized ────────────────────────────",
+                    ),
+                    (
+                        api::ProviderCategory::Enterprise,
+                        "─── Enterprise ─────────────────────────────",
+                    ),
+                    (
+                        api::ProviderCategory::Gateway,
+                        "─── Routing / Gateway ──────────────────────",
+                    ),
+                    (
+                        api::ProviderCategory::Other,
+                        "─── Other ──────────────────────────────────",
+                    ),
                 ];
-                let mut lines = providers
-                    .iter()
-                    .enumerate()
-                    .map(|(index, p)| {
-                        let cursor = if index == *selected { '>' } else { ' ' };
-                        Line::from(format!("  {cursor} {}", p.label()))
-                    })
-                    .collect::<Vec<_>>();
+                for (cat, header) in categories {
+                    let group: Vec<_> = presets.iter().filter(|p| p.category == *cat).collect();
+                    if group.is_empty() {
+                        continue;
+                    }
+                    lines.push(Line::from(Span::styled(
+                        *header,
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                    for p in &group {
+                        let cursor = if idx == *selected { '▶' } else { ' ' };
+                        let style = if idx == *selected {
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(ratatui::style::Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("  {cursor} {}", p.display_name),
+                            style,
+                        )));
+                        idx += 1;
+                    }
+                }
                 lines.push(Line::default());
-                lines.push(Line::from("Up/Down navigate  Enter select  Esc cancel"));
+                lines.push(Line::from("↑/↓ navigate  Enter select  Esc cancel"));
                 (Color::Cyan, Text::from(lines), None)
             }
             AuthModalStep::AuthMethodSelect { provider, selected } => {
                 let methods = match provider {
                     ProviderKind::Anthropic => vec!["API Key", "OAuth"],
                     ProviderKind::OpenAi => vec!["API Key", "OAuth (Codex)"],
-                    ProviderKind::Other => vec!["API Key"],
+                    ProviderKind::Other | ProviderKind::Preset(_) => vec!["API Key"],
                 };
                 let mut lines = vec![
                     Line::from(format!("Select auth method for {}:", provider.label())),
@@ -548,44 +621,67 @@ impl Modal for AuthModal {
     #[allow(clippy::too_many_lines)]
     fn handle_key(&mut self, key: KeyEvent) -> ModalAction {
         match &mut self.step {
-            AuthModalStep::ProviderSelect { selected } => match key.code {
-                KeyCode::Up => {
-                    *selected = if *selected == 0 { 2 } else { *selected - 1 };
-                    ModalAction::Consumed
-                }
-                KeyCode::Down => {
-                    *selected = (*selected + 1) % 3;
-                    ModalAction::Consumed
-                }
-                KeyCode::Enter => {
-                    let provider = match *selected {
-                        0 => ProviderKind::Anthropic,
-                        1 => ProviderKind::OpenAi,
-                        _ => ProviderKind::Other,
-                    };
-                    if provider == ProviderKind::Other {
-                        self.step = AuthModalStep::BaseUrlInput {
-                            input: String::new(),
-                            cursor: 0,
-                            error: None,
+            AuthModalStep::ProviderSelect { selected } => {
+                let total = flat_preset_list().len();
+                match key.code {
+                    KeyCode::Up => {
+                        *selected = if *selected == 0 {
+                            total - 1
+                        } else {
+                            *selected - 1
                         };
-                    } else {
-                        self.step = AuthModalStep::AuthMethodSelect {
-                            provider,
-                            selected: 0,
-                        };
+                        ModalAction::Consumed
                     }
-                    ModalAction::Consumed
+                    KeyCode::Down => {
+                        *selected = (*selected + 1) % total;
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Enter => {
+                        let preset = flat_preset_list()[*selected];
+                        match preset.id {
+                            "anthropic" => {
+                                self.step = AuthModalStep::AuthMethodSelect {
+                                    provider: ProviderKind::Anthropic,
+                                    selected: 0,
+                                };
+                            }
+                            "openai" => {
+                                self.step = AuthModalStep::AuthMethodSelect {
+                                    provider: ProviderKind::OpenAi,
+                                    selected: 0,
+                                };
+                            }
+                            "other" => {
+                                self.step = AuthModalStep::BaseUrlInput {
+                                    input: String::new(),
+                                    cursor: 0,
+                                    error: None,
+                                };
+                            }
+                            _ => {
+                                self.step = AuthModalStep::ApiKeyInput {
+                                    provider: ProviderKind::Preset(preset),
+                                    base_url: None,
+                                    key_buffer: String::new(),
+                                    cursor: 0,
+                                    masked: true,
+                                    error: None,
+                                };
+                            }
+                        }
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Esc => ModalAction::Dismiss,
+                    _ => ModalAction::Consumed,
                 }
-                KeyCode::Esc => ModalAction::Dismiss,
-                _ => ModalAction::Consumed,
-            },
+            }
             AuthModalStep::AuthMethodSelect { provider, selected } => {
-                let methods_len = if *provider == ProviderKind::Other {
-                    1
-                } else {
-                    2
-                };
+                let methods_len =
+                    if matches!(provider, ProviderKind::Other | ProviderKind::Preset(_)) {
+                        1
+                    } else {
+                        2
+                    };
                 match key.code {
                     KeyCode::Up => {
                         *selected = if *selected == 0 {
@@ -620,13 +716,22 @@ impl Modal for AuthModal {
                         ModalAction::Consumed
                     }
                     KeyCode::Esc => {
-                        self.step = AuthModalStep::ProviderSelect {
-                            selected: match provider {
-                                ProviderKind::Anthropic => 0,
-                                ProviderKind::OpenAi => 1,
-                                ProviderKind::Other => 2,
-                            },
+                        let idx = match provider {
+                            ProviderKind::Anthropic => 0,
+                            ProviderKind::OpenAi => 1,
+                            ProviderKind::Other | ProviderKind::Preset(_) => {
+                                let id = match provider {
+                                    ProviderKind::Other => "other",
+                                    ProviderKind::Preset(p) => p.id,
+                                    _ => unreachable!(),
+                                };
+                                flat_preset_list()
+                                    .iter()
+                                    .position(|p| p.id == id)
+                                    .unwrap_or(0)
+                            }
                         };
+                        self.step = AuthModalStep::ProviderSelect { selected: idx };
                         ModalAction::Consumed
                     }
                     _ => ModalAction::Consumed,
@@ -682,7 +787,11 @@ impl Modal for AuthModal {
                     ModalAction::Consumed
                 }
                 KeyCode::Esc => {
-                    self.step = AuthModalStep::ProviderSelect { selected: 2 };
+                    let idx = flat_preset_list()
+                        .iter()
+                        .position(|p| p.id == "other")
+                        .unwrap_or(0);
+                    self.step = AuthModalStep::ProviderSelect { selected: idx };
                     ModalAction::Consumed
                 }
                 _ => ModalAction::Consumed,
@@ -729,9 +838,18 @@ impl Modal for AuthModal {
                         *error = Some("API key cannot be empty".to_string());
                     } else {
                         Self::save_api_key(*provider, base_url.clone(), key_buffer.clone());
-                        self.step = AuthModalStep::ModelFetchLoading {
-                            provider: *provider,
-                        };
+                        match provider {
+                            ProviderKind::Anthropic | ProviderKind::OpenAi => {
+                                self.step = AuthModalStep::ModelFetchLoading {
+                                    provider: *provider,
+                                };
+                            }
+                            _ => {
+                                self.step = AuthModalStep::Success {
+                                    message: format!("Authenticated as {}", provider.label()),
+                                };
+                            }
+                        }
                     }
                     ModalAction::Consumed
                 }
@@ -744,6 +862,12 @@ impl Modal for AuthModal {
                             cursor: previous_len,
                             error: None,
                         };
+                    } else if let ProviderKind::Preset(p) = provider {
+                        let idx = flat_preset_list()
+                            .iter()
+                            .position(|pp| pp.id == p.id)
+                            .unwrap_or(0);
+                        self.step = AuthModalStep::ProviderSelect { selected: idx };
                     } else {
                         self.step = AuthModalStep::AuthMethodSelect {
                             provider: *provider,
@@ -804,8 +928,10 @@ impl Modal for AuthModal {
                 KeyCode::Enter => {
                     if let Some(model) = state.selected_model() {
                         Self::save_default_model(*provider, &model.id);
-                    } else if matches!(*provider, ProviderKind::OpenAi | ProviderKind::Other)
-                        && !state.filter.trim().is_empty()
+                    } else if matches!(
+                        *provider,
+                        ProviderKind::OpenAi | ProviderKind::Other | ProviderKind::Preset(_)
+                    ) && !state.filter.trim().is_empty()
                     {
                         // Allow manual model entry for OpenAI-compatible providers
                         // when remote model listing is not available.
@@ -817,8 +943,10 @@ impl Modal for AuthModal {
                     ModalAction::Consumed
                 }
                 KeyCode::Esc => {
-                    if matches!(*provider, ProviderKind::OpenAi | ProviderKind::Other)
-                        && !state.filter.trim().is_empty()
+                    if matches!(
+                        *provider,
+                        ProviderKind::OpenAi | ProviderKind::Other | ProviderKind::Preset(_)
+                    ) && !state.filter.trim().is_empty()
                     {
                         Self::save_default_model(*provider, &state.filter);
                     }
@@ -841,6 +969,7 @@ impl Modal for AuthModal {
                 ProviderKind::Anthropic => " Auth · Anthropic ",
                 ProviderKind::OpenAi => " Auth · OpenAI ",
                 ProviderKind::Other => " Auth · Other ",
+                ProviderKind::Preset(p) => p.display_name,
             },
             AuthModalStep::BaseUrlInput { .. } => " Auth · Base URL ",
             AuthModalStep::OAuthWaiting { .. } => " Auth · Waiting ",
@@ -892,8 +1021,13 @@ mod tests {
     #[test]
     fn other_provider_goes_to_base_url_input() {
         let mut modal = modal();
-        let _ = modal.handle_key(key(KeyCode::Down));
-        let _ = modal.handle_key(key(KeyCode::Down));
+        let other_idx = flat_preset_list()
+            .iter()
+            .position(|p| p.id == "other")
+            .unwrap();
+        for _ in 0..other_idx {
+            let _ = modal.handle_key(key(KeyCode::Down));
+        }
         assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Consumed);
         match &modal.step {
             AuthModalStep::BaseUrlInput { input, error, .. } => {
