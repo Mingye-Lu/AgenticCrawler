@@ -276,9 +276,10 @@ impl LiveCli {
         if !self.supports_reasoning() {
             return None;
         }
+        let available = model_reasoning_efforts(&self.model);
         let next = match self.reasoning_effort {
-            Some(e) => e.cycle(),
-            None => api::ReasoningEffort::High,
+            Some(e) => e.cycle(&available),
+            None => *available.last().unwrap_or(&api::ReasoningEffort::High),
         };
         self.reasoning_effort = Some(next);
         self.runtime
@@ -980,6 +981,19 @@ fn model_supports_reasoning(model: &str) -> bool {
         .get(model)
         .copied()
         .unwrap_or(false)
+}
+
+fn model_reasoning_efforts(model: &str) -> Vec<api::ReasoningEffort> {
+    let store = api::load_credentials().unwrap_or_default();
+    let registry = ProviderRegistry::from_credentials(&store);
+    if let Some(info) = registry.resolve_model(model) {
+        return info.capabilities.reasoning_efforts.clone();
+    }
+    if model_supports_reasoning(model) {
+        api::ReasoningEffort::OPENAI.to_vec()
+    } else {
+        vec![]
+    }
 }
 
 fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bool> {

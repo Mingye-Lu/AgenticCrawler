@@ -3819,7 +3819,7 @@ mod tests {
 
     #[test]
     fn goal_title_cycles_through_all_effort_levels() {
-        let efforts = ["low", "medium", "high"];
+        let efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];
         for effort in &efforts {
             let header = super::HeaderSnapshot {
                 model: "gpt-5.3-codex".to_string(),

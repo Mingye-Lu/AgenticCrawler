@@ -122,11 +122,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
 
 #[allow(clippy::too_many_lines)]
 fn openai_models() -> Vec<ModelInfo> {
-    let openai_reasoning_efforts = vec![
-        ReasoningEffort::Low,
-        ReasoningEffort::Medium,
-        ReasoningEffort::High,
-    ];
+    let openai_reasoning_efforts = ReasoningEffort::OPENAI.to_vec();
     vec![
         ModelInfo {
             id: "gpt-4o".into(),
@@ -325,7 +321,7 @@ pub async fn fetch_models_dev(provider_id: &str) -> Result<Vec<ModelInfo>, ApiEr
                 vision,
                 streaming: true,
                 reasoning_efforts: if reasoning {
-                    ReasoningEffort::ALL.to_vec()
+                    ReasoningEffort::OPENAI.to_vec()
                 } else {
                     vec![]
                 },

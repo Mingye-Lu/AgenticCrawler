@@ -7,29 +7,44 @@ use serde_json::Value;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
+    None,
+    Minimal,
     Low,
     Medium,
     High,
+    Xhigh,
 }
 
 impl ReasoningEffort {
-    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+    pub const OPENAI: [Self; 6] = [
+        Self::None,
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Xhigh,
+    ];
+
+    pub const STANDARD: [Self; 3] = [Self::Low, Self::Medium, Self::High];
 
     #[must_use]
-    pub const fn cycle(self) -> Self {
-        match self {
-            Self::Low => Self::Medium,
-            Self::Medium => Self::High,
-            Self::High => Self::Low,
+    pub fn cycle(self, available: &[Self]) -> Self {
+        if available.is_empty() {
+            return self;
         }
+        let pos = available.iter().position(|&e| e == self).unwrap_or(0);
+        available[(pos + 1) % available.len()]
     }
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::Xhigh => "xhigh",
         }
     }
 }
