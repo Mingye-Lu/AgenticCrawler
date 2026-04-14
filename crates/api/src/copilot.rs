@@ -95,6 +95,7 @@ pub async fn exchange_for_copilot_token(
         .header("Authorization", format!("token {github_token}"))
         .header("Accept", "application/json")
         .header("editor-version", "acrawl/1.0.0")
+        .header("Copilot-Integration-Id", "acrawl")
         .send()
         .await
         .map_err(ApiError::Http)?;
