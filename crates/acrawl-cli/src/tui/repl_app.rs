@@ -93,6 +93,7 @@ struct HeaderSnapshot {
     session_id: String,
     cost_text: String,
     context_text: String,
+    reasoning_effort: Option<String>,
 }
 
 impl Default for HeaderSnapshot {
@@ -103,6 +104,7 @@ impl Default for HeaderSnapshot {
             session_id: "--".to_string(),
             cost_text: "--".to_string(),
             context_text: "--".to_string(),
+            reasoning_effort: None,
         }
     }
 }
@@ -130,6 +132,7 @@ fn build_header_snapshot(cli: &LiveCli) -> HeaderSnapshot {
         session_id: cli.session_id().to_string(),
         cost_text: format_usd(estimate.total_cost_usd()),
         context_text: format!("{} ctx", format_compact_tokens(usage.total_tokens())),
+        reasoning_effort: cli.reasoning_effort().map(|e| e.as_str().to_string()),
     }
 }
 
@@ -2080,8 +2083,13 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
         input_w,
         input_h,
     );
+    let goal_title = if let Some(ref effort) = state.cached_header.reasoning_effort {
+        format!(" Goal * {} * {effort} ", state.cached_header.model)
+    } else {
+        format!(" Goal * {} ", state.cached_header.model)
+    };
     let block = Block::default()
-        .title(format!(" Goal · {} ", state.cached_header.model))
+        .title(goal_title)
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -2333,8 +2341,10 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
         format!(" {s} Thinking ")
     } else if state.pending_permission.is_some() {
         " ⚠ Permission ".to_string()
+    } else if let Some(ref effort) = header.reasoning_effort {
+        format!(" Input * {} * {effort} ", header.model)
     } else {
-        format!(" Input · {} ", header.model)
+        format!(" Input * {} ", header.model)
     };
 
     let footer_title_style = if state.busy {
@@ -3114,6 +3124,13 @@ fn run_loop(
                         state.exit = true;
                         state.persist_on_exit = true;
                     }
+                    continue;
+                }
+
+                if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    let mut g = cli.lock().expect("cli lock");
+                    g.cycle_reasoning_effort();
+                    state.cached_header = build_header_snapshot(&g);
                     continue;
                 }
 

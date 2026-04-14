@@ -178,6 +178,10 @@ where
         Arc::clone(&self.cancel_flag)
     }
 
+    pub fn api_client_mut(&mut self) -> &mut C {
+        &mut self.api_client
+    }
+
     pub fn request_cancel(&self) {
         self.cancel_flag.store(true, Ordering::Release);
     }

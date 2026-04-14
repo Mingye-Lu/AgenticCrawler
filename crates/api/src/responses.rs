@@ -62,8 +62,8 @@ impl OpenAiResponsesClient {
         };
 
         let mut body = build_responses_request(request, model);
-        if is_reasoning_model(model) {
-            body["reasoning"] = serde_json::json!({"effort": "high", "summary": "auto"});
+        if let Some(effort) = request.reasoning_effort {
+            body["reasoning"] = serde_json::json!({"effort": effort.as_str(), "summary": "auto"});
             body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
         }
 
@@ -109,7 +109,7 @@ impl OpenAiResponsesClient {
     }
 }
 
-#[must_use]
+#[cfg(test)]
 fn is_reasoning_model(model: &str) -> bool {
     model.starts_with("o1")
         || model.starts_with("o3")
@@ -1005,6 +1005,7 @@ mod tests {
                 name: "navigate".to_string(),
             }),
             stream: false,
+            reasoning_effort: None,
         }
     }
 
@@ -1167,8 +1168,10 @@ mod tests {
         let client = OpenAiResponsesClient::new(AuthSource::ApiKey("sk-test".to_string()), "o3")
             .with_base_url(base_url);
 
+        let mut request = sample_request();
+        request.reasoning_effort = Some(crate::types::ReasoningEffort::High);
         let _stream = client
-            .stream_message(&sample_request())
+            .stream_message(&request)
             .await
             .expect("request should succeed");
 

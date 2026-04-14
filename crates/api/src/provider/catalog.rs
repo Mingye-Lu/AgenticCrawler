@@ -5,6 +5,7 @@
 
 use super::{ModelCapabilities, ModelInfo, ModelPricing};
 use crate::error::ApiError;
+use crate::types::ReasoningEffort;
 
 /// Return the built-in model catalog (well-known models shipped with the binary).
 #[must_use]
@@ -65,6 +66,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: true,
                 streaming: true,
+                reasoning_efforts: vec![],
             },
             pricing: Some(ModelPricing {
                 input_per_mtok: 15.0,
@@ -85,6 +87,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: true,
                 streaming: true,
+                reasoning_efforts: vec![],
             },
             pricing: Some(ModelPricing {
                 input_per_mtok: 3.0,
@@ -105,6 +108,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: true,
                 streaming: true,
+                reasoning_efforts: vec![],
             },
             pricing: Some(ModelPricing {
                 input_per_mtok: 0.80,
@@ -116,7 +120,13 @@ fn anthropic_models() -> Vec<ModelInfo> {
     ]
 }
 
+#[allow(clippy::too_many_lines)]
 fn openai_models() -> Vec<ModelInfo> {
+    let openai_reasoning_efforts = vec![
+        ReasoningEffort::Low,
+        ReasoningEffort::Medium,
+        ReasoningEffort::High,
+    ];
     vec![
         ModelInfo {
             id: "gpt-4o".into(),
@@ -130,6 +140,7 @@ fn openai_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: true,
                 streaming: true,
+                reasoning_efforts: vec![],
             },
             pricing: Some(ModelPricing {
                 input_per_mtok: 2.5,
@@ -150,6 +161,7 @@ fn openai_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: true,
                 streaming: true,
+                reasoning_efforts: vec![],
             },
             pricing: Some(ModelPricing {
                 input_per_mtok: 10.0,
@@ -170,6 +182,7 @@ fn openai_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: true,
                 streaming: true,
+                reasoning_efforts: openai_reasoning_efforts.clone(),
             },
             pricing: Some(ModelPricing {
                 input_per_mtok: 2.0,
@@ -190,6 +203,7 @@ fn openai_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: true,
                 streaming: true,
+                reasoning_efforts: openai_reasoning_efforts.clone(),
             },
             pricing: Some(ModelPricing {
                 input_per_mtok: 1.10,
@@ -210,6 +224,7 @@ fn openai_models() -> Vec<ModelInfo> {
                 tool_use: true,
                 vision: false,
                 streaming: true,
+                reasoning_efforts: openai_reasoning_efforts,
             },
             pricing: None,
         },
@@ -309,6 +324,11 @@ pub async fn fetch_models_dev(provider_id: &str) -> Result<Vec<ModelInfo>, ApiEr
                 tool_use,
                 vision,
                 streaming: true,
+                reasoning_efforts: if reasoning {
+                    ReasoningEffort::ALL.to_vec()
+                } else {
+                    vec![]
+                },
             },
             pricing,
         });

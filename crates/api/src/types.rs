@@ -1,5 +1,44 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Reasoning effort level for models that support it (e.g. `OpenAI` o3, o4-mini).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffort {
+    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+
+    #[must_use]
+    pub const fn cycle(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Low,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageRequest {
@@ -14,6 +53,9 @@ pub struct MessageRequest {
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stream: bool,
+    /// `None` = model doesn't support reasoning or should use provider default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl MessageRequest {

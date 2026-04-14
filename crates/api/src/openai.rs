@@ -682,6 +682,7 @@ mod tests {
             tools: None,
             tool_choice: None,
             stream: false,
+            reasoning_effort: None,
         };
 
         let body = build_openai_request(&request, "gpt-4o");
@@ -722,6 +723,7 @@ mod tests {
             }]),
             tool_choice: None,
             stream: false,
+            reasoning_effort: None,
         };
 
         let body = build_openai_request(&request, "gpt-4o");
@@ -897,6 +899,7 @@ mod tests {
             tools: None,
             tool_choice: Some(ToolChoice::Any),
             stream: false,
+            reasoning_effort: None,
         };
         let body = build_openai_request(&request, "gpt-4o");
         assert_eq!(body["tool_choice"], "required");

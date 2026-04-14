@@ -161,6 +161,7 @@ pub(crate) struct LiveCli {
     runtime: ConversationRuntime<LlmRuntimeClient, CliToolExecutor>,
     session: SessionHandle,
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
+    reasoning_effort: Option<api::ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,7 +189,12 @@ impl LiveCli {
             permission_mode,
             None,
         )?;
-        let cli = Self {
+        let initial_effort = if model_supports_reasoning(&model) {
+            Some(api::ReasoningEffort::High)
+        } else {
+            None
+        };
+        let mut cli = Self {
             model,
             allowed_tools,
             permission_mode,
@@ -196,7 +202,11 @@ impl LiveCli {
             runtime,
             session,
             ui_tx: None,
+            reasoning_effort: initial_effort,
         };
+        if let Some(effort) = initial_effort {
+            cli.runtime.api_client_mut().reasoning_effort = Some(effort);
+        }
         cli.persist_session()?;
         Ok(cli)
     }
@@ -220,7 +230,12 @@ impl LiveCli {
             permission_mode,
             Some(ui_tx.clone()),
         )?;
-        let cli = Self {
+        let initial_effort = if model_supports_reasoning(&model) {
+            Some(api::ReasoningEffort::High)
+        } else {
+            None
+        };
+        let mut cli = Self {
             model,
             allowed_tools,
             permission_mode,
@@ -228,7 +243,11 @@ impl LiveCli {
             runtime,
             session,
             ui_tx: Some(ui_tx),
+            reasoning_effort: initial_effort,
         };
+        if let Some(effort) = initial_effort {
+            cli.runtime.api_client_mut().reasoning_effort = Some(effort);
+        }
         cli.persist_session()?;
         Ok(cli)
     }
@@ -243,6 +262,29 @@ impl LiveCli {
 
     pub(crate) fn permission_mode(&self) -> PermissionMode {
         self.permission_mode
+    }
+
+    pub(crate) fn reasoning_effort(&self) -> Option<api::ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    pub(crate) fn supports_reasoning(&self) -> bool {
+        model_supports_reasoning(&self.model)
+    }
+
+    pub(crate) fn cycle_reasoning_effort(&mut self) -> Option<api::ReasoningEffort> {
+        if !self.supports_reasoning() {
+            return None;
+        }
+        let next = match self.reasoning_effort {
+            Some(e) => e.cycle(),
+            None => api::ReasoningEffort::High,
+        };
+        self.reasoning_effort = Some(next);
+        self.runtime
+            .api_client_mut()
+            .reasoning_effort = Some(next);
+        Some(next)
     }
 
     pub(crate) fn cumulative_usage(&self) -> TokenUsage {
@@ -554,6 +596,13 @@ impl LiveCli {
             self.ui_sender(),
         )?;
         self.model.clone_from(&model);
+        if model_supports_reasoning(&model) {
+            let effort = self.reasoning_effort.unwrap_or(api::ReasoningEffort::High);
+            self.reasoning_effort = Some(effort);
+            self.runtime.api_client_mut().reasoning_effort = Some(effort);
+        } else {
+            self.reasoning_effort = None;
+        }
         Ok(CommandUiResult {
             message: format_model_switch_report(&previous, &model, message_count),
             persist_after: true,
@@ -921,6 +970,14 @@ pub(crate) fn run_resume_command(
     }
 }
 
+fn model_supports_reasoning(model: &str) -> bool {
+    let store = api::load_credentials().unwrap_or_default();
+    let registry = ProviderRegistry::from_credentials(&store);
+    registry
+        .resolve_model(model)
+        .is_some_and(|m| m.capabilities.reasoning)
+}
+
 fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut sections = crawler::prompt::build_system_prompt(&mvp_tool_specs());
     sections.extend(load_system_prompt(
@@ -1044,6 +1101,7 @@ pub(crate) struct LlmRuntimeClient {
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
+    reasoning_effort: Option<api::ReasoningEffort>,
 }
 
 impl LlmRuntimeClient {
@@ -1074,6 +1132,7 @@ impl LlmRuntimeClient {
             emit_output,
             allowed_tools,
             ui_tx,
+            reasoning_effort: None,
         })
     }
 
@@ -1104,6 +1163,7 @@ impl ApiClient for LlmRuntimeClient {
             }),
             tool_choice: self.enable_tools.then_some(ToolChoice::Auto),
             stream: true,
+            reasoning_effort: self.reasoning_effort,
         };
         self.runtime.block_on(async {
             let mut stdout = io::stdout();

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::{CredentialStore, StoredProviderConfig};
 use crate::error::ApiError;
-use crate::types::{MessageRequest, MessageResponse, StreamEvent};
+use crate::types::{MessageRequest, MessageResponse, ReasoningEffort, StreamEvent};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
@@ -28,6 +28,8 @@ pub struct ModelCapabilities {
     pub tool_use: bool,
     pub vision: bool,
     pub streaming: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_efforts: Vec<ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
