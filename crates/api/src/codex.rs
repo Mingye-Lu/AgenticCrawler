@@ -28,8 +28,8 @@ pub fn codex_oauth_config() -> OAuthConfig {
 
 /// Loopback redirect URI with `/auth/callback` path (matches Python implementation).
 #[must_use]
-pub fn codex_redirect_uri() -> String {
-    format!("http://localhost:{CODEX_CALLBACK_PORT}/auth/callback")
+pub fn codex_redirect_uri(port: u16) -> String {
+    format!("http://localhost:{port}/auth/callback")
 }
 
 #[derive(Debug)]
@@ -43,11 +43,11 @@ pub struct CodexLoginRequest {
 
 /// Initiates the Codex OAuth PKCE login flow, returning the authorization URL
 /// and PKCE artifacts needed for the token exchange after user approval.
-pub fn login() -> Result<CodexLoginRequest, ApiError> {
+pub fn login(port: u16) -> Result<CodexLoginRequest, ApiError> {
     let config = codex_oauth_config();
     let pkce = generate_pkce_pair().map_err(ApiError::from)?;
     let state = generate_state().map_err(ApiError::from)?;
-    let redirect_uri = codex_redirect_uri();
+    let redirect_uri = codex_redirect_uri(port);
 
     let auth_request =
         OAuthAuthorizationRequest::from_config(&config, &redirect_uri, &state, &pkce)
@@ -115,7 +115,10 @@ mod tests {
 
     #[test]
     fn codex_redirect_uri_matches_expected_format() {
-        assert_eq!(codex_redirect_uri(), "http://localhost:1455/auth/callback");
+        assert_eq!(
+            codex_redirect_uri(CODEX_CALLBACK_PORT),
+            "http://localhost:1455/auth/callback"
+        );
     }
 
     #[test]
@@ -141,7 +144,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn login_produces_valid_authorization_url() {
-        let request = login().expect("login should produce a request");
+        let request = login(CODEX_CALLBACK_PORT).expect("login should produce a request");
         assert!(request
             .authorization_url
             .starts_with("https://auth.openai.com/oauth/authorize?"));
@@ -158,7 +161,10 @@ mod tests {
         assert!(!request.pkce.verifier.is_empty());
         assert!(!request.pkce.challenge.is_empty());
         assert!(!request.state.is_empty());
-        assert_eq!(request.redirect_uri, codex_redirect_uri());
+        assert_eq!(
+            request.redirect_uri,
+            codex_redirect_uri(CODEX_CALLBACK_PORT)
+        );
     }
 
     #[test]

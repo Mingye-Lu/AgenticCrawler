@@ -40,8 +40,8 @@ use crate::tui::ReplTuiEvent;
 mod auth;
 
 pub(crate) use self::auth::{
-    default_oauth_config, open_browser, parse_provider_arg, run_auth_cli, run_login, run_logout,
-    wait_for_oauth_callback_cancellable,
+    bind_oauth_listener, default_oauth_config, open_browser, parse_provider_arg, run_auth_cli,
+    run_login, run_logout, wait_for_oauth_callback_cancellable,
 };
 use self::auth::{
     interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
@@ -1818,7 +1818,10 @@ mod tests {
         let (cancel_tx, cancel_rx) = mpsc::channel();
         cancel_tx.send(()).expect("send cancel signal");
 
-        let handle = std::thread::spawn(move || wait_for_oauth_callback_cancellable(0, cancel_rx));
+        let listener =
+            std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
+        let handle =
+            std::thread::spawn(move || wait_for_oauth_callback_cancellable(listener, cancel_rx));
 
         let result = handle.join().expect("thread should not panic");
         let err = result.expect_err("should return error on cancel");
@@ -1833,7 +1836,10 @@ mod tests {
     fn cancellable_callback_returns_on_cancel_while_listening() {
         let (cancel_tx, cancel_rx) = mpsc::channel();
 
-        let handle = std::thread::spawn(move || wait_for_oauth_callback_cancellable(0, cancel_rx));
+        let listener =
+            std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
+        let handle =
+            std::thread::spawn(move || wait_for_oauth_callback_cancellable(listener, cancel_rx));
 
         // Give the listener time to start polling
         std::thread::sleep(std::time::Duration::from_millis(250));

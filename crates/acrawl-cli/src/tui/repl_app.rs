@@ -2445,7 +2445,8 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
     thread::spawn(move || {
         let result: Result<(), Box<dyn std::error::Error + Send>> = (|| {
             use crate::app::{
-                default_oauth_config, open_browser, wait_for_oauth_callback_cancellable,
+                bind_oauth_listener, default_oauth_config, open_browser,
+                wait_for_oauth_callback_cancellable,
             };
             use api::{AnthropicClient, AuthSource};
             use runtime::{
@@ -2454,8 +2455,10 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
             };
 
             let oauth = default_oauth_config();
-            let callback_port = oauth.callback_port.unwrap_or(4545);
-            let redirect_uri = loopback_redirect_uri(callback_port);
+            let preferred_port = oauth.callback_port.unwrap_or(4545);
+            let (listener, actual_port) = bind_oauth_listener(preferred_port)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            let redirect_uri = loopback_redirect_uri(actual_port);
             let pkce = generate_pkce_pair()
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
             let state_val =
@@ -2476,9 +2479,9 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
                 });
             }
             let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
-                message: format!("Waiting for OAuth callback on port {callback_port}…"),
+                message: format!("Waiting for OAuth callback on port {actual_port}…"),
             });
-            let callback = wait_for_oauth_callback_cancellable(callback_port, cancel_rx)?;
+            let callback = wait_for_oauth_callback_cancellable(listener, cancel_rx)?;
             if let Some(error) = callback.error {
                 let desc = callback.error_description.unwrap_or_default();
                 return Err(Box::new(std::io::Error::other(format!("{error}: {desc}"))) as _);
@@ -2557,17 +2560,17 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
     let ui_tx2 = ui_tx.clone();
     thread::spawn(move || {
         let result: Result<(), Box<dyn std::error::Error + Send>> = (|| {
-            use crate::app::{open_browser, wait_for_oauth_callback_cancellable};
+            use crate::app::{
+                bind_oauth_listener, open_browser, wait_for_oauth_callback_cancellable,
+            };
             use api::{AnthropicClient, AuthSource};
             use runtime::OAuthTokenExchangeRequest;
 
-            let login_request = api::codex_login().map_err(|e| {
+            let (listener, actual_port) = bind_oauth_listener(api::CODEX_CALLBACK_PORT)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+            let login_request = api::codex_login(actual_port).map_err(|e| {
                 Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error + Send>
             })?;
-            let port = login_request
-                .config
-                .callback_port
-                .unwrap_or(api::CODEX_CALLBACK_PORT);
             let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
                 message: "Opening browser for OpenAI login...".to_string(),
             });
@@ -2580,9 +2583,9 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
                 });
             }
             let _ = ui_tx2.send(ReplTuiEvent::AuthOAuthProgress {
-                message: format!("Waiting for Codex OAuth callback on port {port}…"),
+                message: format!("Waiting for Codex OAuth callback on port {actual_port}…"),
             });
-            let callback = wait_for_oauth_callback_cancellable(port, cancel_rx)?;
+            let callback = wait_for_oauth_callback_cancellable(listener, cancel_rx)?;
             if let Some(error) = callback.error {
                 let desc = callback.error_description.unwrap_or_default();
                 return Err(Box::new(std::io::Error::other(format!("{error}: {desc}"))) as _);

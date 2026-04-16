@@ -3,7 +3,10 @@ use std::io::{self, Write};
 use api::{AnthropicClient, AuthSource};
 use runtime::OAuthTokenExchangeRequest;
 
-use super::{open_browser, persist_provider_credentials, wait_for_oauth_callback, Provider};
+use super::{
+    bind_oauth_listener, open_browser, persist_provider_credentials, wait_for_oauth_callback,
+    Provider,
+};
 
 pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("OpenAI authentication:");
@@ -38,18 +41,15 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub(super) fn run_openai_login() -> Result<(), Box<dyn std::error::Error>> {
-    let login_req = api::codex_login()?;
-    let port = login_req
-        .config
-        .callback_port
-        .unwrap_or(api::CODEX_CALLBACK_PORT);
+    let (listener, actual_port) = bind_oauth_listener(api::CODEX_CALLBACK_PORT)?;
+    let login_req = api::codex_login(actual_port)?;
     println!("Starting OpenAI OAuth login...");
     println!("Listening for callback on {}", login_req.redirect_uri);
     if let Err(error) = open_browser(&login_req.authorization_url) {
         eprintln!("warning: failed to open browser automatically: {error}");
         println!("Open this URL manually:\n{}", login_req.authorization_url);
     }
-    let callback = wait_for_oauth_callback(port)?;
+    let callback = wait_for_oauth_callback(listener)?;
     if let Some(error) = callback.error {
         let description = callback
             .error_description

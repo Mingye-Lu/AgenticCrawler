@@ -7,7 +7,10 @@ use runtime::{
     ConfigLoader, OAuthAuthorizationRequest, OAuthConfig, OAuthTokenExchangeRequest,
 };
 
-use super::{open_browser, persist_provider_credentials, wait_for_oauth_callback, Provider};
+use super::{
+    bind_oauth_listener, open_browser, persist_provider_credentials, wait_for_oauth_callback,
+    Provider,
+};
 
 const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
 
@@ -66,8 +69,9 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     let config = ConfigLoader::default_for(&cwd).load()?;
     let default_oauth = default_oauth_config();
     let oauth = config.oauth().unwrap_or(&default_oauth);
-    let callback_port = oauth.callback_port.unwrap_or(DEFAULT_OAUTH_CALLBACK_PORT);
-    let redirect_uri = runtime::loopback_redirect_uri(callback_port);
+    let preferred_port = oauth.callback_port.unwrap_or(DEFAULT_OAUTH_CALLBACK_PORT);
+    let (listener, actual_port) = bind_oauth_listener(preferred_port)?;
+    let redirect_uri = runtime::loopback_redirect_uri(actual_port);
     let pkce = generate_pkce_pair()?;
     let state = generate_state()?;
     let authorize_url =
@@ -79,7 +83,7 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("warning: failed to open browser automatically: {error}");
         println!("Open this URL manually:\n{authorize_url}");
     }
-    let callback = wait_for_oauth_callback(callback_port)?;
+    let callback = wait_for_oauth_callback(listener)?;
     if let Some(error) = callback.error {
         let description = callback
             .error_description

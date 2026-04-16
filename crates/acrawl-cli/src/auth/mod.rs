@@ -13,6 +13,21 @@ use super::Provider;
 
 pub(crate) use anthropic::{default_oauth_config, run_login};
 
+/// Bind a TCP listener for the OAuth callback, preferring `preferred_port`.
+/// Falls back to an OS-assigned port when the preferred one is already in use.
+/// Returns the listener and the actual bound port.
+pub(crate) fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
+    match TcpListener::bind(("127.0.0.1", preferred_port)) {
+        Ok(listener) => Ok((listener, preferred_port)),
+        Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+            let listener = TcpListener::bind(("127.0.0.1", 0))?;
+            let actual_port = listener.local_addr()?.port();
+            Ok((listener, actual_port))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Result of provider selection — either a legacy enum variant or a preset provider.
 #[derive(Debug, Clone)]
 pub(crate) enum ProviderChoice {
@@ -425,10 +440,10 @@ pub(crate) fn open_browser(url: &str) -> io::Result<()> {
     ))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub(super) fn wait_for_oauth_callback(
-    port: u16,
+    listener: TcpListener,
 ) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(("127.0.0.1", port))?;
     let (mut stream, _) = listener.accept()?;
     let mut buffer = [0_u8; 4096];
     let bytes_read = stream.read(&mut buffer)?;
@@ -460,11 +475,9 @@ pub(super) fn wait_for_oauth_callback(
 
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn wait_for_oauth_callback_cancellable(
-    port: u16,
+    listener: TcpListener,
     cancel_rx: mpsc::Receiver<()>,
 ) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error + Send>> {
-    let listener = TcpListener::bind(("127.0.0.1", port))
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
     listener
         .set_nonblocking(true)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
