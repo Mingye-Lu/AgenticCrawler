@@ -13,19 +13,30 @@ use super::Provider;
 
 pub(crate) use anthropic::{default_oauth_config, run_login};
 
-/// Bind a TCP listener for the OAuth callback, preferring `preferred_port`.
-/// Falls back to an OS-assigned port when the preferred one is already in use.
-/// Returns the listener and the actual bound port.
+/// Bind a TCP listener for the OAuth callback on `preferred_port`.
+/// Retries briefly in case the port is stuck in `TIME_WAIT` from a prior
+/// session, then returns a clear error if still occupied.
 pub(crate) fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
-    match TcpListener::bind(("127.0.0.1", preferred_port)) {
-        Ok(listener) => Ok((listener, preferred_port)),
-        Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
-            let listener = TcpListener::bind(("127.0.0.1", 0))?;
-            let actual_port = listener.local_addr()?.port();
-            Ok((listener, actual_port))
+    for attempt in 0..4u8 {
+        match TcpListener::bind(("127.0.0.1", preferred_port)) {
+            Ok(listener) => return Ok((listener, preferred_port)),
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse && attempt < 3 => {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            Err(e) if e.kind() == io::ErrorKind::AddrInUse => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!(
+                        "Port {preferred_port} is already in use. \
+                         A previous auth session may still be running — \
+                         close it or kill the process using the port, then retry."
+                    ),
+                ));
+            }
+            Err(e) => return Err(e),
         }
-        Err(e) => Err(e),
     }
+    unreachable!()
 }
 
 /// Result of provider selection — either a legacy enum variant or a preset provider.
