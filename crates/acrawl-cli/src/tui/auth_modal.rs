@@ -175,16 +175,6 @@ impl AuthModal {
         Self { step }
     }
 
-    pub(crate) fn new_model_only(
-        _ui_tx: Sender<ReplTuiEvent>,
-        provider: crate::app::Provider,
-    ) -> Self {
-        let provider: ProviderKind = provider.into();
-        Self {
-            step: AuthModalStep::ModelFetchLoading { provider },
-        }
-    }
-
     fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: String) {
         let (provider_str, preset_base_url): (&str, Option<String>) = match provider {
             ProviderKind::Anthropic => ("anthropic", None),

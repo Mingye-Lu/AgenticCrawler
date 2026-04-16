@@ -159,91 +159,6 @@ fn permission_badge(mode: PermissionMode) -> (String, Style) {
     }
 }
 
-fn read_env_non_empty(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-}
-
-fn required_provider_for_model(model: &str) -> Option<String> {
-    if model.trim().is_empty() {
-        return None;
-    }
-    let store = api::credentials::load_credentials().unwrap_or_default();
-    let registry = api::provider::ProviderRegistry::from_credentials(&store);
-    Some(registry.provider_for_model(model).to_string())
-}
-
-fn has_store_credentials_for(provider: &str) -> bool {
-    let Ok(store) = api::credentials::load_credentials() else {
-        return false;
-    };
-    store.providers.get(provider).is_some_and(|config| {
-        let has_api_key = config
-            .api_key
-            .as_ref()
-            .is_some_and(|key| !key.trim().is_empty());
-        let has_inline_oauth = config
-            .oauth
-            .as_ref()
-            .is_some_and(|oauth| !oauth.access_token.trim().is_empty());
-        let has_runtime_oauth = config.auth_method == "oauth"
-            && runtime::load_oauth_credentials()
-                .ok()
-                .flatten()
-                .is_some_and(|oauth| !oauth.access_token.trim().is_empty());
-        has_api_key || has_inline_oauth || has_runtime_oauth
-    })
-}
-
-fn has_env_credentials_for(provider: &str) -> bool {
-    match provider {
-        "anthropic" => {
-            read_env_non_empty("ANTHROPIC_API_KEY").is_some()
-                || read_env_non_empty("ANTHROPIC_AUTH_TOKEN").is_some()
-        }
-        "openai" => read_env_non_empty("OPENAI_API_KEY").is_some(),
-        _ => false,
-    }
-}
-
-fn has_credentials_for_provider(provider: &str) -> bool {
-    has_store_credentials_for(provider) || has_env_credentials_for(provider)
-}
-
-fn active_provider_from_store() -> Option<String> {
-    api::credentials::load_credentials()
-        .ok()
-        .and_then(|store| store.active_provider)
-}
-
-fn detect_missing_auth_provider(model: &str) -> Option<String> {
-    if model.trim().is_empty() {
-        if let Some(active) = active_provider_from_store() {
-            if has_credentials_for_provider(&active) {
-                return Some(active);
-            }
-        }
-        if has_credentials_for_provider("openai") {
-            return Some("openai".to_string());
-        }
-        if has_credentials_for_provider("anthropic") {
-            return Some("anthropic".to_string());
-        }
-        if has_credentials_for_provider("other") {
-            return Some("other".to_string());
-        }
-        return Some("not-selected".to_string());
-    }
-
-    let provider = required_provider_for_model(model).unwrap_or_else(|| "other".to_string());
-    if has_credentials_for_provider(&provider) {
-        None
-    } else {
-        Some(provider)
-    }
-}
-
 fn wrap_plain_text(input: &str, width: u16) -> Vec<String> {
     let w = usize::from(width.max(8));
     textwrap::wrap(input, w)
@@ -1100,9 +1015,6 @@ struct ReplTuiState {
     busy: bool,
     pending_permission: Option<(PermissionRequest, Sender<PermissionPromptDecision>)>,
     active_modal: Option<AuthModal>,
-    auth_onboarding_required: bool,
-    auth_onboarding_provider: Option<String>,
-    welcome_success_notice: Option<String>,
     exit: bool,
     current_tool: Option<String>,
     status_entry_index: Option<usize>,
@@ -1151,9 +1063,6 @@ impl ReplTuiState {
             busy: false,
             pending_permission: None,
             active_modal: None,
-            auth_onboarding_required: false,
-            auth_onboarding_provider: None,
-            welcome_success_notice: None,
             exit: false,
             persist_on_exit: false,
             current_tool: None,
@@ -1207,8 +1116,6 @@ impl ReplTuiState {
     fn input_placeholder(&self) -> &'static str {
         if self.pending_permission.is_some() {
             "Waiting for your authorization  (y / n / Esc)…"
-        } else if self.auth_onboarding_required && self.active_modal.is_none() {
-            "Press Enter to open guided auth setup"
         } else if self.busy {
             "AgenticCrawler is working…  (you can queue your next prompt)"
         } else if self.ui_state == AppUiState::WelcomeMode {
@@ -1216,11 +1123,6 @@ impl ReplTuiState {
         } else {
             "Any follow-up instructions?"
         }
-    }
-
-    fn refresh_auth_onboarding(&mut self, model: &str) {
-        self.auth_onboarding_provider = detect_missing_auth_provider(model);
-        self.auth_onboarding_required = self.auth_onboarding_provider.is_some();
     }
 
     /// Advance the typewriter: reveal `chars_per_tick` chars from the queue.
@@ -1952,57 +1854,6 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapsh
     );
 }
 
-fn draw_auth_onboarding_panel(frame: &mut ratatui::Frame<'_>, area: Rect, provider: &str) -> u16 {
-    let block = Block::default()
-        .title(" Auth Setup Required ")
-        .title_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Rgb(220, 170, 40)));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let provider_label = match provider {
-        "anthropic" => "Anthropic",
-        "openai" => "OpenAI",
-        "not-selected" => "Not selected",
-        other => other,
-    };
-    let text = Text::from(vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Provider", Style::default().fg(Color::DarkGray)),
-            Span::raw("  "),
-            Span::styled(provider_label, Style::default().fg(Color::LightCyan)),
-        ]),
-        Line::from(""),
-        Line::from("Press Enter to open the guided auth flow."),
-        Line::from("You can also run /auth, or keep API keys in env variables."),
-        Line::from(""),
-    ]);
-    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: true }), inner);
-    area.height
-}
-
-fn auth_modal_target_height(modal: &AuthModal) -> u16 {
-    match &modal.step {
-        AuthModalStep::ProviderSelect { .. } | AuthModalStep::AuthMethodSelect { .. } => 9,
-        AuthModalStep::BaseUrlInput { .. } | AuthModalStep::ApiKeyInput { .. } => 8,
-        AuthModalStep::OAuthWaiting { .. }
-        | AuthModalStep::ModelFetchLoading { .. }
-        | AuthModalStep::Success { .. }
-        | AuthModalStep::Error { .. } => 7,
-        AuthModalStep::ModelSelect { state, .. } => {
-            let visible_rows = u16::try_from(state.filtered().len().clamp(1, 6)).unwrap_or(1);
-            9 + visible_rows
-        }
-    }
-}
-
 #[allow(clippy::too_many_lines)]
 fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiState) {
     let ascii = [
@@ -2042,31 +1893,6 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     let art_y = area.y + area.height.saturating_sub(art_h + 8) / 2;
     let art_area = Rect::new(art_x, art_y, art_w.min(area.width), art_h.min(area.height));
     frame.render_widget(Paragraph::new(Text::from(lines)), art_area);
-
-    let next_y = art_y.saturating_add(art_h).saturating_add(2);
-    if state.auth_onboarding_required {
-        let card_w = area
-            .width
-            .saturating_sub(WELCOME_BOX_SIDE_GUTTER)
-            .clamp(WELCOME_BOX_MIN_WIDTH, WELCOME_BOX_MAX_WIDTH);
-        let card_h = state
-            .active_modal
-            .as_ref()
-            .map_or(8, auth_modal_target_height);
-        let card_x = area.x + area.width.saturating_sub(card_w) / 2;
-        let card_area = Rect::new(
-            card_x,
-            next_y,
-            card_w,
-            card_h.min(area.height.saturating_sub(2)),
-        );
-        if let Some(modal) = &state.active_modal {
-            modal.draw(frame, card_area);
-        } else if let Some(provider) = &state.auth_onboarding_provider {
-            let _ = draw_auth_onboarding_panel(frame, card_area, provider);
-        }
-        return;
-    }
 
     let input_w = area
         .width
@@ -2873,9 +2699,6 @@ fn run_loop(
     let _mouse_guard = MouseCaptureGuard;
 
     let mut state = ReplTuiState::new();
-    if let Ok(g) = cli.lock() {
-        state.refresh_auth_onboarding(g.model_name());
-    }
 
     loop {
         state.drain_events(ui_rx);
@@ -3086,13 +2909,8 @@ fn run_loop(
                                                 "Auth setup saved, but runtime refresh failed: {error}"
                                             ));
                                         } else {
-                                            state.refresh_auth_onboarding(guard.model_name());
                                             state.ui_state = AppUiState::WelcomeMode;
                                             state.entries.clear();
-                                            state.welcome_success_notice = Some(
-                                                "Authentication configured. Runtime is ready."
-                                                    .to_string(),
-                                            );
                                         }
                                     }
                                     Err(_) => {
@@ -3172,33 +2990,6 @@ fn run_loop(
                             );
                             continue;
                         }
-                        if state.auth_onboarding_required
-                            && state.active_modal.is_none()
-                            && state.input.trim().is_empty()
-                        {
-                            let parsed_provider = state
-                                .auth_onboarding_provider
-                                .as_deref()
-                                .and_then(|p| crate::app::parse_provider_arg(p).ok());
-                            let model_empty = cli
-                                .lock()
-                                .ok()
-                                .is_some_and(|g| g.model_name().trim().is_empty());
-                            let model_only = model_empty
-                                && state.auth_onboarding_provider.as_deref().is_some_and(|p| {
-                                    p != "not-selected" && has_credentials_for_provider(p)
-                                });
-                            state.active_modal = Some(if model_only {
-                                parsed_provider.map_or_else(
-                                    || AuthModal::new(ui_tx.clone(), None),
-                                    |provider| AuthModal::new_model_only(ui_tx.clone(), provider),
-                                )
-                            } else {
-                                AuthModal::new(ui_tx.clone(), parsed_provider)
-                            });
-                            continue;
-                        }
-
                         if state.slash_overlay.is_some() {
                             let trimmed = state.input.trim().to_string();
                             if let Some(selected) = state.selected_slash_command() {
@@ -3235,32 +3026,6 @@ fn run_loop(
                         if let Some(cmd) = SlashCommand::parse(&trimmed) {
                             handle_slash_command_tui(terminal, &mut state, cli, ui_tx, cmd)?;
                             state.wake_input_caret();
-                            continue;
-                        }
-                        if state.auth_onboarding_required && state.active_modal.is_none() {
-                            state.push_system(
-                                "Authentication is required before the first turn. Opening setup…",
-                            );
-                            let parsed_provider = state
-                                .auth_onboarding_provider
-                                .as_deref()
-                                .and_then(|p| crate::app::parse_provider_arg(p).ok());
-                            let model_empty = cli
-                                .lock()
-                                .ok()
-                                .is_some_and(|g| g.model_name().trim().is_empty());
-                            let model_only = model_empty
-                                && state.auth_onboarding_provider.as_deref().is_some_and(|p| {
-                                    p != "not-selected" && has_credentials_for_provider(p)
-                                });
-                            state.active_modal = Some(if model_only {
-                                parsed_provider.map_or_else(
-                                    || AuthModal::new(ui_tx.clone(), None),
-                                    |provider| AuthModal::new_model_only(ui_tx.clone(), provider),
-                                )
-                            } else {
-                                AuthModal::new(ui_tx.clone(), parsed_provider)
-                            });
                             continue;
                         }
                         state.push_user_line(&trimmed);
