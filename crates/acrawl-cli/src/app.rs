@@ -163,6 +163,10 @@ pub(crate) struct LiveCli {
     runtime: ConversationRuntime<LlmRuntimeClient, CliToolExecutor>,
     session: SessionHandle,
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
+    /// `false` when the TUI owns the terminal (raw-mode / alternate screen).
+    /// When `false`, LLM streaming and tool output are routed through `ui_tx`
+    /// instead of being written directly to stdout.
+    emit_output: bool,
     reasoning_effort: Option<api::ReasoningEffort>,
 }
 
@@ -204,6 +208,7 @@ impl LiveCli {
             runtime,
             session,
             ui_tx: None,
+            emit_output: true,
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
@@ -245,6 +250,7 @@ impl LiveCli {
             runtime,
             session,
             ui_tx: Some(ui_tx),
+            emit_output: false,
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
@@ -591,7 +597,7 @@ impl LiveCli {
             model.clone(),
             self.system_prompt.clone(),
             true,
-            true,
+            self.emit_output,
             self.allowed_tools.clone(),
             self.permission_mode,
             self.ui_sender(),
@@ -637,7 +643,7 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            true,
+            self.emit_output,
             self.allowed_tools.clone(),
             self.permission_mode,
             self.ui_sender(),
@@ -666,7 +672,7 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            true,
+            self.emit_output,
             self.allowed_tools.clone(),
             self.permission_mode,
             self.ui_sender(),
@@ -705,7 +711,7 @@ impl LiveCli {
             model.clone(),
             self.system_prompt.clone(),
             true,
-            true,
+            self.emit_output,
             self.allowed_tools.clone(),
             self.permission_mode,
             self.ui_sender(),
@@ -773,7 +779,7 @@ impl LiveCli {
                     model.clone(),
                     self.system_prompt.clone(),
                     true,
-                    true,
+                    self.emit_output,
                     self.allowed_tools.clone(),
                     self.permission_mode,
                     self.ui_sender(),
@@ -812,7 +818,7 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            true,
+            self.emit_output,
             self.allowed_tools.clone(),
             self.permission_mode,
             self.ui_sender(),
@@ -828,7 +834,7 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            true,
+            self.emit_output,
             self.allowed_tools.clone(),
             self.permission_mode,
             self.ui_sender(),
@@ -848,7 +854,7 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            true,
+            self.emit_output,
             self.allowed_tools.clone(),
             self.permission_mode,
             self.ui_sender(),
