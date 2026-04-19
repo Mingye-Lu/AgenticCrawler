@@ -10,6 +10,7 @@ use tokio::time::timeout;
 
 const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[allow(clippy::needless_raw_string_hashes)]
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"
@@ -61,7 +62,7 @@ async function bootstrap() {
 
     if (command.action === 'navigate') {
       try {
-        await page.goto(command.url, { waitUntil: 'domcontentloaded' });
+        await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         const title = await page.title();
         const html = await page.content();
         process.stdout.write(JSON.stringify({
@@ -119,7 +120,7 @@ async function bootstrap() {
 
     if (command.action === 'go_back') {
       try {
-        await page.goBack({ waitUntil: 'domcontentloaded' });
+        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
         const url = page.url();
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url } }) + '\n');
       } catch (error) {
@@ -281,6 +282,7 @@ pub enum PlaywrightBridgeError {
     Json(serde_json::Error),
     ChildClosed,
     ShutdownTimeout { timeout: Duration },
+    CommandTimeout { timeout: Duration },
 }
 
 impl fmt::Display for PlaywrightBridgeError {
@@ -308,6 +310,11 @@ impl fmt::Display for PlaywrightBridgeError {
                 "Playwright bridge did not shut down within {} seconds",
                 timeout.as_secs()
             ),
+            Self::CommandTimeout { timeout } => write!(
+                f,
+                "Playwright bridge command timed out after {} seconds",
+                timeout.as_secs()
+            ),
         }
     }
 }
@@ -322,7 +329,8 @@ impl std::error::Error for PlaywrightBridgeError {
             | Self::Protocol(_)
             | Self::PlaywrightNotInstalled(_)
             | Self::ChildClosed
-            | Self::ShutdownTimeout { .. } => None,
+            | Self::ShutdownTimeout { .. }
+            | Self::CommandTimeout { .. } => None,
         }
     }
 }
@@ -453,7 +461,11 @@ impl PlaywrightBridge {
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
 
-        let line = self.read_bridge_line().await?;
+        let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
+            .await
+            .map_err(|_| PlaywrightBridgeError::CommandTimeout {
+                timeout: DEFAULT_COMMAND_TIMEOUT,
+            })??;
         let response: GenericBridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {
             return Err(PlaywrightBridgeError::Protocol(format!(
@@ -676,7 +688,11 @@ impl PlaywrightBridge {
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
 
-        let line = self.read_bridge_line().await?;
+        let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
+            .await
+            .map_err(|_| PlaywrightBridgeError::CommandTimeout {
+                timeout: DEFAULT_COMMAND_TIMEOUT,
+            })??;
         let response: BridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {
             return Err(PlaywrightBridgeError::Protocol(format!(
