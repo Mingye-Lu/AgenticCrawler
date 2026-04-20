@@ -1,9 +1,9 @@
 //! Base modal trait and shared rendering helpers for the Ratatui TUI modal system.
 
 use crossterm::event::KeyEvent;
-use ratatui::layout::{Margin, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Clear};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
 
 /// Represents the action taken by a modal in response to a key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +29,7 @@ pub trait Modal {
 /// Renders a centered modal frame with a border and title.
 ///
 /// This function:
-/// 1. Computes a centered area using `Margin { horizontal: area.width / 6, vertical: area.height / 4 }`
+/// 1. Computes a centered area with clamped width and height for better readability on wide terminals
 /// 2. Clears the modal area
 /// 3. Renders a `Block` with the given title and border color
 /// 4. Returns the inner `Rect` (inside the block borders) for the caller to draw content into
@@ -42,23 +42,48 @@ pub trait Modal {
 ///
 /// # Returns
 /// The inner `Rect` where modal content should be drawn
+fn modal_block_area(area: Rect) -> Rect {
+    let max_usable_w = area.width.saturating_sub(2).max(1);
+    let max_usable_h = area.height.saturating_sub(2).max(1);
+
+    let preferred_w = area.width.saturating_sub(area.width / 3);
+    let block_w = if max_usable_w >= 54 {
+        preferred_w.clamp(54, 108).min(max_usable_w)
+    } else {
+        max_usable_w
+    };
+
+    let preferred_h = area
+        .height
+        .saturating_sub((area.height / 4).saturating_mul(2));
+    let block_h = if max_usable_h >= 10 {
+        preferred_h.clamp(10, 28).min(max_usable_h)
+    } else {
+        max_usable_h
+    };
+
+    let block_x = area.x + area.width.saturating_sub(block_w) / 2;
+    let block_y = area.y + area.height.saturating_sub(block_h) / 2;
+    Rect::new(block_x, block_y, block_w, block_h)
+}
+
 pub fn draw_modal_frame(
     frame: &mut ratatui::Frame<'_>,
     area: Rect,
     title: &str,
     border_color: Color,
 ) -> Rect {
-    let block_area = area.inner(Margin {
-        horizontal: area.width / 6,
-        vertical: area.height / 4,
-    });
+    let block_area = modal_block_area(area);
 
     frame.render_widget(Clear, block_area);
 
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border_color))
+        .padding(Padding::new(1, 1, 0, 0))
+        .style(Style::default().bg(Color::Rgb(16, 20, 26)));
 
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
@@ -72,19 +97,16 @@ mod tests {
 
     #[test]
     fn modal_frame_returns_smaller_inner_rect() {
-        // Test that the inner rect is strictly smaller than the outer area
         let area = Rect::new(0, 0, 80, 24);
-        let block_area = area.inner(Margin {
-            horizontal: area.width / 6,
-            vertical: area.height / 4,
-        });
+        let block_area = modal_block_area(area);
 
-        // The block_area should be smaller than the original area
         assert!(block_area.width < area.width);
         assert!(block_area.height < area.height);
 
-        // The inner rect (inside the block borders) should be even smaller
-        let block = Block::default().borders(Borders::ALL);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .padding(Padding::new(1, 1, 0, 0));
         let inner = block.inner(block_area);
 
         assert!(inner.width < block_area.width);
@@ -92,30 +114,24 @@ mod tests {
     }
 
     #[test]
-    fn modal_frame_centering_math() {
-        // Test margin computation for 80x24
-        let area_80x24 = Rect::new(0, 0, 80, 24);
-        let block_area_80x24 = area_80x24.inner(Margin {
-            horizontal: area_80x24.width / 6,
-            vertical: area_80x24.height / 4,
-        });
+    fn modal_frame_centering_and_clamp_math() {
+        let area_80x24 = modal_block_area(Rect::new(0, 0, 80, 24));
+        assert_eq!(area_80x24.width, 54);
+        assert_eq!(area_80x24.height, 12);
+        assert_eq!(area_80x24.x, 13);
+        assert_eq!(area_80x24.y, 6);
 
-        // Margin should be width/6 = 80/6 ≈ 13, height/4 = 24/4 = 6
-        // So block_area should be 80 - 2*13 = 54 wide, 24 - 2*6 = 12 tall
-        assert_eq!(block_area_80x24.width, 54);
-        assert_eq!(block_area_80x24.height, 12);
+        let area_120x40 = modal_block_area(Rect::new(0, 0, 120, 40));
+        assert_eq!(area_120x40.width, 80);
+        assert_eq!(area_120x40.height, 20);
+        assert_eq!(area_120x40.x, 20);
+        assert_eq!(area_120x40.y, 10);
 
-        // Test margin computation for 120x40
-        let area_120x40 = Rect::new(0, 0, 120, 40);
-        let block_area_120x40 = area_120x40.inner(Margin {
-            horizontal: area_120x40.width / 6,
-            vertical: area_120x40.height / 4,
-        });
-
-        // Margin should be width/6 = 120/6 = 20, height/4 = 40/4 = 10
-        // So block_area should be 120 - 2*20 = 80 wide, 40 - 2*10 = 20 tall
-        assert_eq!(block_area_120x40.width, 80);
-        assert_eq!(block_area_120x40.height, 20);
+        let area_200x44 = modal_block_area(Rect::new(0, 0, 200, 44));
+        assert_eq!(area_200x44.width, 108);
+        assert_eq!(area_200x44.height, 22);
+        assert_eq!(area_200x44.x, 46);
+        assert_eq!(area_200x44.y, 11);
     }
 
     #[test]

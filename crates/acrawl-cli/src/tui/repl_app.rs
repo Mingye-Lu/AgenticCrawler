@@ -21,8 +21,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph,
-    Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
+    Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
 use ratatui::DefaultTerminal;
 use runtime::{
@@ -42,6 +42,8 @@ const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
 const WELCOME_BOX_MAX_WIDTH: u16 = 82;
 const WELCOME_BOX_MIN_WIDTH: u16 = 30;
 const INPUT_CARET_MARKER: char = '\u{E000}';
+const SLASH_OVERLAY_VISIBLE_ITEMS: usize = 7;
+const SLASH_OVERLAY_HINT_TEXT: &str = "Up/Down move  Enter accept  Tab complete  Esc close";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AppUiState {
@@ -1367,6 +1369,7 @@ impl ReplTuiState {
     fn calculate_input_dimensions(
         &mut self,
         width: u16,
+        model_label: &str,
     ) -> (u16, Vec<Line<'static>>, usize, Option<(u16, u16)>) {
         self.clamp_input_cursor();
         let is_placeholder = self.input.is_empty();
@@ -1518,9 +1521,15 @@ impl ReplTuiState {
         }
 
         render_lines.push(Line::from(""));
+        render_lines.push(Line::from(Span::styled(
+            format!("Model: {model_label}"),
+            Style::default()
+                .fg(Color::Rgb(128, 136, 146))
+                .add_modifier(Modifier::DIM),
+        )));
 
         #[allow(clippy::cast_possible_truncation)]
-        let box_height = (total_sliced as u16) + 4;
+        let box_height = (total_sliced as u16) + 5;
         (box_height, render_lines, max_scroll, cursor_pos)
     }
 
@@ -1577,7 +1586,7 @@ impl ReplTuiState {
         let (selected, mut scroll_offset) = self.slash_overlay.as_ref().map_or((0, 0), |prev| {
             (prev.selected.min(candidates.len() - 1), prev.scroll_offset)
         });
-        let visible_count = min(candidates.len(), 7);
+        let visible_count = min(candidates.len(), SLASH_OVERLAY_VISIBLE_ITEMS);
         if selected < scroll_offset {
             scroll_offset = selected;
         } else if selected >= scroll_offset + visible_count {
@@ -1765,6 +1774,8 @@ fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionReq
                 .add_modifier(Modifier::BOLD),
         )
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .style(Style::default().bg(Color::Rgb(16, 20, 26)))
         .border_style(Style::default().fg(Color::Rgb(200, 120, 40)));
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
@@ -1855,7 +1866,12 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapsh
 }
 
 #[allow(clippy::too_many_lines)]
-fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiState) {
+fn draw_welcome(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    state: &mut ReplTuiState,
+    show_input_cursor: bool,
+) {
     let ascii = [
         "  █████╗  ██████╗██████╗  █████╗ ██╗    ██╗██╗",
         " ██╔══██╗██╔════╝██╔══██╗██╔══██╗██║    ██║██║",
@@ -1898,8 +1914,9 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
         .width
         .saturating_sub(WELCOME_BOX_SIDE_GUTTER)
         .clamp(WELCOME_BOX_MIN_WIDTH, WELCOME_BOX_MAX_WIDTH);
+    let model_label = state.cached_header.model.clone();
     let (box_height, render_lines, max_scroll, cursor_pos) =
-        state.calculate_input_dimensions(input_w);
+        state.calculate_input_dimensions(input_w, &model_label);
     let input_h = box_height;
 
     let input_x = area.x + area.width.saturating_sub(input_w) / 2;
@@ -1931,8 +1948,10 @@ fn draw_welcome(frame: &mut ratatui::Frame<'_>, area: Rect, state: &mut ReplTuiS
     frame.render_widget(block, input_area);
 
     frame.render_widget(Paragraph::new(Text::from(render_lines)), inner);
-    if let Some((row, col)) = cursor_pos {
-        frame.set_cursor_position((inner.x.saturating_add(col), inner.y.saturating_add(row)));
+    if show_input_cursor {
+        if let Some((row, col)) = cursor_pos {
+            frame.set_cursor_position((inner.x.saturating_add(col), inner.y.saturating_add(row)));
+        }
     }
     if max_scroll > 0 {
         let scrollbar = Scrollbar::default()
@@ -1967,27 +1986,67 @@ fn draw_slash_overlay(
         return;
     };
     let total = overlay.items.len();
-    let visible_count = min(total, 7);
+    let visible_count = min(total, SLASH_OVERLAY_VISIBLE_ITEMS);
     let scroll_offset = overlay.scroll_offset;
-    let overlay_h = u16::try_from(visible_count + 2).unwrap_or(4);
-    let overlay_w = min(bounds.width.saturating_sub(2), 70).max(30);
-    let overlay_x = input_area.x + 2;
-    let overlay_y = input_area.y.saturating_sub(overlay_h).max(bounds.y + 1);
+
+    let max_summary_w = overlay
+        .items
+        .iter()
+        .map(|item| item.summary.chars().count())
+        .max()
+        .unwrap_or(0);
+    let desired_content_w = (16 + max_summary_w).max(SLASH_OVERLAY_HINT_TEXT.chars().count());
+    let desired_total_w = u16::try_from(desired_content_w.saturating_add(6)).unwrap_or(64);
+
+    let list_rows = u16::try_from(visible_count).unwrap_or(1);
+    let overlay_h = list_rows.saturating_add(5);
+    let max_width = bounds.width.saturating_sub(2).max(1);
+    let target_w = desired_total_w.clamp(44, 72);
+    let overlay_w = target_w.min(max_width);
+    let min_x = bounds.x.saturating_add(1);
+    let max_x = bounds
+        .x
+        .saturating_add(bounds.width.saturating_sub(overlay_w.saturating_add(1)));
+    let overlay_x = input_area
+        .x
+        .saturating_add(2)
+        .clamp(min_x, max_x.max(min_x));
+    let overlay_y = input_area
+        .y
+        .saturating_sub(overlay_h)
+        .max(bounds.y.saturating_add(1));
     let overlay_area = Rect::new(overlay_x, overlay_y, overlay_w, overlay_h);
+
     frame.render_widget(Clear, overlay_area);
     let title = if total > visible_count {
         format!(" Slash Commands ({}/{}) ", overlay.selected + 1, total)
     } else {
         " Slash Commands ".to_string()
     };
+    let overlay_bg = Color::Rgb(28, 31, 36);
     let block = Block::default()
         .title(title)
         .title_style(Style::default().fg(Color::LightCyan))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Rgb(70, 120, 150)));
+        .border_style(Style::default().fg(Color::Rgb(90, 115, 132)))
+        .padding(Padding::new(1, 1, 0, 0))
+        .style(Style::default().bg(overlay_bg));
     let inner = block.inner(overlay_area);
     frame.render_widget(block, overlay_area);
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(list_rows),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+    let list_area = sections[1];
+    let hint_area = sections[3];
+
     let items = overlay
         .items
         .iter()
@@ -2001,23 +2060,37 @@ fn draw_slash_overlay(
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(item.summary),
+                Span::styled(item.summary, Style::default().fg(Color::Rgb(188, 194, 200))),
             ]))
         })
         .collect::<Vec<_>>();
     let mut list_state = ListState::default();
     list_state.select(Some(overlay.selected.saturating_sub(scroll_offset)));
     let list = List::new(items)
-        .highlight_style(Style::default().bg(Color::Rgb(30, 44, 56)))
+        .style(Style::default().bg(overlay_bg))
+        .highlight_style(Style::default().bg(Color::Rgb(52, 64, 79)))
         .highlight_symbol("▶ ");
-    frame.render_stateful_widget(list, inner, &mut list_state);
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    let hint_line = Line::from(Span::styled(
+        SLASH_OVERLAY_HINT_TEXT,
+        Style::default()
+            .fg(Color::Rgb(130, 136, 145))
+            .add_modifier(Modifier::DIM),
+    ));
+    frame.render_widget(Paragraph::new(hint_line), hint_area);
 }
 
 #[allow(clippy::too_many_lines)]
-fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &HeaderSnapshot) {
+fn draw_chat(
+    frame: &mut ratatui::Frame<'_>,
+    state: &mut ReplTuiState,
+    header: &HeaderSnapshot,
+    show_input_cursor: bool,
+) {
     let area = frame.area();
     let (footer_h, render_lines, max_scroll, cursor_pos) =
-        state.calculate_input_dimensions(area.width);
+        state.calculate_input_dimensions(area.width, &header.model);
 
     // Layout: 1-row header | transcript | 1-row spacer | input footer
     let chunks = Layout::default()
@@ -2202,11 +2275,13 @@ fn draw_chat(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState, header: &
     frame.render_widget(footer_block, input_area);
 
     frame.render_widget(Paragraph::new(Text::from(render_lines)), footer_inner);
-    if let Some((row, col)) = cursor_pos {
-        frame.set_cursor_position((
-            footer_inner.x.saturating_add(col),
-            footer_inner.y.saturating_add(row),
-        ));
+    if show_input_cursor {
+        if let Some((row, col)) = cursor_pos {
+            frame.set_cursor_position((
+                footer_inner.x.saturating_add(col),
+                footer_inner.y.saturating_add(row),
+            ));
+        }
     }
     if max_scroll > 0 {
         let scrollbar = Scrollbar::default()
@@ -2722,9 +2797,13 @@ fn run_loop(
         let header = state.cached_header.clone();
 
         terminal.draw(|frame| {
+            let show_input_cursor =
+                state.active_modal.is_none() && state.pending_permission.is_none();
             match state.ui_state {
-                AppUiState::WelcomeMode => draw_welcome(frame, frame.area(), &mut state),
-                AppUiState::ChatMode => draw_chat(frame, &mut state, &header),
+                AppUiState::WelcomeMode => {
+                    draw_welcome(frame, frame.area(), &mut state, show_input_cursor)
+                }
+                AppUiState::ChatMode => draw_chat(frame, &mut state, &header, show_input_cursor),
             }
             if let Some((ref req, _)) = state.pending_permission {
                 draw_permission_modal(frame, req);
@@ -2972,7 +3051,7 @@ fn run_loop(
                 if key.code == KeyCode::Down && state.slash_overlay.is_some() {
                     if let Some(overlay) = state.slash_overlay.as_mut() {
                         overlay.selected = min(overlay.selected + 1, overlay.items.len() - 1);
-                        let visible_count = min(overlay.items.len(), 7);
+                        let visible_count = min(overlay.items.len(), SLASH_OVERLAY_VISIBLE_ITEMS);
                         if overlay.selected >= overlay.scroll_offset + visible_count {
                             overlay.scroll_offset = overlay.selected - visible_count + 1;
                         }

@@ -1824,8 +1824,7 @@ mod tests {
         let (cancel_tx, cancel_rx) = mpsc::channel();
         cancel_tx.send(()).expect("send cancel signal");
 
-        let listener =
-            std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
         let handle =
             std::thread::spawn(move || wait_for_oauth_callback_cancellable(listener, cancel_rx));
 
@@ -1842,8 +1841,7 @@ mod tests {
     fn cancellable_callback_returns_on_cancel_while_listening() {
         let (cancel_tx, cancel_rx) = mpsc::channel();
 
-        let listener =
-            std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind ephemeral port");
         let handle =
             std::thread::spawn(move || wait_for_oauth_callback_cancellable(listener, cancel_rx));
 
