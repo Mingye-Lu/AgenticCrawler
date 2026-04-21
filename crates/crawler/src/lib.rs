@@ -58,7 +58,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("May trigger navigation or page changes. Read the tool result before issuing another action."),
         },
         ToolSpec {
             name: "fill_form",
@@ -103,7 +103,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Use to verify page state when uncertain about what is visible, or to debug unexpected tool results."),
         },
         ToolSpec {
             name: "go_back",
@@ -128,7 +128,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Use to reveal lazy-loaded content or elements below the fold. Scroll down before concluding content is missing."),
         },
         ToolSpec {
             name: "wait",
@@ -173,7 +173,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Use for complex interactions that CSS selectors can't handle. The script runs in the page context and can return a value."),
+            instructions: Some("Last resort for complex interactions that CSS selectors cannot handle. Prefer click, fill_form, and select_option first. The script runs in the page context and can return a value."),
         },
         ToolSpec {
             name: "hover",
@@ -229,7 +229,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Use to discover available links, forms, or images before interacting with them. Helps plan the next action when the page structure is unclear."),
         },
         ToolSpec {
             name: "save_file",
