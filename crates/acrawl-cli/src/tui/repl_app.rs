@@ -993,7 +993,6 @@ struct ReplTuiState {
     exit: bool,
     current_tool: Option<String>,
     status_entry_index: Option<usize>,
-    tool_call_entry_index: Option<usize>,
     persist_on_exit: bool,
     cursor_on: bool,
     cursor_blink_deadline: Instant,
@@ -1044,7 +1043,6 @@ impl ReplTuiState {
             persist_on_exit: false,
             current_tool: None,
             status_entry_index: None,
-            tool_call_entry_index: None,
             cursor_on: true,
             cursor_blink_deadline: Instant::now() + Duration::from_millis(530),
             slash_overlay: None,
@@ -1304,7 +1302,6 @@ impl ReplTuiState {
         }
         let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
-        self.tool_call_entry_index = Some(self.entries.len());
         self.entries.push(TranscriptEntry::ToolCall {
             name,
             input_summary,
@@ -1319,26 +1316,24 @@ impl ReplTuiState {
             ToolCallStatus::Success { output }
         };
 
-        if let Some(idx) = self.tool_call_entry_index.take() {
-            if let Some(TranscriptEntry::ToolCall {
-                name: entry_name,
-                status: entry_status,
-                ..
-            }) = self.entries.get_mut(idx)
-            {
-                if entry_name == name {
-                    *entry_status = status.clone();
-                    return;
-                }
-            }
-        }
-
+        // Find the first Running entry with a matching tool name.
+        // This correctly handles multiple parallel calls of the same tool
+        // (e.g. two navigate calls in one assistant turn) because completions
+        // arrive in the same order the calls were started, and each completion
+        // consumes exactly the first still-Running entry.
         if let Some(TranscriptEntry::ToolCall {
             status: entry_status,
             ..
-        }) = self.entries.iter_mut().rev().find(
-            |entry| matches!(entry, TranscriptEntry::ToolCall { name: entry_name, .. } if entry_name == name),
-        ) {
+        }) = self.entries.iter_mut().find(|entry| {
+            matches!(
+                entry,
+                TranscriptEntry::ToolCall {
+                    name: entry_name,
+                    status: ToolCallStatus::Running,
+                    ..
+                } if entry_name == name
+            )
+        }) {
             *entry_status = status;
         }
     }
@@ -3623,7 +3618,6 @@ mod tests {
             input_summary: "ls".to_string(),
             status: ToolCallStatus::Running,
         });
-        state.tool_call_entry_index = Some(0);
 
         tx.send(ReplTuiEvent::ToolCallComplete {
             name: "bash".to_string(),
@@ -3641,7 +3635,6 @@ mod tests {
                 ..
             }
         ));
-        assert!(state.tool_call_entry_index.is_none());
     }
 
     #[test]
@@ -3654,7 +3647,6 @@ mod tests {
             input_summary: "bad cmd".to_string(),
             status: ToolCallStatus::Running,
         });
-        state.tool_call_entry_index = Some(0);
 
         tx.send(ReplTuiEvent::ToolCallComplete {
             name: "bash".to_string(),
@@ -3672,7 +3664,6 @@ mod tests {
                 ..
             }
         ));
-        assert!(state.tool_call_entry_index.is_none());
     }
 
     #[test]
