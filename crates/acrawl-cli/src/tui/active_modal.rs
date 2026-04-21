@@ -7,7 +7,6 @@ use ratatui::Frame;
 
 pub enum ActiveModal {
     Auth(AuthModal),
-    #[allow(dead_code)]
     Model(ModelModal),
 }
 

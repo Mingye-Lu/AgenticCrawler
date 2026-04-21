@@ -12,7 +12,6 @@ pub struct ProviderGroup {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct GroupedModelListState {
     pub groups: Vec<ProviderGroup>,
     pub filter: String,
@@ -22,7 +21,6 @@ pub struct GroupedModelListState {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct FilteredGroup<'a> {
     pub provider_name: &'a str,
     pub provider_id: &'a str,
@@ -30,7 +28,6 @@ pub struct FilteredGroup<'a> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum RowKind<'a> {
     Header {
         provider_name: &'a str,
@@ -45,7 +42,6 @@ pub enum RowKind<'a> {
 }
 
 impl GroupedModelListState {
-    #[allow(dead_code)]
     pub fn new(groups: Vec<ProviderGroup>, current_model_id: Option<String>) -> Self {
         Self {
             groups,
@@ -56,12 +52,10 @@ impl GroupedModelListState {
         }
     }
 
-    #[allow(dead_code)]
     fn filter_len(&self) -> usize {
         self.filter.chars().count()
     }
 
-    #[allow(dead_code)]
     fn cursor_byte_index(&self) -> usize {
         self.filter
             .char_indices()
@@ -69,7 +63,6 @@ impl GroupedModelListState {
             .map_or(self.filter.len(), |(idx, _)| idx)
     }
 
-    #[allow(dead_code)]
     fn clamp_cursor(&mut self) {
         self.filter_cursor = self.filter_cursor.min(self.filter_len());
     }
@@ -114,40 +107,28 @@ impl GroupedModelListState {
             .collect()
     }
 
-    #[allow(dead_code)]
-    pub fn total_visible_rows(&self) -> usize {
-        let filtered = self.filtered_groups();
-        filtered.iter().map(|g| 1 + g.models.len()).sum()
-    }
-
-    #[allow(dead_code)]
     pub fn total_selectable(&self) -> usize {
         let filtered = self.filtered_groups();
         filtered.iter().map(|g| g.models.len()).sum()
     }
 
-    #[allow(dead_code)]
     pub fn handle_up(&mut self) {
         self.selected_idx = self.selected_idx.saturating_sub(1);
     }
 
-    #[allow(dead_code)]
     pub fn handle_down(&mut self) {
         let max = self.total_selectable().saturating_sub(1);
         self.selected_idx = (self.selected_idx + 1).min(max);
     }
 
-    #[allow(dead_code)]
     pub fn handle_left(&mut self) {
         self.selected_idx = 0;
     }
 
-    #[allow(dead_code)]
     pub fn handle_right(&mut self) {
         self.selected_idx = self.total_selectable().saturating_sub(1);
     }
 
-    #[allow(dead_code)]
     pub fn handle_char(&mut self, c: char) {
         let idx = self.cursor_byte_index();
         self.filter.insert(idx, c);
@@ -155,7 +136,6 @@ impl GroupedModelListState {
         self.selected_idx = 0;
     }
 
-    #[allow(dead_code)]
     pub fn handle_backspace(&mut self) {
         if self.filter_cursor == 0 {
             return;
@@ -174,7 +154,6 @@ impl GroupedModelListState {
         self.selected_idx = 0;
     }
 
-    #[allow(dead_code)]
     pub fn handle_delete(&mut self) {
         if self.filter_cursor >= self.filter_len() {
             return;
@@ -191,17 +170,14 @@ impl GroupedModelListState {
         self.selected_idx = 0;
     }
 
-    #[allow(dead_code)]
     pub fn move_cursor_home(&mut self) {
         self.filter_cursor = 0;
     }
 
-    #[allow(dead_code)]
     pub fn move_cursor_end(&mut self) {
         self.filter_cursor = self.filter_len();
     }
 
-    #[allow(dead_code)]
     pub fn selected_model(&self) -> Option<(&str, &str)> {
         let filtered = self.filtered_groups();
         let mut model_count = 0;
@@ -218,14 +194,12 @@ impl GroupedModelListState {
         None
     }
 
-    #[allow(dead_code)]
     pub fn is_current_model(&self, model_id: &str) -> bool {
         self.current_model_id
             .as_ref()
             .is_some_and(|id| id == model_id)
     }
 
-    #[allow(dead_code)]
     pub fn row_at(&self, flat_row: usize) -> Option<RowKind<'_>> {
         let filtered = self.filtered_groups();
         let mut current_row = 0;

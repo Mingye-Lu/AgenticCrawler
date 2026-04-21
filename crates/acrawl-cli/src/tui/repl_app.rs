@@ -986,7 +986,6 @@ struct ReplTuiState {
     input_preferred_col: Option<usize>,
     status_line: String,
     busy: bool,
-    #[allow(dead_code)]
     pending_model_after_auth: Option<String>,
     active_modal: Option<ActiveModal>,
     /// Live model catalog fetched from models.dev; None until background fetch completes.

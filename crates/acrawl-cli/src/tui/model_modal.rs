@@ -34,7 +34,6 @@ pub struct ModelModal {
 }
 
 impl ModelModal {
-    #[allow(dead_code)]
     pub fn new(
         registry: &ProviderRegistry,
         current_model_id: &str,
