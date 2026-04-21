@@ -76,12 +76,4 @@ impl ActiveModal {
             Self::Model(modal) => Some(modal),
         }
     }
-
-    #[allow(dead_code)]
-    pub fn as_model_mut(&mut self) -> Option<&mut ModelModal> {
-        match self {
-            Self::Auth(_) => None,
-            Self::Model(modal) => Some(modal),
-        }
-    }
 }
