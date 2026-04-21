@@ -62,4 +62,10 @@ Default model comes from the `default_model` field in the active provider's `Sto
 - Clippy `pedantic` is on as a warning; `module_name_repetitions`, `missing_panics_doc`, `missing_errors_doc` are explicitly allowed. New lint warnings should be fixed rather than suppressed locally unless there's a reason.
 - Tests that mutate process env (provider, model, workspace dir) must serialize with a `OnceLock<Mutex<()>>` guard, following the pattern in `acrawl-cli/src/main.rs` and `crates/runtime/src/lib.rs::test_env_lock`.
 - Slash-command behavior is shared between the live REPL and `--resume`. When editing a slash command, check `resume_supported_slash_commands()` — the test `resume_supported_command_list_matches_expected_surface` pins the exact resume-safe set.
+- TUI popup/list UX baseline (applies to slash overlay + auth modal lists + similar list selectors):
+  - Keep one blank line at the top of popup content.
+  - Keep key-hint text pinned to the last visible content row, with a blank separator row above it and no extra blank row below it; style hints in dim gray.
+  - Up/Down navigation must clamp at edges (no wrap-around) for both keyboard and mouse wheel.
+  - For list selectors, Left jumps to the first item and Right jumps to the last item.
+  - When scrolling to keep selection visible, use edge-follow behavior (no forced centering jumps).
 - `claw-code/` at the repo root is a separate nested project (has its own `CLAUDE.md`/`README.md`). It is not part of the `acrawl` cargo workspace — don't pull it into workspace-wide edits unless the task is specifically about it.
