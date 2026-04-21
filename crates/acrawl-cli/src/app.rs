@@ -15,9 +15,9 @@ use api::{
 use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
 use runtime::{
-    load_system_prompt, ApiClient, ApiRequest, AssistantEvent, CompactionConfig, ConfigLoader,
-    ConversationMessage, ConversationRuntime, MessageRole, RuntimeError, Session, TokenUsage,
-    ToolError, ToolExecutor,
+    load_settings, load_system_prompt, settings_get_max_steps, ApiClient, ApiRequest,
+    AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage, ConversationRuntime,
+    MessageRole, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
 };
 use serde_json::json;
 
@@ -949,6 +949,7 @@ fn build_runtime(
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, Box<dyn std::error::Error>> {
     session.model = Some(model.clone());
+    let max_steps = settings_get_max_steps(&load_settings()) as usize;
     Ok(ConversationRuntime::new_with_features(
         session,
         LlmRuntimeClient::new(
@@ -961,7 +962,8 @@ fn build_runtime(
         CliToolExecutor::new(allowed_tools, emit_output, ui_tx),
         system_prompt,
         &build_runtime_feature_config()?,
-    ))
+    )
+    .with_max_iterations(max_steps))
 }
 
 pub(crate) struct LlmRuntimeClient {
