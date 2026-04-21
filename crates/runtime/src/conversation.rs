@@ -8,7 +8,6 @@ use crate::compact::{
 };
 use crate::config::RuntimeFeatureConfig;
 use crate::hooks::{HookRunResult, HookRunner};
-use crate::permissions::{PermissionOutcome, PermissionPolicy, PermissionPrompter};
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
 
@@ -105,7 +104,6 @@ pub struct ConversationRuntime<C, T> {
     session: Session,
     api_client: C,
     tool_executor: T,
-    permission_policy: PermissionPolicy,
     system_prompt: Vec<String>,
     max_iterations: usize,
     usage_tracker: UsageTracker,
@@ -124,14 +122,12 @@ where
         session: Session,
         api_client: C,
         tool_executor: T,
-        permission_policy: PermissionPolicy,
         system_prompt: Vec<String>,
     ) -> Self {
         Self::new_with_features(
             session,
             api_client,
             tool_executor,
-            permission_policy,
             system_prompt,
             &RuntimeFeatureConfig::default(),
         )
@@ -142,7 +138,6 @@ where
         session: Session,
         api_client: C,
         tool_executor: T,
-        permission_policy: PermissionPolicy,
         system_prompt: Vec<String>,
         feature_config: &RuntimeFeatureConfig,
     ) -> Self {
@@ -151,7 +146,6 @@ where
             session,
             api_client,
             tool_executor,
-            permission_policy,
             system_prompt,
             max_iterations: usize::MAX,
             usage_tracker,
@@ -187,11 +181,7 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn run_turn(
-        &mut self,
-        user_input: impl Into<String>,
-        mut prompter: Option<&mut dyn PermissionPrompter>,
-    ) -> Result<TurnSummary, RuntimeError> {
+    pub fn run_turn(&mut self, user_input: impl Into<String>) -> Result<TurnSummary, RuntimeError> {
         self.session
             .messages
             .push(ConversationMessage::user_text(user_input.into()));
@@ -241,54 +231,37 @@ where
             }
 
             for (tool_use_id, tool_name, input) in pending_tool_uses {
-                let permission_outcome = if let Some(prompt) = prompter.as_mut() {
-                    self.permission_policy
-                        .authorize(&tool_name, &input, Some(*prompt))
-                } else {
-                    self.permission_policy.authorize(&tool_name, &input, None)
-                };
+                let result_message = {
+                    let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
+                    if pre_hook_result.is_denied() {
+                        let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
+                        ConversationMessage::tool_result(
+                            tool_use_id,
+                            tool_name,
+                            format_hook_message(&pre_hook_result, &deny_message),
+                            true,
+                        )
+                    } else {
+                        let (mut output, mut is_error) =
+                            match self.tool_executor.execute(&tool_name, &input) {
+                                Ok(output) => (output, false),
+                                Err(error) => (error.to_string(), true),
+                            };
+                        output = merge_hook_feedback(pre_hook_result.messages(), output, false);
 
-                let result_message = match permission_outcome {
-                    PermissionOutcome::Allow => {
-                        let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
-                        if pre_hook_result.is_denied() {
-                            let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                format_hook_message(&pre_hook_result, &deny_message),
-                                true,
-                            )
-                        } else {
-                            let (mut output, mut is_error) =
-                                match self.tool_executor.execute(&tool_name, &input) {
-                                    Ok(output) => (output, false),
-                                    Err(error) => (error.to_string(), true),
-                                };
-                            output = merge_hook_feedback(pre_hook_result.messages(), output, false);
-
-                            let post_hook_result = self
-                                .hook_runner
-                                .run_post_tool_use(&tool_name, &input, &output, is_error);
-                            if post_hook_result.is_denied() {
-                                is_error = true;
-                            }
-                            output = merge_hook_feedback(
-                                post_hook_result.messages(),
-                                output,
-                                post_hook_result.is_denied(),
-                            );
-
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                output,
-                                is_error,
-                            )
+                        let post_hook_result = self
+                            .hook_runner
+                            .run_post_tool_use(&tool_name, &input, &output, is_error);
+                        if post_hook_result.is_denied() {
+                            is_error = true;
                         }
-                    }
-                    PermissionOutcome::Deny { reason } => {
-                        ConversationMessage::tool_result(tool_use_id, tool_name, reason, true)
+                        output = merge_hook_feedback(
+                            post_hook_result.messages(),
+                            output,
+                            post_hook_result.is_denied(),
+                        );
+
+                        ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
                     }
                 };
                 self.session.messages.push(result_message.clone());
@@ -497,10 +470,6 @@ mod tests {
     };
     use crate::compact::CompactionConfig;
     use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
-    use crate::permissions::{
-        PermissionMode, PermissionPolicy, PermissionPromptDecision, PermissionPrompter,
-        PermissionRequest,
-    };
     use crate::prompt::{ProjectContext, SystemPromptBuilder};
     use crate::session::{ContentBlock, MessageRole, Session};
     use crate::usage::TokenUsage;
@@ -557,15 +526,6 @@ mod tests {
         }
     }
 
-    struct PromptAllowOnce;
-
-    impl PermissionPrompter for PromptAllowOnce {
-        fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
-            assert_eq!(request.tool_name, "add");
-            PermissionPromptDecision::Allow
-        }
-    }
-
     #[test]
     fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
         let api_client = ScriptedApiClient { call_count: 0 };
@@ -576,7 +536,6 @@ mod tests {
                 .sum::<i32>();
             Ok(total.to_string())
         });
-        let permission_policy = PermissionPolicy::new(PermissionMode::WorkspaceWrite);
         let system_prompt = SystemPromptBuilder::new()
             .with_project_context(ProjectContext {
                 cwd: PathBuf::from("/tmp/project"),
@@ -586,16 +545,11 @@ mod tests {
             })
             .with_os("linux", "6.8")
             .build();
-        let mut runtime = ConversationRuntime::new(
-            Session::new(),
-            api_client,
-            tool_executor,
-            permission_policy,
-            system_prompt,
-        );
+        let mut runtime =
+            ConversationRuntime::new(Session::new(), api_client, tool_executor, system_prompt);
 
         let summary = runtime
-            .run_turn("what is 2 + 2?", Some(&mut PromptAllowOnce))
+            .run_turn("what is 2 + 2?")
             .expect("conversation loop should succeed");
 
         assert_eq!(summary.iterations, 2);
@@ -614,60 +568,6 @@ mod tests {
                 is_error: false,
                 ..
             }
-        ));
-    }
-
-    #[test]
-    fn records_denied_tool_results_when_prompt_rejects() {
-        struct RejectPrompter;
-        impl PermissionPrompter for RejectPrompter {
-            fn decide(&mut self, _request: &PermissionRequest) -> PermissionPromptDecision {
-                PermissionPromptDecision::Deny {
-                    reason: "not now".to_string(),
-                }
-            }
-        }
-
-        struct SingleCallApiClient;
-        impl ApiClient for SingleCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-                if request
-                    .messages
-                    .iter()
-                    .any(|message| message.role == MessageRole::Tool)
-                {
-                    return Ok(vec![
-                        AssistantEvent::TextDelta("I could not use the tool.".to_string()),
-                        AssistantEvent::MessageStop,
-                    ]);
-                }
-                Ok(vec![
-                    AssistantEvent::ToolUse {
-                        id: "tool-1".to_string(),
-                        name: "blocked".to_string(),
-                        input: "secret".to_string(),
-                    },
-                    AssistantEvent::MessageStop,
-                ])
-            }
-        }
-
-        let mut runtime = ConversationRuntime::new(
-            Session::new(),
-            SingleCallApiClient,
-            StaticToolExecutor::new(),
-            PermissionPolicy::new(PermissionMode::WorkspaceWrite),
-            vec!["system".to_string()],
-        );
-
-        let summary = runtime
-            .run_turn("use the tool", Some(&mut RejectPrompter))
-            .expect("conversation should continue after denied tool");
-
-        assert_eq!(summary.tool_results.len(), 1);
-        assert!(matches!(
-            &summary.tool_results[0].blocks[0],
-            ContentBlock::ToolResult { is_error: true, output, .. } if output == "not now"
         ));
     }
 
@@ -704,7 +604,6 @@ mod tests {
             StaticToolExecutor::new().register("blocked", |_input| {
                 panic!("tool should not execute when hook denies")
             }),
-            PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
             &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
                 vec![shell_snippet("printf 'blocked by hook'; exit 2")],
@@ -713,7 +612,7 @@ mod tests {
         );
 
         let summary = runtime
-            .run_turn("use the tool", None)
+            .run_turn("use the tool")
             .expect("conversation should continue after hook denial");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -770,7 +669,6 @@ mod tests {
             Session::new(),
             TwoCallApiClient { calls: 0 },
             StaticToolExecutor::new().register("add", |_input| Ok("4".to_string())),
-            PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
             &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
                 vec![shell_snippet("printf 'pre hook ran'")],
@@ -778,9 +676,7 @@ mod tests {
             )),
         );
 
-        let summary = runtime
-            .run_turn("use add", None)
-            .expect("tool loop succeeds");
+        let summary = runtime.run_turn("use add").expect("tool loop succeeds");
 
         assert_eq!(summary.tool_results.len(), 1);
         let ContentBlock::ToolResult {
@@ -841,7 +737,6 @@ mod tests {
             session,
             SimpleApi,
             StaticToolExecutor::new(),
-            PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
         );
 
@@ -868,12 +763,11 @@ mod tests {
             Session::new(),
             SimpleApi,
             StaticToolExecutor::new(),
-            PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
         );
-        runtime.run_turn("a", None).expect("turn a");
-        runtime.run_turn("b", None).expect("turn b");
-        runtime.run_turn("c", None).expect("turn c");
+        runtime.run_turn("a").expect("turn a");
+        runtime.run_turn("b").expect("turn b");
+        runtime.run_turn("c").expect("turn c");
 
         let result = runtime.compact(CompactionConfig {
             preserve_recent_messages: 2,
@@ -936,14 +830,11 @@ mod tests {
             session,
             SimpleApi,
             StaticToolExecutor::new(),
-            PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
         )
         .with_auto_compaction_input_tokens_threshold(100_000);
 
-        let summary = runtime
-            .run_turn("trigger", None)
-            .expect("turn should succeed");
+        let summary = runtime.run_turn("trigger").expect("turn should succeed");
 
         assert_eq!(
             summary.auto_compaction,
@@ -979,14 +870,11 @@ mod tests {
             Session::new(),
             SimpleApi,
             StaticToolExecutor::new(),
-            PermissionPolicy::new(PermissionMode::DangerFullAccess),
             vec!["system".to_string()],
         )
         .with_auto_compaction_input_tokens_threshold(100_000);
 
-        let summary = runtime
-            .run_turn("trigger", None)
-            .expect("turn should succeed");
+        let summary = runtime.run_turn("trigger").expect("turn should succeed");
         assert_eq!(summary.auto_compaction, None);
         assert_eq!(runtime.session().messages.len(), 2);
     }
