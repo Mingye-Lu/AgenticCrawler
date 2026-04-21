@@ -2,7 +2,7 @@ use std::sync::mpsc::Sender;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
@@ -326,12 +326,63 @@ impl AuthModal {
             }
         }
     }
+
+    pub(crate) fn supports_vertical_wheel(&self) -> bool {
+        matches!(
+            self.step,
+            AuthModalStep::ProviderSelect { .. }
+                | AuthModalStep::AuthMethodSelect { .. }
+                | AuthModalStep::ModelSelect { .. }
+        )
+    }
+
+    pub(crate) fn handle_vertical_wheel(&mut self, scroll_down: bool) {
+        match &mut self.step {
+            AuthModalStep::ProviderSelect { selected } => {
+                let total = flat_preset_list().len();
+                if total == 0 {
+                    return;
+                }
+                if scroll_down {
+                    *selected = (*selected + 1).min(total - 1);
+                } else {
+                    *selected = selected.saturating_sub(1);
+                }
+            }
+            AuthModalStep::AuthMethodSelect { provider, selected } => {
+                let methods_len =
+                    if matches!(provider, ProviderKind::Other | ProviderKind::Preset(_)) {
+                        1
+                    } else {
+                        2
+                    };
+                if scroll_down {
+                    *selected = (*selected + 1).min(methods_len - 1);
+                } else {
+                    *selected = selected.saturating_sub(1);
+                }
+            }
+            AuthModalStep::ModelSelect { state, .. } => {
+                if scroll_down {
+                    state.handle_down();
+                } else {
+                    state.handle_up();
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Modal for AuthModal {
     #[allow(clippy::too_many_lines)]
     fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
-        let (border_color, text, cursor_pos, anchor_line) = match &self.step {
+        let hint_style = Style::default()
+            .fg(Color::Rgb(130, 136, 145))
+            .add_modifier(Modifier::DIM);
+        let hint_line = |text: &str| Line::from(Span::styled(text.to_string(), hint_style));
+
+        let (border_color, body_lines, footer_hint, cursor_pos, anchor_line) = match &self.step {
             AuthModalStep::ProviderSelect { selected } => {
                 let presets = flat_preset_list();
                 let mut lines: Vec<Line<'_>> = Vec::new();
@@ -391,10 +442,15 @@ impl Modal for AuthModal {
                         idx += 1;
                     }
                 }
-                lines.push(Line::default());
-                lines.push(Line::from("↑/↓ navigate  Enter select  Esc cancel"));
-
-                (Color::Cyan, Text::from(lines), None, Some(selected_line))
+                (
+                    Color::Cyan,
+                    lines,
+                    Some(hint_line(
+                        "↑/↓ navigate  ← first  → last  Enter select  Esc cancel",
+                    )),
+                    None,
+                    Some(selected_line),
+                )
             }
             AuthModalStep::AuthMethodSelect { provider, selected } => {
                 let methods = match provider {
@@ -410,9 +466,15 @@ impl Modal for AuthModal {
                     let cursor = if index == *selected { '>' } else { ' ' };
                     lines.push(Line::from(format!("  {cursor} {method}")));
                 }
-                lines.push(Line::default());
-                lines.push(Line::from("Up/Down navigate  Enter select  Esc back"));
-                (Color::Cyan, Text::from(lines), None, None)
+                (
+                    Color::Cyan,
+                    lines,
+                    Some(hint_line(
+                        "Up/Down navigate  Left first  Right last  Enter select  Esc back",
+                    )),
+                    None,
+                    Some(selected.saturating_add(2)),
+                )
             }
             AuthModalStep::BaseUrlInput {
                 input,
@@ -430,12 +492,11 @@ impl Modal for AuthModal {
                         message.clone(),
                         Style::default().fg(Color::Red),
                     )));
-                    lines.push(Line::default());
                 }
-                lines.push(Line::from("←/→ move  Enter confirm  Esc back"));
                 (
                     Color::Yellow,
-                    Text::from(lines),
+                    lines,
+                    Some(hint_line("←/→ move  Enter confirm  Esc back")),
                     Some((
                         3u16,
                         4u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)),
@@ -466,12 +527,11 @@ impl Modal for AuthModal {
                         message.clone(),
                         Style::default().fg(Color::Red),
                     )));
-                    lines.push(Line::default());
                 }
-                lines.push(Line::from("←/→ move  Enter confirm  Esc back"));
                 (
                     Color::Yellow,
-                    Text::from(lines),
+                    lines,
+                    Some(hint_line("←/→ move  Enter confirm  Esc back")),
                     Some((
                         3u16,
                         3u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)),
@@ -482,12 +542,14 @@ impl Modal for AuthModal {
             AuthModalStep::OAuthWaiting { status, tick, .. } => {
                 const FRAMES: [char; 8] = ['|', '/', '-', '\\', '|', '/', '-', '\\'];
                 let spinner = FRAMES[usize::from(*tick) % FRAMES.len()];
-                let lines = vec![
-                    Line::from(format!("{spinner}  {status}")),
-                    Line::default(),
-                    Line::from("Esc cancel"),
-                ];
-                (Color::Blue, Text::from(lines), None, None)
+                let lines = vec![Line::from(format!("{spinner}  {status}"))];
+                (
+                    Color::Blue,
+                    lines,
+                    Some(hint_line("Esc cancel")),
+                    None,
+                    None,
+                )
             }
             AuthModalStep::ModelFetchLoading { provider, .. } => {
                 let lines = vec![
@@ -495,7 +557,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Please wait..."),
                 ];
-                (Color::Blue, Text::from(lines), None, None)
+                (Color::Blue, lines, None, None, None)
             }
             AuthModalStep::ModelSelect { provider, state } => {
                 let mut lines = vec![
@@ -512,8 +574,11 @@ impl Modal for AuthModal {
                         Style::default().fg(Color::DarkGray),
                     )));
                 } else {
-                    let start = state.selected_idx.saturating_sub(5);
-                    let end = (start + 10).min(filtered.len());
+                    let visible_rows = 10usize;
+                    let start = state
+                        .selected_idx
+                        .saturating_sub(visible_rows.saturating_sub(1));
+                    let end = (start + visible_rows).min(filtered.len());
 
                     for (i, model) in filtered[start..end].iter().enumerate() {
                         let actual_idx = start + i;
@@ -535,14 +600,12 @@ impl Modal for AuthModal {
                         )));
                     }
                 }
-
-                lines.push(Line::default());
-                lines.push(Line::from(
-                    "↑/↓ list  ←/→ search  Enter select/input  Esc skip",
-                ));
                 (
                     Color::Cyan,
-                    Text::from(lines),
+                    lines,
+                    Some(hint_line(
+                        "↑/↓ list  ←/→ search  Enter select/input  Esc skip",
+                    )),
                     Some((
                         3u16,
                         10u16
@@ -557,7 +620,7 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Press any key to continue"),
                 ];
-                (Color::Green, Text::from(lines), None, None)
+                (Color::Green, lines, None, None, None)
             }
             AuthModalStep::Error { message } => {
                 let lines = vec![
@@ -565,23 +628,23 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Press any key to dismiss"),
                 ];
-                (Color::Red, Text::from(lines), None, None)
+                (Color::Red, lines, None, None, None)
             }
         };
 
-        let scroll_for = |inner_h: u16| -> u16 {
+        let scroll_for = |view_h: u16| -> u16 {
             let Some(sel) = anchor_line else {
                 return 0;
             };
-            let vh = inner_h as usize;
+            let vh = usize::from(view_h.max(1));
             if sel < vh {
                 0
             } else {
-                u16::try_from(sel.saturating_sub(vh / 2)).unwrap_or(u16::MAX)
+                u16::try_from(sel.saturating_sub(vh.saturating_sub(1))).unwrap_or(u16::MAX)
             }
         };
 
-        if area.width <= 92 {
+        let inner = if area.width <= 92 {
             let block = Block::default()
                 .title(self.title())
                 .title_style(
@@ -592,52 +655,61 @@ impl Modal for AuthModal {
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(border_color))
-                .padding(Padding::new(1, 1, 0, 0));
+                .padding(Padding::new(1, 1, 0, 0))
+                .style(Style::default().bg(Color::Rgb(16, 20, 26)));
             let inner = block.inner(area);
             frame.render_widget(Clear, area);
             frame.render_widget(block, area);
-            let mut content_lines = text.lines.clone();
-            while content_lines
-                .last()
-                .is_some_and(|line| line.spans.iter().all(|span| span.content.trim().is_empty()))
-            {
-                content_lines.pop();
-            }
-            let mut lines = Vec::with_capacity(content_lines.len() + 2);
-            lines.push(Line::from(""));
-            lines.extend(content_lines);
-            lines.push(Line::from(""));
-            let scroll_row = anchor_line.map_or(0u16, |sel| {
-                let sel = sel + 1; // narrow path prepends a blank line
-                let vh = inner.height as usize;
-                if sel < vh {
-                    0
-                } else {
-                    u16::try_from(sel.saturating_sub(vh / 2)).unwrap_or(u16::MAX)
-                }
-            });
-            let paragraph = Paragraph::new(Text::from(lines))
-                .wrap(Wrap { trim: false })
-                .scroll((scroll_row, 0));
-            frame.render_widget(paragraph, inner);
-            if let Some((row, col)) = cursor_pos {
-                frame.set_cursor_position((
-                    inner.x.saturating_add(col),
-                    inner.y.saturating_add(row),
-                ));
-            }
+            inner
         } else {
-            let inner = draw_modal_frame(frame, area, self.title(), border_color);
-            let scroll_row = scroll_for(inner.height);
-            let paragraph = Paragraph::new(text)
+            draw_modal_frame(frame, area, self.title(), border_color)
+        };
+
+        let (body_area, hint_area) = if footer_hint.is_some() {
+            let sections = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Length(1),
+                    ratatui::layout::Constraint::Min(0),
+                    ratatui::layout::Constraint::Length(1),
+                    ratatui::layout::Constraint::Length(1),
+                ])
+                .split(inner);
+            (sections[1], Some(sections[3]))
+        } else {
+            let sections = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Length(1),
+                    ratatui::layout::Constraint::Min(0),
+                    ratatui::layout::Constraint::Length(1),
+                ])
+                .split(inner);
+            (sections[1], None)
+        };
+
+        if body_area.height > 0 {
+            let body_text = Text::from(body_lines);
+            let scroll_row = scroll_for(body_area.height);
+            let paragraph = Paragraph::new(body_text)
                 .wrap(Wrap { trim: false })
                 .scroll((scroll_row, 0));
-            frame.render_widget(paragraph, inner);
+            frame.render_widget(paragraph, body_area);
             if let Some((row, col)) = cursor_pos {
+                let cursor_row = row
+                    .saturating_sub(1)
+                    .min(body_area.height.saturating_sub(1));
+                let cursor_col = col.min(body_area.width.saturating_sub(1));
                 frame.set_cursor_position((
-                    inner.x.saturating_add(col),
-                    inner.y.saturating_add(row),
+                    body_area.x.saturating_add(cursor_col),
+                    body_area.y.saturating_add(cursor_row),
                 ));
+            }
+        }
+
+        if let (Some(area), Some(hint)) = (hint_area, footer_hint) {
+            if area.height > 0 {
+                frame.render_widget(Paragraph::new(hint), area);
             }
         }
     }
@@ -649,15 +721,19 @@ impl Modal for AuthModal {
                 let total = flat_preset_list().len();
                 match key.code {
                     KeyCode::Up => {
-                        *selected = if *selected == 0 {
-                            total - 1
-                        } else {
-                            *selected - 1
-                        };
+                        *selected = selected.saturating_sub(1);
                         ModalAction::Consumed
                     }
                     KeyCode::Down => {
-                        *selected = (*selected + 1) % total;
+                        *selected = (*selected + 1).min(total.saturating_sub(1));
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Left => {
+                        *selected = 0;
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Right => {
+                        *selected = total.saturating_sub(1);
                         ModalAction::Consumed
                     }
                     KeyCode::Enter => {
@@ -708,15 +784,19 @@ impl Modal for AuthModal {
                     };
                 match key.code {
                     KeyCode::Up => {
-                        *selected = if *selected == 0 {
-                            methods_len - 1
-                        } else {
-                            *selected - 1
-                        };
+                        *selected = selected.saturating_sub(1);
                         ModalAction::Consumed
                     }
                     KeyCode::Down => {
-                        *selected = (*selected + 1) % methods_len;
+                        *selected = (*selected + 1).min(methods_len - 1);
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Left => {
+                        *selected = 0;
+                        ModalAction::Consumed
+                    }
+                    KeyCode::Right => {
+                        *selected = methods_len - 1;
                         ModalAction::Consumed
                     }
                     KeyCode::Enter => {
@@ -1026,6 +1106,126 @@ mod tests {
         match &modal.step {
             AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, 0),
             _ => panic!("expected provider selection step"),
+        }
+    }
+
+    #[test]
+    fn wheel_scroll_provider_select_clamps_at_edges() {
+        let mut modal = modal();
+        let total = flat_preset_list().len();
+
+        modal.handle_vertical_wheel(false);
+        match &modal.step {
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, 0),
+            _ => panic!("expected provider selection step"),
+        }
+
+        for _ in 1..total {
+            modal.handle_vertical_wheel(true);
+        }
+        modal.handle_vertical_wheel(true);
+        match &modal.step {
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, total - 1),
+            _ => panic!("expected provider selection step"),
+        }
+    }
+
+    #[test]
+    fn provider_select_keyboard_clamps_and_jumps() {
+        let mut modal = modal();
+        let total = flat_preset_list().len();
+
+        assert_eq!(modal.handle_key(key(KeyCode::Up)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, 0),
+            _ => panic!("expected provider selection step"),
+        }
+
+        assert_eq!(modal.handle_key(key(KeyCode::Right)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, total - 1),
+            _ => panic!("expected provider selection step"),
+        }
+
+        assert_eq!(modal.handle_key(key(KeyCode::Down)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, total - 1),
+            _ => panic!("expected provider selection step"),
+        }
+
+        assert_eq!(modal.handle_key(key(KeyCode::Left)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::ProviderSelect { selected } => assert_eq!(*selected, 0),
+            _ => panic!("expected provider selection step"),
+        }
+    }
+
+    #[test]
+    fn auth_method_keyboard_clamps_and_jumps() {
+        let mut modal = modal();
+        let _ = modal.handle_key(key(KeyCode::Enter));
+
+        assert_eq!(modal.handle_key(key(KeyCode::Up)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::AuthMethodSelect { selected, .. } => assert_eq!(*selected, 0),
+            _ => panic!("expected auth method select step"),
+        }
+
+        assert_eq!(modal.handle_key(key(KeyCode::Right)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::AuthMethodSelect { selected, .. } => assert_eq!(*selected, 1),
+            _ => panic!("expected auth method select step"),
+        }
+
+        assert_eq!(modal.handle_key(key(KeyCode::Down)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::AuthMethodSelect { selected, .. } => assert_eq!(*selected, 1),
+            _ => panic!("expected auth method select step"),
+        }
+
+        assert_eq!(modal.handle_key(key(KeyCode::Left)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::AuthMethodSelect { selected, .. } => assert_eq!(*selected, 0),
+            _ => panic!("expected auth method select step"),
+        }
+    }
+
+    #[test]
+    fn wheel_scroll_model_select_clamps_at_edges() {
+        let mut modal = AuthModal {
+            step: AuthModalStep::ModelSelect {
+                provider: ProviderKind::OpenAi,
+                state: crate::tui::model_list::ModelListState {
+                    models: vec![
+                        crate::tui::model_list::ModelInfo {
+                            id: "a".to_string(),
+                            display_name: None,
+                        },
+                        crate::tui::model_list::ModelInfo {
+                            id: "b".to_string(),
+                            display_name: None,
+                        },
+                    ],
+                    filter: String::new(),
+                    filter_cursor: 0,
+                    selected_idx: 0,
+                },
+            },
+        };
+
+        modal.handle_vertical_wheel(false);
+        if let AuthModalStep::ModelSelect { state, .. } = &modal.step {
+            assert_eq!(state.selected_idx, 0);
+        } else {
+            panic!("expected model select step");
+        }
+
+        modal.handle_vertical_wheel(true);
+        modal.handle_vertical_wheel(true);
+        if let AuthModalStep::ModelSelect { state, .. } = &modal.step {
+            assert_eq!(state.selected_idx, 1);
+        } else {
+            panic!("expected model select step");
         }
     }
 
