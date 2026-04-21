@@ -70,7 +70,6 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use runtime::PermissionMode;
     use serde_json::json;
 
     use super::*;
@@ -85,7 +84,6 @@ mod tests {
                     "properties": { "url": { "type": "string" } },
                     "required": ["url"]
                 }),
-                required_permission: PermissionMode::DangerFullAccess,
                 instructions: Some("Always use full URLs."),
             },
             ToolSpec {
@@ -96,7 +94,6 @@ mod tests {
                     "properties": { "selector": { "type": "string" } },
                     "required": ["selector"]
                 }),
-                required_permission: PermissionMode::DangerFullAccess,
                 instructions: None,
             },
             ToolSpec {
@@ -106,7 +103,6 @@ mod tests {
                     "type": "object",
                     "properties": {}
                 }),
-                required_permission: PermissionMode::DangerFullAccess,
                 instructions: None,
             },
         ]
@@ -137,7 +133,6 @@ mod tests {
             name: "navigate",
             description: "Navigate to a URL",
             input_schema: json!({"required": ["url"]}),
-            required_permission: PermissionMode::DangerFullAccess,
             instructions: None,
         };
         let line = format_tool(&spec);
@@ -150,7 +145,6 @@ mod tests {
             name: "screenshot",
             description: "Take a screenshot",
             input_schema: json!({"type": "object"}),
-            required_permission: PermissionMode::DangerFullAccess,
             instructions: None,
         };
         let line = format_tool(&spec);

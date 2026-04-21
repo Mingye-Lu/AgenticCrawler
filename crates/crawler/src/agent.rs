@@ -1,8 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use runtime::{
-    ApiClient, ContentBlock, ConversationRuntime, PermissionMode, PermissionPolicy, Session,
-    ToolError, ToolExecutor, TurnSummary,
+    ApiClient, ContentBlock, ConversationRuntime, Session, ToolError, ToolExecutor, TurnSummary,
 };
 use serde_json::Value;
 
@@ -114,17 +113,11 @@ impl CrawlerAgent {
         let max_steps = self.max_steps;
         let system_prompt = build_system_prompt(&mvp_tool_specs());
 
-        let mut runtime = ConversationRuntime::new(
-            Session::new(),
-            api_client,
-            self,
-            PermissionPolicy::new(PermissionMode::DangerFullAccess),
-            system_prompt,
-        )
-        .with_max_iterations(max_steps);
+        let mut runtime = ConversationRuntime::new(Session::new(), api_client, self, system_prompt)
+            .with_max_iterations(max_steps);
 
         let summary = runtime
-            .run_turn(goal, None)
+            .run_turn(goal)
             .map_err(|e| CrawlError::new(e.to_string()))?;
 
         Ok(build_crawl_result(&summary))

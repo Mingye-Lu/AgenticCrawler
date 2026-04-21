@@ -1,4 +1,3 @@
-use runtime::PermissionMode;
 use serde_json::json;
 
 pub mod agent;
@@ -24,7 +23,6 @@ pub struct ToolSpec {
     pub name: &'static str,
     pub description: &'static str,
     pub input_schema: serde_json::Value,
-    pub required_permission: PermissionMode,
     /// Extended usage guidance rendered into the system prompt.
     pub instructions: Option<&'static str>,
 }
@@ -45,7 +43,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: Some("Always use full URLs including the protocol (https://). The response includes extracted page text — read it before taking further actions."),
         },
         ToolSpec {
@@ -59,7 +57,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["selector"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: None,
         },
         ToolSpec {
@@ -78,7 +76,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["fields"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: Some("Pass all field values as a JSON object in `fields`. Set `submit` to true to submit the form after filling. Use `form_selector` when the page has multiple forms."),
         },
         ToolSpec {
@@ -93,7 +91,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["instruction", "data"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::ReadOnly,
+
             instructions: Some("Describe what to extract in `instruction`. Pass a JSON template in `data` showing the desired output shape. Return structured JSON."),
         },
         ToolSpec {
@@ -104,7 +102,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "properties": {},
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: None,
         },
         ToolSpec {
@@ -115,7 +113,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "properties": {},
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: None,
         },
         ToolSpec {
@@ -129,7 +127,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: None,
         },
         ToolSpec {
@@ -143,7 +141,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay."),
         },
         ToolSpec {
@@ -160,7 +158,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["selector"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option."),
         },
         ToolSpec {
@@ -174,7 +172,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["script"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: Some("Use for complex interactions that CSS selectors can't handle. The script runs in the page context and can return a value."),
         },
         ToolSpec {
@@ -188,7 +186,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["selector"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: None,
         },
         ToolSpec {
@@ -203,7 +201,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["key"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: None,
         },
         ToolSpec {
@@ -216,7 +214,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::DangerFullAccess,
+
             instructions: None,
         },
         ToolSpec {
@@ -230,7 +228,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::ReadOnly,
+
             instructions: None,
         },
         ToolSpec {
@@ -246,7 +244,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            required_permission: PermissionMode::WorkspaceWrite,
+
             instructions: Some("Downloads the resource at `url` into the workspace directory. Optionally specify `filename` and `subdir`."),
         },
     ]
