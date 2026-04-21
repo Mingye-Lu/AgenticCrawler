@@ -29,6 +29,7 @@ use runtime::{format_usd, pricing_for_model};
 
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
 use crate::format::{render_repl_help, VERSION};
+use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
 use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
@@ -985,7 +986,9 @@ struct ReplTuiState {
     input_preferred_col: Option<usize>,
     status_line: String,
     busy: bool,
-    active_modal: Option<AuthModal>,
+    #[allow(dead_code)]
+    pending_model_after_auth: Option<String>,
+    active_modal: Option<ActiveModal>,
     exit: bool,
     current_tool: Option<String>,
     status_entry_index: Option<usize>,
@@ -1033,6 +1036,7 @@ impl ReplTuiState {
             input_preferred_col: None,
             status_line: String::new(),
             busy: false,
+            pending_model_after_auth: None,
             active_modal: None,
             exit: false,
             persist_on_exit: false,
@@ -1069,7 +1073,7 @@ impl ReplTuiState {
             self.spinner_tick = self.spinner_tick.wrapping_add(1);
             self.spinner_deadline = now + Duration::from_millis(120);
         }
-        if let Some(ref mut modal) = self.active_modal {
+        if let Some(modal) = self.active_modal.as_mut().map(ActiveModal::as_auth_mut) {
             if let AuthModalStep::OAuthWaiting { tick, .. } = &mut modal.step {
                 if advance_spinner {
                     *tick = tick.wrapping_add(1);
@@ -1688,7 +1692,7 @@ impl ReplTuiState {
                     self.push_system(&s);
                 }
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
-                    if let Some(ref mut modal) = self.active_modal {
+                    if let Some(modal) = self.active_modal.as_mut().map(ActiveModal::as_auth_mut) {
                         modal.step = match result {
                             Ok(()) => {
                                 let provider_kind = match crate::app::parse_provider_arg(&provider)
@@ -1736,7 +1740,7 @@ impl ReplTuiState {
                     }
                 }
                 ReplTuiEvent::AuthOAuthProgress { message } => {
-                    if let Some(ref mut modal) = self.active_modal {
+                    if let Some(modal) = self.active_modal.as_mut().map(ActiveModal::as_auth_mut) {
                         if let AuthModalStep::OAuthWaiting { status, .. } = &mut modal.step {
                             *status = message;
                         }
@@ -2329,7 +2333,10 @@ fn handle_slash_command_tui(
             let parsed_provider = provider
                 .as_deref()
                 .and_then(|p| crate::app::parse_provider_arg(p).ok());
-            state.active_modal = Some(AuthModal::new(ui_tx.clone(), parsed_provider));
+            state.active_modal = Some(ActiveModal::Auth(AuthModal::new(
+                ui_tx.clone(),
+                parsed_provider,
+            )));
             if let Some(crate::app::Provider::Anthropic) = parsed_provider {
                 spawn_anthropic_oauth_thread(ui_tx.clone(), &mut state.active_modal);
             }
@@ -2416,9 +2423,12 @@ fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
 }
 
 #[allow(clippy::too_many_lines)]
-fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
+fn spawn_anthropic_oauth_thread(
+    ui_tx: Sender<ReplTuiEvent>,
+    active_modal: &mut Option<ActiveModal>,
+) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
-    if let Some(ref mut modal) = active_modal {
+    if let Some(modal) = active_modal.as_mut().map(ActiveModal::as_auth_mut) {
         if let AuthModalStep::OAuthWaiting {
             cancel_tx: ref mut tx,
             ..
@@ -2532,9 +2542,9 @@ fn spawn_anthropic_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut 
 }
 
 #[allow(clippy::too_many_lines)]
-fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<AuthModal>) {
+fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<ActiveModal>) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
-    if let Some(ref mut modal) = active_modal {
+    if let Some(modal) = active_modal.as_mut().map(ActiveModal::as_auth_mut) {
         if let AuthModalStep::OAuthWaiting {
             cancel_tx: ref mut tx,
             ..
@@ -2862,15 +2872,18 @@ fn run_loop(
 
                 if let Some(ref mut modal) = state.active_modal {
                     let action = modal.handle_key(key);
-                    let modal_succeeded = matches!(modal.step, AuthModalStep::Success { .. });
+                    let modal_succeeded =
+                        matches!(modal.as_auth().step, AuthModalStep::Success { .. });
+                    let oauth_provider = match &modal.as_auth().step {
+                        AuthModalStep::OAuthWaiting {
+                            cancel_tx: None,
+                            provider,
+                            ..
+                        } => Some(*provider),
+                        _ => None,
+                    };
 
-                    if let AuthModalStep::OAuthWaiting {
-                        cancel_tx: None,
-                        provider,
-                        ..
-                    } = &modal.step
-                    {
-                        let prov = *provider;
+                    if let Some(prov) = oauth_provider {
                         match prov {
                             crate::tui::auth_modal::ProviderKind::Anthropic => {
                                 spawn_anthropic_oauth_thread(
