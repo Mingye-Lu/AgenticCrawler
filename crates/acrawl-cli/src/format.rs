@@ -47,43 +47,6 @@ pub(crate) fn format_model_switch_report(
     )
 }
 
-pub(crate) fn format_permissions_report(mode: &str) -> String {
-    let modes = [
-        ("read-only", "Read/search tools only", mode == "read-only"),
-        (
-            "workspace-write",
-            "Edit files inside the workspace",
-            mode == "workspace-write",
-        ),
-        (
-            "danger-full-access",
-            "Unrestricted tool access",
-            mode == "danger-full-access",
-        ),
-    ]
-    .into_iter()
-    .map(|(name, description, is_current)| {
-        let marker = if is_current {
-            "● current"
-        } else {
-            "○ available"
-        };
-        format!("  {name:<18} {marker:<11} {description}")
-    })
-    .collect::<Vec<_>>()
-    .join("\n");
-
-    format!(
-        "Permissions\n  Active mode      {mode}\n  Mode status      live session default\n\nModes\n{modes}\n\nUsage\n  Inspect current mode with /permissions\n  Switch modes with /permissions <mode>"
-    )
-}
-
-pub(crate) fn format_permissions_switch_report(previous: &str, next: &str) -> String {
-    format!(
-        "Permissions updated\n  Result           mode switched\n  Previous mode    {previous}\n  Active mode      {next}\n  Applies to       subsequent tool calls\n  Usage            /permissions to inspect current mode"
-    )
-}
-
 pub(crate) fn format_cost_report(usage: TokenUsage) -> String {
     format!(
         "Cost\n  Input tokens     {}\n  Output tokens    {}\n  Cache create     {}\n  Cache read       {}\n  Total tokens     {}",
@@ -124,12 +87,11 @@ pub(crate) fn format_auto_compaction_notice(removed: usize) -> String {
 pub(crate) fn format_status_report(
     model: &str,
     usage: StatusUsage,
-    permission_mode: &str,
     context: &StatusContext,
 ) -> String {
     [
         format!(
-            "Status\n  Model            {model}\n  Permission mode  {permission_mode}\n  Messages         {}\n  Turns            {}\n  Estimated tokens {}",
+            "Status\n  Model            {model}\n  Messages         {}\n  Turns            {}\n  Estimated tokens {}",
             usage.message_count, usage.turns, usage.estimated_tokens,
         ),
         format!(
@@ -284,15 +246,6 @@ pub(crate) fn render_config_report(
     lines.push("Merged JSON".to_string());
     lines.push(format!("  {}", runtime_config.as_json().render()));
     Ok(lines.join("\n"))
-}
-
-pub(crate) fn normalize_permission_mode(mode: &str) -> Option<&'static str> {
-    match mode.trim() {
-        "read-only" => Some("read-only"),
-        "workspace-write" => Some("workspace-write"),
-        "danger-full-access" => Some("danger-full-access"),
-        _ => None,
-    }
 }
 
 pub(crate) fn render_last_tool_debug_report(
@@ -506,27 +459,6 @@ mod tests {
     }
 
     #[test]
-    fn permissions_report_uses_sectioned_layout() {
-        let report = format_permissions_report("workspace-write");
-        assert!(report.contains("Permissions"));
-        assert!(report.contains("Active mode      workspace-write"));
-        assert!(report.contains("Modes"));
-        assert!(report.contains("read-only          ○ available Read/search tools only"));
-        assert!(report.contains("workspace-write    ● current   Edit files inside the workspace"));
-        assert!(report.contains("danger-full-access ○ available Unrestricted tool access"));
-    }
-
-    #[test]
-    fn permissions_switch_report_is_structured() {
-        let report = format_permissions_switch_report("read-only", "workspace-write");
-        assert!(report.contains("Permissions updated"));
-        assert!(report.contains("Result           mode switched"));
-        assert!(report.contains("Previous mode    read-only"));
-        assert!(report.contains("Active mode      workspace-write"));
-        assert!(report.contains("Applies to       subsequent tool calls"));
-    }
-
-    #[test]
     fn model_report_uses_sectioned_layout() {
         let report = format_model_report("claude-sonnet", 12, 4);
         assert!(report.contains("Model"));
@@ -565,7 +497,6 @@ mod tests {
                 },
                 estimated_tokens: 128,
             },
-            "workspace-write",
             &StatusContext {
                 cwd: PathBuf::from("/tmp/project"),
                 session_path: Some(PathBuf::from("session.json")),
@@ -577,7 +508,6 @@ mod tests {
         );
         assert!(status.contains("Status"));
         assert!(status.contains("Model            claude-sonnet"));
-        assert!(status.contains("Permission mode  workspace-write"));
         assert!(status.contains("Messages         7"));
         assert!(status.contains("Latest total     10"));
         assert!(status.contains("Cumulative total 31"));
@@ -618,27 +548,12 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_supported_permission_modes() {
-        assert_eq!(normalize_permission_mode("read-only"), Some("read-only"));
-        assert_eq!(
-            normalize_permission_mode("workspace-write"),
-            Some("workspace-write")
-        );
-        assert_eq!(
-            normalize_permission_mode("danger-full-access"),
-            Some("danger-full-access")
-        );
-        assert_eq!(normalize_permission_mode("unknown"), None);
-    }
-
-    #[test]
     fn repl_help_includes_shared_commands_and_exit() {
         let help = render_repl_help();
         assert!(help.contains("REPL"));
         assert!(help.contains("/help"));
         assert!(help.contains("/status"));
         assert!(help.contains("/model [model]"));
-        assert!(help.contains("/permissions [read-only|workspace-write|danger-full-access]"));
         assert!(help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
         assert!(help.contains("/resume <session-path>"));

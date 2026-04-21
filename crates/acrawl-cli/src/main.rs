@@ -13,13 +13,13 @@ use std::path::{Path, PathBuf};
 
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
 use crawler::mvp_tool_specs;
-use runtime::{load_system_prompt, PermissionMode, Session};
+use runtime::{load_system_prompt, Session};
 
 use app::{
-    default_permission_mode, initial_model_from_credentials, permission_mode_from_label,
-    run_auth_cli, run_login, run_logout, run_repl, run_resume_command, AllowedToolSet, LiveCli,
+    initial_model_from_credentials, run_auth_cli, run_login, run_logout, run_repl,
+    run_resume_command, AllowedToolSet, LiveCli,
 };
-use format::{normalize_permission_mode, render_version_report, DEFAULT_DATE, VERSION};
+use format::{render_version_report, DEFAULT_DATE, VERSION};
 
 fn main() {
     // Load settings.json and set env vars consumed by child processes / the crawler.
@@ -71,9 +71,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             model,
             output_format,
             allowed_tools,
-            permission_mode,
         } => {
-            LiveCli::new(model, true, allowed_tools, permission_mode)?
+            LiveCli::new(model, true, allowed_tools)?
                 .run_turn_with_output(&prompt, output_format)?;
         }
         CliAction::Auth { provider } => run_auth_cli(provider.as_deref())?,
@@ -96,12 +95,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::Repl {
             model,
             allowed_tools,
-            permission_mode,
         } => {
             // When model is missing, start REPL and let inline TUI auth onboarding
             // collect provider/model instead of falling back to CLI auth prompts.
             let model = model.unwrap_or_default();
-            run_repl(model, allowed_tools, permission_mode)?;
+            run_repl(model, allowed_tools)?;
         }
         CliAction::Help => print_help(),
     }
@@ -124,7 +122,6 @@ enum CliAction {
         model: String,
         output_format: CliOutputFormat,
         allowed_tools: Option<AllowedToolSet>,
-        permission_mode: PermissionMode,
     },
     Auth {
         provider: Option<String>,
@@ -135,7 +132,6 @@ enum CliAction {
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
-        permission_mode: PermissionMode,
     },
     Help,
 }
@@ -162,7 +158,6 @@ impl CliOutputFormat {
 fn parse_args(args: &[String]) -> Result<CliAction, String> {
     let mut model = initial_model_from_credentials();
     let mut output_format = CliOutputFormat::Text;
-    let mut permission_mode = default_permission_mode();
     let mut wants_version = false;
     let mut allowed_tool_values = Vec::new();
     let mut rest = Vec::new();
@@ -196,23 +191,8 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 output_format = CliOutputFormat::parse(value)?;
                 index += 2;
             }
-            "--permission-mode" => {
-                let value = args
-                    .get(index + 1)
-                    .ok_or_else(|| "missing value for --permission-mode".to_string())?;
-                permission_mode = parse_permission_mode_arg(value)?;
-                index += 2;
-            }
             flag if flag.starts_with("--output-format=") => {
                 output_format = CliOutputFormat::parse(&flag[16..])?;
-                index += 1;
-            }
-            flag if flag.starts_with("--permission-mode=") => {
-                permission_mode = parse_permission_mode_arg(&flag[18..])?;
-                index += 1;
-            }
-            "--dangerously-skip-permissions" => {
-                permission_mode = PermissionMode::DangerFullAccess;
                 index += 1;
             }
             "--no-headless" | "--headed" => {
@@ -244,7 +224,6 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                     model: registry.resolve_alias(&model).to_string(),
                     output_format,
                     allowed_tools: normalize_allowed_tools(&allowed_tool_values)?,
-                    permission_mode,
                 });
             }
             "--print" => {
@@ -283,7 +262,6 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         return Ok(CliAction::Repl {
             model,
             allowed_tools,
-            permission_mode,
         });
     }
     if matches!(rest.first().map(String::as_str), Some("--help" | "-h")) {
@@ -315,7 +293,6 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 model,
                 output_format,
                 allowed_tools,
-                permission_mode,
             })
         }
         other if !other.starts_with('/') => Ok(CliAction::Prompt {
@@ -325,7 +302,6 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             })?,
             output_format,
             allowed_tools,
-            permission_mode,
         }),
         other => Err(format!("unknown subcommand: {other}")),
     }
@@ -384,14 +360,6 @@ fn normalize_bool_flag(flag: &str, value: &str) -> Result<bool, String> {
             "unsupported value for {flag}: {other} (expected true/false)"
         )),
     }
-}
-
-fn parse_permission_mode_arg(value: &str) -> Result<PermissionMode, String> {
-    normalize_permission_mode(value)
-        .ok_or_else(|| {
-            format!("unsupported permission mode '{value}'. Use read-only, workspace-write, or danger-full-access.")
-        })
-        .map(permission_mode_from_label)
 }
 
 fn parse_system_prompt_args(args: &[String]) -> Result<CliAction, String> {
@@ -543,14 +511,6 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  --permission-mode MODE     Set read-only, workspace-write, or danger-full-access"
-    )?;
-    writeln!(
-        out,
-        "  --dangerously-skip-permissions  Skip all permission checks"
-    )?;
-    writeln!(
-        out,
         "  --no-headless              Launch the browser in headed (visible) mode"
     )?;
     writeln!(
@@ -606,7 +566,6 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
-    use runtime::PermissionMode;
 
     static MODEL_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -643,7 +602,6 @@ mod tests {
                 CliAction::Repl {
                     model: None,
                     allowed_tools: None,
-                    permission_mode: PermissionMode::ReadOnly,
                 }
             );
         });
@@ -666,7 +624,6 @@ mod tests {
                     model: "claude-sonnet-4-6".to_string(),
                     output_format: CliOutputFormat::Text,
                     allowed_tools: None,
-                    permission_mode: PermissionMode::ReadOnly,
                 }
             );
         });
@@ -689,7 +646,6 @@ mod tests {
                     model: "claude-opus".to_string(),
                     output_format: CliOutputFormat::Json,
                     allowed_tools: None,
-                    permission_mode: PermissionMode::ReadOnly,
                 }
             );
         });
@@ -711,7 +667,6 @@ mod tests {
                     model: "claude-opus-4-6".to_string(),
                     output_format: CliOutputFormat::Text,
                     allowed_tools: None,
-                    permission_mode: PermissionMode::ReadOnly,
                 }
             );
         });
@@ -727,25 +682,6 @@ mod tests {
             parse_args(&["-V".to_string()]).expect("parse"),
             CliAction::Version
         );
-    }
-
-    #[test]
-    fn parses_permission_mode_flag() {
-        with_clean_config_env(|| {
-            let args = vec![
-                "--permission-mode=read-only".to_string(),
-                "--model".to_string(),
-                "claude-sonnet-4-6".to_string(),
-            ];
-            assert_eq!(
-                parse_args(&args).expect("args should parse"),
-                CliAction::Repl {
-                    model: Some("claude-sonnet-4-6".to_string()),
-                    allowed_tools: None,
-                    permission_mode: PermissionMode::ReadOnly,
-                }
-            );
-        });
     }
 
     #[test]

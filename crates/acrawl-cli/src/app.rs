@@ -16,16 +16,14 @@ use commands::{slash_command_specs, SlashCommand};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
 use runtime::{
     load_system_prompt, ApiClient, ApiRequest, AssistantEvent, CompactionConfig, ConfigLoader,
-    ConversationMessage, ConversationRuntime, MessageRole, PermissionMode, PermissionPolicy,
-    PermissionPromptDecision, PermissionPrompter, PermissionRequest, RuntimeError, Session,
-    TokenUsage, ToolError, ToolExecutor,
+    ConversationMessage, ConversationRuntime, MessageRole, RuntimeError, Session, TokenUsage,
+    ToolError, ToolExecutor,
 };
 use serde_json::json;
 
 use crate::format::{
     format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
-    format_model_switch_report, format_permissions_report, format_permissions_switch_report,
-    format_resume_report, format_status_report, normalize_permission_mode, render_config_report,
+    format_model_switch_report, format_resume_report, format_status_report, render_config_report,
     render_export_text, render_last_tool_debug_report, render_repl_help, render_version_report,
     resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
@@ -69,24 +67,6 @@ pub(crate) fn initial_model_from_credentials() -> Option<String> {
     None
 }
 
-pub(crate) fn default_permission_mode() -> PermissionMode {
-    let settings = runtime::load_settings();
-    settings
-        .permission_mode
-        .as_deref()
-        .and_then(normalize_permission_mode)
-        .map_or(PermissionMode::DangerFullAccess, permission_mode_from_label)
-}
-
-pub(crate) fn permission_mode_from_label(mode: &str) -> PermissionMode {
-    match mode {
-        "read-only" => PermissionMode::ReadOnly,
-        "workspace-write" => PermissionMode::WorkspaceWrite,
-        "danger-full-access" => PermissionMode::DangerFullAccess,
-        other => panic!("unsupported permission mode label: {other}"),
-    }
-}
-
 pub(crate) fn filter_tool_specs(allowed_tools: Option<&AllowedToolSet>) -> Vec<crawler::ToolSpec> {
     mvp_tool_specs()
         .into_iter()
@@ -104,23 +84,21 @@ pub(crate) fn slash_command_completion_candidates() -> Vec<String> {
 pub(crate) fn run_repl(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
-    permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let classic =
         runtime::load_settings().classic_repl.unwrap_or(false) || !io::stdout().is_terminal();
     if classic {
-        run_repl_classic(model, allowed_tools, permission_mode)
+        run_repl_classic(model, allowed_tools)
     } else {
-        crate::tui::run_repl_ratatui(model, allowed_tools, permission_mode)
+        crate::tui::run_repl_ratatui(model, allowed_tools)
     }
 }
 
 fn run_repl_classic(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
-    permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut cli = LiveCli::new(model, true, allowed_tools, permission_mode)?;
+    let mut cli = LiveCli::new(model, true, allowed_tools)?;
     let mut editor = input::LineEditor::new("> ", slash_command_completion_candidates());
     println!("{}", cli.startup_banner());
 
@@ -158,7 +136,6 @@ fn run_repl_classic(
 pub(crate) struct LiveCli {
     model: String,
     allowed_tools: Option<AllowedToolSet>,
-    permission_mode: PermissionMode,
     system_prompt: Vec<String>,
     runtime: ConversationRuntime<LlmRuntimeClient, CliToolExecutor>,
     session: SessionHandle,
@@ -181,7 +158,6 @@ impl LiveCli {
         model: String,
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
-        permission_mode: PermissionMode,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
@@ -192,7 +168,6 @@ impl LiveCli {
             enable_tools,
             true,
             allowed_tools.clone(),
-            permission_mode,
             None,
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
@@ -203,7 +178,6 @@ impl LiveCli {
         let mut cli = Self {
             model,
             allowed_tools,
-            permission_mode,
             system_prompt,
             runtime,
             session,
@@ -222,7 +196,6 @@ impl LiveCli {
         model: String,
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
-        permission_mode: PermissionMode,
         ui_tx: mpsc::Sender<ReplTuiEvent>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let system_prompt = build_system_prompt()?;
@@ -234,7 +207,6 @@ impl LiveCli {
             enable_tools,
             false,
             allowed_tools.clone(),
-            permission_mode,
             Some(ui_tx.clone()),
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
@@ -245,7 +217,6 @@ impl LiveCli {
         let mut cli = Self {
             model,
             allowed_tools,
-            permission_mode,
             system_prompt,
             runtime,
             session,
@@ -266,10 +237,6 @@ impl LiveCli {
 
     pub(crate) fn model_name(&self) -> &str {
         &self.model
-    }
-
-    pub(crate) fn permission_mode(&self) -> PermissionMode {
-        self.permission_mode
     }
 
     pub(crate) fn reasoning_effort(&self) -> Option<api::ReasoningEffort> {
@@ -306,15 +273,11 @@ impl LiveCli {
         self.runtime.cancel_flag()
     }
 
-    pub(crate) fn run_turn_tui(
-        &mut self,
-        input: &str,
-        mut permission_prompter: ChannelPermissionPrompter,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(tx) = &self.ui_tx {
             let _ = tx.send(ReplTuiEvent::TurnStarting);
         }
-        let result = self.runtime.run_turn(input, Some(&mut permission_prompter));
+        let result = self.runtime.run_turn(input);
         let finish: Result<(), String> = match &result {
             Ok(summary) => {
                 if let Some(ev) = summary.auto_compaction {
@@ -350,14 +313,10 @@ impl LiveCli {
  ██║  ██║╚██████╗██║  ██║██║  ██║╚███╔███╔╝███████╗\n\
  ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝\x1b[0m 🕷️\n\n\
   \x1b[2mModel\x1b[0m            {}\n\
-  \x1b[2mPermissions\x1b[0m      {}\n\
   \x1b[2mDirectory\x1b[0m        {}\n\
   \x1b[2mSession\x1b[0m          {}\n\n\
   Type \x1b[1m/help\x1b[0m for commands · \x1b[2mShift+Enter\x1b[0m for newline",
-            self.model,
-            self.permission_mode.as_str(),
-            cwd,
-            self.session.id,
+            self.model, cwd, self.session.id,
         )
     }
 
@@ -369,8 +328,7 @@ impl LiveCli {
             TerminalRenderer::new().color_theme(),
             &mut stdout,
         )?;
-        let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
-        let result = self.runtime.run_turn(input, Some(&mut permission_prompter));
+        let result = self.runtime.run_turn(input);
         match result {
             Ok(summary) => {
                 spinner.finish(
@@ -419,11 +377,9 @@ impl LiveCli {
             true,
             false,
             self.allowed_tools.clone(),
-            self.permission_mode,
             self.ui_sender(),
         )?;
-        let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
-        let summary = runtime.run_turn(input, Some(&mut permission_prompter))?;
+        let summary = runtime.run_turn(input)?;
         self.runtime = runtime;
         self.persist_session()?;
         println!(
@@ -474,11 +430,6 @@ impl LiveCli {
             }
             SlashCommand::Model { model } => {
                 let result = self.model_command(model)?;
-                println!("{}", result.message);
-                result.persist_after
-            }
-            SlashCommand::Permissions { mode } => {
-                let result = self.permissions_command(mode)?;
                 println!("{}", result.message);
                 result.persist_after
             }
@@ -557,7 +508,6 @@ impl LiveCli {
                 cumulative,
                 estimated_tokens: self.runtime.estimated_tokens(),
             },
-            self.permission_mode.as_str(),
             &status_context(Some(&self.session.path))?,
         ))
     }
@@ -599,7 +549,6 @@ impl LiveCli {
             true,
             self.emit_output,
             self.allowed_tools.clone(),
-            self.permission_mode,
             self.ui_sender(),
         )?;
         self.model.clone_from(&model);
@@ -612,44 +561,6 @@ impl LiveCli {
         }
         Ok(CommandUiResult {
             message: format_model_switch_report(&previous, &model, message_count),
-            persist_after: true,
-        })
-    }
-
-    pub(crate) fn permissions_command(
-        &mut self,
-        mode: Option<String>,
-    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
-        let Some(mode) = mode else {
-            return Ok(CommandUiResult {
-                message: format_permissions_report(self.permission_mode.as_str()),
-                persist_after: false,
-            });
-        };
-        let normalized = normalize_permission_mode(&mode).ok_or_else(|| {
-            format!("unsupported permission mode '{mode}'. Use read-only, workspace-write, or danger-full-access.")
-        })?;
-        if normalized == self.permission_mode.as_str() {
-            return Ok(CommandUiResult {
-                message: format_permissions_report(normalized),
-                persist_after: false,
-            });
-        }
-        let previous = self.permission_mode.as_str().to_string();
-        let session = self.runtime.session().clone();
-        self.permission_mode = permission_mode_from_label(normalized);
-        self.runtime = build_runtime(
-            session,
-            self.model.clone(),
-            self.system_prompt.clone(),
-            true,
-            self.emit_output,
-            self.allowed_tools.clone(),
-            self.permission_mode,
-            self.ui_sender(),
-        )?;
-        Ok(CommandUiResult {
-            message: format_permissions_switch_report(&previous, normalized),
             persist_after: true,
         })
     }
@@ -674,14 +585,12 @@ impl LiveCli {
             true,
             self.emit_output,
             self.allowed_tools.clone(),
-            self.permission_mode,
             self.ui_sender(),
         )?;
         Ok(CommandUiResult {
             message: format!(
-                "Session cleared\n  Mode             fresh session\n  Preserved model  {}\n  Permission mode  {}\n  Session          {}",
+                "Session cleared\n  Mode             fresh session\n  Preserved model  {}\n  Session          {}",
                 self.model,
-                self.permission_mode.as_str(),
                 self.session.id
             ),
             persist_after: true,
@@ -713,7 +622,6 @@ impl LiveCli {
             true,
             self.emit_output,
             self.allowed_tools.clone(),
-            self.permission_mode,
             self.ui_sender(),
         )?;
         self.model = model;
@@ -781,7 +689,6 @@ impl LiveCli {
                     true,
                     self.emit_output,
                     self.allowed_tools.clone(),
-                    self.permission_mode,
                     self.ui_sender(),
                 )?;
                 self.model = model;
@@ -820,7 +727,6 @@ impl LiveCli {
             true,
             self.emit_output,
             self.allowed_tools.clone(),
-            self.permission_mode,
             self.ui_sender(),
         )?;
         println!("Auth\n  Provider         {label}\n  Result           authenticated");
@@ -836,7 +742,6 @@ impl LiveCli {
             true,
             self.emit_output,
             self.allowed_tools.clone(),
-            self.permission_mode,
             self.ui_sender(),
         )?;
         Ok(())
@@ -856,7 +761,6 @@ impl LiveCli {
             true,
             self.emit_output,
             self.allowed_tools.clone(),
-            self.permission_mode,
             self.ui_sender(),
         )?;
         self.persist_session()?;
@@ -938,7 +842,6 @@ pub(crate) fn run_resume_command(
                         cumulative: usage,
                         estimated_tokens: 0,
                     },
-                    default_permission_mode().as_str(),
                     &status_context(Some(session_path))?,
                 )),
             })
@@ -966,7 +869,6 @@ pub(crate) fn run_resume_command(
         SlashCommand::Debug
         | SlashCommand::Resume { .. }
         | SlashCommand::Model { .. }
-        | SlashCommand::Permissions { .. }
         | SlashCommand::Session { .. }
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed
@@ -1044,7 +946,6 @@ fn build_runtime(
     enable_tools: bool,
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
-    permission_mode: PermissionMode,
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, Box<dyn std::error::Error>> {
     session.model = Some(model.clone());
@@ -1058,76 +959,9 @@ fn build_runtime(
             ui_tx.clone(),
         )?,
         CliToolExecutor::new(allowed_tools, emit_output, ui_tx),
-        permission_policy(permission_mode),
         system_prompt,
         &build_runtime_feature_config()?,
     ))
-}
-
-pub(crate) struct ChannelPermissionPrompter {
-    ui_tx: mpsc::Sender<ReplTuiEvent>,
-}
-
-impl ChannelPermissionPrompter {
-    pub(crate) fn new(ui_tx: mpsc::Sender<ReplTuiEvent>) -> Self {
-        Self { ui_tx }
-    }
-}
-
-impl PermissionPrompter for ChannelPermissionPrompter {
-    fn decide(&mut self, request: &PermissionRequest) -> PermissionPromptDecision {
-        let (tx, rx) = mpsc::channel();
-        let _ = self.ui_tx.send(ReplTuiEvent::PermissionNeeded {
-            request: request.clone(),
-            respond: tx,
-        });
-        rx.recv().unwrap_or(PermissionPromptDecision::Deny {
-            reason: "permission UI closed".into(),
-        })
-    }
-}
-
-struct CliPermissionPrompter {
-    current_mode: PermissionMode,
-}
-impl CliPermissionPrompter {
-    fn new(current_mode: PermissionMode) -> Self {
-        Self { current_mode }
-    }
-}
-impl runtime::PermissionPrompter for CliPermissionPrompter {
-    fn decide(
-        &mut self,
-        request: &runtime::PermissionRequest,
-    ) -> runtime::PermissionPromptDecision {
-        println!();
-        println!("Permission approval required");
-        println!("  Tool             {}", request.tool_name);
-        println!("  Current mode     {}", self.current_mode.as_str());
-        println!("  Required mode    {}", request.required_mode.as_str());
-        println!("  Input            {}", request.input);
-        print!("Approve this tool call? [y/N]: ");
-        let _ = io::stdout().flush();
-        let mut response = String::new();
-        match io::stdin().read_line(&mut response) {
-            Ok(_) => {
-                let normalized = response.trim().to_ascii_lowercase();
-                if matches!(normalized.as_str(), "y" | "yes") {
-                    runtime::PermissionPromptDecision::Allow
-                } else {
-                    runtime::PermissionPromptDecision::Deny {
-                        reason: format!(
-                            "tool '{}' denied by user approval prompt",
-                            request.tool_name
-                        ),
-                    }
-                }
-            }
-            Err(error) => runtime::PermissionPromptDecision::Deny {
-                reason: format!("permission approval failed: {error}"),
-            },
-        }
-    }
 }
 
 pub(crate) struct LlmRuntimeClient {
@@ -1525,14 +1359,6 @@ impl ToolExecutor for CliToolExecutor {
             }
         }
     }
-}
-
-fn permission_policy(mode: PermissionMode) -> PermissionPolicy {
-    mvp_tool_specs()
-        .into_iter()
-        .fold(PermissionPolicy::new(mode), |policy, spec| {
-            policy.with_tool_requirement(spec.name, spec.required_permission)
-        })
 }
 
 pub(crate) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMessage> {

@@ -1,13 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const STARTER_ACRAWL_JSON: &str = concat!(
-    "{\n",
-    "  \"permissions\": {\n",
-    "    \"defaultMode\": \"dontAsk\"\n",
-    "  }\n",
-    "}\n",
-);
+const STARTER_ACRAWL_JSON: &str = "{}\n";
 const GITIGNORE_COMMENT: &str = "# AgenticCrawler local artifacts";
 const GITIGNORE_ENTRIES: [&str; 2] = [".acrawl/settings.local.json", ".acrawl/sessions/"];
 
@@ -364,13 +358,7 @@ mod tests {
         assert!(root.join("AGENTS.md").is_file());
         assert_eq!(
             fs::read_to_string(root.join(".acrawl.json")).expect("read acrawl json"),
-            concat!(
-                "{\n",
-                "  \"permissions\": {\n",
-                "    \"defaultMode\": \"dontAsk\"\n",
-                "  }\n",
-                "}\n",
-            )
+            "{}\n"
         );
         let gitignore = fs::read_to_string(root.join(".gitignore")).expect("read gitignore");
         assert!(gitignore.contains(".acrawl/settings.local.json"));

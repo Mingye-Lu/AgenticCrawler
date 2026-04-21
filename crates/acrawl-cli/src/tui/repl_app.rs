@@ -22,16 +22,12 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
-    Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
 use ratatui::DefaultTerminal;
-use runtime::{
-    format_usd, pricing_for_model, PermissionMode, PermissionPromptDecision, PermissionRequest,
-};
+use runtime::{format_usd, pricing_for_model};
 
-use crate::app::{
-    slash_command_completion_candidates, AllowedToolSet, ChannelPermissionPrompter, LiveCli,
-};
+use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
 use crate::format::{render_repl_help, VERSION};
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
 use crate::tui::modal::{Modal, ModalAction};
@@ -91,7 +87,6 @@ struct SlashOverlay {
 #[derive(Debug, Clone)]
 struct HeaderSnapshot {
     model: String,
-    permission_mode: PermissionMode,
     session_id: String,
     cost_text: String,
     context_text: String,
@@ -102,7 +97,6 @@ impl Default for HeaderSnapshot {
     fn default() -> Self {
         Self {
             model: "--".to_string(),
-            permission_mode: PermissionMode::ReadOnly,
             session_id: "--".to_string(),
             cost_text: "--".to_string(),
             context_text: "--".to_string(),
@@ -130,34 +124,10 @@ fn build_header_snapshot(cli: &LiveCli) -> HeaderSnapshot {
     );
     HeaderSnapshot {
         model: cli.model_name().to_string(),
-        permission_mode: cli.permission_mode(),
         session_id: cli.session_id().to_string(),
         cost_text: format_usd(estimate.total_cost_usd()),
         context_text: format!("{} ctx", format_compact_tokens(usage.total_tokens())),
         reasoning_effort: cli.reasoning_effort().map(|e| e.as_str().to_string()),
-    }
-}
-
-fn permission_badge(mode: PermissionMode) -> (String, Style) {
-    match mode {
-        PermissionMode::ReadOnly => (
-            "[ LOCK Read-Only ]".to_string(),
-            Style::default()
-                .fg(Color::LightGreen)
-                .add_modifier(Modifier::BOLD),
-        ),
-        PermissionMode::WorkspaceWrite => (
-            "[ WRITE Workspace ]".to_string(),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        PermissionMode::DangerFullAccess | PermissionMode::Prompt | PermissionMode::Allow => (
-            "[ ! FULL ACCESS ]".to_string(),
-            Style::default()
-                .fg(Color::LightRed)
-                .add_modifier(Modifier::BOLD),
-        ),
     }
 }
 
@@ -1015,7 +985,6 @@ struct ReplTuiState {
     input_preferred_col: Option<usize>,
     status_line: String,
     busy: bool,
-    pending_permission: Option<(PermissionRequest, Sender<PermissionPromptDecision>)>,
     active_modal: Option<AuthModal>,
     exit: bool,
     current_tool: Option<String>,
@@ -1064,7 +1033,6 @@ impl ReplTuiState {
             input_preferred_col: None,
             status_line: String::new(),
             busy: false,
-            pending_permission: None,
             active_modal: None,
             exit: false,
             persist_on_exit: false,
@@ -1118,9 +1086,7 @@ impl ReplTuiState {
 
     /// Context-aware placeholder shown when the input box is empty.
     fn input_placeholder(&self) -> &'static str {
-        if self.pending_permission.is_some() {
-            "Waiting for your authorization  (y / n / Esc)…"
-        } else if self.busy {
+        if self.busy {
             "AgenticCrawler is working…  (you can queue your next prompt)"
         } else if self.ui_state == AppUiState::WelcomeMode {
             "What is our goal today?"
@@ -1718,9 +1684,6 @@ impl ReplTuiState {
                         self.push_system(&format!("Error: {e}"));
                     }
                 }
-                ReplTuiEvent::PermissionNeeded { request, respond } => {
-                    self.pending_permission = Some((request, respond));
-                }
                 ReplTuiEvent::SystemMessage(s) => {
                     self.push_system(&s);
                 }
@@ -1784,68 +1747,6 @@ impl ReplTuiState {
     }
 }
 
-fn draw_permission_modal(frame: &mut ratatui::Frame<'_>, request: &PermissionRequest) {
-    let area = frame.area();
-    let block_area = area.inner(Margin {
-        horizontal: area.width / 6,
-        vertical: area.height / 4,
-    });
-    frame.render_widget(Clear, block_area);
-    let block = Block::default()
-        .title(" Permission Required ")
-        .title_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .style(Style::default().bg(Color::Rgb(16, 20, 26)))
-        .border_style(Style::default().fg(Color::Rgb(200, 120, 40)));
-    let inner = block.inner(block_area);
-    frame.render_widget(block, block_area);
-    let text = Text::from(vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("Tool: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(request.tool_name.clone(), Style::default().fg(Color::Cyan)),
-        ]),
-        Line::from(vec![
-            Span::styled("Current mode: ", Style::default().fg(Color::DarkGray)),
-            Span::raw(request.current_mode.as_str()),
-        ]),
-        Line::from(vec![
-            Span::styled("Required mode: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                request.required_mode.as_str(),
-                Style::default().fg(Color::LightRed),
-            ),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            request.input.clone(),
-            Style::default().fg(Color::Gray),
-        )),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "y",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" allow   "),
-            Span::styled(
-                "n",
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" deny"),
-        ]),
-    ]);
-    let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, inner);
-}
-
 fn suspend_for_stdout(terminal: &mut DefaultTerminal, f: impl FnOnce()) -> io::Result<()> {
     ratatui::try_restore()?;
     f();
@@ -1855,7 +1756,6 @@ fn suspend_for_stdout(terminal: &mut DefaultTerminal, f: impl FnOnce()) -> io::R
 }
 
 fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapshot) {
-    let (perm_text, perm_style) = permission_badge(header.permission_mode);
     let mut spans = vec![
         Span::styled(
             " ACrawl ",
@@ -1863,8 +1763,6 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapsh
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" "),
-        Span::styled(perm_text, perm_style),
         Span::raw(format!("  model={} ", header.model)),
     ];
     let left_w = Line::from(spans.clone()).width();
@@ -2266,8 +2164,6 @@ fn draw_chat(
     } else if state.busy {
         let s = state.spinner_char();
         format!(" {s} Thinking ")
-    } else if state.pending_permission.is_some() {
-        " ⚠ Permission ".to_string()
     } else if let Some(ref effort) = header.reasoning_effort {
         format!(" Input · {} · {effort} ", header.model)
     } else {
@@ -2276,16 +2172,12 @@ fn draw_chat(
 
     let footer_title_style = if state.busy {
         Style::default().fg(Color::LightCyan)
-    } else if state.pending_permission.is_some() {
-        Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::Rgb(100, 140, 180))
     };
 
     let footer_border_color = if state.busy {
         Color::Rgb(30, 70, 100)
-    } else if state.pending_permission.is_some() {
-        Color::Rgb(120, 90, 30)
     } else {
         Color::Rgb(50, 70, 100)
     };
@@ -2360,14 +2252,6 @@ fn handle_slash_command_tui(
                 g.persist_session()?;
             }
             state.push_system_card("Model", &result.message);
-        }
-        SlashCommand::Permissions { mode } => {
-            let mut g = cli.lock().expect("cli lock");
-            let result = g.permissions_command(mode)?;
-            if result.persist_after {
-                g.persist_session()?;
-            }
-            state.push_system_card("Permissions", &result.message);
         }
         SlashCommand::Compact => {
             let mut g = cli.lock().expect("cli lock");
@@ -2752,7 +2636,6 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
 pub fn run_repl_ratatui(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
-    permission_mode: PermissionMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (ui_tx, ui_rx) = mpsc::channel::<ReplTuiEvent>();
     let (work_tx, work_rx) = mpsc::channel::<WorkerMsg>();
@@ -2761,19 +2644,16 @@ pub fn run_repl_ratatui(
         model,
         true,
         allowed_tools,
-        permission_mode,
         ui_tx.clone(),
     )?));
 
     let cli_worker = Arc::clone(&cli);
-    let ui_tx_worker = ui_tx.clone();
     thread::spawn(move || {
         while let Ok(msg) = work_rx.recv() {
             match msg {
                 WorkerMsg::RunTurn(line) => {
                     let mut g = cli_worker.lock().expect("cli lock");
-                    let prompter = ChannelPermissionPrompter::new(ui_tx_worker.clone());
-                    let _ = g.run_turn_tui(&line, prompter);
+                    let _ = g.run_turn_tui(&line);
                 }
                 WorkerMsg::Shutdown => break,
             }
@@ -2824,16 +2704,12 @@ fn run_loop(
         let header = state.cached_header.clone();
 
         terminal.draw(|frame| {
-            let show_input_cursor =
-                state.active_modal.is_none() && state.pending_permission.is_none();
+            let show_input_cursor = state.active_modal.is_none();
             match state.ui_state {
                 AppUiState::WelcomeMode => {
-                    draw_welcome(frame, frame.area(), &mut state, show_input_cursor)
+                    draw_welcome(frame, frame.area(), &mut state, show_input_cursor);
                 }
                 AppUiState::ChatMode => draw_chat(frame, &mut state, &header, show_input_cursor),
-            }
-            if let Some((ref req, _)) = state.pending_permission {
-                draw_permission_modal(frame, req);
             }
             if let Some(ref modal) = state.active_modal {
                 modal.draw(frame, frame.area());
@@ -2982,27 +2858,6 @@ fn run_loop(
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
                     state.selection_anchor = None;
                     state.selection_end = None;
-                }
-
-                if let Some((req, respond)) = state.pending_permission.take() {
-                    #[allow(clippy::unnested_or_patterns)]
-                    match key.code {
-                        KeyCode::Char('y') | KeyCode::Char('Y') => {
-                            let _ = respond.send(PermissionPromptDecision::Allow);
-                        }
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                            let _ = respond.send(PermissionPromptDecision::Deny {
-                                reason: format!(
-                                    "tool '{}' denied from TUI permission dialog",
-                                    req.tool_name
-                                ),
-                            });
-                        }
-                        _ => {
-                            state.pending_permission = Some((req, respond));
-                        }
-                    }
-                    continue;
                 }
 
                 if let Some(ref mut modal) = state.active_modal {
