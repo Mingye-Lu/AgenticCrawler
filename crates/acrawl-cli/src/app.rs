@@ -1110,7 +1110,6 @@ impl ApiClient for LlmRuntimeClient {
                             write!(out, "{rendered}")
                                 .and_then(|()| out.flush())
                                 .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            self.send_ui_stream(rendered);
                         }
                         if let Some((id, name, input)) = pending_tool.take() {
                             let input = if input.is_empty() {
@@ -1147,7 +1146,6 @@ impl ApiClient for LlmRuntimeClient {
                             write!(out, "{rendered}")
                                 .and_then(|()| out.flush())
                                 .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            self.send_ui_stream(rendered);
                         }
                         events.push(AssistantEvent::MessageStop);
                     }
