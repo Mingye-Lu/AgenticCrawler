@@ -64,12 +64,6 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: false,
     },
     SlashCommandSpec {
-        name: "permissions",
-        summary: "Show or switch the active permission mode",
-        argument_hint: Some("[read-only|workspace-write|danger-full-access]"),
-        resume_supported: false,
-    },
-    SlashCommandSpec {
         name: "clear",
         summary: "Start a fresh local session",
         argument_hint: Some("[--confirm]"),
@@ -152,9 +146,6 @@ pub enum SlashCommand {
     Model {
         model: Option<String>,
     },
-    Permissions {
-        mode: Option<String>,
-    },
     Clear {
         confirm: bool,
     },
@@ -200,9 +191,6 @@ impl SlashCommand {
             "debug" => Self::Debug,
             "model" => Self::Model {
                 model: parts.next().map(ToOwned::to_owned),
-            },
-            "permissions" => Self::Permissions {
-                mode: parts.next().map(ToOwned::to_owned),
             },
             "clear" => Self::Clear {
                 confirm: parts.next() == Some("--confirm"),
@@ -301,7 +289,6 @@ pub fn handle_slash_command(
         SlashCommand::Status
         | SlashCommand::Debug
         | SlashCommand::Model { .. }
-        | SlashCommand::Permissions { .. }
         | SlashCommand::Clear { .. }
         | SlashCommand::Cost
         | SlashCommand::Resume { .. }
@@ -339,12 +326,6 @@ mod tests {
         assert_eq!(
             SlashCommand::parse("/model"),
             Some(SlashCommand::Model { model: None })
-        );
-        assert_eq!(
-            SlashCommand::parse("/permissions read-only"),
-            Some(SlashCommand::Permissions {
-                mode: Some("read-only".to_string()),
-            })
         );
         assert_eq!(
             SlashCommand::parse("/clear"),
@@ -430,7 +411,6 @@ mod tests {
         assert!(help.contains("/compact"));
         assert!(help.contains("/debug"));
         assert!(help.contains("/model [model]"));
-        assert!(help.contains("/permissions [read-only|workspace-write|danger-full-access]"));
         assert!(help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
         assert!(help.contains("/resume <session-path>"));
@@ -441,7 +421,7 @@ mod tests {
         assert!(help.contains("/auth [anthropic|openai|other]"));
         assert!(help.contains("/headed"));
         assert!(help.contains("/headless"));
-        assert_eq!(slash_command_specs().len(), 17);
+        assert_eq!(slash_command_specs().len(), 16);
         assert_eq!(resume_supported_slash_commands().len(), 8);
     }
 
@@ -494,12 +474,6 @@ mod tests {
         assert!(
             handle_slash_command("/model claude", &session, CompactionConfig::default()).is_none()
         );
-        assert!(handle_slash_command(
-            "/permissions read-only",
-            &session,
-            CompactionConfig::default()
-        )
-        .is_none());
         assert!(handle_slash_command("/clear", &session, CompactionConfig::default()).is_none());
         assert!(
             handle_slash_command("/clear --confirm", &session, CompactionConfig::default())
