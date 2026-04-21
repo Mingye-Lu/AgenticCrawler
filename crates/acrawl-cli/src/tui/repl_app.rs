@@ -1073,7 +1073,11 @@ impl ReplTuiState {
             self.spinner_tick = self.spinner_tick.wrapping_add(1);
             self.spinner_deadline = now + Duration::from_millis(120);
         }
-        if let Some(modal) = self.active_modal.as_mut().map(ActiveModal::as_auth_mut) {
+        if let Some(modal) = self
+            .active_modal
+            .as_mut()
+            .and_then(ActiveModal::as_auth_mut)
+        {
             if let AuthModalStep::OAuthWaiting { tick, .. } = &mut modal.step {
                 if advance_spinner {
                     *tick = tick.wrapping_add(1);
@@ -1692,7 +1696,11 @@ impl ReplTuiState {
                     self.push_system(&s);
                 }
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
-                    if let Some(modal) = self.active_modal.as_mut().map(ActiveModal::as_auth_mut) {
+                    if let Some(modal) = self
+                        .active_modal
+                        .as_mut()
+                        .and_then(ActiveModal::as_auth_mut)
+                    {
                         modal.step = match result {
                             Ok(()) => {
                                 let provider_kind = match crate::app::parse_provider_arg(&provider)
@@ -1740,7 +1748,11 @@ impl ReplTuiState {
                     }
                 }
                 ReplTuiEvent::AuthOAuthProgress { message } => {
-                    if let Some(modal) = self.active_modal.as_mut().map(ActiveModal::as_auth_mut) {
+                    if let Some(modal) = self
+                        .active_modal
+                        .as_mut()
+                        .and_then(ActiveModal::as_auth_mut)
+                    {
                         if let AuthModalStep::OAuthWaiting { status, .. } = &mut modal.step {
                             *status = message;
                         }
@@ -2250,12 +2262,23 @@ fn handle_slash_command_tui(
             state.push_system_card("Cost", &report);
         }
         SlashCommand::Model { model } => {
-            let mut g = cli.lock().expect("cli lock");
-            let result = g.model_command(model)?;
-            if result.persist_after {
-                g.persist_session()?;
+            if let Some(model_name) = model {
+                let mut g = cli.lock().expect("cli lock");
+                let result = g.model_command(Some(model_name))?;
+                if result.persist_after {
+                    g.persist_session()?;
+                }
+                state.push_system_card("Model", &result.message);
+            } else if state.busy {
+                state.push_system_card("Model", "Cannot switch models while the agent is running.");
+            } else {
+                let credentials = api::load_credentials().unwrap_or_default();
+                let registry = api::provider::ProviderRegistry::from_credentials(&credentials);
+                let current_model = cli.lock().expect("cli lock").model_name().to_string();
+                state.active_modal = Some(ActiveModal::Model(
+                    crate::tui::model_modal::ModelModal::new(&registry, &current_model),
+                ));
             }
-            state.push_system_card("Model", &result.message);
         }
         SlashCommand::Compact => {
             let mut g = cli.lock().expect("cli lock");
@@ -2428,7 +2451,7 @@ fn spawn_anthropic_oauth_thread(
     active_modal: &mut Option<ActiveModal>,
 ) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
-    if let Some(modal) = active_modal.as_mut().map(ActiveModal::as_auth_mut) {
+    if let Some(modal) = active_modal.as_mut().and_then(ActiveModal::as_auth_mut) {
         if let AuthModalStep::OAuthWaiting {
             cancel_tx: ref mut tx,
             ..
@@ -2544,7 +2567,7 @@ fn spawn_anthropic_oauth_thread(
 #[allow(clippy::too_many_lines)]
 fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Option<ActiveModal>) {
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
-    if let Some(modal) = active_modal.as_mut().map(ActiveModal::as_auth_mut) {
+    if let Some(modal) = active_modal.as_mut().and_then(ActiveModal::as_auth_mut) {
         if let AuthModalStep::OAuthWaiting {
             cancel_tx: ref mut tx,
             ..
@@ -2870,19 +2893,30 @@ fn run_loop(
                     state.selection_end = None;
                 }
 
+                let mut modal_action = None;
+                let mut modal_succeeded = false;
+                let mut oauth_provider = None;
+                let mut model_outcome = None;
+
                 if let Some(ref mut modal) = state.active_modal {
-                    let action = modal.handle_key(key);
-                    let modal_succeeded =
-                        matches!(modal.as_auth().step, AuthModalStep::Success { .. });
-                    let oauth_provider = match &modal.as_auth().step {
+                    modal_action = Some(modal.handle_key(key));
+                    modal_succeeded = modal
+                        .as_auth()
+                        .is_some_and(|m| matches!(m.step, AuthModalStep::Success { .. }));
+                    oauth_provider = modal.as_auth().and_then(|m| match &m.step {
                         AuthModalStep::OAuthWaiting {
                             cancel_tx: None,
                             provider,
                             ..
                         } => Some(*provider),
                         _ => None,
-                    };
+                    });
+                    if let Some(m) = modal.as_model() {
+                        model_outcome = Some(m.outcome().clone());
+                    }
+                }
 
+                if let Some(action) = modal_action {
                     if let Some(prov) = oauth_provider {
                         match prov {
                             crate::tui::auth_modal::ProviderKind::Anthropic => {
@@ -2927,6 +2961,77 @@ fn run_loop(
                                             "Authentication configured, but runtime lock failed.",
                                         );
                                     }
+                                }
+                                // Handle pending model switch after auth success
+                                if let Some(pending_model) = state.pending_model_after_auth.take() {
+                                    match cli.lock() {
+                                        Ok(mut guard) => {
+                                            match guard.model_command(Some(pending_model.clone())) {
+                                                Ok(result) => {
+                                                    if result.persist_after {
+                                                        let _ = guard.persist_session();
+                                                    }
+                                                    state
+                                                        .push_system_card("Model", &result.message);
+                                                }
+                                                Err(e) => {
+                                                    state.push_system_card(
+                                                        "Model Error",
+                                                        &format!("Failed to switch model: {e}"),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Err(_) => {
+                                            state.push_system_card(
+                                                "Model Error",
+                                                "Failed to acquire CLI lock for model switch",
+                                            );
+                                        }
+                                    }
+                                }
+                            } else if let Some(outcome) = model_outcome {
+                                match outcome {
+                                    crate::tui::model_modal::ModelModalOutcome::SwitchModel {
+                                        model_id,
+                                    } => match cli.lock() {
+                                        Ok(mut guard) => match guard
+                                            .model_command(Some(model_id.clone()))
+                                        {
+                                            Ok(result) => {
+                                                if result.persist_after {
+                                                    let _ = guard.persist_session();
+                                                }
+                                                drop(guard);
+                                                state.push_system_card("Model", &result.message);
+                                            }
+                                            Err(e) => {
+                                                drop(guard);
+                                                state.push_system_card(
+                                                    "Model Error",
+                                                    &format!("{e}"),
+                                                );
+                                            }
+                                        },
+                                        Err(_) => {
+                                            state.push_system_card(
+                                                "Model Error",
+                                                "Failed to acquire CLI lock.",
+                                            );
+                                        }
+                                    },
+                                    crate::tui::model_modal::ModelModalOutcome::AuthRequired {
+                                        provider_id,
+                                        model_id,
+                                    } => {
+                                        state.pending_model_after_auth = Some(model_id.clone());
+                                        let parsed_provider =
+                                            crate::app::parse_provider_arg(&provider_id).ok();
+                                        state.active_modal = Some(ActiveModal::Auth(
+                                            AuthModal::new(ui_tx.clone(), parsed_provider),
+                                        ));
+                                    }
+                                    crate::tui::model_modal::ModelModalOutcome::None => {}
                                 }
                             }
                             continue;
