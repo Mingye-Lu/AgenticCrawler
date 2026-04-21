@@ -1025,6 +1025,7 @@ struct ReplTuiState {
     cursor_on: bool,
     cursor_blink_deadline: Instant,
     slash_overlay: Option<SlashOverlay>,
+    last_slash_overlay_rect: Option<Rect>,
     cached_header: HeaderSnapshot,
     spinner_tick: u8,
     spinner_deadline: Instant,
@@ -1073,6 +1074,7 @@ impl ReplTuiState {
             cursor_on: true,
             cursor_blink_deadline: Instant::now() + Duration::from_millis(530),
             slash_overlay: None,
+            last_slash_overlay_rect: None,
             cached_header: HeaderSnapshot::default(),
             spinner_tick: 0,
             spinner_deadline: Instant::now() + Duration::from_millis(120),
@@ -1565,6 +1567,7 @@ impl ReplTuiState {
         let trimmed = self.input.trim();
         if !trimmed.starts_with('/') || trimmed.contains(char::is_whitespace) {
             self.slash_overlay = None;
+            self.last_slash_overlay_rect = None;
             return;
         }
 
@@ -1580,6 +1583,7 @@ impl ReplTuiState {
 
         if candidates.is_empty() {
             self.slash_overlay = None;
+            self.last_slash_overlay_rect = None;
             return;
         }
 
@@ -1609,6 +1613,27 @@ impl ReplTuiState {
                 .get(overlay.selected)
                 .map(|item| item.command.clone())
         })
+    }
+
+    fn slash_overlay_select_prev(&mut self) {
+        if let Some(overlay) = self.slash_overlay.as_mut() {
+            if overlay.selected > 0 {
+                overlay.selected -= 1;
+                if overlay.selected < overlay.scroll_offset {
+                    overlay.scroll_offset = overlay.selected;
+                }
+            }
+        }
+    }
+
+    fn slash_overlay_select_next(&mut self) {
+        if let Some(overlay) = self.slash_overlay.as_mut() {
+            overlay.selected = min(overlay.selected + 1, overlay.items.len() - 1);
+            let visible_count = min(overlay.items.len(), SLASH_OVERLAY_VISIBLE_ITEMS);
+            if overlay.selected >= overlay.scroll_offset + visible_count {
+                overlay.scroll_offset = overlay.selected - visible_count + 1;
+            }
+        }
     }
 
     fn clamp_scroll_offset(&mut self) {
@@ -1973,7 +1998,7 @@ fn draw_welcome(
         );
     }
 
-    draw_slash_overlay(frame, state, input_area, area);
+    state.last_slash_overlay_rect = draw_slash_overlay(frame, state, input_area, area);
 }
 
 fn draw_slash_overlay(
@@ -1981,9 +2006,9 @@ fn draw_slash_overlay(
     state: &ReplTuiState,
     input_area: Rect,
     bounds: Rect,
-) {
+) -> Option<Rect> {
     let Some(overlay) = &state.slash_overlay else {
-        return;
+        return None;
     };
     let total = overlay.items.len();
     let visible_count = min(total, SLASH_OVERLAY_VISIBLE_ITEMS);
@@ -2079,6 +2104,8 @@ fn draw_slash_overlay(
             .add_modifier(Modifier::DIM),
     ));
     frame.render_widget(Paragraph::new(hint_line), hint_area);
+
+    Some(overlay_area)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2303,7 +2330,7 @@ fn draw_chat(
         );
     }
 
-    draw_slash_overlay(frame, state, input_area, main_area);
+    state.last_slash_overlay_rect = draw_slash_overlay(frame, state, input_area, main_area);
 }
 
 #[allow(clippy::too_many_lines)]
@@ -2842,6 +2869,38 @@ fn run_loop(
         let ev = event::read()?;
         match ev {
             Event::Mouse(me) => {
+                if matches!(
+                    me.kind,
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                ) && state.active_modal.is_some()
+                {
+                    if let Some(modal) = state.active_modal.as_mut() {
+                        if modal.supports_vertical_wheel() {
+                            modal.handle_vertical_wheel(matches!(
+                                me.kind,
+                                MouseEventKind::ScrollDown
+                            ));
+                        }
+                    }
+                    continue;
+                }
+
+                if let Some(overlay_rect) = state.last_slash_overlay_rect {
+                    if rect_contains_mouse(overlay_rect, me.column, me.row) {
+                        match me.kind {
+                            MouseEventKind::ScrollUp => {
+                                state.slash_overlay_select_prev();
+                                continue;
+                            }
+                            MouseEventKind::ScrollDown => {
+                                state.slash_overlay_select_next();
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
                 let in_transcript =
                     rect_contains_mouse(state.last_transcript_rect, me.column, me.row);
                 let in_input = rect_contains_mouse(state.last_input_rect, me.column, me.row);
@@ -3037,25 +3096,12 @@ fn run_loop(
                 }
 
                 if key.code == KeyCode::Up && state.slash_overlay.is_some() {
-                    if let Some(overlay) = state.slash_overlay.as_mut() {
-                        if overlay.selected > 0 {
-                            overlay.selected -= 1;
-                            if overlay.selected < overlay.scroll_offset {
-                                overlay.scroll_offset = overlay.selected;
-                            }
-                        }
-                    }
+                    state.slash_overlay_select_prev();
                     continue;
                 }
 
                 if key.code == KeyCode::Down && state.slash_overlay.is_some() {
-                    if let Some(overlay) = state.slash_overlay.as_mut() {
-                        overlay.selected = min(overlay.selected + 1, overlay.items.len() - 1);
-                        let visible_count = min(overlay.items.len(), SLASH_OVERLAY_VISIBLE_ITEMS);
-                        if overlay.selected >= overlay.scroll_offset + visible_count {
-                            overlay.scroll_offset = overlay.selected - visible_count + 1;
-                        }
-                    }
+                    state.slash_overlay_select_next();
                     continue;
                 }
 
