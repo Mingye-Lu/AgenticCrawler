@@ -7,6 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
+use api::provider::ModelInfo;
 use api::provider::ProviderRegistry;
 
 use crate::tui::grouped_model_list::{GroupedModelListState, ModelEntry, ProviderGroup, RowKind};
@@ -29,13 +30,17 @@ pub struct ModelModal {
     configured_providers: HashSet<String>,
     outcome: ModelModalOutcome,
     scroll_offset: std::cell::Cell<usize>,
+    is_live_catalog: bool,
 }
 
 impl ModelModal {
     #[allow(dead_code)]
-    pub fn new(registry: &ProviderRegistry, current_model_id: &str) -> Self {
-        let catalog_models = api::provider::catalog::builtin_models();
-
+    pub fn new(
+        registry: &ProviderRegistry,
+        current_model_id: &str,
+        catalog_models: Vec<ModelInfo>,
+        is_live: bool,
+    ) -> Self {
         let mut groups_map: std::collections::HashMap<String, Vec<ModelEntry>> =
             std::collections::HashMap::new();
         let mut provider_names: std::collections::HashMap<String, String> =
@@ -125,6 +130,7 @@ impl ModelModal {
             configured_providers,
             outcome: ModelModalOutcome::None,
             scroll_offset: std::cell::Cell::new(0),
+            is_live_catalog: is_live,
         }
     }
 
@@ -316,7 +322,13 @@ impl Modal for ModelModal {
         let hint_style = Style::default()
             .fg(Color::Rgb(130, 136, 145))
             .add_modifier(Modifier::DIM);
-        let hint_text = "↑↓ Navigate  Enter Select  Esc Cancel  Type to filter";
+        let source_tag = if self.is_live_catalog {
+            " [live]"
+        } else {
+            " [builtin]"
+        };
+        let hint_text =
+            format!("↑↓ Navigate  Enter Select  Esc Cancel  Type to filter{source_tag}");
         frame.render_widget(Paragraph::new(hint_text).style(hint_style), hint_area);
     }
 

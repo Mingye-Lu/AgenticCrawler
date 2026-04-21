@@ -989,6 +989,8 @@ struct ReplTuiState {
     #[allow(dead_code)]
     pending_model_after_auth: Option<String>,
     active_modal: Option<ActiveModal>,
+    /// Live model catalog fetched from models.dev; None until background fetch completes.
+    live_model_catalog: Option<Vec<api::provider::ModelInfo>>,
     exit: bool,
     current_tool: Option<String>,
     status_entry_index: Option<usize>,
@@ -1038,6 +1040,7 @@ impl ReplTuiState {
             busy: false,
             pending_model_after_auth: None,
             active_modal: None,
+            live_model_catalog: None,
             exit: false,
             persist_on_exit: false,
             current_tool: None,
@@ -1758,6 +1761,11 @@ impl ReplTuiState {
                         }
                     }
                 }
+                ReplTuiEvent::ModelCatalogReady(models) => {
+                    if !models.is_empty() {
+                        self.live_model_catalog = Some(models);
+                    }
+                }
             }
         }
     }
@@ -2275,8 +2283,18 @@ fn handle_slash_command_tui(
                 let credentials = api::load_credentials().unwrap_or_default();
                 let registry = api::provider::ProviderRegistry::from_credentials(&credentials);
                 let current_model = cli.lock().expect("cli lock").model_name().to_string();
+                let catalog = state
+                    .live_model_catalog
+                    .clone()
+                    .unwrap_or_else(api::provider::catalog::builtin_models);
+                let is_live = state.live_model_catalog.is_some();
                 state.active_modal = Some(ActiveModal::Model(
-                    crate::tui::model_modal::ModelModal::new(&registry, &current_model),
+                    crate::tui::model_modal::ModelModal::new(
+                        &registry,
+                        &current_model,
+                        catalog,
+                        is_live,
+                    ),
                 ));
             }
         }
@@ -2717,6 +2735,15 @@ fn run_loop(
     let _mouse_guard = MouseCaptureGuard;
 
     let mut state = ReplTuiState::new();
+
+    {
+        let ui_tx_catalog = ui_tx.clone();
+        thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime for catalog fetch");
+            let models = rt.block_on(api::provider::catalog::fetch_all_models_dev_for_picker());
+            let _ = ui_tx_catalog.send(ReplTuiEvent::ModelCatalogReady(models));
+        });
+    }
 
     loop {
         state.drain_events(ui_rx);

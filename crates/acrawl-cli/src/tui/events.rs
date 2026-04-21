@@ -1,3 +1,5 @@
+use api::provider::ModelInfo;
+
 /// UI updates from the LLM stream, tool executor, or worker thread.
 #[derive(Debug)]
 pub enum ReplTuiEvent {
@@ -32,6 +34,9 @@ pub enum ReplTuiEvent {
     AuthOAuthProgress {
         message: String,
     },
+    /// Live model catalog fetched from models.dev on REPL startup.
+    /// Empty Vec means fetch failed — caller falls back to builtin catalog.
+    ModelCatalogReady(Vec<ModelInfo>),
 }
 
 #[cfg(test)]
@@ -55,5 +60,7 @@ mod tests {
         let _progress = ReplTuiEvent::AuthOAuthProgress {
             message: "Listening on port 4545...".to_string(),
         };
+
+        let _catalog_ready = ReplTuiEvent::ModelCatalogReady(Vec::new());
     }
 }

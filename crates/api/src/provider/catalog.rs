@@ -1401,6 +1401,142 @@ pub async fn fetch_models_dev_reasoning(
     Ok(map)
 }
 
+/// Maps (`builtin_provider_id`, `models_dev_provider_id`) for all 19 builtin providers.
+/// Handles cases where models.dev uses different IDs from the acrawl credential store.
+const MODELS_DEV_PROVIDER_MAP: &[(&str, &str)] = &[
+    ("anthropic", "anthropic"),
+    ("openai", "openai"),
+    ("groq", "groq"),
+    ("mistral", "mistral"),
+    ("deepinfra", "deepinfra"),
+    ("cerebras", "cerebras"),
+    ("cohere", "cohere"),
+    ("togetherai", "togetherai"),
+    ("perplexity", "perplexity"),
+    ("xai", "xai"),
+    ("venice", "venice"),
+    ("alibaba", "alibaba"),
+    ("cloudflare", "cloudflare-workers-ai"),
+    ("sap", "sap-ai-core"),
+    ("google", "google"),
+    ("bedrock", "amazon-bedrock"),
+    ("azure", "azure"),
+    ("vertex", "google-vertex"),
+    ("copilot", "github-copilot"),
+];
+
+/// Fetch all models from models.dev for the full builtin provider set in a single HTTP request.
+/// Returns all models (no `tool_call` filtering — callers decide what to show).
+/// On any network or parse error, returns an empty Vec (caller falls back to builtin catalog).
+/// The `provider_id` field in returned `ModelInfo` uses the builtin ID, not the models.dev ID,
+/// so `ProviderRegistry::configured_providers()` checks work correctly.
+pub async fn fetch_all_models_dev_for_picker() -> Vec<ModelInfo> {
+    let client = reqwest::Client::new();
+    let Ok(response) = client
+        .get("https://models.dev/api.json")
+        .header("User-Agent", "acrawl")
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+    else {
+        return vec![];
+    };
+
+    if !response.status().is_success() {
+        return vec![];
+    }
+
+    let catalog: std::collections::HashMap<String, serde_json::Value> = match response.json().await
+    {
+        Ok(catalog) => catalog,
+        Err(_) => return vec![],
+    };
+
+    let mut all_models = Vec::new();
+
+    for &(builtin_id, models_dev_id) in MODELS_DEV_PROVIDER_MAP {
+        let Some(provider) = catalog.get(models_dev_id) else {
+            continue;
+        };
+        let Some(models_obj) = provider.get("models").and_then(|value| value.as_object()) else {
+            continue;
+        };
+
+        for (id, model_data) in models_obj {
+            let display_name = model_data
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(id)
+                .to_string();
+
+            let max_output_tokens = model_data
+                .get("limit")
+                .and_then(|value| value.get("output"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(4096);
+            let max_output_tokens = u32::try_from(max_output_tokens).unwrap_or(4096);
+
+            let context_window = model_data
+                .get("limit")
+                .and_then(|value| value.get("context"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(128_000);
+            let context_window = u32::try_from(context_window).unwrap_or(128_000);
+
+            let reasoning = model_data
+                .get("reasoning")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+
+            let tool_use = model_data
+                .get("tool_call")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+
+            let vision = model_data
+                .get("attachment")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+
+            let pricing = model_data.get("cost").and_then(|cost| {
+                let input = cost.get("input")?.as_f64()?;
+                let output = cost.get("output")?.as_f64()?;
+                Some(ModelPricing {
+                    input_per_mtok: input,
+                    output_per_mtok: output,
+                    cache_read_per_mtok: cost.get("cache_read").and_then(serde_json::Value::as_f64),
+                    cache_write_per_mtok: cost
+                        .get("cache_write")
+                        .and_then(serde_json::Value::as_f64),
+                })
+            });
+
+            all_models.push(ModelInfo {
+                id: id.clone(),
+                display_name,
+                aliases: vec![],
+                provider_id: builtin_id.to_string(),
+                max_output_tokens,
+                context_window,
+                capabilities: ModelCapabilities {
+                    reasoning,
+                    tool_use,
+                    vision,
+                    streaming: true,
+                    reasoning_efforts: if reasoning {
+                        ReasoningEffort::OPENAI.to_vec()
+                    } else {
+                        vec![]
+                    },
+                },
+                pricing,
+            });
+        }
+    }
+
+    all_models
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
