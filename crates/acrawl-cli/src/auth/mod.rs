@@ -493,7 +493,7 @@ pub(crate) fn wait_for_oauth_callback_cancellable(
         .set_nonblocking(true)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_mins(5);
     loop {
         if std::time::Instant::now() >= deadline {
             return Err(Box::new(io::Error::new(

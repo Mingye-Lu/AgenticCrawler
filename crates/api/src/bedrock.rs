@@ -291,7 +291,7 @@ mod tests {
             .signed_request(
                 "anthropic.claude-sonnet-4-6-20250514-v1:0",
                 r#"{"messages":[],"max_tokens":1}"#,
-                UNIX_EPOCH + Duration::from_secs(1_735_689_600),
+                UNIX_EPOCH + Duration::from_hours(482_136),
             )
             .expect("sign request");
 

@@ -833,7 +833,7 @@ fn build_wrapped_list(
                         let plain_line = if idx == 0 {
                             format!("│ {key:key_col$} {line_str}{} │", " ".repeat(pad))
                         } else {
-                            format!("│ {} {line_str}{} │", " ".repeat(key_col), " ".repeat(pad),)
+                            format!("│ {} {line_str}{} │", " ".repeat(key_col), " ".repeat(pad))
                         };
                         text_out.push(plain_line);
 
@@ -2893,10 +2893,10 @@ fn run_loop(
                                 state.selection_end = None;
                             }
                         }
-                        MouseEventKind::Down(MouseButton::Right) => {
-                            if state.selection_anchor.is_some() {
-                                state.pending_copy = Some(true);
-                            }
+                        MouseEventKind::Down(MouseButton::Right)
+                            if state.selection_anchor.is_some() =>
+                        {
+                            state.pending_copy = Some(true);
                         }
                         _ => {}
                     }
