@@ -15,13 +15,6 @@ pub enum ConfigSource {
     Local,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResolvedPermissionMode {
-    ReadOnly,
-    WorkspaceWrite,
-    DangerFullAccess,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigEntry {
     pub source: ConfigSource,
@@ -41,7 +34,6 @@ pub struct RuntimeFeatureConfig {
     mcp: McpConfigCollection,
     oauth: Option<OAuthConfig>,
     model: Option<String>,
-    permission_mode: Option<ResolvedPermissionMode>,
     sandbox: SandboxConfig,
 }
 
@@ -238,7 +230,6 @@ impl ConfigLoader {
             },
             oauth: parse_optional_oauth_config(&merged_value, "merged settings.oauth")?,
             model: parse_optional_model(&merged_value),
-            permission_mode: parse_optional_permission_mode(&merged_value)?,
             sandbox: parse_optional_sandbox_config(&merged_value)?,
         };
 
@@ -306,11 +297,6 @@ impl RuntimeConfig {
     }
 
     #[must_use]
-    pub fn permission_mode(&self) -> Option<ResolvedPermissionMode> {
-        self.feature_config.permission_mode
-    }
-
-    #[must_use]
     pub fn sandbox(&self) -> &SandboxConfig {
         &self.feature_config.sandbox
     }
@@ -341,11 +327,6 @@ impl RuntimeFeatureConfig {
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.model.as_deref()
-    }
-
-    #[must_use]
-    pub fn permission_mode(&self) -> Option<ResolvedPermissionMode> {
-        self.permission_mode
     }
 
     #[must_use]
@@ -486,40 +467,6 @@ fn parse_optional_hooks_config(root: &JsonValue) -> Result<RuntimeHookConfig, Co
         post_tool_use: optional_hook_command_array(hooks, "PostToolUse", "merged settings.hooks")?
             .unwrap_or_default(),
     })
-}
-
-fn parse_optional_permission_mode(
-    root: &JsonValue,
-) -> Result<Option<ResolvedPermissionMode>, ConfigError> {
-    let Some(object) = root.as_object() else {
-        return Ok(None);
-    };
-    if let Some(mode) = object.get("permissionMode").and_then(JsonValue::as_str) {
-        return parse_permission_mode_label(mode, "merged settings.permissionMode").map(Some);
-    }
-    let Some(mode) = object
-        .get("permissions")
-        .and_then(JsonValue::as_object)
-        .and_then(|permissions| permissions.get("defaultMode"))
-        .and_then(JsonValue::as_str)
-    else {
-        return Ok(None);
-    };
-    parse_permission_mode_label(mode, "merged settings.permissions.defaultMode").map(Some)
-}
-
-fn parse_permission_mode_label(
-    mode: &str,
-    context: &str,
-) -> Result<ResolvedPermissionMode, ConfigError> {
-    match mode {
-        "default" | "plan" | "read-only" => Ok(ResolvedPermissionMode::ReadOnly),
-        "acceptEdits" | "auto" | "workspace-write" => Ok(ResolvedPermissionMode::WorkspaceWrite),
-        "dontAsk" | "danger-full-access" => Ok(ResolvedPermissionMode::DangerFullAccess),
-        other => Err(ConfigError::Parse(format!(
-            "{context}: unsupported permission mode {other}"
-        ))),
-    }
 }
 
 fn parse_optional_sandbox_config(root: &JsonValue) -> Result<SandboxConfig, ConfigError> {
@@ -844,8 +791,7 @@ fn deep_merge_objects(
 #[cfg(test)]
 mod tests {
     use super::{
-        ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ResolvedPermissionMode,
-        ACRAWL_SETTINGS_SCHEMA_NAME,
+        ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ACRAWL_SETTINGS_SCHEMA_NAME,
     };
     use crate::json::JsonValue;
     use crate::sandbox::FilesystemIsolationMode;
@@ -925,10 +871,6 @@ mod tests {
             Some(&JsonValue::String("opus".to_string()))
         );
         assert_eq!(loaded.model(), Some("opus"));
-        assert_eq!(
-            loaded.permission_mode(),
-            Some(ResolvedPermissionMode::WorkspaceWrite)
-        );
         assert_eq!(
             loaded
                 .get("env")

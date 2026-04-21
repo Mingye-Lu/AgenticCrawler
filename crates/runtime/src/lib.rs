@@ -10,7 +10,6 @@ mod mcp;
 mod mcp_client;
 mod mcp_stdio;
 mod oauth;
-mod permissions;
 mod prompt;
 mod remote;
 pub mod sandbox;
@@ -28,8 +27,8 @@ pub use config::{
     ConfigEntry, ConfigError, ConfigLoader, ConfigSource, McpClaudeAiProxyServerConfig,
     McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig,
     McpServerConfig, McpStdioServerConfig, McpTransport, McpWebSocketServerConfig, OAuthConfig,
-    ResolvedPermissionMode, RuntimeConfig, RuntimeFeatureConfig, RuntimeHookConfig,
-    ScopedMcpServerConfig, ACRAWL_SETTINGS_SCHEMA_NAME,
+    RuntimeConfig, RuntimeFeatureConfig, RuntimeHookConfig, ScopedMcpServerConfig,
+    ACRAWL_SETTINGS_SCHEMA_NAME,
 };
 pub use conversation::{
     auto_compaction_threshold_from_env, ApiClient, ApiRequest, AssistantEvent, AutoCompactionEvent,
@@ -63,10 +62,6 @@ pub use oauth::{
     parse_oauth_callback_request_target, save_oauth_credentials, OAuthAuthorizationRequest,
     OAuthCallbackParams, OAuthRefreshRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
     PkceChallengeMethod, PkceCodePair,
-};
-pub use permissions::{
-    PermissionMode, PermissionOutcome, PermissionPolicy, PermissionPromptDecision,
-    PermissionPrompter, PermissionRequest,
 };
 pub use prompt::{
     load_system_prompt, prepend_bullets, ProjectContext, PromptBuildError, SystemPromptBuilder,

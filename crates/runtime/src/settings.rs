@@ -19,10 +19,6 @@ pub struct Settings {
     #[serde(default)]
     pub workspace_dir: Option<String>,
 
-    /// Permission mode: "read-only", "workspace-write", "danger-full-access" (default: "read-only")
-    #[serde(default)]
-    pub permission_mode: Option<String>,
-
     /// Use classic REPL instead of TUI (default: false)
     #[serde(default)]
     pub classic_repl: Option<bool>,
@@ -38,7 +34,6 @@ impl Default for Settings {
             headless: Some(true),
             max_steps: Some(50),
             workspace_dir: Some("workspace".to_string()),
-            permission_mode: Some("read-only".to_string()),
             classic_repl: Some(false),
             auto_compact_input_tokens: Some(200_000),
         }
@@ -182,7 +177,6 @@ mod tests {
         assert_eq!(settings.headless, Some(true));
         assert_eq!(settings.max_steps, Some(50));
         assert_eq!(settings.workspace_dir, Some("workspace".to_string()));
-        assert_eq!(settings.permission_mode, Some("read-only".to_string()));
         assert_eq!(settings.classic_repl, Some(false));
         assert_eq!(settings.auto_compact_input_tokens, Some(200_000));
 
@@ -220,7 +214,6 @@ mod tests {
             headless: Some(false),
             max_steps: Some(100),
             workspace_dir: Some("custom_workspace".to_string()),
-            permission_mode: Some("workspace-write".to_string()),
             classic_repl: Some(true),
             auto_compact_input_tokens: Some(500_000),
         };
