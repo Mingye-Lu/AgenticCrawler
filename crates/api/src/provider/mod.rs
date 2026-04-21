@@ -372,8 +372,7 @@ impl ProviderRegistry {
 
         if self
             .active_provider_id()
-            .filter(|id| store.providers.contains_key(*id))
-            .is_none()
+            .is_none_or(|id| !store.providers.contains_key(id))
         {
             let matching = self.ambiguous_provider_matches(model);
             if matching.len() > 1 {

@@ -10,7 +10,7 @@ use tokio::time::timeout;
 
 const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_mins(1);
 
 #[allow(clippy::needless_raw_string_hashes)]
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"

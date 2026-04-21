@@ -342,11 +342,7 @@ impl ResponsesMessageStream {
     }
 
     fn drain_lines(&mut self) -> Result<(), ApiError> {
-        loop {
-            let Some(position) = self.buffer.iter().position(|byte| *byte == b'\n') else {
-                break;
-            };
-
+        while let Some(position) = self.buffer.iter().position(|byte| *byte == b'\n') {
             let mut line: Vec<u8> = self.buffer.drain(..=position).collect();
             if matches!(line.last(), Some(b'\n')) {
                 line.pop();
