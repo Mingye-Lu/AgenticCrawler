@@ -362,11 +362,8 @@ impl ProviderRegistry {
     ) -> Result<ProviderClient, ApiError> {
         let provider_id = self.provider_for_model(model)?;
         let api_id = model_api_id(model);
-        let config = store.providers.get(provider_id).ok_or_else(|| {
-            ApiError::Auth(format!(
-                "No {provider_id} credentials found. Run `acrawl auth {provider_id}`."
-            ))
-        })?;
+        let default_config = StoredProviderConfig::default();
+        let config = store.providers.get(provider_id).unwrap_or(&default_config);
 
         ProviderClient::from_stored_config(provider_id, config, api_id)
     }
@@ -463,11 +460,11 @@ mod tests {
     }
 
     #[test]
-    fn registry_build_client_errors_when_no_creds() {
+    fn registry_build_client_falls_back_to_default_config() {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
         let result = registry.build_client("anthropic/claude-sonnet-4-6", &store);
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]

@@ -9,32 +9,55 @@ pub fn build_client(
     config: &StoredProviderConfig,
     _model: &str,
 ) -> Result<ProviderClient, ApiError> {
-    let access_key_id = config.api_key.clone().filter(|value| !value.is_empty());
+    let access_key_id = config
+        .api_key
+        .clone()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("AWS_ACCESS_KEY_ID").ok().filter(|v| !v.is_empty()));
+
     let secret_access_key = config
         .aws_secret_access_key
         .clone()
-        .filter(|value| !value.is_empty());
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            std::env::var("AWS_SECRET_ACCESS_KEY")
+                .ok()
+                .filter(|v| !v.is_empty())
+        });
 
     let (Some(access_key_id), Some(secret_access_key)) = (access_key_id, secret_access_key) else {
         return Err(ApiError::Auth(
-            "Bedrock requires api_key (access key id) and aws_secret_access_key".into(),
+            "Bedrock requires AWS credentials. Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables, or run `acrawl auth bedrock`.".into(),
         ));
     };
 
     let region = config
         .region
         .clone()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("AWS_REGION").ok().filter(|v| !v.is_empty()))
+        .or_else(|| {
+            std::env::var("AWS_DEFAULT_REGION")
+                .ok()
+                .filter(|v| !v.is_empty())
+        })
         .unwrap_or_else(|| DEFAULT_REGION.to_string());
 
+    let session_token = config
+        .base_url
+        .clone()
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            std::env::var("AWS_SESSION_TOKEN")
+                .ok()
+                .filter(|v| !v.is_empty())
+        });
+
     let client = crate::bedrock::BedrockClient::new(access_key_id, secret_access_key, region);
-    Ok(
-        match config.base_url.clone().filter(|value| !value.is_empty()) {
-            Some(session_token) => {
-                ProviderClient::Bedrock(client.with_session_token(session_token))
-            }
-            None => ProviderClient::Bedrock(client),
-        },
-    )
+    Ok(match session_token {
+        Some(token) => ProviderClient::Bedrock(client.with_session_token(token)),
+        None => ProviderClient::Bedrock(client),
+    })
 }
 
 #[cfg(test)]

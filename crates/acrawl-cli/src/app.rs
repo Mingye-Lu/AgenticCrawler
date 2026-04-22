@@ -1010,11 +1010,16 @@ impl LlmRuntimeClient {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let store = api::load_credentials().unwrap_or_default();
         let registry = ProviderRegistry::from_credentials(&store);
-        let provider = if store.providers.is_empty() || model.is_empty() {
-            // No credentials configured yet — TUI auth onboarding will handle this.
+        let provider = if model.is_empty() {
             ProviderClient::no_auth_placeholder()
         } else {
-            registry.build_client(&model, &store)?
+            match registry.build_client(&model, &store) {
+                Ok(client) => client,
+                Err(e) => {
+                    eprintln!("Warning: {e}");
+                    ProviderClient::no_auth_placeholder()
+                }
+            }
         };
         Ok(Self {
             runtime: tokio::runtime::Runtime::new()?,
