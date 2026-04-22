@@ -28,6 +28,9 @@ use ratatui::DefaultTerminal;
 use runtime::{format_usd, pricing_for_model};
 
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
+use crate::display_width::{
+    char_count_for_display_col, char_display_width, split_at_display_width, text_display_width,
+};
 use crate::format::{render_repl_help, VERSION};
 use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
@@ -228,17 +231,12 @@ fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'static>> {
                 }
 
                 // Find how many chars of remaining_text fit in 'available' width
-                // Simplified: assuming each char is 1 width for now (AgenticCrawler mostly uses ASCII/Simple UTF8 here)
-                let split_idx = remaining_text
-                    .chars()
-                    .take(available)
-                    .map(char::len_utf8)
-                    .sum::<usize>();
+                let (split_idx, chunk_width) = split_at_display_width(&remaining_text, available);
                 let head = remaining_text[..split_idx].to_string();
                 remaining_text = remaining_text[split_idx..].to_string();
 
                 current_line_spans.push(Span::styled(head, style));
-                current_width += available; // Or actual width if using unicode_width
+                current_width += chunk_width;
 
                 if current_width >= target_width {
                     result.push(Line::from(std::mem::take(&mut current_line_spans)));
@@ -1213,31 +1211,23 @@ impl ReplTuiState {
                 line += 1;
                 col = 0;
             } else {
-                col += 1;
+                col += char_display_width(ch);
             }
         }
         (line, col)
     }
 
-    fn line_lengths(&self) -> Vec<usize> {
-        let mut lengths = vec![0usize];
-        for ch in self.input.chars() {
-            if ch == '\n' {
-                lengths.push(0);
-            } else if let Some(last) = lengths.last_mut() {
-                *last += 1;
-            }
-        }
-        lengths
+    fn input_lines(&self) -> Vec<&str> {
+        self.input.split('\n').collect()
     }
 
     fn set_input_cursor_line_col(&mut self, target_line: usize, target_col: usize) {
-        let lengths = self.line_lengths();
-        let line = target_line.min(lengths.len().saturating_sub(1));
-        let col = target_col.min(lengths[line]);
+        let lines = self.input_lines();
+        let line = target_line.min(lines.len().saturating_sub(1));
+        let col = char_count_for_display_col(lines[line], target_col);
         let mut cursor = 0usize;
-        for len in lengths.iter().take(line) {
-            cursor += *len + 1;
+        for input_line in lines.iter().take(line) {
+            cursor += input_line.chars().count() + 1;
         }
         cursor += col;
         self.input_cursor = cursor.min(self.input_char_len());
@@ -1264,7 +1254,10 @@ impl ReplTuiState {
 
     fn move_input_cursor_end(&mut self) {
         let (line, _) = self.input_cursor_line_col();
-        let target = self.line_lengths().get(line).copied().unwrap_or_default();
+        let target = self
+            .input_lines()
+            .get(line)
+            .map_or(0, |input_line| text_display_width(input_line));
         self.set_input_cursor_line_col(line, target);
         self.input_preferred_col = Some(target);
     }
@@ -1282,11 +1275,15 @@ impl ReplTuiState {
     }
 
     fn move_input_cursor_down(&mut self) {
-        let lengths = self.line_lengths();
+        let line_widths = self
+            .input_lines()
+            .into_iter()
+            .map(text_display_width)
+            .collect::<Vec<_>>();
         let (line, col) = self.input_cursor_line_col();
-        if line + 1 >= lengths.len() {
-            self.set_input_cursor_line_col(line, lengths[line]);
-            self.input_preferred_col = Some(lengths[line]);
+        if line + 1 >= line_widths.len() {
+            self.set_input_cursor_line_col(line, line_widths[line]);
+            self.input_preferred_col = Some(line_widths[line]);
             return;
         }
         let target_col = self.input_preferred_col.unwrap_or(col);
@@ -1377,6 +1374,14 @@ impl ReplTuiState {
         let mut caret_row_idx = 0usize;
         let mut seen_caret = false;
 
+        let input_char_width = |ch: char| {
+            if ch == INPUT_CARET_MARKER {
+                0
+            } else {
+                char_display_width(ch)
+            }
+        };
+
         for (logical_idx, line) in lines_data.into_iter().enumerate() {
             let offset = if logical_idx == 0 { 2 } else { 0 };
             let first_line_width = safe_width.saturating_sub(offset);
@@ -1389,17 +1394,15 @@ impl ReplTuiState {
             let mut current = String::new();
             let mut w = 0;
             let mut is_first_chunk = true;
-            let mut pushed_last = false;
 
             for c in line.chars() {
-                current.push(c);
-                w += 1;
+                let char_width = input_char_width(c);
                 let target = if is_first_chunk {
                     first_line_width
                 } else {
                     safe_width
                 };
-                if w >= target {
+                if !current.is_empty() && w + char_width > target {
                     if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
                         caret_row_idx = visual_lines.len();
                         seen_caret = true;
@@ -1408,12 +1411,23 @@ impl ReplTuiState {
                     current = String::new();
                     w = 0;
                     is_first_chunk = false;
-                    pushed_last = true;
-                } else {
-                    pushed_last = false;
+                }
+
+                current.push(c);
+                w += char_width;
+
+                if w >= target && !current.is_empty() {
+                    if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
+                        caret_row_idx = visual_lines.len();
+                        seen_caret = true;
+                    }
+                    visual_lines.push((logical_idx == 0 && is_first_chunk, current));
+                    current = String::new();
+                    w = 0;
+                    is_first_chunk = false;
                 }
             }
-            if !current.is_empty() || pushed_last {
+            if !current.is_empty() {
                 if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
                     caret_row_idx = visual_lines.len();
                     seen_caret = true;
@@ -1470,7 +1484,11 @@ impl ReplTuiState {
 
             if is_placeholder && i == 0 {
                 spans.push(Span::styled(row, text_style));
-                let prompt_width = if has_prompt { 2 } else { 0 };
+                let prompt_width = if has_prompt {
+                    u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX)
+                } else {
+                    0
+                };
                 cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
             } else {
                 let mut marker_idx = None;
@@ -1483,16 +1501,23 @@ impl ReplTuiState {
                 if let Some(marker_char_idx) = marker_idx {
                     let left = row.chars().take(marker_char_idx).collect::<String>();
                     let right = row.chars().skip(marker_char_idx + 1).collect::<String>();
-                    if !left.is_empty() {
+                    let prompt_width = if has_prompt {
+                        u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX)
+                    } else {
+                        0
+                    };
+                    if left.is_empty() {
+                        cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
+                    } else {
+                        let left_width = text_display_width(&left);
                         spans.push(Span::styled(left, text_style));
+                        let cursor_col =
+                            prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
+                        cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
                     }
                     if !right.is_empty() {
                         spans.push(Span::styled(right, text_style));
                     }
-                    let prompt_width = if has_prompt { 2 } else { 0 };
-                    let cursor_col =
-                        prompt_width + u16::try_from(marker_char_idx).unwrap_or(u16::MAX);
-                    cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
                 } else {
                     spans.push(Span::styled(row, text_style));
                 }
@@ -1806,7 +1831,7 @@ fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapsh
         header.session_id, header.cost_text, header.context_text
     );
     let total_w = usize::from(area.width);
-    let right_w = right_text.chars().count();
+    let right_w = text_display_width(&right_text);
     let gap = total_w.saturating_sub(left_w + right_w).max(1);
 
     spans.push(Span::raw(" ".repeat(gap)));
@@ -1853,8 +1878,12 @@ fn draw_welcome(
     }
     lines.push(Line::from(""));
     let version_str = format!("v{VERSION} · Playwright ready");
-    let max_w = ascii.iter().map(|s| s.chars().count()).max().unwrap_or(0);
-    let pad = max_w.saturating_sub(version_str.chars().count()) / 2;
+    let max_w = ascii
+        .iter()
+        .map(|s| text_display_width(s))
+        .max()
+        .unwrap_or(0);
+    let pad = max_w.saturating_sub(text_display_width(&version_str)) / 2;
     let version_padded = format!("{}{version_str}", " ".repeat(pad));
     lines.push(Line::from(Span::styled(
         version_padded,
@@ -1950,10 +1979,10 @@ fn draw_slash_overlay(
     let max_summary_w = overlay
         .items
         .iter()
-        .map(|item| item.summary.chars().count())
+        .map(|item| text_display_width(item.summary))
         .max()
         .unwrap_or(0);
-    let desired_content_w = (16 + max_summary_w).max(SLASH_OVERLAY_HINT_TEXT.chars().count());
+    let desired_content_w = (16 + max_summary_w).max(text_display_width(SLASH_OVERLAY_HINT_TEXT));
     let desired_total_w = u16::try_from(desired_content_w.saturating_add(6)).unwrap_or(64);
 
     let list_rows = u16::try_from(visible_count).unwrap_or(1);
@@ -2173,7 +2202,7 @@ fn draw_chat(
     if state.busy {
         let spinner = state.spinner_char();
         let label = format!(" {spinner} Generating… ");
-        let lw = u16::try_from(label.chars().count()).unwrap_or(14);
+        let lw = u16::try_from(text_display_width(&label)).unwrap_or(14);
         if main_inner.width > lw + 2 {
             let ind_area = Rect::new(
                 main_inner.x + main_inner.width - lw,
@@ -3303,11 +3332,14 @@ mod tests {
     use std::sync::mpsc;
 
     use crate::app::Provider;
+    use crate::display_width::text_display_width;
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::ReplTuiEvent;
+    use ratatui::text::Line;
 
     use super::{
-        render_tool_call_lines, tool_input_summary, ReplTuiState, ToolCallStatus, TranscriptEntry,
+        line_to_plain_text, render_tool_call_lines, tool_input_summary, wrap_ansi_line,
+        ReplTuiState, ToolCallStatus, TranscriptEntry,
     };
 
     fn assert_matching_lengths(items: &[ratatui::widgets::ListItem<'static>], text: &[String]) {
@@ -3595,6 +3627,14 @@ mod tests {
     }
 
     #[test]
+    fn wrap_ansi_line_respects_wide_character_width() {
+        let wrapped = wrap_ansi_line(Line::from("ab中cd中efg"), 10);
+        let plain = wrapped.iter().map(line_to_plain_text).collect::<Vec<_>>();
+
+        assert_eq!(plain, vec!["ab中cd中ef".to_string(), "g".to_string()]);
+    }
+
+    #[test]
     fn tool_input_summary_extracts_key_fields() {
         assert_eq!(tool_input_summary("bash", r#"{"command":"ls"}"#), "ls");
         assert_eq!(
@@ -3609,6 +3649,31 @@ mod tests {
             tool_input_summary("glob_search", r#"{"pattern":"*.rs"}"#),
             "*.rs"
         );
+    }
+
+    #[test]
+    fn input_cursor_uses_display_width_for_wide_chars() {
+        let mut state = ReplTuiState::new();
+        state.input = "a中\nbc".to_string();
+        state.input_cursor = 2;
+
+        assert_eq!(state.input_cursor_line_col(), (0, 3));
+
+        state.move_input_cursor_down();
+        assert_eq!(state.input_cursor_line_col(), (1, 2));
+        assert_eq!(state.input_cursor, 5);
+    }
+
+    #[test]
+    fn calculate_input_dimensions_places_cursor_after_wide_char() {
+        let mut state = ReplTuiState::new();
+        state.input = "中a".to_string();
+        state.input_cursor = 1;
+
+        let (_, _, _, cursor_pos) = state.calculate_input_dimensions(20, "model");
+        let prompt_width = u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX);
+
+        assert_eq!(cursor_pos, Some((1, prompt_width + 2)));
     }
 
     #[test]

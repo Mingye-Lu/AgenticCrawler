@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
+use crate::display_width::{prefix_display_width, text_display_width};
 use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
 
@@ -534,7 +535,10 @@ impl Modal for AuthModal {
                     Some(hint_line("←/→ move  Enter confirm  Esc back")),
                     Some((
                         3u16,
-                        4u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)),
+                        u16::try_from(
+                            text_display_width("  > ") + prefix_display_width(input, *cursor),
+                        )
+                        .unwrap_or(u16::MAX),
                     )),
                     None,
                 )
@@ -569,7 +573,10 @@ impl Modal for AuthModal {
                     Some(hint_line("←/→ move  Enter confirm  Esc back")),
                     Some((
                         3u16,
-                        3u16.saturating_add(u16::try_from(*cursor).unwrap_or(u16::MAX)),
+                        u16::try_from(
+                            text_display_width("  [") + prefix_display_width(&display_key, *cursor),
+                        )
+                        .unwrap_or(u16::MAX),
                     )),
                     None,
                 )
@@ -649,8 +656,11 @@ impl Modal for AuthModal {
                     )),
                     Some((
                         3u16,
-                        10u16
-                            .saturating_add(u16::try_from(state.filter_cursor).unwrap_or(u16::MAX)),
+                        u16::try_from(
+                            text_display_width("  Search: ")
+                                + prefix_display_width(&state.filter, state.filter_cursor),
+                        )
+                        .unwrap_or(u16::MAX),
                     )),
                     None,
                 )

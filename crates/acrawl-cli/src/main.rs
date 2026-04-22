@@ -1,4 +1,5 @@
 mod app;
+mod display_width;
 mod format;
 mod init;
 mod input;

@@ -11,6 +11,8 @@ use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
+use crate::display_width::text_display_width;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ColorTheme {
     heading: Color,
@@ -1156,7 +1158,7 @@ impl PredictiveMarkdownBuffer {
 }
 
 fn visible_width(input: &str) -> usize {
-    strip_ansi(input).chars().count()
+    text_display_width(&strip_ansi(input))
 }
 
 pub fn strip_ansi(input: &str) -> String {
@@ -1249,6 +1251,20 @@ mod tests {
         assert_eq!(lines[2], "│ alpha │ 1     │");
         assert_eq!(lines[3], "│ beta  │ 22    │");
         assert!(markdown_output.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn renders_tables_with_wide_chars_aligned() {
+        let terminal_renderer = TerminalRenderer::new();
+        let markdown_output = terminal_renderer
+            .render_markdown("| Name | Value |\n| ---- | ----- |\n| 中文 | 1 |\n| a | 22 |");
+        let plain_text = strip_ansi(&markdown_output);
+        let lines = plain_text.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines[0], "│ Name │ Value │");
+        assert_eq!(lines[1], "│──────┼───────│");
+        assert_eq!(lines[2], "│ 中文 │ 1     │");
+        assert_eq!(lines[3], "│ a    │ 22    │");
     }
 
     #[test]

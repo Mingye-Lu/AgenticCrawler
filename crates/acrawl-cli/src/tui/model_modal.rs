@@ -10,6 +10,7 @@ use ratatui::Frame;
 use api::provider::ModelInfo;
 use api::provider::ProviderRegistry;
 
+use crate::display_width::{prefix_display_width, text_display_width};
 use crate::tui::grouped_model_list::{GroupedModelListState, ModelEntry, ProviderGroup, RowKind};
 use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
 
@@ -248,9 +249,14 @@ impl Modal for ModelModal {
         frame.render_widget(Paragraph::new(filter_text), filter_area);
 
         if self.list_state.filter.is_empty() {
-            frame.set_cursor_position((filter_area.x + 2, filter_area.y));
+            let cursor_x = filter_area
+                .x
+                .saturating_add(u16::try_from(text_display_width("🔍 ")).unwrap_or(u16::MAX))
+                .min(filter_area.right().saturating_sub(1));
+            frame.set_cursor_position((cursor_x, filter_area.y));
         } else {
-            let cursor_col = 2 + self.list_state.filter_cursor;
+            let cursor_col = text_display_width("🔍 ")
+                + prefix_display_width(&self.list_state.filter, self.list_state.filter_cursor);
             let cursor_x = filter_area
                 .x
                 .saturating_add(u16::try_from(cursor_col).unwrap_or(u16::MAX))
