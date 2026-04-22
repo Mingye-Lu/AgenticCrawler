@@ -24,14 +24,15 @@ impl CrawlState {
     ///
     /// # Arguments
     /// * `sub_goal` - The goal for the child state
-    /// * `url` - Optional URL for the child state; inherits parent's current_url if not provided
+    /// * `url` - Optional URL for the child state; inherits parent's `current_url` if not provided
     /// * `child_max_steps` - Maximum steps for the child state
     ///
     /// # Returns
-    /// A new CrawlState with copied history and reset transient fields
+    /// A new `CrawlState` with copied history and reset transient fields
+    #[must_use]
     pub fn fork(&self, _sub_goal: &str, url: Option<&str>, child_max_steps: usize) -> CrawlState {
         CrawlState {
-            current_url: url.map(|s| s.to_string()).or_else(|| self.current_url.clone()),
+            current_url: url.map(str::to_string).or_else(|| self.current_url.clone()),
             action_history: self.action_history.clone(),
             extracted_data: Vec::new(),
             step_count: 0,
@@ -43,6 +44,7 @@ impl CrawlState {
     }
 
     /// Return all extracted data (own + children) as a flat list.
+    #[must_use]
     pub fn all_data(&self) -> Vec<Value> {
         let mut result = self.extracted_data.clone();
         for block in &self.child_blocks {
@@ -58,8 +60,10 @@ mod tests {
 
     #[test]
     fn test_crawl_state_fork_deep_copies_history() {
-        let mut parent = CrawlState::default();
-        parent.action_history = vec!["action1".to_string(), "action2".to_string()];
+        let parent = CrawlState {
+            action_history: vec!["action1".to_string(), "action2".to_string()],
+            ..CrawlState::default()
+        };
 
         let child = parent.fork("child_goal", None, 10);
 
@@ -75,16 +79,18 @@ mod tests {
 
     #[test]
     fn test_crawl_state_fork_resets_transient_fields() {
-        let mut parent = CrawlState::default();
-        parent.extracted_data = vec![serde_json::json!({"key": "value"})];
-        parent.step_count = 5;
-        parent.done = true;
-        parent.done_reason = "parent done".to_string();
-        parent.child_blocks = vec![ChildBlock {
-            child_id: "child1".to_string(),
-            sub_goal: "goal1".to_string(),
-            items: vec![],
-        }];
+        let parent = CrawlState {
+            extracted_data: vec![serde_json::json!({"key": "value"})],
+            step_count: 5,
+            done: true,
+            done_reason: "parent done".to_string(),
+            child_blocks: vec![ChildBlock {
+                child_id: "child1".to_string(),
+                sub_goal: "goal1".to_string(),
+                items: vec![],
+            }],
+            ..CrawlState::default()
+        };
 
         let child = parent.fork("child_goal", None, 10);
 
@@ -98,8 +104,10 @@ mod tests {
 
     #[test]
     fn test_crawl_state_fork_inherits_url() {
-        let mut parent = CrawlState::default();
-        parent.current_url = Some("https://example.com".to_string());
+        let parent = CrawlState {
+            current_url: Some("https://example.com".to_string()),
+            ..CrawlState::default()
+        };
 
         let child = parent.fork("child_goal", None, 10);
 
@@ -108,8 +116,10 @@ mod tests {
 
     #[test]
     fn test_crawl_state_fork_uses_provided_url() {
-        let mut parent = CrawlState::default();
-        parent.current_url = Some("https://example.com".to_string());
+        let parent = CrawlState {
+            current_url: Some("https://example.com".to_string()),
+            ..CrawlState::default()
+        };
 
         let child = parent.fork("child_goal", Some("https://other.com"), 10);
 
@@ -118,26 +128,28 @@ mod tests {
 
     #[test]
     fn test_crawl_state_all_data_includes_children() {
-        let mut parent = CrawlState::default();
-        parent.extracted_data = vec![
-            serde_json::json!({"id": 1}),
-            serde_json::json!({"id": 2}),
-        ];
-        parent.child_blocks = vec![
-            ChildBlock {
-                child_id: "child1".to_string(),
-                sub_goal: "goal1".to_string(),
-                items: vec![serde_json::json!({"id": 3})],
-            },
-            ChildBlock {
-                child_id: "child2".to_string(),
-                sub_goal: "goal2".to_string(),
-                items: vec![
-                    serde_json::json!({"id": 4}),
-                    serde_json::json!({"id": 5}),
-                ],
-            },
-        ];
+        let parent = CrawlState {
+            extracted_data: vec![
+                serde_json::json!({"id": 1}),
+                serde_json::json!({"id": 2}),
+            ],
+            child_blocks: vec![
+                ChildBlock {
+                    child_id: "child1".to_string(),
+                    sub_goal: "goal1".to_string(),
+                    items: vec![serde_json::json!({"id": 3})],
+                },
+                ChildBlock {
+                    child_id: "child2".to_string(),
+                    sub_goal: "goal2".to_string(),
+                    items: vec![
+                        serde_json::json!({"id": 4}),
+                        serde_json::json!({"id": 5}),
+                    ],
+                },
+            ],
+            ..CrawlState::default()
+        };
 
         let all_data = parent.all_data();
 
@@ -151,8 +163,10 @@ mod tests {
 
     #[test]
     fn test_crawl_state_fork_isolation() {
-        let mut parent = CrawlState::default();
-        parent.action_history = vec!["parent_action".to_string()];
+        let parent = CrawlState {
+            action_history: vec!["parent_action".to_string()],
+            ..CrawlState::default()
+        };
 
         let mut child = parent.fork("child_goal", None, 10);
 

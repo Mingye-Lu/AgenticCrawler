@@ -51,7 +51,7 @@ pub struct Settings {
     #[serde(default)]
     pub fork_child_max_steps: Option<u32>,
 
-    /// Timeout in seconds for wait_for_subagents (default: 60)
+    /// Timeout in seconds for `wait_for_subagents` (default: 60)
     #[serde(default)]
     pub fork_wait_timeout_secs: Option<u32>,
 }

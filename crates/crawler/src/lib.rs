@@ -9,6 +9,7 @@ pub mod prompt;
 pub mod state;
 pub mod tool_registry;
 pub mod tools;
+pub mod manager;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
@@ -17,6 +18,7 @@ pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
 pub use state::CrawlState;
 pub use tool_registry::{ToolHandler, ToolRegistry};
+pub use manager::{AgentManager, AgentInfo, AgentStatus, ForkLimitError, SharedAgentManager};
 
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {

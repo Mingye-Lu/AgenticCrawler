@@ -1075,7 +1075,7 @@ for line in sys.stdin:
             .expect("new_page should succeed");
 
         let tab = bridge
-            .switch_tab(page_index as i64)
+            .switch_tab(i64::try_from(page_index).expect("page_index fits i64"))
             .await
             .expect("switch_tab should succeed");
 
