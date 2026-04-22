@@ -1191,7 +1191,7 @@ impl ApiClient for LlmRuntimeClient {
             {
                 return Ok(events);
             }
-            if self.provider.is_anthropic() {
+            if self.provider.supports_send_message() {
                 let response = self
                     .provider
                     .send_message(&MessageRequest {

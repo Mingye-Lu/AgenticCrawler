@@ -4,6 +4,7 @@ use std::time::SystemTime;
 use aws_credential_types::Credentials;
 use aws_sigv4::http_request::{sign, SignableBody, SignableRequest, SigningSettings};
 use aws_sigv4::sign::v4;
+use base64::Engine;
 use serde_json::Value;
 
 use crate::error::ApiError;
@@ -14,12 +15,20 @@ const BEDROCK_SERVICE: &str = "bedrock-runtime";
 const BEDROCK_ACCEPT: &str = "application/vnd.amazon.eventstream";
 
 #[derive(Debug, Clone)]
+enum BedrockAuth {
+    SigV4 {
+        access_key_id: String,
+        secret_access_key: String,
+        session_token: Option<String>,
+    },
+    BearerToken(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct BedrockClient {
     http: reqwest::Client,
     region: String,
-    access_key_id: String,
-    secret_access_key: String,
-    session_token: Option<String>,
+    auth: BedrockAuth,
 }
 
 impl BedrockClient {
@@ -28,15 +37,32 @@ impl BedrockClient {
         Self {
             http: reqwest::Client::new(),
             region,
-            access_key_id,
-            secret_access_key,
-            session_token: None,
+            auth: BedrockAuth::SigV4 {
+                access_key_id,
+                secret_access_key,
+                session_token: None,
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn from_bearer_token(token: String, region: String) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            region,
+            auth: BedrockAuth::BearerToken(token),
         }
     }
 
     #[must_use]
     pub fn with_session_token(mut self, token: String) -> Self {
-        self.session_token = Some(token);
+        if let BedrockAuth::SigV4 {
+            ref mut session_token,
+            ..
+        } = self.auth
+        {
+            *session_token = Some(token);
+        }
         self
     }
 
@@ -53,7 +79,14 @@ impl BedrockClient {
         request: &MessageRequest,
     ) -> Result<BedrockMessageStream, ApiError> {
         let body = Self::serialize_request_body(request, true)?;
-        let req = self.signed_request(&request.model, &body, SystemTime::now())?;
+        let req = match &self.auth {
+            BedrockAuth::SigV4 { .. } => {
+                self.signed_request(&request.model, &body, SystemTime::now())?
+            }
+            BedrockAuth::BearerToken(token) => {
+                self.bearer_request(&request.model, &body, token)?
+            }
+        };
         let response = self.http.execute(req).await.map_err(ApiError::from)?;
         let status = response.status();
         if !status.is_success() {
@@ -77,7 +110,7 @@ impl BedrockClient {
 
     fn serialize_request_body(
         request: &MessageRequest,
-        streaming: bool,
+        _streaming: bool,
     ) -> Result<String, ApiError> {
         let mut payload = serde_json::to_value(request).map_err(ApiError::from)?;
         let Some(map) = payload.as_object_mut() else {
@@ -86,23 +119,53 @@ impl BedrockClient {
             ));
         };
 
+        map.remove("model");
+        map.remove("stream");
+        map.remove("reasoning_effort");
         map.insert(
             "anthropic_version".into(),
             Value::String(BEDROCK_ANTHROPIC_VERSION.to_string()),
         );
-        map.insert("stream".into(), Value::Bool(streaming));
 
         serde_json::to_string(&payload).map_err(ApiError::from)
     }
 
     fn credentials(&self) -> Credentials {
-        Credentials::new(
-            &self.access_key_id,
-            &self.secret_access_key,
-            self.session_token.clone(),
-            None,
-            "acrawl-bedrock",
-        )
+        match &self.auth {
+            BedrockAuth::SigV4 {
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => Credentials::new(
+                access_key_id,
+                secret_access_key,
+                session_token.clone(),
+                None,
+                "acrawl-bedrock",
+            ),
+            BedrockAuth::BearerToken(_) => {
+                Credentials::new("", "", None, None, "acrawl-bedrock-bearer")
+            }
+        }
+    }
+
+    fn bearer_request(
+        &self,
+        model: &str,
+        body: &str,
+        token: &str,
+    ) -> Result<reqwest::Request, ApiError> {
+        let endpoint = self.endpoint_url(model);
+        self.http
+            .post(&endpoint)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {token}"),
+            )
+            .body(body.to_string())
+            .build()
+            .map_err(ApiError::from)
     }
 
     fn signed_request(
@@ -221,7 +284,14 @@ impl BedrockMessageStream {
 }
 
 fn parse_stream_event_payload(payload: &[u8]) -> Option<StreamEvent> {
-    serde_json::from_slice::<StreamEvent>(payload).ok()
+    serde_json::from_slice::<StreamEvent>(payload)
+        .ok()
+        .or_else(|| {
+            let wrapper: serde_json::Value = serde_json::from_slice(payload).ok()?;
+            let b64 = wrapper.get("bytes")?.as_str()?;
+            let decoded = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+            serde_json::from_slice::<StreamEvent>(&decoded).ok()
+        })
 }
 
 fn parse_event_frame(data: &[u8]) -> Option<(Vec<u8>, usize)> {

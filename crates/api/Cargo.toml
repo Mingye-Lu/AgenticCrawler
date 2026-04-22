@@ -9,6 +9,7 @@ publish.workspace = true
 aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
 aws-sigv4 = { version = "1", features = ["sign-http"] }
 azure_identity = { version = "0.34", optional = true }
+base64 = "0.22"
 gcp_auth = { version = "0.12", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 runtime = { path = "../runtime" }

@@ -112,6 +112,11 @@ impl ProviderClient {
         matches!(self, Self::Anthropic(_) | Self::Bedrock(_))
     }
 
+    #[must_use]
+    pub fn supports_send_message(&self) -> bool {
+        matches!(self, Self::Anthropic(_))
+    }
+
     pub fn from_stored_config(
         provider_id: &str,
         config: &StoredProviderConfig,
@@ -363,7 +368,11 @@ impl ProviderRegistry {
         let provider_id = self.provider_for_model(model)?;
         let api_id = model_api_id(model);
         let default_config = StoredProviderConfig::default();
-        let config = store.providers.get(provider_id).unwrap_or(&default_config);
+        let config = store
+            .providers
+            .get(provider_id)
+            .or_else(|| legacy_provider_key(provider_id).and_then(|k| store.providers.get(k)))
+            .unwrap_or(&default_config);
 
         ProviderClient::from_stored_config(provider_id, config, api_id)
     }
@@ -371,6 +380,13 @@ impl ProviderRegistry {
     #[must_use]
     pub fn configured_providers(&self) -> &[String] {
         &self.configured_providers
+    }
+}
+
+fn legacy_provider_key(provider_id: &str) -> Option<&'static str> {
+    match provider_id {
+        "amazon-bedrock" => Some("bedrock"),
+        _ => None,
     }
 }
 
