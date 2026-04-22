@@ -208,8 +208,9 @@ impl CrawlerAgent {
         agent_manager.lock().await.mark_done(&agent_id);
 
         let summary = result.map_err(|e| CrawlError::new(e.to_string()))?;
+        let crawl_state = runtime.tool_executor_mut().crawl_state.clone();
 
-        Ok(build_crawl_result(&summary))
+        Ok(build_crawl_result(&summary, &crawl_state))
     }
 
     async fn ensure_browser(&mut self) -> Result<(), ToolError> {
@@ -367,6 +368,26 @@ impl CrawlerAgent {
         Ok(msg)
     }
 
+    async fn handle_done(&mut self, input: &str) -> Result<String, ToolError> {
+        let params: Value = serde_json::from_str(input)
+            .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+        let summary = params
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("Task complete")
+            .to_string();
+
+        if !self.child_tasks.is_empty() {
+            let _ = self.handle_wait_for_subagents().await;
+        }
+
+        self.crawl_state.done = true;
+        self.crawl_state.done_reason = summary.clone();
+
+        Ok(summary)
+    }
+
     fn supports_async(tool_name: &str) -> bool {
         matches!(
             tool_name,
@@ -414,6 +435,10 @@ impl ToolExecutor for CrawlerAgent {
 
         if tool_name == "wait_for_subagents" {
             return self.handle_wait_for_subagents().await;
+        }
+
+        if tool_name == "done" {
+            return self.handle_done(input).await;
         }
 
         let input_value: Value = if input.is_empty() {
@@ -467,7 +492,7 @@ fn generate_agent_id() -> String {
     format!("agent-{nanos}")
 }
 
-fn build_crawl_result(summary: &TurnSummary) -> CrawlResult {
+fn build_crawl_result(summary: &TurnSummary, crawl_state: &CrawlState) -> CrawlResult {
     let text_summary = summary
         .assistant_messages
         .iter()
@@ -482,7 +507,7 @@ fn build_crawl_result(summary: &TurnSummary) -> CrawlResult {
         })
         .unwrap_or_default();
 
-    let extracted_data = summary
+    let mut extracted_data = summary
         .tool_results
         .iter()
         .flat_map(|msg| msg.blocks.iter())
@@ -503,7 +528,9 @@ fn build_crawl_result(summary: &TurnSummary) -> CrawlResult {
                 None
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    extracted_data.extend(crawl_state.all_data());
 
     CrawlResult {
         summary: text_summary,
@@ -884,6 +911,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_done_sets_state_done() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent.execute("done", r#"{"summary":"Task complete"}"#).await;
+
+        assert_eq!(result.unwrap(), "Task complete");
+        assert!(agent.crawl_state.done);
+        assert_eq!(agent.crawl_state.done_reason, "Task complete");
+    }
+
+    #[tokio::test]
+    async fn test_done_auto_waits_for_children() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+        manager
+            .lock()
+            .await
+            .register_child("child-1", "test-agent", None)
+            .expect("child registration should succeed");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal".to_string(), handle));
+
+        let result = agent.execute("done", r#"{"summary":"Finished"}"#).await.unwrap();
+
+        assert_eq!(result, "Finished");
+        assert!(agent.crawl_state.done);
+        assert_eq!(agent.crawl_state.done_reason, "Finished");
+        assert!(agent.child_tasks.is_empty());
+        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(agent.crawl_state.action_history.len(), 1);
+        assert_eq!(
+            agent.crawl_state.action_history[0],
+            "Waited for 1 subagent(s). Collected 1 item(s)."
+        );
+    }
+
+    #[tokio::test]
     async fn test_merge_child_data_to_parent() {
         let manager = default_agent_manager();
         manager.lock().await.register_root("test-agent");
@@ -933,6 +1001,19 @@ mod tests {
         assert_eq!(all.len(), 2);
     }
 
+    #[tokio::test]
+    async fn test_message_stop_still_works_without_done() {
+        let agent = CrawlerAgent::new_for_testing(mock_registry());
+        let api_client = TextOnlyApiClient;
+
+        let result = agent.run("test", api_client).await;
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert_eq!(result.steps_executed, 1);
+        assert_eq!(result.summary, "All done.");
+    }
+
     #[test]
     fn build_crawl_result_extracts_last_assistant_text() {
         let summary = TurnSummary {
@@ -954,9 +1035,49 @@ mod tests {
             },
             auto_compaction: None,
         };
+        let crawl_state = CrawlState::default();
 
-        let result = build_crawl_result(&summary);
+        let result = build_crawl_result(&summary, &crawl_state);
         assert_eq!(result.summary, "final answer");
         assert_eq!(result.steps_executed, 2);
+    }
+
+    #[test]
+    fn build_crawl_result_merges_child_data() {
+        let summary = TurnSummary {
+            assistant_messages: vec![runtime::ConversationMessage::assistant(vec![
+                ContentBlock::Text {
+                    text: "final answer".to_string(),
+                },
+            ])],
+            tool_results: vec![runtime::ConversationMessage::tool_result(
+                "call-1".to_string(),
+                "extract_data".to_string(),
+                r#"{"parent":1}"#.to_string(),
+                false,
+            )],
+            iterations: 1,
+            usage: TokenUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            auto_compaction: None,
+        };
+        let crawl_state = CrawlState {
+            child_blocks: vec![ChildBlock {
+                child_id: "child-1".to_string(),
+                sub_goal: "goal".to_string(),
+                items: vec![serde_json::json!({"child": 1})],
+            }],
+            ..CrawlState::default()
+        };
+
+        let result = build_crawl_result(&summary, &crawl_state);
+
+        assert_eq!(result.extracted_data.len(), 2);
+        assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
+        assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
     }
 }
