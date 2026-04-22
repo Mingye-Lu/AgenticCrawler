@@ -1080,4 +1080,64 @@ mod tests {
         assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
         assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
     }
+
+    #[tokio::test]
+    async fn test_fork_full_lifecycle() {
+        let mut parent = CrawlerAgent::new_for_testing(mock_registry());
+        parent.crawl_state.extracted_data = vec![serde_json::json!({"parent": 1})];
+
+        // Simulate a completed child task
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
+            Some(vec![
+                serde_json::json!({"child": 1}),
+                serde_json::json!({"child": 2}),
+            ])
+        });
+        parent
+            .child_tasks
+            .insert("child-1".to_string(), ("search page 2".to_string(), handle));
+
+        let wait_result = parent.execute("wait_for_subagents", "{}").await.unwrap();
+        assert!(wait_result.contains("Collected 2"));
+
+        let all = parent.crawl_state.all_data();
+        assert_eq!(all.len(), 3);
+        assert_eq!(parent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(parent.crawl_state.child_blocks[0].sub_goal, "search page 2");
+    }
+
+    #[tokio::test]
+    async fn test_fork_immediate_done_auto_waits() {
+        let mut parent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"found": "data"})]) });
+        parent
+            .child_tasks
+            .insert("child-1".to_string(), ("find data".to_string(), handle));
+
+        let done_result = parent
+            .execute("done", r#"{"summary": "all done"}"#)
+            .await
+            .unwrap();
+
+        assert_eq!(done_result, "all done");
+        assert!(parent.crawl_state.done);
+        assert_eq!(parent.crawl_state.done_reason, "all done");
+        assert_eq!(parent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(parent.crawl_state.child_blocks[0].items.len(), 1);
+    }
+
+    #[test]
+    fn test_fork_depth_2_lifecycle() {
+        let mut mgr = AgentManager::new(10, 2, 20);
+        mgr.register_root("root");
+        mgr.register_child("child1", "root", None).unwrap();
+        mgr.register_child("grandchild1", "child1", None).unwrap();
+
+        assert_eq!(mgr.get_depth("root"), 0);
+        assert_eq!(mgr.get_depth("child1"), 1);
+        assert_eq!(mgr.get_depth("grandchild1"), 2);
+        assert!(!mgr.can_fork("grandchild1")); // depth 2, max_depth=2, child would be depth 3
+    }
 }
