@@ -15,9 +15,13 @@ pub struct Settings {
     #[serde(default)]
     pub max_steps: Option<u32>,
 
-    /// Default model in provider/model format (e.g. "anthropic/claude-sonnet-4-6")
+    /// Last used model in provider/model format (e.g. "anthropic/claude-sonnet-4-6")
     #[serde(default)]
     pub model: Option<String>,
+
+    /// Reasoning effort level for reasoning models (e.g. "high", "medium", "low")
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 
     /// Directory for saved files (default: "workspace")
     #[serde(default)]
@@ -38,6 +42,7 @@ impl Default for Settings {
             headless: Some(true),
             max_steps: Some(50),
             model: None,
+            reasoning_effort: None,
             workspace_dir: Some("workspace".to_string()),
             classic_repl: Some(false),
             auto_compact_input_tokens: Some(200_000),
@@ -99,6 +104,14 @@ pub fn save_settings(settings: &Settings) -> io::Result<()> {
     fs::write(path, json)?;
 
     Ok(())
+}
+
+/// Update a single setting by loading current settings, applying the mutation, and saving.
+/// This avoids clobbering other settings that may have been changed externally.
+pub fn update_settings(mutate: impl FnOnce(&mut Settings)) -> io::Result<()> {
+    let mut settings = load_settings();
+    mutate(&mut settings);
+    save_settings(&settings)
 }
 
 /// Get headless setting, with default fallback.
@@ -219,6 +232,7 @@ mod tests {
             headless: Some(false),
             max_steps: Some(100),
             model: Some("anthropic/claude-sonnet-4-6".to_string()),
+            reasoning_effort: Some("high".to_string()),
             workspace_dir: Some("custom_workspace".to_string()),
             classic_repl: Some(true),
             auto_compact_input_tokens: Some(500_000),
@@ -344,6 +358,41 @@ mod tests {
         // Should return defaults on parse error
         assert_eq!(settings.headless, Some(true));
         assert_eq!(settings.max_steps, Some(50));
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn test_update_settings_updates_field_without_clobbering_others() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        save_settings(&Settings {
+            headless: Some(false),
+            max_steps: Some(88),
+            model: Some("anthropic/claude-sonnet-4-6".to_string()),
+            reasoning_effort: Some("medium".to_string()),
+            workspace_dir: Some("custom_workspace".to_string()),
+            classic_repl: Some(true),
+            auto_compact_input_tokens: Some(123_456),
+        })
+        .expect("save settings");
+
+        update_settings(|settings| {
+            settings.model = Some("openai/o4-mini".to_string());
+        })
+        .expect("update settings");
+
+        let loaded = load_settings();
+        assert_eq!(loaded.headless, Some(false));
+        assert_eq!(loaded.max_steps, Some(88));
+        assert_eq!(loaded.model, Some("openai/o4-mini".to_string()));
+        assert_eq!(loaded.reasoning_effort, Some("medium".to_string()));
+        assert_eq!(loaded.workspace_dir, Some("custom_workspace".to_string()));
+        assert_eq!(loaded.classic_repl, Some(true));
+        assert_eq!(loaded.auto_compact_input_tokens, Some(123_456));
 
         cleanup_temp_dir(&temp_dir);
     }

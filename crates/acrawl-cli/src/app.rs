@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::mpsc;
 
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
@@ -56,23 +57,7 @@ pub(crate) enum Provider {
 
 pub(crate) fn initial_model_from_credentials() -> Option<String> {
     let settings = runtime::load_settings();
-    if let Some(ref model) = settings.model {
-        if !model.is_empty() {
-            return Some(model.clone());
-        }
-    }
-
-    let store = api::load_credentials().unwrap_or_default();
-    if let Some(provider_name) = &store.active_provider {
-        if let Some(config) = store.providers.get(provider_name) {
-            if let Some(model) = &config.default_model {
-                if model.contains('/') {
-                    return Some(model.clone());
-                }
-            }
-        }
-    }
-    None
+    settings.model.filter(|m| !m.is_empty() && m.contains('/'))
 }
 
 pub(crate) fn filter_tool_specs(allowed_tools: Option<&AllowedToolSet>) -> Vec<crawler::ToolSpec> {
@@ -167,6 +152,7 @@ impl LiveCli {
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
         let runtime = build_runtime(
@@ -179,7 +165,11 @@ impl LiveCli {
             None,
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
-            Some(api::ReasoningEffort::High)
+            let saved = settings
+                .reasoning_effort
+                .as_deref()
+                .and_then(|effort| api::ReasoningEffort::from_str(effort).ok());
+            Some(saved.unwrap_or(api::ReasoningEffort::High))
         } else {
             None
         };
@@ -206,6 +196,7 @@ impl LiveCli {
         allowed_tools: Option<AllowedToolSet>,
         ui_tx: mpsc::Sender<ReplTuiEvent>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
         let runtime = build_runtime(
@@ -218,7 +209,11 @@ impl LiveCli {
             Some(ui_tx.clone()),
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
-            Some(api::ReasoningEffort::High)
+            let saved = settings
+                .reasoning_effort
+                .as_deref()
+                .and_then(|effort| api::ReasoningEffort::from_str(effort).ok());
+            Some(saved.unwrap_or(api::ReasoningEffort::High))
         } else {
             None
         };
@@ -266,6 +261,10 @@ impl LiveCli {
         };
         self.reasoning_effort = Some(next);
         self.runtime.api_client_mut().reasoning_effort = Some(next);
+        let effort_str = next.as_str().to_string();
+        let _ = runtime::update_settings(|s| {
+            s.reasoning_effort = Some(effort_str);
+        });
         Some(next)
     }
 
@@ -478,12 +477,18 @@ impl LiveCli {
             }
             SlashCommand::Headed => {
                 env::set_var("HEADLESS", "false");
+                let _ = runtime::update_settings(|s| {
+                    s.headless = Some(false);
+                });
                 self.reset_browser();
                 println!("Browser mode\n  Result           switched to headed (visible)");
                 false
             }
             SlashCommand::Headless => {
                 env::set_var("HEADLESS", "true");
+                let _ = runtime::update_settings(|s| {
+                    s.headless = Some(true);
+                });
                 self.reset_browser();
                 println!("Browser mode\n  Result           switched to headless");
                 false
@@ -564,6 +569,10 @@ impl LiveCli {
         } else {
             self.reasoning_effort = None;
         }
+        let _ = runtime::update_settings(|s| {
+            s.model = Some(model.clone());
+            s.reasoning_effort = self.reasoning_effort.map(|e| e.as_str().to_string());
+        });
         Ok(CommandUiResult {
             message: format_model_switch_report(&previous, &model, message_count),
             persist_after: true,
@@ -630,6 +639,9 @@ impl LiveCli {
             self.ui_sender(),
         )?;
         self.model = model;
+        let _ = runtime::update_settings(|s| {
+            s.model = Some(self.model.clone());
+        });
         self.session = handle;
         Ok(CommandUiResult {
             message: format_resume_report(
@@ -697,6 +709,9 @@ impl LiveCli {
                     self.ui_sender(),
                 )?;
                 self.model = model;
+                let _ = runtime::update_settings(|s| {
+                    s.model = Some(self.model.clone());
+                });
                 self.session = handle;
                 Ok(CommandUiResult {
                     message: format!(

@@ -686,40 +686,26 @@ mod tests {
     }
 
     #[test]
-    fn initial_model_skips_legacy_bare_default_model() {
+    fn initial_model_skips_unprefixed_settings_model() {
         with_clean_config_env(|| {
-            let mut store = api::CredentialStore {
-                active_provider: Some("anthropic".to_string()),
+            runtime::save_settings(&runtime::Settings {
+                model: Some("claude-sonnet-4-6".to_string()),
                 ..Default::default()
-            };
-            store.providers.insert(
-                "anthropic".to_string(),
-                api::StoredProviderConfig {
-                    default_model: Some("claude-sonnet-4-6".to_string()),
-                    ..Default::default()
-                },
-            );
-            api::save_credentials(&store).expect("save test credentials");
+            })
+            .expect("save test settings");
 
             assert_eq!(initial_model_from_credentials(), None);
         });
     }
 
     #[test]
-    fn initial_model_accepts_prefixed_default_model() {
+    fn initial_model_accepts_prefixed_settings_model() {
         with_clean_config_env(|| {
-            let mut store = api::CredentialStore {
-                active_provider: Some("anthropic".to_string()),
+            runtime::save_settings(&runtime::Settings {
+                model: Some("anthropic/claude-sonnet-4-6".to_string()),
                 ..Default::default()
-            };
-            store.providers.insert(
-                "anthropic".to_string(),
-                api::StoredProviderConfig {
-                    default_model: Some("anthropic/claude-sonnet-4-6".to_string()),
-                    ..Default::default()
-                },
-            );
-            api::save_credentials(&store).expect("save test credentials");
+            })
+            .expect("save test settings");
 
             assert_eq!(
                 initial_model_from_credentials(),

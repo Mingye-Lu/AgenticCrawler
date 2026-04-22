@@ -231,6 +231,13 @@ impl AuthModal {
         config.default_model = Some(prefixed_model_id);
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
+        let _ = runtime::update_settings(|s| {
+            s.model = Some(if model_id.contains('/') {
+                model_id.trim().to_string()
+            } else {
+                format!("{provider_str}/{}", model_id.trim())
+            });
+        });
     }
 
     pub(crate) fn process_loading(&mut self) {

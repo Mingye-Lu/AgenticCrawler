@@ -74,7 +74,7 @@ pub use remote::{
 };
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use settings::{
-    config_home_dir, load_settings, save_settings, settings_file_path,
+    config_home_dir, load_settings, save_settings, settings_file_path, update_settings,
     settings_get_auto_compact_tokens, settings_get_headless, settings_get_max_steps,
     settings_get_workspace_dir, Settings,
 };

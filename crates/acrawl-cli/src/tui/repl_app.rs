@@ -2345,6 +2345,9 @@ fn handle_slash_command_tui(
         }
         SlashCommand::Headed => {
             std::env::set_var("HEADLESS", "false");
+            let _ = runtime::update_settings(|s| {
+                s.headless = Some(false);
+            });
             cli.lock().expect("cli lock").reset_browser();
             state.push_system_card(
                 "Browser Mode",
@@ -2353,6 +2356,9 @@ fn handle_slash_command_tui(
         }
         SlashCommand::Headless => {
             std::env::set_var("HEADLESS", "true");
+            let _ = runtime::update_settings(|s| {
+                s.headless = Some(true);
+            });
             cli.lock().expect("cli lock").reset_browser();
             state.push_system_card(
                 "Browser Mode",
