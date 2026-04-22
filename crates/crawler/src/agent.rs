@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use runtime::{
     ApiClient, ContentBlock, ConversationRuntime, Session, ToolError, ToolExecutor, TurnSummary,
@@ -7,12 +9,16 @@ use runtime::{
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
 use crate::state::CrawlState;
 use crate::tool_registry::ToolRegistry;
-use crate::{mvp_tool_specs, BrowserContext};
+use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
 
 const DEFAULT_MAX_STEPS: usize = 50;
+const DEFAULT_MAX_CONCURRENT_PER_PARENT: usize = 5;
+const DEFAULT_MAX_FORK_DEPTH: usize = 3;
+const DEFAULT_MAX_TOTAL_AGENTS: usize = 10;
 
 #[derive(Debug, Clone, Default)]
 pub struct AgentState {
@@ -68,15 +74,34 @@ pub struct CrawlerAgent {
     browser: Option<BrowserContext>,
     registry: ToolRegistry,
     max_steps: usize,
+    agent_id: String,
+    agent_manager: SharedAgentManager,
+    shared_bridge: Option<SharedBridge>,
+    crawl_state: CrawlState,
+    child_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
+    api_client_arc: Option<SharedApiClient>,
+    #[cfg(test)]
+    fork_page_index_override: Option<usize>,
 }
 
 impl CrawlerAgent {
     #[must_use]
     pub fn new(browser: BrowserContext, registry: ToolRegistry) -> Self {
         Self {
+            shared_bridge: Some(browser.bridge().clone()),
             browser: Some(browser),
             registry,
             max_steps: DEFAULT_MAX_STEPS,
+            agent_id: generate_agent_id(),
+            agent_manager: default_agent_manager(),
+            crawl_state: CrawlState {
+                max_steps: DEFAULT_MAX_STEPS,
+                ..CrawlState::default()
+            },
+            child_tasks: HashMap::new(),
+            api_client_arc: None,
+            #[cfg(test)]
+            fork_page_index_override: None,
         }
     }
 
@@ -86,6 +111,17 @@ impl CrawlerAgent {
             browser: None,
             registry,
             max_steps: DEFAULT_MAX_STEPS,
+            agent_id: generate_agent_id(),
+            agent_manager: default_agent_manager(),
+            shared_bridge: None,
+            crawl_state: CrawlState {
+                max_steps: DEFAULT_MAX_STEPS,
+                ..CrawlState::default()
+            },
+            child_tasks: HashMap::new(),
+            api_client_arc: None,
+            #[cfg(test)]
+            fork_page_index_override: None,
         }
     }
 
@@ -95,12 +131,36 @@ impl CrawlerAgent {
             browser: None,
             registry,
             max_steps: DEFAULT_MAX_STEPS,
+            agent_id: "test-agent".to_string(),
+            agent_manager: default_agent_manager(),
+            shared_bridge: None,
+            crawl_state: CrawlState {
+                max_steps: DEFAULT_MAX_STEPS,
+                ..CrawlState::default()
+            },
+            child_tasks: HashMap::new(),
+            api_client_arc: None,
+            #[cfg(test)]
+            fork_page_index_override: None,
         }
     }
 
     #[must_use]
     pub fn with_max_steps(mut self, max_steps: usize) -> Self {
         self.max_steps = max_steps;
+        self.crawl_state.max_steps = max_steps;
+        self
+    }
+
+    #[must_use]
+    pub fn with_agent_id(mut self, id: String) -> Self {
+        self.agent_id = id;
+        self
+    }
+
+    #[must_use]
+    pub fn with_agent_manager(mut self, manager: SharedAgentManager) -> Self {
+        self.agent_manager = manager;
         self
     }
 
@@ -112,19 +172,41 @@ impl CrawlerAgent {
     }
 
     pub async fn run(
-        self,
+        mut self,
         goal: &str,
-        api_client: impl ApiClient,
+        api_client: impl ApiClient + Send + Sync + 'static,
     ) -> Result<CrawlResult, CrawlError> {
+        let shared_client = SharedApiClient::new(api_client);
+        self.api_client_arc = Some(shared_client.clone());
+
+        let settings = runtime::load_settings();
+        {
+            let mut manager = self.agent_manager.lock().await;
+            if !manager.contains(&self.agent_id) {
+                manager.max_concurrent_per_parent =
+                    runtime::settings_get_max_concurrent_per_parent(&settings) as usize;
+                manager.max_depth = runtime::settings_get_max_fork_depth(&settings) as usize;
+                manager.max_total = runtime::settings_get_max_total_agents(&settings) as usize;
+                manager.register_root(self.agent_id.clone());
+            }
+        }
+
         let max_steps = self.max_steps;
         let system_prompt = build_system_prompt(&mvp_tool_specs());
 
-        let mut runtime = ConversationRuntime::new(Session::new(), api_client, self, system_prompt)
-            .with_max_iterations(max_steps);
-        let summary = runtime
-            .run_turn(goal)
-            .await
-            .map_err(|e| CrawlError::new(e.to_string()))?;
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            shared_client.clone(),
+            self,
+            system_prompt,
+        )
+        .with_max_iterations(max_steps);
+        let result = runtime.run_turn(goal).await;
+        let agent_id = runtime.tool_executor_mut().agent_id.clone();
+        let agent_manager = runtime.tool_executor_mut().agent_manager.clone();
+        agent_manager.lock().await.mark_done(&agent_id);
+
+        let summary = result.map_err(|e| CrawlError::new(e.to_string()))?;
 
         Ok(build_crawl_result(&summary))
     }
@@ -134,11 +216,107 @@ impl CrawlerAgent {
             return Ok(());
         }
 
-        let bridge = crate::PlaywrightBridge::new()
-            .await
-            .map_err(|error| ToolError::new(error.to_string()))?;
-        self.browser = Some(BrowserContext::new(Arc::new(Mutex::new(bridge))));
+        let shared_bridge = match &self.shared_bridge {
+            Some(shared_bridge) => shared_bridge.clone(),
+            None => {
+                let bridge = crate::PlaywrightBridge::new()
+                    .await
+                    .map_err(|error| ToolError::new(error.to_string()))?;
+                let shared_bridge = Arc::new(Mutex::new(bridge));
+                self.shared_bridge = Some(shared_bridge.clone());
+                shared_bridge
+            }
+        };
+
+        self.browser = Some(BrowserContext::new(shared_bridge));
         Ok(())
+    }
+
+    async fn handle_fork(&mut self, input: &str) -> Result<String, ToolError> {
+        let params: Value = serde_json::from_str(input)
+            .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+
+        let sub_goal = params
+            .get("sub_goal")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string();
+
+        if sub_goal.is_empty() {
+            return Err(ToolError::new("fork requires non-empty sub_goal"));
+        }
+
+        let url = params
+            .get("url")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+
+        let can_fork = {
+            let manager = self.agent_manager.lock().await;
+            manager.can_fork(&self.agent_id)
+        };
+        if !can_fork {
+            return Ok(format!("Cannot fork: limits exceeded for agent {}", self.agent_id));
+        }
+
+        self.ensure_browser().await?;
+
+        let settings = runtime::load_settings();
+        let child_max_steps = runtime::settings_get_fork_child_max_steps(&settings) as usize;
+        let child_state = self
+            .crawl_state
+            .fork(&sub_goal, url.as_deref(), child_max_steps);
+        let child_id = format!("{}-child-{}", self.agent_id, self.child_tasks.len() + 1);
+        let child_api_client = self
+            .api_client_arc
+            .clone()
+            .ok_or_else(|| ToolError::new("fork: api_client not initialized"))?;
+        let shared_bridge = self
+            .shared_bridge
+            .clone()
+            .ok_or_else(|| ToolError::new("fork: browser bridge not initialized"))?;
+        let target_url = url
+            .clone()
+            .or_else(|| self.crawl_state.current_url.clone());
+
+        let page_index = self
+            .create_child_page(shared_bridge.clone(), target_url.as_deref())
+            .await?;
+
+        {
+            let mut manager = self.agent_manager.lock().await;
+            manager
+                .register_child(child_id.clone(), &self.agent_id, None)
+                .map_err(|error| ToolError::new(error.to_string()))?;
+        }
+
+        let mut child_agent = CrawlerAgent::new(
+            BrowserContext::new_shared(shared_bridge.clone(), page_index),
+            ToolRegistry::new_with_core_tools(),
+        )
+        .with_max_steps(child_max_steps)
+        .with_agent_id(child_id.clone())
+        .with_agent_manager(self.agent_manager.clone());
+        child_agent.shared_bridge = Some(shared_bridge);
+        child_agent.crawl_state = child_state;
+        child_agent.api_client_arc = Some(child_api_client.clone());
+
+        let child_sub_goal = sub_goal.clone();
+        let runtime_handle = tokio::runtime::Handle::current();
+        let join_handle = tokio::spawn(async move {
+            let _ = tokio::task::spawn_blocking(move || {
+                let _ = runtime_handle.block_on(child_agent.run(&child_sub_goal, child_api_client));
+            })
+            .await;
+        });
+        self.child_tasks.insert(child_id.clone(), join_handle);
+
+        self.crawl_state
+            .action_history
+            .push(format!("Forked subagent {child_id} for: {sub_goal}"));
+
+        Ok(format!("Forked subagent {child_id} for: {sub_goal}"))
     }
 
     fn supports_async(tool_name: &str) -> bool {
@@ -161,10 +339,31 @@ impl CrawlerAgent {
                 | "save_file"
         )
     }
+
+    async fn create_child_page(
+        &self,
+        shared_bridge: SharedBridge,
+        target_url: Option<&str>,
+    ) -> Result<usize, ToolError> {
+        #[cfg(test)]
+        if let Some(page_index) = self.fork_page_index_override {
+            return Ok(page_index);
+        }
+
+        let mut bridge = shared_bridge.lock().await;
+        bridge
+            .new_page(target_url)
+            .await
+            .map_err(|error| ToolError::new(error.to_string()))
+    }
 }
 
 impl ToolExecutor for CrawlerAgent {
     async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+        if tool_name == "fork" {
+            return self.handle_fork(input).await;
+        }
+
         let input_value: Value = if input.is_empty() {
             Value::Object(serde_json::Map::new())
         } else {
@@ -199,6 +398,21 @@ impl ToolExecutor for CrawlerAgent {
 
         Err(ToolError::new(format!("unknown tool: `{tool_name}`")))
     }
+}
+
+fn default_agent_manager() -> SharedAgentManager {
+    Arc::new(Mutex::new(AgentManager::new(
+        DEFAULT_MAX_CONCURRENT_PER_PARENT,
+        DEFAULT_MAX_FORK_DEPTH,
+        DEFAULT_MAX_TOTAL_AGENTS,
+    )))
+}
+
+fn generate_agent_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    format!("agent-{nanos}")
 }
 
 fn build_crawl_result(summary: &TurnSummary) -> CrawlResult {
@@ -296,6 +510,24 @@ mod tests {
         fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
             Ok(vec![
                 AssistantEvent::TextDelta("All done.".to_string()),
+                AssistantEvent::MessageStop,
+            ])
+        }
+    }
+
+    struct CountingTextOnlyApiClient {
+        call_count: Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl ApiClient for CountingTextOnlyApiClient {
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            let mut call_count = self
+                .call_count
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *call_count += 1;
+            Ok(vec![
+                AssistantEvent::TextDelta("Child done.".to_string()),
                 AssistantEvent::MessageStop,
             ])
         }
@@ -467,6 +699,109 @@ mod tests {
             .expect_err("should fail due to max iterations");
 
         assert!(err.to_string().contains("maximum"));
+    }
+
+    #[tokio::test]
+    async fn test_fork_dispatch_spawns_child() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let call_count = Arc::new(std::sync::Mutex::new(0usize));
+        let shared_client = SharedApiClient::new(CountingTextOnlyApiClient {
+            call_count: Arc::clone(&call_count),
+        });
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager.clone());
+        agent.api_client_arc = Some(shared_client);
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            crate::PlaywrightBridge::new()
+                .await
+                .expect("bridge should initialize for fork test"),
+        )));
+        agent.fork_page_index_override = Some(1);
+
+        let observation = agent
+            .execute("fork", r#"{"sub_goal":"check result","url":"https://example.com"}"#)
+            .await
+            .expect("fork should succeed");
+
+        assert!(observation.contains("Forked subagent root-child-1 for: check result"));
+        assert_eq!(manager.lock().await.get_children("root").len(), 1);
+        assert_eq!(agent.child_tasks.len(), 1);
+        for (_, handle) in agent.child_tasks.drain() {
+            let _ = handle.await;
+        }
+
+        assert_eq!(
+            *call_count
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fork_returns_observation() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager);
+        agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            crate::PlaywrightBridge::new()
+                .await
+                .expect("bridge should initialize for fork test"),
+        )));
+        agent.fork_page_index_override = Some(1);
+
+        let observation = agent
+            .execute("fork", r#"{"sub_goal":"collect details"}"#)
+            .await
+            .expect("fork should succeed");
+
+        assert_eq!(observation, "Forked subagent root-child-1 for: collect details");
+
+        for (_, handle) in agent.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fork_at_limit_returns_error() {
+        let manager = Arc::new(Mutex::new(AgentManager::new(0, 3, 10)));
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager);
+        agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
+
+        let observation = agent
+            .execute("fork", r#"{"sub_goal":"blocked"}"#)
+            .await
+            .expect("fork limit should return an observation");
+
+        assert_eq!(observation, "Cannot fork: limits exceeded for agent root");
+    }
+
+    #[tokio::test]
+    async fn test_fork_empty_subgoal_returns_error() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager);
+
+        let err = agent
+            .execute("fork", r#"{"sub_goal":"   "}"#)
+            .await
+            .expect_err("empty sub_goal should fail");
+
+        assert_eq!(err.to_string(), "fork requires non-empty sub_goal");
     }
 
     #[test]

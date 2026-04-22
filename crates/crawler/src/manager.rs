@@ -212,6 +212,11 @@ impl AgentManager {
         }
     }
 
+    #[must_use]
+    pub fn contains(&self, agent_id: &str) -> bool {
+        self.agents.contains_key(agent_id)
+    }
+
     /// Abort all active children of `parent_id` by calling
     /// [`JoinHandle::abort`](tokio::task::JoinHandle::abort) on their tasks.
     pub fn abort_children(&mut self, parent_id: &str) {
