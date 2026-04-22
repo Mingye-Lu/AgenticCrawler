@@ -361,11 +361,6 @@ impl ProviderRegistry {
         store: &CredentialStore,
     ) -> Result<ProviderClient, ApiError> {
         let provider_id = self.provider_for_model(model)?;
-
-        if store.providers.is_empty() {
-            return Ok(ProviderClient::no_auth_placeholder());
-        }
-
         let api_id = model_api_id(model);
         let config = store.providers.get(provider_id).ok_or_else(|| {
             ApiError::Auth(format!(
@@ -468,12 +463,11 @@ mod tests {
     }
 
     #[test]
-    fn registry_build_client_returns_placeholder_when_no_creds() {
+    fn registry_build_client_errors_when_no_creds() {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
-        let client = registry.build_client("anthropic/claude-sonnet-4-6", &store);
-        assert!(client.is_ok());
-        assert!(client.unwrap().is_anthropic());
+        let result = registry.build_client("anthropic/claude-sonnet-4-6", &store);
+        assert!(result.is_err());
     }
 
     #[test]
