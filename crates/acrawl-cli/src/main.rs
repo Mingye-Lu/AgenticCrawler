@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 use std::env;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+pub(crate) static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
 use crawler::mvp_tool_specs;
@@ -50,6 +53,13 @@ fn main() {
         );
         default_panic(info);
     }));
+
+    TOKIO_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create tokio runtime")
+    });
 
     if let Err(error) = run() {
         eprintln!("error: {error}\n\nRun `acrawl --help` for usage.");

@@ -26,10 +26,9 @@ fn block_on_runtime_future<F, T>(future: F) -> Result<T, RuntimeError>
 where
     F: std::future::Future<Output = Result<T, RuntimeError>>,
 {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| RuntimeError::new(format!("failed to create async runtime: {error}")))?
+    crate::TOKIO_RUNTIME
+        .get()
+        .expect("tokio runtime not initialized")
         .block_on(future)
 }
 
@@ -941,13 +940,18 @@ fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bo
 
     static CACHE: OnceLock<HashMap<String, bool>> = OnceLock::new();
     CACHE.get_or_init(|| {
-        tokio::runtime::Runtime::new()
-            .ok()
-            .and_then(|rt| {
-                rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
-                    .ok()
-            })
-            .unwrap_or_default()
+        if let Some(rt) = crate::TOKIO_RUNTIME.get() {
+            rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
+                .ok()
+        } else {
+            tokio::runtime::Runtime::new()
+                .ok()
+                .and_then(|rt| {
+                    rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
+                        .ok()
+                })
+        }
+        .unwrap_or_default()
     })
 }
 
@@ -991,7 +995,7 @@ fn build_runtime(
             emit_output,
             allowed_tools.clone(),
             ui_tx.clone(),
-        )?,
+        ),
         CliToolExecutor::new(allowed_tools, emit_output, ui_tx),
         system_prompt,
         &build_runtime_feature_config()?,
@@ -1000,7 +1004,6 @@ fn build_runtime(
 }
 
 pub(crate) struct LlmRuntimeClient {
-    runtime: tokio::runtime::Runtime,
     registry: ProviderRegistry,
     provider: ProviderClient,
     model: String,
@@ -1018,7 +1021,7 @@ impl LlmRuntimeClient {
         emit_output: bool,
         allowed_tools: Option<AllowedToolSet>,
         ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Self {
         let store = api::load_credentials().unwrap_or_default();
         let registry = ProviderRegistry::from_credentials(&store);
         let provider = if model.is_empty() {
@@ -1032,8 +1035,7 @@ impl LlmRuntimeClient {
                 }
             }
         };
-        Ok(Self {
-            runtime: tokio::runtime::Runtime::new()?,
+        Self {
             registry,
             provider,
             model,
@@ -1042,7 +1044,7 @@ impl LlmRuntimeClient {
             allowed_tools,
             ui_tx,
             reasoning_effort: None,
-        })
+        }
     }
 
     fn send_ui_stream(&self, chunk: impl Into<String>) {
@@ -1074,8 +1076,9 @@ impl ApiClient for LlmRuntimeClient {
             stream: true,
             reasoning_effort: self.reasoning_effort,
         };
-        self.runtime.block_on(async {
-            let mut stdout = io::stdout();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let mut stdout = io::stdout();
             let mut sink = io::sink();
             let out: &mut dyn Write = if self.emit_output {
                 &mut stdout
@@ -1215,6 +1218,7 @@ impl ApiClient for LlmRuntimeClient {
             } else {
                 Ok(events)
             }
+        })
         })
     }
 }
