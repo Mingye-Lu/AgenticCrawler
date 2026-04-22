@@ -55,6 +55,13 @@ pub(crate) enum Provider {
 }
 
 pub(crate) fn initial_model_from_credentials() -> Option<String> {
+    let settings = runtime::load_settings();
+    if let Some(ref model) = settings.model {
+        if !model.is_empty() {
+            return Some(model.clone());
+        }
+    }
+
     let store = api::load_credentials().unwrap_or_default();
     if let Some(provider_name) = &store.active_provider {
         if let Some(config) = store.providers.get(provider_name) {
@@ -874,21 +881,23 @@ pub(crate) fn run_resume_command(
 }
 
 fn model_supports_reasoning(model: &str) -> bool {
+    let api_model = api::provider::model_api_id(model);
     let store = api::load_credentials().unwrap_or_default();
     let registry = ProviderRegistry::from_credentials(&store);
-    if let Some(info) = registry.resolve_model(model) {
+    if let Some(info) = registry.resolve_model(api_model) {
         return info.capabilities.reasoning;
     }
     models_dev_reasoning_cache()
-        .get(model)
+        .get(api_model)
         .copied()
         .unwrap_or(false)
 }
 
 fn model_reasoning_efforts(model: &str) -> Vec<api::ReasoningEffort> {
+    let api_model = api::provider::model_api_id(model);
     let store = api::load_credentials().unwrap_or_default();
     let registry = ProviderRegistry::from_credentials(&store);
-    if let Some(info) = registry.resolve_model(model) {
+    if let Some(info) = registry.resolve_model(api_model) {
         return info.capabilities.reasoning_efforts.clone();
     }
     if model_supports_reasoning(model) {
@@ -1011,7 +1020,7 @@ impl ApiClient for LlmRuntimeClient {
     #[allow(clippy::too_many_lines)]
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         let message_request = MessageRequest {
-            model: self.model.clone(),
+            model: api::provider::model_api_id(&self.model).to_string(),
             max_tokens: self.registry.max_tokens(&self.model),
             messages: convert_messages(&request.messages),
             system: (!request.system_prompt.is_empty()).then(|| request.system_prompt.join("\n\n")),

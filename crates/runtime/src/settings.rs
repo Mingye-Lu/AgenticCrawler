@@ -15,6 +15,10 @@ pub struct Settings {
     #[serde(default)]
     pub max_steps: Option<u32>,
 
+    /// Default model in provider/model format (e.g. "anthropic/claude-sonnet-4-6")
+    #[serde(default)]
+    pub model: Option<String>,
+
     /// Directory for saved files (default: "workspace")
     #[serde(default)]
     pub workspace_dir: Option<String>,
@@ -33,6 +37,7 @@ impl Default for Settings {
         Self {
             headless: Some(true),
             max_steps: Some(50),
+            model: None,
             workspace_dir: Some("workspace".to_string()),
             classic_repl: Some(false),
             auto_compact_input_tokens: Some(200_000),
@@ -213,6 +218,7 @@ mod tests {
         let original = Settings {
             headless: Some(false),
             max_steps: Some(100),
+            model: Some("anthropic/claude-sonnet-4-6".to_string()),
             workspace_dir: Some("custom_workspace".to_string()),
             classic_repl: Some(true),
             auto_compact_input_tokens: Some(500_000),

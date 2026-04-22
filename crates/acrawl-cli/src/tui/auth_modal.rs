@@ -203,7 +203,6 @@ impl AuthModal {
         };
         config.api_key = Some(key);
         config.base_url = base_url.or(preset_base_url);
-        store.active_provider = Some(provider_str.to_string());
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
     }
@@ -225,7 +224,6 @@ impl AuthModal {
             .cloned()
             .unwrap_or_default();
         config.default_model = Some(model_id.trim().to_string());
-        store.active_provider = Some(provider_str.to_string());
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
     }

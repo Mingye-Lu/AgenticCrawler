@@ -311,47 +311,51 @@ fn build_vertex_client(config: &StoredProviderConfig, model: &str) -> ProviderCl
 
 pub struct ProviderRegistry {
     catalog: Vec<ModelInfo>,
-    active_provider_id: Option<String>,
     configured_providers: Vec<String>,
+}
+
+/// Extract the API model ID from a potentially provider-prefixed model string.
+/// "anthropic/claude-sonnet-4-6" → "claude-sonnet-4-6"
+/// "claude-sonnet-4-6" → "claude-sonnet-4-6"
+#[must_use]
+pub fn model_api_id(model: &str) -> &str {
+    model.split_once('/').map_or(model, |(_, id)| id)
 }
 
 impl ProviderRegistry {
     #[must_use]
     pub fn from_credentials(store: &CredentialStore) -> Self {
         let configured_providers: Vec<String> = store.providers.keys().cloned().collect();
-        let active_provider_id = store.active_provider.clone();
         let catalog = catalog::builtin_models();
         Self {
             catalog,
-            active_provider_id,
             configured_providers,
         }
     }
 
     #[must_use]
     pub fn resolve_model(&self, model: &str) -> Option<&ModelInfo> {
-        self.catalog.iter().find(|m| m.id == model)
+        let id = model_api_id(model);
+        self.catalog.iter().find(|m| m.id == id)
     }
 
     #[must_use]
     pub fn max_tokens(&self, model: &str) -> u32 {
         self.resolve_model(model).map_or_else(
-            || catalog::default_max_tokens(model),
+            || catalog::default_max_tokens(model_api_id(model)),
             |m| m.max_output_tokens,
         )
     }
 
     #[must_use]
     pub fn provider_for_model<'a>(&'a self, model: &'a str) -> &'a str {
+        if let Some((provider, _)) = model.split_once('/') {
+            return provider;
+        }
         self.resolve_model(model).map_or_else(
             || catalog::infer_provider(model),
             |m| m.provider_id.as_str(),
         )
-    }
-
-    #[must_use]
-    pub fn active_provider_id(&self) -> Option<&str> {
-        self.active_provider_id.as_deref()
     }
 
     pub fn build_client(
@@ -363,31 +367,27 @@ impl ProviderRegistry {
             return Ok(ProviderClient::no_auth_placeholder());
         }
 
-        if self
-            .active_provider_id()
-            .is_none_or(|id| !store.providers.contains_key(id))
-        {
+        let provider_id = self.provider_for_model(model);
+
+        if !model.contains('/') {
             let matching = self.ambiguous_provider_matches(model);
             if matching.len() > 1 {
                 return Err(ApiError::Auth(format!(
-                    "Model '{model}' matches multiple configured providers ({}). Set active provider with `acrawl auth <provider>`.",
-                    matching.join(", ")
+                    "Model '{model}' matches multiple configured providers ({}). Use provider/model format (e.g. '{}/{model}').",
+                    matching.join(", "),
+                    matching[0],
                 )));
             }
         }
 
-        let provider_id = self
-            .active_provider_id()
-            .filter(|id| store.providers.contains_key(*id))
-            .unwrap_or_else(|| self.provider_for_model(model));
-
+        let api_id = model_api_id(model);
         let config = store.providers.get(provider_id).ok_or_else(|| {
             ApiError::Auth(format!(
-                "No {provider_id} credentials found. Run `acrawl auth`."
+                "No {provider_id} credentials found. Run `acrawl auth {provider_id}`."
             ))
         })?;
 
-        ProviderClient::from_stored_config(provider_id, config, model)
+        ProviderClient::from_stored_config(provider_id, config, api_id)
     }
 
     #[must_use]
@@ -427,8 +427,19 @@ mod tests {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
         assert!(registry.resolve_model("claude-sonnet-4-6").is_some());
+        assert!(registry.resolve_model("anthropic/claude-sonnet-4-6").is_some());
         assert!(registry.resolve_model("gpt-4o").is_some());
         assert!(registry.resolve_model("unknown-model").is_none());
+    }
+
+    #[test]
+    fn model_api_id_strips_prefix() {
+        assert_eq!(model_api_id("anthropic/claude-sonnet-4-6"), "claude-sonnet-4-6");
+        assert_eq!(
+            model_api_id("bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0"),
+            "anthropic.claude-sonnet-4-6-20250514-v1:0"
+        );
+        assert_eq!(model_api_id("claude-sonnet-4-6"), "claude-sonnet-4-6");
     }
 
     #[test]
@@ -455,6 +466,10 @@ mod tests {
             registry.provider_for_model("claude-sonnet-4-6"),
             "anthropic"
         );
+        assert_eq!(
+            registry.provider_for_model("anthropic/claude-sonnet-4-6"),
+            "anthropic"
+        );
         assert_eq!(registry.provider_for_model("gpt-4o"), "openai");
         assert_eq!(registry.provider_for_model("codex-mini-latest"), "openai");
         assert_eq!(registry.provider_for_model("llama3.2"), "other");
@@ -467,25 +482,6 @@ mod tests {
         let client = registry.build_client("claude-sonnet-4-6", &store);
         assert!(client.is_ok());
         assert!(client.unwrap().is_anthropic());
-    }
-
-    #[test]
-    fn registry_build_client_uses_active_provider() {
-        let mut store = CredentialStore {
-            active_provider: Some("openai".into()),
-            ..Default::default()
-        };
-        store.providers.insert(
-            "openai".into(),
-            crate::credentials::StoredProviderConfig {
-                auth_method: "api_key".into(),
-                api_key: Some("sk-test".into()),
-                ..Default::default()
-            },
-        );
-        let registry = ProviderRegistry::from_credentials(&store);
-        let client = registry.build_client("claude-sonnet-4-6", &store);
-        assert!(client.is_ok());
     }
 
     #[test]
@@ -504,26 +500,68 @@ mod tests {
     }
 
     #[test]
-    fn test_active_provider_overrides_model_inference() {
-        let mut store = CredentialStore {
-            active_provider: Some("other".into()),
-            ..Default::default()
-        };
+    fn build_client_routes_by_model_provider() {
+        let mut store = CredentialStore::default();
         store.providers.insert(
-            "other".into(),
+            "anthropic".into(),
             StoredProviderConfig {
                 auth_method: "api_key".into(),
-                api_key: Some("test-key".into()),
-                base_url: Some("https://api.example.com/v1".into()),
+                api_key: Some("anthropic-key".into()),
+                ..Default::default()
+            },
+        );
+        store.providers.insert(
+            "bedrock".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("AKIDEXAMPLE".into()),
+                aws_secret_access_key: Some("secret".into()),
+                region: Some("us-east-1".into()),
                 ..Default::default()
             },
         );
 
         let registry = ProviderRegistry::from_credentials(&store);
-        let client = registry.build_client("claude-sonnet-4-6", &store);
+        let anthropic_client = registry.build_client("claude-sonnet-4-6", &store);
+        let bedrock_client =
+            registry.build_client("anthropic.claude-sonnet-4-6-20250514-v1:0", &store);
+
+        assert!(anthropic_client.is_ok());
+        assert!(matches!(anthropic_client.unwrap(), ProviderClient::Anthropic(_)));
+        assert!(bedrock_client.is_ok());
+        assert!(matches!(bedrock_client.unwrap(), ProviderClient::Bedrock(_)));
+    }
+
+    #[test]
+    fn build_client_with_explicit_provider_prefix() {
+        let mut store = CredentialStore::default();
+        store.providers.insert(
+            "anthropic".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("anthropic-key".into()),
+                ..Default::default()
+            },
+        );
+        store.providers.insert(
+            "bedrock".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("AKIDEXAMPLE".into()),
+                aws_secret_access_key: Some("secret".into()),
+                region: Some("us-east-1".into()),
+                ..Default::default()
+            },
+        );
+
+        let registry = ProviderRegistry::from_credentials(&store);
+        let client = registry.build_client(
+            "bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0",
+            &store,
+        );
 
         assert!(client.is_ok());
-        assert!(matches!(client.unwrap(), ProviderClient::Custom(_)));
+        assert!(matches!(client.unwrap(), ProviderClient::Bedrock(_)));
     }
 
     #[test]
@@ -554,7 +592,8 @@ mod tests {
                 assert!(message.contains("matches multiple configured providers"));
                 assert!(message.contains("groq"));
                 assert!(message.contains("perplexity"));
-                assert!(message.contains("acrawl auth <provider>"));
+                assert!(message.contains("provider/model format"));
+                assert!(message.contains("groq/llama-3.1-sonar-preview"));
             }
             _ => panic!("expected ambiguous provider auth error"),
         }

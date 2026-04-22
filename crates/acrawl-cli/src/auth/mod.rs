@@ -81,7 +81,6 @@ pub(crate) fn persist_provider_credentials(
             .and_then(|existing| existing.default_model.clone());
     }
     api::set_provider_config(&mut store, &provider_name, config);
-    store.active_provider = Some(provider_name);
     api::save_credentials(&store)?;
     Ok(())
 }
@@ -100,7 +99,6 @@ pub(crate) fn persist_preset_credentials(
             .and_then(|existing| existing.default_model.clone());
     }
     api::set_provider_config(&mut store, &key, config);
-    store.active_provider = Some(key);
     api::save_credentials(&store)?;
     Ok(())
 }

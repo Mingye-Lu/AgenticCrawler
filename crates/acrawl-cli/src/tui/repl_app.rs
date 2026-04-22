@@ -1728,7 +1728,6 @@ impl ReplTuiState {
                                     .cloned()
                                     .unwrap_or_default();
                                 config.auth_method = "oauth".to_string();
-                                store.active_provider = Some(provider_str.to_string());
                                 api::credentials::set_provider_config(
                                     &mut store,
                                     provider_str,
@@ -2549,7 +2548,6 @@ fn spawn_anthropic_oauth_thread(
                 .block_on(client.exchange_oauth_code(&oauth, &exchange))
                 .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
             let mut store = api::credentials::load_credentials().unwrap_or_default();
-            store.active_provider = Some("anthropic".to_string());
             api::credentials::set_provider_config(
                 &mut store,
                 "anthropic",
@@ -2661,7 +2659,6 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
                 account_id,
             };
             let mut store = api::credentials::load_credentials().unwrap_or_default();
-            store.active_provider = Some("openai".to_string());
             let mut cfg = store.providers.get("openai").cloned().unwrap_or_default();
             cfg.auth_method = "oauth".to_string();
             cfg.oauth = Some(oauth_tokens);

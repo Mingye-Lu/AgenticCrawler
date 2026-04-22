@@ -1582,34 +1582,6 @@ mod tests {
     }
 
     #[test]
-    fn test_active_provider_overrides_inference() {
-        use crate::credentials::{CredentialStore, StoredProviderConfig};
-
-        let mut store = CredentialStore {
-            active_provider: Some("other".into()),
-            ..Default::default()
-        };
-        store.providers.insert(
-            "other".into(),
-            StoredProviderConfig {
-                auth_method: "api_key".into(),
-                api_key: Some("test-key".into()),
-                base_url: Some("https://api.example.com/v1".into()),
-                ..Default::default()
-            },
-        );
-
-        let registry = crate::provider::ProviderRegistry::from_credentials(&store);
-        let client = registry.build_client("claude-sonnet-4-6", &store);
-
-        assert!(client.is_ok());
-        assert!(matches!(
-            client.unwrap(),
-            crate::provider::ProviderClient::Custom(_)
-        ));
-    }
-
-    #[test]
     fn default_max_tokens_for_known_prefixes() {
         assert_eq!(default_max_tokens("claude-sonnet-4-6"), 64_000);
         assert_eq!(default_max_tokens("claude-opus-4-6"), 32_000);
