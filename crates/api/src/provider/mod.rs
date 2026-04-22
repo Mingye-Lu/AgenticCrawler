@@ -347,15 +347,12 @@ impl ProviderRegistry {
         )
     }
 
-    #[must_use]
-    pub fn provider_for_model<'a>(&'a self, model: &'a str) -> &'a str {
-        if let Some((provider, _)) = model.split_once('/') {
-            return provider;
-        }
-        self.resolve_model(model).map_or_else(
-            || catalog::infer_provider(model),
-            |m| m.provider_id.as_str(),
-        )
+    pub fn provider_for_model<'a>(&'a self, model: &'a str) -> Result<&'a str, ApiError> {
+        model.split_once('/').map(|(provider, _)| provider).ok_or_else(|| {
+            ApiError::Auth(format!(
+                "Model '{model}' must include a provider prefix (e.g. 'anthropic/{model}'). Run `acrawl auth` to configure a provider."
+            ))
+        })
     }
 
     pub fn build_client(
@@ -363,21 +360,10 @@ impl ProviderRegistry {
         model: &str,
         store: &CredentialStore,
     ) -> Result<ProviderClient, ApiError> {
+        let provider_id = self.provider_for_model(model)?;
+
         if store.providers.is_empty() {
             return Ok(ProviderClient::no_auth_placeholder());
-        }
-
-        let provider_id = self.provider_for_model(model);
-
-        if !model.contains('/') {
-            let matching = self.ambiguous_provider_matches(model);
-            if matching.len() > 1 {
-                return Err(ApiError::Auth(format!(
-                    "Model '{model}' matches multiple configured providers ({}). Use provider/model format (e.g. '{}/{model}').",
-                    matching.join(", "),
-                    matching[0],
-                )));
-            }
         }
 
         let api_id = model_api_id(model);
@@ -393,27 +379,6 @@ impl ProviderRegistry {
     #[must_use]
     pub fn configured_providers(&self) -> &[String] {
         &self.configured_providers
-    }
-
-    fn ambiguous_provider_matches(&self, model: &str) -> Vec<&'static str> {
-        Self::matching_provider_ids(model, &self.configured_providers)
-    }
-
-    fn matching_provider_ids(model: &str, configured_providers: &[String]) -> Vec<&'static str> {
-        let mut matching = Vec::new();
-        for preset in preset::builtin_presets() {
-            if preset.model_prefixes.is_empty()
-                || !configured_providers.iter().any(|id| id == preset.id)
-                || !preset
-                    .model_prefixes
-                    .iter()
-                    .any(|prefix| model.starts_with(prefix))
-            {
-                continue;
-            }
-            matching.push(preset.id);
-        }
-        matching
     }
 }
 
@@ -446,9 +411,9 @@ mod tests {
     fn registry_max_tokens_from_catalog() {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
-        assert_eq!(registry.max_tokens("claude-sonnet-4-6"), 64_000);
-        assert_eq!(registry.max_tokens("claude-opus-4-6"), 32_000);
-        assert_eq!(registry.max_tokens("gpt-4o"), 16_384);
+        assert_eq!(registry.max_tokens("anthropic/claude-sonnet-4-6"), 64_000);
+        assert_eq!(registry.max_tokens("anthropic/claude-opus-4-6"), 32_000);
+        assert_eq!(registry.max_tokens("openai/gpt-4o"), 16_384);
     }
 
     #[test]
@@ -463,23 +428,50 @@ mod tests {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
         assert_eq!(
-            registry.provider_for_model("claude-sonnet-4-6"),
+            registry.provider_for_model("anthropic/claude-sonnet-4-6").unwrap(),
             "anthropic"
         );
         assert_eq!(
-            registry.provider_for_model("anthropic/claude-sonnet-4-6"),
+            registry.provider_for_model("anthropic/claude-sonnet-4-6").unwrap(),
             "anthropic"
         );
-        assert_eq!(registry.provider_for_model("gpt-4o"), "openai");
-        assert_eq!(registry.provider_for_model("codex-mini-latest"), "openai");
-        assert_eq!(registry.provider_for_model("llama3.2"), "other");
+        assert_eq!(registry.provider_for_model("openai/gpt-4o").unwrap(), "openai");
+        assert_eq!(
+            registry.provider_for_model("openai/codex-mini-latest").unwrap(),
+            "openai"
+        );
+        assert_eq!(registry.provider_for_model("other/llama3.2").unwrap(), "other");
+    }
+
+    #[test]
+    fn bare_model_name_returns_error() {
+        let mut store = CredentialStore::default();
+        store.providers.insert(
+            "anthropic".into(),
+            StoredProviderConfig {
+                auth_method: "api_key".into(),
+                api_key: Some("anthropic-key".into()),
+                ..Default::default()
+            },
+        );
+
+        let registry = ProviderRegistry::from_credentials(&store);
+        let result = registry.build_client("claude-sonnet-4-6", &store);
+
+        match result {
+            Err(ApiError::Auth(message)) => assert_eq!(
+                message,
+                "Model 'claude-sonnet-4-6' must include a provider prefix (e.g. 'anthropic/claude-sonnet-4-6'). Run `acrawl auth` to configure a provider."
+            ),
+            _ => panic!("expected provider prefix auth error"),
+        }
     }
 
     #[test]
     fn registry_build_client_returns_placeholder_when_no_creds() {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
-        let client = registry.build_client("claude-sonnet-4-6", &store);
+        let client = registry.build_client("anthropic/claude-sonnet-4-6", &store);
         assert!(client.is_ok());
         assert!(client.unwrap().is_anthropic());
     }
@@ -522,9 +514,9 @@ mod tests {
         );
 
         let registry = ProviderRegistry::from_credentials(&store);
-        let anthropic_client = registry.build_client("claude-sonnet-4-6", &store);
+        let anthropic_client = registry.build_client("anthropic/claude-sonnet-4-6", &store);
         let bedrock_client =
-            registry.build_client("anthropic.claude-sonnet-4-6-20250514-v1:0", &store);
+            registry.build_client("bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0", &store);
 
         assert!(anthropic_client.is_ok());
         assert!(matches!(anthropic_client.unwrap(), ProviderClient::Anthropic(_)));
@@ -562,41 +554,6 @@ mod tests {
 
         assert!(client.is_ok());
         assert!(matches!(client.unwrap(), ProviderClient::Bedrock(_)));
-    }
-
-    #[test]
-    fn test_ambiguous_model_without_active_provider_returns_error() {
-        let mut store = CredentialStore::default();
-        store.providers.insert(
-            "groq".into(),
-            StoredProviderConfig {
-                auth_method: "api_key".into(),
-                api_key: Some("test-key".into()),
-                ..Default::default()
-            },
-        );
-        store.providers.insert(
-            "perplexity".into(),
-            StoredProviderConfig {
-                auth_method: "api_key".into(),
-                api_key: Some("test-key".into()),
-                ..Default::default()
-            },
-        );
-
-        let registry = ProviderRegistry::from_credentials(&store);
-        let result = registry.build_client("llama-3.1-sonar-preview", &store);
-
-        match result {
-            Err(ApiError::Auth(message)) => {
-                assert!(message.contains("matches multiple configured providers"));
-                assert!(message.contains("groq"));
-                assert!(message.contains("perplexity"));
-                assert!(message.contains("provider/model format"));
-                assert!(message.contains("groq/llama-3.1-sonar-preview"));
-            }
-            _ => panic!("expected ambiguous provider auth error"),
-        }
     }
 
     #[test]
@@ -834,27 +791,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_model_inference_covers_prefixed_providers() {
-        use crate::provider::catalog::infer_provider;
-
-        let cases = [
-            ("grok-2", "xai"),
-            ("command-r-plus", "cohere"),
-            ("qwen-max", "alibaba"),
-            ("mistral-large-latest", "mistral"),
-            ("codestral-latest", "mistral"),
-            ("gemma2-9b-it", "groq"),
-            ("@cf/meta/llama-3.1-70b-instruct", "cloudflare"),
-            ("dolphin-2.9.2-qwen2-72b", "venice"),
-            ("llama3.1-70b", "cerebras"),
-        ];
-        for (model, expected_provider) in cases {
-            let inferred = infer_provider(model);
-            assert_eq!(
-                inferred, expected_provider,
-                "model '{model}' should infer to '{expected_provider}', got '{inferred}'"
-            );
-        }
-    }
 }

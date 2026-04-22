@@ -686,6 +686,49 @@ mod tests {
     }
 
     #[test]
+    fn initial_model_skips_legacy_bare_default_model() {
+        with_clean_config_env(|| {
+            let mut store = api::CredentialStore {
+                active_provider: Some("anthropic".to_string()),
+                ..Default::default()
+            };
+            store.providers.insert(
+                "anthropic".to_string(),
+                api::StoredProviderConfig {
+                    default_model: Some("claude-sonnet-4-6".to_string()),
+                    ..Default::default()
+                },
+            );
+            api::save_credentials(&store).expect("save test credentials");
+
+            assert_eq!(initial_model_from_credentials(), None);
+        });
+    }
+
+    #[test]
+    fn initial_model_accepts_prefixed_default_model() {
+        with_clean_config_env(|| {
+            let mut store = api::CredentialStore {
+                active_provider: Some("anthropic".to_string()),
+                ..Default::default()
+            };
+            store.providers.insert(
+                "anthropic".to_string(),
+                api::StoredProviderConfig {
+                    default_model: Some("anthropic/claude-sonnet-4-6".to_string()),
+                    ..Default::default()
+                },
+            );
+            api::save_credentials(&store).expect("save test credentials");
+
+            assert_eq!(
+                initial_model_from_credentials(),
+                Some("anthropic/claude-sonnet-4-6".to_string())
+            );
+        });
+    }
+
+    #[test]
     fn rejects_ide_tool_names_not_in_crawler_toolset() {
         let err = parse_args(&["--allowedTools".to_string(), "read_file".to_string()])
             .expect_err("read_file is an IDE tool, not a crawler tool");

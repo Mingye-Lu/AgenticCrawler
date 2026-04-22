@@ -33,49 +33,23 @@ pub fn builtin_models() -> Vec<ModelInfo> {
     models
 }
 
-/// Infer provider ID from a model name when the model is not in the catalog.
-///
-/// This is the fallback for user-supplied model IDs that aren't registered.
-#[must_use]
-pub fn infer_provider(model: &str) -> &'static str {
-    if model.starts_with("claude") {
-        return "anthropic";
-    } else if model.starts_with("gpt-")
-        || model.starts_with("o1")
-        || model.starts_with("o3")
-        || model.starts_with("o4")
-        || model.starts_with("codex-")
-        || model.starts_with("chatgpt-")
-    {
-        return "openai";
-    }
-
-    for (provider_id, prefixes) in crate::provider::preset::preset_model_prefixes() {
-        if provider_id == "anthropic" || provider_id == "openai" {
-            continue;
-        }
-        if prefixes.iter().any(|prefix| model.starts_with(prefix)) {
-            return provider_id;
-        }
-    }
-
-    "other"
-}
-
 /// Default max output tokens for unknown models (fallback when not in catalog).
 #[must_use]
 pub fn default_max_tokens(model: &str) -> u32 {
-    match infer_provider(model) {
-        "anthropic" => {
-            if model.contains("opus") {
-                32_000
-            } else {
-                64_000
-            }
+    if model.contains("claude") || model.contains("anthropic") {
+        if model.contains("opus") {
+            return 32_000;
         }
-        "openai" => 16_384,
-        _ => 8_192,
+        return 64_000;
     }
+    if model.starts_with("gpt-")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+    {
+        return 16_384;
+    }
+    8_192
 }
 
 fn anthropic_models() -> Vec<ModelInfo> {
@@ -1572,20 +1546,11 @@ mod tests {
     }
 
     #[test]
-    fn infer_provider_for_known_prefixes() {
-        assert_eq!(infer_provider("claude-sonnet-4-6"), "anthropic");
-        assert_eq!(infer_provider("gpt-4o"), "openai");
-        assert_eq!(infer_provider("o3"), "openai");
-        assert_eq!(infer_provider("o4-mini"), "openai");
-        assert_eq!(infer_provider("codex-mini-latest"), "openai");
-        assert_eq!(infer_provider("llama3.2"), "other");
-    }
-
-    #[test]
     fn default_max_tokens_for_known_prefixes() {
         assert_eq!(default_max_tokens("claude-sonnet-4-6"), 64_000);
         assert_eq!(default_max_tokens("claude-opus-4-6"), 32_000);
         assert_eq!(default_max_tokens("gpt-4o"), 16_384);
+        assert_eq!(default_max_tokens("o3"), 16_384);
         assert_eq!(default_max_tokens("llama3.2"), 8_192);
     }
 

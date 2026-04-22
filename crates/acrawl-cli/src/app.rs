@@ -66,7 +66,9 @@ pub(crate) fn initial_model_from_credentials() -> Option<String> {
     if let Some(provider_name) = &store.active_provider {
         if let Some(config) = store.providers.get(provider_name) {
             if let Some(model) = &config.default_model {
-                return Some(model.clone());
+                if model.contains('/') {
+                    return Some(model.clone());
+                }
             }
         }
     }
@@ -1427,42 +1429,18 @@ mod tests {
     }
 
     #[test]
-    fn routes_claude_models_to_anthropic() {
+    fn provider_for_model_requires_provider_prefix() {
+        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
+        assert!(registry.provider_for_model("claude-sonnet-4-6").is_err());
+    }
+
+    #[test]
+    fn provider_for_model_accepts_prefixed_model() {
         let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
         assert_eq!(
-            registry.provider_for_model("claude-sonnet-4-6"),
+            registry.provider_for_model("anthropic/claude-sonnet-4-6").unwrap(),
             "anthropic"
         );
-    }
-
-    #[test]
-    fn routes_gpt_models_to_openai() {
-        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
-        assert_eq!(registry.provider_for_model("gpt-4o"), "openai");
-    }
-
-    #[test]
-    fn routes_codex_models_to_openai() {
-        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
-        assert_eq!(registry.provider_for_model("codex-mini-latest"), "openai");
-    }
-
-    #[test]
-    fn routes_o_series_models_to_openai() {
-        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
-        assert_eq!(registry.provider_for_model("o3"), "openai");
-    }
-
-    #[test]
-    fn routes_llama_models_to_other() {
-        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
-        assert_eq!(registry.provider_for_model("llama3.2"), "other");
-    }
-
-    #[test]
-    fn routes_qwen_models_to_other() {
-        let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
-        assert_eq!(registry.provider_for_model("qwen2"), "other");
     }
 
     #[test]

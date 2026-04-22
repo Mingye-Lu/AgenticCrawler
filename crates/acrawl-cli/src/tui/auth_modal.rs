@@ -218,12 +218,17 @@ impl AuthModal {
             ProviderKind::Other => "other",
             ProviderKind::Preset(p) => p.id,
         };
+        let prefixed_model_id = if model_id.contains('/') {
+            model_id.trim().to_string()
+        } else {
+            format!("{provider_str}/{}", model_id.trim())
+        };
         let mut config = store
             .providers
             .get(provider_str)
             .cloned()
             .unwrap_or_default();
-        config.default_model = Some(model_id.trim().to_string());
+        config.default_model = Some(prefixed_model_id);
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
     }

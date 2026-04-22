@@ -410,19 +410,11 @@ static BUILTIN_PRESETS: [ProviderPreset; 24] = [
 /// 2. Add matching catalog entries in `catalog.rs` so aliases, pricing, and provider IDs line up.
 /// 3. Wire auth prompts in `acrawl-cli` if the provider needs anything beyond the default API-key flow.
 /// 4. Add or extend `ProviderProtocol` and client builders for non-standard transports.
-/// 5. Give the preset clear `model_prefixes` so inference stays predictable.
+/// 5. Give the preset clear `model_prefixes` so provider-specific UX stays predictable.
 /// 6. Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check`.
 #[must_use]
 pub fn builtin_presets() -> Vec<ProviderPreset> {
     BUILTIN_PRESETS.to_vec()
-}
-
-#[must_use]
-pub fn preset_model_prefixes() -> Vec<(&'static str, &'static [&'static str])> {
-    BUILTIN_PRESETS
-        .iter()
-        .map(|preset| (preset.id, preset.model_prefixes))
-        .collect()
 }
 
 #[must_use]

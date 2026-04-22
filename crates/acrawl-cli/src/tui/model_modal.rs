@@ -346,14 +346,15 @@ impl Modal for ModelModal {
             }
             KeyCode::Enter => {
                 if let Some((provider_id, model_id)) = self.list_state.selected_model() {
+                    let full_model_id = format!("{provider_id}/{model_id}");
                     if self.configured_providers.contains(provider_id) {
                         self.outcome = ModelModalOutcome::SwitchModel {
-                            model_id: model_id.to_string(),
+                            model_id: full_model_id,
                         };
                     } else {
                         self.outcome = ModelModalOutcome::AuthRequired {
                             provider_id: provider_id.to_string(),
-                            model_id: model_id.to_string(),
+                            model_id: full_model_id,
                         };
                     }
                     ModalAction::Dismiss
