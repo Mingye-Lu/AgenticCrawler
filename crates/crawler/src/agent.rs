@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
-use crate::state::CrawlState;
+use crate::state::{ChildBlock, CrawlState};
 use crate::tool_registry::ToolRegistry;
 use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
 
@@ -78,7 +78,8 @@ pub struct CrawlerAgent {
     agent_manager: SharedAgentManager,
     shared_bridge: Option<SharedBridge>,
     crawl_state: CrawlState,
-    child_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
+    pub(crate) child_tasks:
+        HashMap<String, (String, tokio::task::JoinHandle<Option<Vec<Value>>>)>,
     api_client_arc: Option<SharedApiClient>,
     #[cfg(test)]
     fork_page_index_override: Option<usize>,
@@ -303,20 +304,67 @@ impl CrawlerAgent {
         child_agent.api_client_arc = Some(child_api_client.clone());
 
         let child_sub_goal = sub_goal.clone();
-        let runtime_handle = tokio::runtime::Handle::current();
-        let join_handle = tokio::spawn(async move {
-            let _ = tokio::task::spawn_blocking(move || {
-                let _ = runtime_handle.block_on(child_agent.run(&child_sub_goal, child_api_client));
-            })
-            .await;
-        });
-        self.child_tasks.insert(child_id.clone(), join_handle);
+        let join_handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::task::spawn_blocking(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("child runtime should initialize");
+                let result = runtime.block_on(child_agent.run(&child_sub_goal, child_api_client));
+                result.ok().map(|crawl_result| crawl_result.extracted_data)
+            });
+        self.child_tasks
+            .insert(child_id.clone(), (sub_goal.clone(), join_handle));
 
         self.crawl_state
             .action_history
             .push(format!("Forked subagent {child_id} for: {sub_goal}"));
 
         Ok(format!("Forked subagent {child_id} for: {sub_goal}"))
+    }
+
+    async fn handle_wait_for_subagents(&mut self) -> Result<String, ToolError> {
+        if self.child_tasks.is_empty() {
+            return Ok("No active subagents".to_string());
+        }
+
+        let settings = runtime::load_settings();
+        let wait_timeout_secs = runtime::settings_get_fork_wait_timeout_secs(&settings) as u64;
+        let timeout = std::time::Duration::from_secs(wait_timeout_secs);
+        let tasks: Vec<(String, String, tokio::task::JoinHandle<Option<Vec<Value>>>)> = self
+            .child_tasks
+            .drain()
+            .map(|(child_id, (sub_goal, handle))| (child_id, sub_goal, handle))
+            .collect();
+
+        let task_count = tasks.len();
+        let mut total_items = 0_usize;
+
+        for (child_id, sub_goal, mut handle) in tasks {
+            let items = match tokio::time::timeout(timeout, &mut handle).await {
+                Ok(Ok(Some(items))) => items,
+                Ok(Ok(None)) | Ok(Err(_)) => Vec::new(),
+                Err(_) => {
+                    handle.abort();
+                    Vec::new()
+                }
+            };
+
+            total_items += items.len();
+            self.crawl_state.child_blocks.push(ChildBlock {
+                child_id: child_id.clone(),
+                sub_goal,
+                items,
+            });
+
+            self.agent_manager.lock().await.mark_done(&child_id);
+        }
+
+        let msg =
+            format!("Waited for {task_count} subagent(s). Collected {total_items} item(s).");
+        self.crawl_state.action_history.push(msg.clone());
+
+        Ok(msg)
     }
 
     fn supports_async(tool_name: &str) -> bool {
@@ -362,6 +410,10 @@ impl ToolExecutor for CrawlerAgent {
     async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
         if tool_name == "fork" {
             return self.handle_fork(input).await;
+        }
+
+        if tool_name == "wait_for_subagents" {
+            return self.handle_wait_for_subagents().await;
         }
 
         let input_value: Value = if input.is_empty() {
@@ -729,7 +781,7 @@ mod tests {
         assert!(observation.contains("Forked subagent root-child-1 for: check result"));
         assert_eq!(manager.lock().await.get_children("root").len(), 1);
         assert_eq!(agent.child_tasks.len(), 1);
-        for (_, handle) in agent.child_tasks.drain() {
+        for (_, (_, handle)) in agent.child_tasks.drain() {
             let _ = handle.await;
         }
 
@@ -764,7 +816,7 @@ mod tests {
 
         assert_eq!(observation, "Forked subagent root-child-1 for: collect details");
 
-        for (_, handle) in agent.child_tasks.drain() {
+        for (_, (_, handle)) in agent.child_tasks.drain() {
             handle.abort();
         }
     }
@@ -802,6 +854,83 @@ mod tests {
             .expect_err("empty sub_goal should fail");
 
         assert_eq!(err.to_string(), "fork requires non-empty sub_goal");
+    }
+
+    #[tokio::test]
+    async fn test_wait_no_children_returns_immediately() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent.handle_wait_for_subagents().await;
+
+        assert_eq!(result.unwrap(), "No active subagents");
+    }
+
+    #[tokio::test]
+    async fn test_wait_records_step() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async { None });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("search".to_string(), handle));
+
+        let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
+
+        assert_eq!(result, "Waited for 1 subagent(s). Collected 0 item(s).");
+        assert_eq!(agent.crawl_state.action_history.len(), 1);
+        assert_eq!(agent.crawl_state.action_history[0], result);
+    }
+
+    #[tokio::test]
+    async fn test_merge_child_data_to_parent() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+        manager
+            .lock()
+            .await
+            .register_child("child-1", "test-agent", None)
+            .expect("child registration should succeed");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"data": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("search".to_string(), handle));
+
+        let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
+
+        assert!(result.contains("Collected 1"));
+        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(agent.crawl_state.child_blocks[0].child_id, "child-1");
+        assert_eq!(agent.crawl_state.child_blocks[0].sub_goal, "search");
+        assert_eq!(agent.crawl_state.child_blocks[0].items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_merge_preserves_parent_data() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+        manager
+            .lock()
+            .await
+            .register_child("child-1", "test-agent", None)
+            .expect("child registration should succeed");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        agent.crawl_state.extracted_data = vec![serde_json::json!({"parent": 1})];
+
+        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal".to_string(), handle));
+
+        let _ = agent.execute("wait_for_subagents", "{}").await;
+
+        let all = agent.crawl_state.all_data();
+        assert_eq!(all.len(), 2);
     }
 
     #[test]
