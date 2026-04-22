@@ -108,18 +108,30 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
          a dismiss button before retrying the intended action."
             .to_string(),
         // Section 6 — completion protocol
-        "Completion:\n\
-         - Before reporting success, re-read the original task and confirm each \
-         requirement is met by data you actually extracted.\n\
-         - If any requirement is unmet or uncertain, say so explicitly rather \
-         than guessing.\n\
-         - If the task is impossible to continue (requires login, payment, or \
-         access you do not have), stop immediately and explain why.\n\
-         - When providing extracted data, include the source URL and note any \
-         gaps or limitations."
-            .to_string(),
-    ]
-}
+         "Completion:\n\
+          - Before reporting success, re-read the original task and confirm each \
+          requirement is met by data you actually extracted.\n\
+          - If any requirement is unmet or uncertain, say so explicitly rather \
+          than guessing.\n\
+          - If the task is impossible to continue (requires login, payment, or \
+          access you do not have), stop immediately and explain why.\n\
+          - When providing extracted data, include the source URL and note any \
+          gaps or limitations."
+             .to_string(),
+         // Section 7 — parallel exploration
+         "Parallel exploration:\n\
+          - Use the `fork` tool to spawn a subagent on a separate browser tab when you need \
+          to explore multiple pages simultaneously.\n\
+          - Each subagent gets a copy of your history and works independently.\n\
+          - You can fork multiple subagents at once (up to the configured limit).\n\
+          - After forking, continue your own work — subagents run in parallel.\n\
+          - Use `wait_for_subagents` to pause and collect results when you need them.\n\
+          - When you call `done`, the system automatically waits for all subagents and merges their data.\n\
+          - Prefer forking over sequential navigation when visiting multiple independent pages.\n\
+          - Example: Scraping 5 product pages? Fork 5 subagents, each visiting one page, then call done."
+             .to_string(),
+     ]
+ }
 
 #[cfg(test)]
 mod tests {
@@ -208,28 +220,41 @@ mod tests {
         assert!(!line.contains("params"));
     }
 
-    #[test]
-    fn build_system_prompt_contains_all_sections() {
-        let prompt = build_system_prompt(&sample_specs());
-        let joined = prompt.join("\n");
-        assert!(joined.contains("Operating procedure:"));
-        assert!(joined.contains("Data integrity:"));
-        assert!(joined.contains("Constraints:"));
-        assert!(joined.contains("Error recovery by situation:"));
-        assert!(joined.contains("Completion:"));
-    }
+     #[test]
+     fn build_system_prompt_contains_all_sections() {
+         let prompt = build_system_prompt(&sample_specs());
+         let joined = prompt.join("\n");
+         assert!(joined.contains("Operating procedure:"));
+         assert!(joined.contains("Data integrity:"));
+         assert!(joined.contains("Constraints:"));
+         assert!(joined.contains("Error recovery by situation:"));
+         assert!(joined.contains("Completion:"));
+         assert!(joined.contains("Parallel exploration:"));
+     }
 
-    #[test]
-    fn build_system_prompt_lists_all_18_tools() {
-        let specs = crate::mvp_tool_specs();
-        let prompt = build_system_prompt(&specs);
-        let first = &prompt[0];
-        for spec in &specs {
-            assert!(
-                first.contains(spec.name),
-                "prompt should list tool: {}",
-                spec.name
-            );
-        }
-    }
-}
+     #[test]
+     fn build_system_prompt_lists_all_18_tools() {
+         let specs = crate::mvp_tool_specs();
+         let prompt = build_system_prompt(&specs);
+         let first = &prompt[0];
+         for spec in &specs {
+             assert!(
+                 first.contains(spec.name),
+                 "prompt should list tool: {}",
+                 spec.name
+             );
+         }
+     }
+
+     #[test]
+     fn test_system_prompt_contains_parallel_exploration() {
+         let specs = crate::mvp_tool_specs();
+         let prompt = build_system_prompt(&specs);
+         let joined = prompt.join("\n");
+         assert!(joined.contains("fork"), "should mention fork tool");
+         assert!(joined.contains("parallel"), "should mention parallel");
+         assert!(joined.contains("subagent"), "should mention subagent");
+         assert!(joined.contains("wait_for_subagents"), "should mention wait_for_subagents");
+         assert_eq!(prompt.len(), 7, "should have 7 sections");
+     }
+ }

@@ -247,6 +247,46 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
 
             instructions: Some("Downloads the resource at `url` into the workspace directory. Optionally specify `filename` and `subdir`."),
         },
+        ToolSpec {
+            name: "fork",
+            description: "Spawn a parallel subagent on a new browser tab to explore a URL or complete a sub-goal independently. Results are merged when the subagent completes.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sub_goal": { "type": "string" },
+                    "url": { "type": "string" }
+                },
+                "required": ["sub_goal"],
+                "additionalProperties": false
+            }),
+
+            instructions: Some("Use fork when you need to visit multiple pages in parallel — e.g., scraping pagination, exploring search results, or comparing products. Each subagent has a step budget and works independently. Fork multiple subagents before waiting for any of them."),
+        },
+        ToolSpec {
+            name: "wait_for_subagents",
+            description: "Wait for all active subagents to complete and collect their results. Returns immediately if no subagents are active.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+
+            instructions: Some("Only call this when you need subagent results before deciding your next action. The done tool automatically waits for subagents, so you do not need to call wait_for_subagents before done."),
+        },
+        ToolSpec {
+            name: "done",
+            description: "Signal that the current task is complete. Automatically waits for any active subagents and merges their extracted data.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "summary": { "type": "string" }
+                },
+                "required": ["summary"],
+                "additionalProperties": false
+            }),
+
+            instructions: Some("Call when the goal is fully met. Provide a clear summary of what was accomplished and any data extracted. Do not call done until you have completed all necessary work."),
+        },
     ]
 }
 
@@ -268,14 +308,17 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_15_tools() {
+    fn mvp_tool_specs_contains_expected_18_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 15);
+        assert_eq!(specs.len(), 18);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 15, "tool names should be unique");
+        assert_eq!(names.len(), 18, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("save_file"));
+        assert!(names.contains("fork"));
+        assert!(names.contains("wait_for_subagents"));
+        assert!(names.contains("done"));
     }
 
     #[test]
