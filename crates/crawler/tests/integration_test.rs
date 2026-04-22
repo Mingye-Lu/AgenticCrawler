@@ -71,13 +71,14 @@ async fn crawler_agent_execute_dispatches_registered_tool() {
     assert_eq!(parsed["url"], "https://example.com");
 }
 
-#[test]
-fn crawler_agent_run_completes_full_pipeline_with_mock_llm() {
+#[tokio::test]
+async fn crawler_agent_run_completes_full_pipeline_with_mock_llm() {
     let agent = CrawlerAgent::new_lazy(mock_registry()).with_max_steps(5);
     let api_client = MockApiClient { call_count: 0 };
 
     let result = agent
         .run("Extract title from example.com", api_client)
+        .await
         .expect("agent run should succeed");
 
     assert_eq!(result.steps_executed, 2);

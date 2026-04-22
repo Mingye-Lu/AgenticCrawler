@@ -111,36 +111,31 @@ impl CrawlerAgent {
         self.browser = None;
     }
 
-    pub fn run(self, goal: &str, api_client: impl ApiClient) -> Result<CrawlResult, CrawlError> {
+    pub async fn run(
+        self,
+        goal: &str,
+        api_client: impl ApiClient,
+    ) -> Result<CrawlResult, CrawlError> {
         let max_steps = self.max_steps;
         let system_prompt = build_system_prompt(&mvp_tool_specs());
 
         let mut runtime = ConversationRuntime::new(Session::new(), api_client, self, system_prompt)
             .with_max_iterations(max_steps);
-
-        let runtime_handle = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| CrawlError::new(format!("runtime: {error}")))?;
-
-        let summary = runtime_handle
-            .block_on(runtime.run_turn(goal))
+        let summary = runtime
+            .run_turn(goal)
+            .await
             .map_err(|e| CrawlError::new(e.to_string()))?;
 
         Ok(build_crawl_result(&summary))
     }
 
-    fn ensure_browser(&mut self) -> Result<(), ToolError> {
+    async fn ensure_browser(&mut self) -> Result<(), ToolError> {
         if self.browser.is_some() {
             return Ok(());
         }
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|error| ToolError::new(format!("failed to create async runtime: {error}")))?;
-        let bridge = runtime
-            .block_on(crate::PlaywrightBridge::new())
+        let bridge = crate::PlaywrightBridge::new()
+            .await
             .map_err(|error| ToolError::new(error.to_string()))?;
         self.browser = Some(BrowserContext::new(Arc::new(Mutex::new(bridge))));
         Ok(())
@@ -189,7 +184,7 @@ impl ToolExecutor for CrawlerAgent {
         }
 
         if Self::supports_async(tool_name) {
-            self.ensure_browser()?;
+            self.ensure_browser().await?;
             let browser = self
                 .browser
                 .as_mut()
@@ -402,47 +397,50 @@ mod tests {
         );
     }
 
-    #[test]
-    fn run_executes_agent_loop_and_returns_result() {
+    #[tokio::test]
+    async fn run_executes_agent_loop_and_returns_result() {
         let agent = CrawlerAgent::new_for_testing(mock_registry()).with_max_steps(10);
         let api_client = MockApiClient { call_count: 0 };
 
         let result = agent
             .run("Navigate to example.com", api_client)
+            .await
             .expect("agent run should succeed");
 
         assert_eq!(result.steps_executed, 2);
         assert_eq!(result.summary, "Found the page content.");
     }
 
-    #[test]
-    fn run_returns_immediately_when_llm_gives_text_only() {
+    #[tokio::test]
+    async fn run_returns_immediately_when_llm_gives_text_only() {
         let agent = CrawlerAgent::new_for_testing(mock_registry());
         let api_client = TextOnlyApiClient;
 
         let result = agent
             .run("just a question", api_client)
+            .await
             .expect("should succeed");
 
         assert_eq!(result.steps_executed, 1);
         assert_eq!(result.summary, "All done.");
     }
 
-    #[test]
-    fn run_collects_extracted_data_from_tool_results() {
+    #[tokio::test]
+    async fn run_collects_extracted_data_from_tool_results() {
         let agent = CrawlerAgent::new_for_testing(mock_registry());
         let api_client = ExtractDataApiClient { call_count: 0 };
 
         let result = agent
             .run("extract titles from example.com", api_client)
+            .await
             .expect("should succeed");
 
         assert_eq!(result.extracted_data.len(), 1);
         assert_eq!(result.extracted_data[0]["title"], "Example");
     }
 
-    #[test]
-    fn max_steps_limit_is_enforced() {
+    #[tokio::test]
+    async fn max_steps_limit_is_enforced() {
         struct InfiniteLoopApiClient;
 
         impl ApiClient for InfiniteLoopApiClient {
@@ -465,6 +463,7 @@ mod tests {
 
         let err = agent
             .run("loop forever", InfiniteLoopApiClient)
+            .await
             .expect_err("should fail due to max iterations");
 
         assert!(err.to_string().contains("maximum"));
