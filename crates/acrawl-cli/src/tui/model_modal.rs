@@ -13,6 +13,13 @@ use api::provider::ProviderRegistry;
 use crate::tui::grouped_model_list::{GroupedModelListState, ModelEntry, ProviderGroup, RowKind};
 use crate::tui::modal::{draw_modal_frame, Modal, ModalAction};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogSource {
+    Live,
+    BuiltinWhileLoading,
+    BuiltinFallback,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelModalOutcome {
     None,
@@ -30,7 +37,7 @@ pub struct ModelModal {
     configured_providers: HashSet<String>,
     outcome: ModelModalOutcome,
     scroll_offset: std::cell::Cell<usize>,
-    is_live_catalog: bool,
+    catalog_source: CatalogSource,
 }
 
 impl ModelModal {
@@ -38,7 +45,7 @@ impl ModelModal {
         registry: &ProviderRegistry,
         current_model_id: &str,
         catalog_models: Vec<ModelInfo>,
-        is_live: bool,
+        catalog_source: CatalogSource,
     ) -> Self {
         let mut groups_map: std::collections::HashMap<String, Vec<ModelEntry>> =
             std::collections::HashMap::new();
@@ -129,7 +136,15 @@ impl ModelModal {
             configured_providers,
             outcome: ModelModalOutcome::None,
             scroll_offset: std::cell::Cell::new(0),
-            is_live_catalog: is_live,
+            catalog_source,
+        }
+    }
+
+    fn catalog_source_tag(source: CatalogSource) -> &'static str {
+        match source {
+            CatalogSource::Live => " [live]",
+            CatalogSource::BuiltinWhileLoading => " [builtin; live loading]",
+            CatalogSource::BuiltinFallback => " [builtin fallback]",
         }
     }
 
@@ -321,11 +336,7 @@ impl Modal for ModelModal {
         let hint_style = Style::default()
             .fg(Color::Rgb(130, 136, 145))
             .add_modifier(Modifier::DIM);
-        let source_tag = if self.is_live_catalog {
-            " [live]"
-        } else {
-            " [builtin]"
-        };
+        let source_tag = Self::catalog_source_tag(self.catalog_source);
         let hint_text =
             format!("↑↓ Navigate  Enter Select  Esc Cancel  Type to filter{source_tag}");
         frame.render_widget(Paragraph::new(hint_text).style(hint_style), hint_area);
@@ -400,5 +411,26 @@ impl Modal for ModelModal {
             }
             _ => ModalAction::Consumed,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CatalogSource, ModelModal};
+
+    #[test]
+    fn catalog_source_tags_are_explicit() {
+        assert_eq!(
+            ModelModal::catalog_source_tag(CatalogSource::Live),
+            " [live]"
+        );
+        assert_eq!(
+            ModelModal::catalog_source_tag(CatalogSource::BuiltinWhileLoading),
+            " [builtin; live loading]"
+        );
+        assert_eq!(
+            ModelModal::catalog_source_tag(CatalogSource::BuiltinFallback),
+            " [builtin fallback]"
+        );
     }
 }

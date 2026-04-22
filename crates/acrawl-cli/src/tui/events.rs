@@ -1,3 +1,4 @@
+use crate::tui::model_list::ModelInfo as PickerModelInfo;
 use api::provider::ModelInfo;
 
 /// UI updates from the LLM stream, tool executor, or worker thread.
@@ -34,6 +35,8 @@ pub enum ReplTuiEvent {
     AuthOAuthProgress {
         message: String,
     },
+    /// Auth modal finished fetching provider-specific models in a background thread.
+    AuthModelsLoaded(Result<Vec<PickerModelInfo>, String>),
     /// Live model catalog fetched from models.dev on REPL startup.
     /// Empty Vec means fetch failed — caller falls back to builtin catalog.
     ModelCatalogReady(Vec<ModelInfo>),
@@ -60,6 +63,8 @@ mod tests {
         let _progress = ReplTuiEvent::AuthOAuthProgress {
             message: "Listening on port 4545...".to_string(),
         };
+
+        let _auth_models_loaded = ReplTuiEvent::AuthModelsLoaded(Ok(Vec::new()));
 
         let _catalog_ready = ReplTuiEvent::ModelCatalogReady(Vec::new());
     }

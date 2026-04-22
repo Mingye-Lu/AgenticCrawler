@@ -1,4 +1,5 @@
 use std::sync::mpsc::Sender;
+use std::thread;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
@@ -102,6 +103,8 @@ pub(crate) enum AuthModalStep {
 
 pub(crate) struct AuthModal {
     pub(crate) step: AuthModalStep,
+    ui_tx: Sender<ReplTuiEvent>,
+    model_fetch_in_flight: bool,
 }
 
 impl AuthModal {
@@ -142,10 +145,7 @@ impl AuthModal {
         value.replace_range(start..end, "");
     }
 
-    pub(crate) fn new(
-        _ui_tx: Sender<ReplTuiEvent>,
-        provider: Option<crate::app::Provider>,
-    ) -> Self {
+    pub(crate) fn new(ui_tx: Sender<ReplTuiEvent>, provider: Option<crate::app::Provider>) -> Self {
         let step = if let Some(p) = provider {
             match p {
                 crate::app::Provider::OpenAi => AuthModalStep::ApiKeyInput {
@@ -172,7 +172,89 @@ impl AuthModal {
             AuthModalStep::ProviderSelect { selected: 0 }
         };
 
-        Self { step }
+        Self {
+            step,
+            ui_tx,
+            model_fetch_in_flight: false,
+        }
+    }
+
+    fn fetch_models_for_provider(
+        provider: ProviderKind,
+    ) -> Result<Vec<crate::tui::model_list::ModelInfo>, String> {
+        let store = api::credentials::load_credentials().unwrap_or_default();
+        let provider_str = match provider {
+            ProviderKind::Anthropic => "anthropic",
+            ProviderKind::OpenAi => "openai",
+            ProviderKind::Other => "other",
+            ProviderKind::Preset(p) => p.id,
+        };
+        let config = store
+            .providers
+            .get(provider_str)
+            .cloned()
+            .unwrap_or_default();
+
+        match provider {
+            ProviderKind::Anthropic => {
+                let key = config.api_key.unwrap_or_default();
+                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                runtime
+                    .block_on(api::models::list_anthropic_models(&key))
+                    .map(|models| {
+                        models
+                            .into_iter()
+                            .map(|m| crate::tui::model_list::ModelInfo {
+                                id: m.id,
+                                display_name: m.display_name,
+                            })
+                            .collect()
+                    })
+                    .map_err(|e| e.to_string())
+            }
+            ProviderKind::OpenAi => {
+                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                if config.auth_method == "oauth" {
+                    runtime
+                        .block_on(api::models::list_models_dev("openai"))
+                        .map(|models| {
+                            models
+                                .into_iter()
+                                .map(|m| crate::tui::model_list::ModelInfo {
+                                    id: m.id,
+                                    display_name: None,
+                                })
+                                .collect()
+                        })
+                        .map_err(|e| e.to_string())
+                } else {
+                    let auth = config.api_key.and_then(|key| {
+                        if key.trim().is_empty() {
+                            None
+                        } else {
+                            Some(api::AuthSource::ApiKey(key))
+                        }
+                    });
+                    if let Some(auth) = auth {
+                        runtime
+                            .block_on(api::models::list_openai_models(&auth))
+                            .map(|models| {
+                                models
+                                    .into_iter()
+                                    .map(|m| crate::tui::model_list::ModelInfo {
+                                        id: m.id,
+                                        display_name: None,
+                                    })
+                                    .collect()
+                            })
+                            .map_err(|e| e.to_string())
+                    } else {
+                        Ok(vec![])
+                    }
+                }
+            }
+            ProviderKind::Other | ProviderKind::Preset(_) => Ok(vec![]),
+        }
     }
 
     fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: String) {
@@ -241,98 +323,47 @@ impl AuthModal {
     }
 
     pub(crate) fn process_loading(&mut self) {
-        if let AuthModalStep::ModelFetchLoading { provider } = &self.step {
-            let provider_copy = *provider;
-
-            let store = api::credentials::load_credentials().unwrap_or_default();
-            let provider_str = match provider_copy {
-                ProviderKind::Anthropic => "anthropic",
-                ProviderKind::OpenAi => "openai",
-                ProviderKind::Other => "other",
-                ProviderKind::Preset(p) => p.id,
-            };
-            let config = store
-                .providers
-                .get(provider_str)
-                .cloned()
-                .unwrap_or_default();
-
-            let models_result = match provider_copy {
-                ProviderKind::Anthropic => {
-                    let key = config.api_key.unwrap_or_default();
-                    tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(api::models::list_anthropic_models(&key))
-                        .map(|models| {
-                            models
-                                .into_iter()
-                                .map(|m| crate::tui::model_list::ModelInfo {
-                                    id: m.id,
-                                    display_name: m.display_name,
-                                })
-                                .collect()
-                        })
-                }
-                ProviderKind::OpenAi => {
-                    if config.auth_method == "oauth" {
-                        tokio::runtime::Runtime::new()
-                            .unwrap()
-                            .block_on(api::models::list_models_dev("openai"))
-                            .map(|models| {
-                                models
-                                    .into_iter()
-                                    .map(|m| crate::tui::model_list::ModelInfo {
-                                        id: m.id,
-                                        display_name: None,
-                                    })
-                                    .collect()
-                            })
-                    } else {
-                        let auth = config.api_key.and_then(|key| {
-                            if key.trim().is_empty() {
-                                None
-                            } else {
-                                Some(api::AuthSource::ApiKey(key))
-                            }
-                        });
-                        if let Some(auth) = auth {
-                            tokio::runtime::Runtime::new()
-                                .unwrap()
-                                .block_on(api::models::list_openai_models(&auth))
-                                .map(|models| {
-                                    models
-                                        .into_iter()
-                                        .map(|m| crate::tui::model_list::ModelInfo {
-                                            id: m.id,
-                                            display_name: None,
-                                        })
-                                        .collect()
-                                })
-                        } else {
-                            Ok(vec![])
-                        }
-                    }
-                }
-                ProviderKind::Other | ProviderKind::Preset(_) => Ok(vec![]),
-            };
-
-            match models_result {
-                Ok(models) => {
-                    self.step = AuthModalStep::ModelSelect {
-                        provider: provider_copy,
-                        state: crate::tui::model_list::ModelListState {
-                            models,
-                            ..Default::default()
-                        },
-                    };
-                }
-                Err(e) => {
-                    self.step = AuthModalStep::Error {
-                        message: format!("Failed to fetch models: {e}"),
-                    };
-                }
+        let provider = match self.step {
+            AuthModalStep::ModelFetchLoading { provider } => provider,
+            _ => {
+                self.model_fetch_in_flight = false;
+                return;
             }
+        };
+        if self.model_fetch_in_flight {
+            return;
         }
+
+        self.model_fetch_in_flight = true;
+        let ui_tx = self.ui_tx.clone();
+        thread::spawn(move || {
+            let result = Self::fetch_models_for_provider(provider);
+            let _ = ui_tx.send(ReplTuiEvent::AuthModelsLoaded(result));
+        });
+    }
+
+    pub(crate) fn finish_model_loading(
+        &mut self,
+        result: Result<Vec<crate::tui::model_list::ModelInfo>, String>,
+    ) {
+        self.model_fetch_in_flight = false;
+        let provider = match self.step {
+            AuthModalStep::ModelFetchLoading { provider } => provider,
+            _ => return,
+        };
+
+        self.step = match result {
+            Ok(models) => AuthModalStep::ModelSelect {
+                provider,
+                state: crate::tui::model_list::ModelListState {
+                    models,
+                    ..Default::default()
+                },
+            },
+            Err(e) => AuthModalStep::Error {
+                message: format!("Failed to fetch models: {e}"),
+            },
+        };
     }
 
     pub(crate) fn supports_vertical_wheel(&self) -> bool {
@@ -565,7 +596,13 @@ impl Modal for AuthModal {
                     Line::default(),
                     Line::from("Please wait..."),
                 ];
-                (Color::Blue, lines, None, None, None)
+                (
+                    Color::Blue,
+                    lines,
+                    Some(hint_line("Esc finish without choosing a default model")),
+                    None,
+                    None,
+                )
             }
             AuthModalStep::ModelSelect { provider, state } => {
                 let mut lines = vec![
@@ -612,7 +649,7 @@ impl Modal for AuthModal {
                     Color::Cyan,
                     lines,
                     Some(hint_line(
-                        "↑/↓ list  ←/→ search  Enter select/input  Esc skip",
+                        "↑/↓ list  ←/→ search  Enter select/input  Esc clear/skip",
                     )),
                     Some((
                         3u16,
@@ -999,7 +1036,15 @@ impl Modal for AuthModal {
                 }
                 _ => ModalAction::Consumed,
             },
-            AuthModalStep::ModelFetchLoading { .. } => ModalAction::Consumed,
+            AuthModalStep::ModelFetchLoading { provider } => match key.code {
+                KeyCode::Esc => {
+                    self.step = AuthModalStep::Success {
+                        message: format!("Authenticated as {}", provider.label()),
+                    };
+                    ModalAction::Consumed
+                }
+                _ => ModalAction::Consumed,
+            },
             AuthModalStep::ModelSelect { provider, state } => match key.code {
                 KeyCode::Left => {
                     state.move_cursor_left();
@@ -1055,16 +1100,15 @@ impl Modal for AuthModal {
                     ModalAction::Consumed
                 }
                 KeyCode::Esc => {
-                    if matches!(
-                        *provider,
-                        ProviderKind::OpenAi | ProviderKind::Other | ProviderKind::Preset(_)
-                    ) && !state.filter.trim().is_empty()
-                    {
-                        Self::save_default_model(*provider, &state.filter);
+                    if state.filter.trim().is_empty() {
+                        self.step = AuthModalStep::Success {
+                            message: format!("Authenticated as {}", provider.label()),
+                        };
+                    } else {
+                        state.filter.clear();
+                        state.filter_cursor = 0;
+                        state.selected_idx = 0;
                     }
-                    self.step = AuthModalStep::Success {
-                        message: format!("Authenticated as {}", provider.label()),
-                    };
                     ModalAction::Consumed
                 }
                 _ => ModalAction::Consumed,
@@ -1102,6 +1146,15 @@ mod tests {
     fn modal() -> AuthModal {
         let (ui_tx, _ui_rx) = mpsc::channel();
         AuthModal::new(ui_tx, None)
+    }
+
+    fn modal_with_step(step: AuthModalStep) -> AuthModal {
+        let (ui_tx, _ui_rx) = mpsc::channel();
+        AuthModal {
+            step,
+            ui_tx,
+            model_fetch_in_flight: false,
+        }
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1200,26 +1253,24 @@ mod tests {
 
     #[test]
     fn wheel_scroll_model_select_clamps_at_edges() {
-        let mut modal = AuthModal {
-            step: AuthModalStep::ModelSelect {
-                provider: ProviderKind::OpenAi,
-                state: crate::tui::model_list::ModelListState {
-                    models: vec![
-                        crate::tui::model_list::ModelInfo {
-                            id: "a".to_string(),
-                            display_name: None,
-                        },
-                        crate::tui::model_list::ModelInfo {
-                            id: "b".to_string(),
-                            display_name: None,
-                        },
-                    ],
-                    filter: String::new(),
-                    filter_cursor: 0,
-                    selected_idx: 0,
-                },
+        let mut modal = modal_with_step(AuthModalStep::ModelSelect {
+            provider: ProviderKind::OpenAi,
+            state: crate::tui::model_list::ModelListState {
+                models: vec![
+                    crate::tui::model_list::ModelInfo {
+                        id: "a".to_string(),
+                        display_name: None,
+                    },
+                    crate::tui::model_list::ModelInfo {
+                        id: "b".to_string(),
+                        display_name: None,
+                    },
+                ],
+                filter: String::new(),
+                filter_cursor: 0,
+                selected_idx: 0,
             },
-        };
+        });
 
         modal.handle_vertical_wheel(false);
         if let AuthModalStep::ModelSelect { state, .. } = &modal.step {
@@ -1375,23 +1426,73 @@ mod tests {
     }
 
     #[test]
-    fn success_any_key_dismisses() {
-        let mut modal = AuthModal {
-            step: AuthModalStep::Success {
-                message: "done".to_string(),
+    fn model_fetch_loading_esc_finishes_auth_without_default_model() {
+        let mut modal = modal_with_step(AuthModalStep::ModelFetchLoading {
+            provider: ProviderKind::OpenAi,
+        });
+
+        assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Consumed);
+        assert!(matches!(modal.step, AuthModalStep::Success { .. }));
+    }
+
+    #[test]
+    fn model_select_esc_clears_filter_before_skipping() {
+        let mut modal = modal_with_step(AuthModalStep::ModelSelect {
+            provider: ProviderKind::OpenAi,
+            state: crate::tui::model_list::ModelListState {
+                models: vec![],
+                filter: "gpt-4.1".to_string(),
+                filter_cursor: 7,
+                selected_idx: 3,
             },
-        };
+        });
+
+        assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Consumed);
+        match &modal.step {
+            AuthModalStep::ModelSelect { state, .. } => {
+                assert!(state.filter.is_empty());
+                assert_eq!(state.filter_cursor, 0);
+                assert_eq!(state.selected_idx, 0);
+            }
+            _ => panic!("expected model select step"),
+        }
+    }
+
+    #[test]
+    fn finish_model_loading_transitions_to_model_select() {
+        let mut modal = modal_with_step(AuthModalStep::ModelFetchLoading {
+            provider: ProviderKind::Anthropic,
+        });
+
+        modal.finish_model_loading(Ok(vec![crate::tui::model_list::ModelInfo {
+            id: "claude-sonnet-4-6".to_string(),
+            display_name: Some("Claude Sonnet 4.6".to_string()),
+        }]));
+
+        match &modal.step {
+            AuthModalStep::ModelSelect { provider, state } => {
+                assert_eq!(*provider, ProviderKind::Anthropic);
+                assert_eq!(state.models.len(), 1);
+                assert_eq!(state.models[0].id, "claude-sonnet-4-6");
+            }
+            _ => panic!("expected model select step"),
+        }
+    }
+
+    #[test]
+    fn success_any_key_dismisses() {
+        let mut modal = modal_with_step(AuthModalStep::Success {
+            message: "done".to_string(),
+        });
 
         assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Dismiss);
     }
 
     #[test]
     fn error_any_key_dismisses() {
-        let mut modal = AuthModal {
-            step: AuthModalStep::Error {
-                message: "failed".to_string(),
-            },
-        };
+        let mut modal = modal_with_step(AuthModalStep::Error {
+            message: "failed".to_string(),
+        });
 
         assert_eq!(
             modal.handle_key(key(KeyCode::Char('x'))),
