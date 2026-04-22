@@ -11,7 +11,7 @@ use api::provider::ModelInfo;
 use api::provider::ProviderRegistry;
 
 use crate::tui::grouped_model_list::{GroupedModelListState, ModelEntry, ProviderGroup, RowKind};
-use crate::tui::modal::{draw_modal_frame, Modal, ModalAction};
+use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogSource {
@@ -164,6 +164,36 @@ impl ModelModal {
     pub fn outcome(&self) -> &ModelModalOutcome {
         &self.outcome
     }
+
+    fn visible_rows(&self) -> (Vec<RowKind<'_>>, usize, usize) {
+        let filtered = self.list_state.filtered_groups();
+        let mut rows = Vec::new();
+        let mut selectable_count = 0usize;
+        let mut selected_visual_row = 0usize;
+
+        for group in filtered {
+            rows.push(RowKind::Header {
+                provider_name: group.provider_name,
+                provider_id: group.provider_id,
+            });
+
+            for model in group.models {
+                let is_selected = selectable_count == self.list_state.selected_idx;
+                if is_selected {
+                    selected_visual_row = rows.len();
+                }
+                rows.push(RowKind::Model {
+                    entry: model,
+                    provider_id: group.provider_id,
+                    is_selected,
+                    is_current: self.list_state.is_current_model(&model.id),
+                });
+                selectable_count += 1;
+            }
+        }
+
+        (rows, selected_visual_row, selectable_count)
+    }
 }
 
 impl Modal for ModelModal {
@@ -236,22 +266,7 @@ impl Modal for ModelModal {
 
         let visible_rows = usize::from(list_area.height);
         if visible_rows > 0 {
-            let filtered = self.list_state.filtered_groups();
-
-            let mut selected_visual_row = 0;
-            let mut current_row = 0;
-            let mut selectable_count = 0;
-
-            for group in &filtered {
-                current_row += 1;
-                for _ in &group.models {
-                    if selectable_count == self.list_state.selected_idx {
-                        selected_visual_row = current_row;
-                    }
-                    selectable_count += 1;
-                    current_row += 1;
-                }
-            }
+            let (rows, selected_visual_row, total_selectable) = self.visible_rows();
 
             let mut scroll_offset = self.scroll_offset.get();
             if selected_visual_row < scroll_offset {
@@ -262,7 +277,7 @@ impl Modal for ModelModal {
             }
             self.scroll_offset.set(scroll_offset);
 
-            if self.list_state.total_selectable() == 0 {
+            if total_selectable == 0 {
                 let no_matches = Paragraph::new("No matches")
                     .style(
                         Style::default()
@@ -272,7 +287,12 @@ impl Modal for ModelModal {
                     .alignment(ratatui::layout::Alignment::Center);
                 frame.render_widget(no_matches, list_area);
             } else {
-                for (i, screen_row) in (scroll_offset..(scroll_offset + visible_rows)).enumerate() {
+                for (i, row) in rows
+                    .iter()
+                    .skip(scroll_offset)
+                    .take(visible_rows)
+                    .enumerate()
+                {
                     let row_area = list_area.offset(Offset { x: 0, y: i as i32 });
                     if row_area.y >= list_area.bottom() {
                         break;
@@ -281,11 +301,11 @@ impl Modal for ModelModal {
                     let mut row_rect = row_area;
                     row_rect.height = 1;
 
-                    match self.list_state.row_at(screen_row) {
-                        Some(RowKind::Header {
+                    match *row {
+                        RowKind::Header {
                             provider_name,
                             provider_id,
-                        }) => {
+                        } => {
                             let mut spans = vec![Span::styled(
                                 provider_name.to_string(),
                                 Style::default()
@@ -302,12 +322,12 @@ impl Modal for ModelModal {
                             }
                             frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
                         }
-                        Some(RowKind::Model {
+                        RowKind::Model {
                             entry,
                             provider_id,
                             is_selected,
                             is_current,
-                        }) => {
+                        } => {
                             let prefix = if is_current { "✓ " } else { "  " };
                             let text = if entry.display_name.is_empty() {
                                 &entry.id
@@ -327,7 +347,6 @@ impl Modal for ModelModal {
                             frame
                                 .render_widget(Paragraph::new(display_text).style(style), row_rect);
                         }
-                        None => {}
                     }
                 }
             }
@@ -343,6 +362,10 @@ impl Modal for ModelModal {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> ModalAction {
+        if should_passthrough_key(&key) {
+            return ModalAction::Unhandled;
+        }
+
         match key.code {
             KeyCode::Esc => {
                 if self.list_state.filter.is_empty() {
@@ -417,6 +440,8 @@ impl Modal for ModelModal {
 #[cfg(test)]
 mod tests {
     use super::{CatalogSource, ModelModal};
+    use crate::tui::modal::{Modal, ModalAction};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
     fn catalog_source_tags_are_explicit() {
@@ -432,5 +457,17 @@ mod tests {
             ModelModal::catalog_source_tag(CatalogSource::BuiltinFallback),
             " [builtin fallback]"
         );
+    }
+
+    #[test]
+    fn control_shortcuts_passthrough_modal() {
+        let registry = api::provider::ProviderRegistry::from_credentials(
+            &api::load_credentials().unwrap_or_default(),
+        );
+        let mut modal =
+            ModelModal::new(&registry, "openai/gpt-4o", Vec::new(), CatalogSource::Live);
+
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(modal.handle_key(ctrl_c), ModalAction::Unhandled);
     }
 }

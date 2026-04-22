@@ -2985,6 +2985,7 @@ fn run_loop(
 
                     match action {
                         ModalAction::Consumed => continue,
+                        ModalAction::Unhandled => {}
                         ModalAction::Dismiss => {
                             state.active_modal = None;
                             if modal_succeeded {

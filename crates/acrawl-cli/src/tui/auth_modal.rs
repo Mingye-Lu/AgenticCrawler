@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
-use crate::tui::modal::{draw_modal_frame, Modal, ModalAction};
+use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
 
 fn flat_preset_list() -> Vec<api::ProviderPreset> {
@@ -323,12 +323,9 @@ impl AuthModal {
     }
 
     pub(crate) fn process_loading(&mut self) {
-        let provider = match self.step {
-            AuthModalStep::ModelFetchLoading { provider } => provider,
-            _ => {
-                self.model_fetch_in_flight = false;
-                return;
-            }
+        let AuthModalStep::ModelFetchLoading { provider } = self.step else {
+            self.model_fetch_in_flight = false;
+            return;
         };
         if self.model_fetch_in_flight {
             return;
@@ -347,9 +344,8 @@ impl AuthModal {
         result: Result<Vec<crate::tui::model_list::ModelInfo>, String>,
     ) {
         self.model_fetch_in_flight = false;
-        let provider = match self.step {
-            AuthModalStep::ModelFetchLoading { provider } => provider,
-            _ => return,
+        let AuthModalStep::ModelFetchLoading { provider } = self.step else {
+            return;
         };
 
         self.step = match result {
@@ -761,6 +757,10 @@ impl Modal for AuthModal {
 
     #[allow(clippy::too_many_lines)]
     fn handle_key(&mut self, key: KeyEvent) -> ModalAction {
+        if should_passthrough_key(&key) {
+            return ModalAction::Unhandled;
+        }
+
         match &mut self.step {
             AuthModalStep::ProviderSelect { selected } => {
                 let total = flat_preset_list().len();
@@ -1423,6 +1423,14 @@ mod tests {
 
         assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Dismiss);
         assert_eq!(cancel_rx.recv().ok(), Some(()));
+    }
+
+    #[test]
+    fn control_shortcuts_passthrough_modal() {
+        let mut modal = modal();
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), crossterm::event::KeyModifiers::CONTROL);
+
+        assert_eq!(modal.handle_key(ctrl_c), ModalAction::Unhandled);
     }
 
     #[test]

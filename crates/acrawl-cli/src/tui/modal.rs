@@ -1,6 +1,6 @@
 //! Base modal trait and shared rendering helpers for the Ratatui TUI modal system.
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding};
@@ -12,6 +12,8 @@ pub enum ModalAction {
     Consumed,
     /// Modal should close.
     Dismiss,
+    /// Modal did not handle the key; allow global shortcuts to run.
+    Unhandled,
 }
 
 /// Base trait for modal dialogs in the TUI.
@@ -24,6 +26,13 @@ pub trait Modal {
 
     /// Return the title of the modal.
     fn title(&self) -> &str;
+}
+
+pub fn should_passthrough_key(key: &KeyEvent) -> bool {
+    matches!(
+        (key.code, key.modifiers),
+        (KeyCode::Char('c' | 'd' | 't'), KeyModifiers::CONTROL)
+    )
 }
 
 /// Renders a centered modal frame with a border and title.
@@ -138,7 +147,19 @@ mod tests {
     fn modal_action_variants_exist() {
         let _ = ModalAction::Consumed;
         let _ = ModalAction::Dismiss;
+        let _ = ModalAction::Unhandled;
 
         assert_ne!(ModalAction::Consumed, ModalAction::Dismiss);
+    }
+
+    #[test]
+    fn control_modified_keys_are_passthrough() {
+        let ctrl_c = KeyEvent::new(crossterm::event::KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let ctrl_j = KeyEvent::new(crossterm::event::KeyCode::Char('j'), KeyModifiers::CONTROL);
+        let shift_x = KeyEvent::new(crossterm::event::KeyCode::Char('X'), KeyModifiers::SHIFT);
+
+        assert!(should_passthrough_key(&ctrl_c));
+        assert!(!should_passthrough_key(&ctrl_j));
+        assert!(!should_passthrough_key(&shift_x));
     }
 }

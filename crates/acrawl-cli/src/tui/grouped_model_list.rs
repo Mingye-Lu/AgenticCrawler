@@ -200,6 +200,7 @@ impl GroupedModelListState {
             .is_some_and(|id| id == model_id)
     }
 
+    #[cfg(test)]
     pub fn row_at(&self, flat_row: usize) -> Option<RowKind<'_>> {
         let filtered = self.filtered_groups();
         let mut current_row = 0;
