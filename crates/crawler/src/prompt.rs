@@ -131,7 +131,7 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
           - Example: Scraping 5 product pages? Fork 5 subagents, each visiting one page, then call done."
              .to_string(),
      ]
- }
+}
 
 #[cfg(test)]
 mod tests {
@@ -220,41 +220,44 @@ mod tests {
         assert!(!line.contains("params"));
     }
 
-     #[test]
-     fn build_system_prompt_contains_all_sections() {
-         let prompt = build_system_prompt(&sample_specs());
-         let joined = prompt.join("\n");
-         assert!(joined.contains("Operating procedure:"));
-         assert!(joined.contains("Data integrity:"));
-         assert!(joined.contains("Constraints:"));
-         assert!(joined.contains("Error recovery by situation:"));
-         assert!(joined.contains("Completion:"));
-         assert!(joined.contains("Parallel exploration:"));
-     }
+    #[test]
+    fn build_system_prompt_contains_all_sections() {
+        let prompt = build_system_prompt(&sample_specs());
+        let joined = prompt.join("\n");
+        assert!(joined.contains("Operating procedure:"));
+        assert!(joined.contains("Data integrity:"));
+        assert!(joined.contains("Constraints:"));
+        assert!(joined.contains("Error recovery by situation:"));
+        assert!(joined.contains("Completion:"));
+        assert!(joined.contains("Parallel exploration:"));
+    }
 
-     #[test]
-     fn build_system_prompt_lists_all_18_tools() {
-         let specs = crate::mvp_tool_specs();
-         let prompt = build_system_prompt(&specs);
-         let first = &prompt[0];
-         for spec in &specs {
-             assert!(
-                 first.contains(spec.name),
-                 "prompt should list tool: {}",
-                 spec.name
-             );
-         }
-     }
+    #[test]
+    fn build_system_prompt_lists_all_18_tools() {
+        let specs = crate::mvp_tool_specs();
+        let prompt = build_system_prompt(&specs);
+        let first = &prompt[0];
+        for spec in &specs {
+            assert!(
+                first.contains(spec.name),
+                "prompt should list tool: {}",
+                spec.name
+            );
+        }
+    }
 
-     #[test]
-     fn test_system_prompt_contains_parallel_exploration() {
-         let specs = crate::mvp_tool_specs();
-         let prompt = build_system_prompt(&specs);
-         let joined = prompt.join("\n");
-         assert!(joined.contains("fork"), "should mention fork tool");
-         assert!(joined.contains("parallel"), "should mention parallel");
-         assert!(joined.contains("subagent"), "should mention subagent");
-         assert!(joined.contains("wait_for_subagents"), "should mention wait_for_subagents");
-         assert_eq!(prompt.len(), 7, "should have 7 sections");
-     }
- }
+    #[test]
+    fn test_system_prompt_contains_parallel_exploration() {
+        let specs = crate::mvp_tool_specs();
+        let prompt = build_system_prompt(&specs);
+        let joined = prompt.join("\n");
+        assert!(joined.contains("fork"), "should mention fork tool");
+        assert!(joined.contains("parallel"), "should mention parallel");
+        assert!(joined.contains("subagent"), "should mention subagent");
+        assert!(
+            joined.contains("wait_for_subagents"),
+            "should mention wait_for_subagents"
+        );
+        assert_eq!(prompt.len(), 7, "should have 7 sections");
+    }
+}

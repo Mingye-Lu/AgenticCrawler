@@ -129,10 +129,7 @@ mod tests {
     #[test]
     fn test_crawl_state_all_data_includes_children() {
         let parent = CrawlState {
-            extracted_data: vec![
-                serde_json::json!({"id": 1}),
-                serde_json::json!({"id": 2}),
-            ],
+            extracted_data: vec![serde_json::json!({"id": 1}), serde_json::json!({"id": 2})],
             child_blocks: vec![
                 ChildBlock {
                     child_id: "child1".to_string(),
@@ -142,10 +139,7 @@ mod tests {
                 ChildBlock {
                     child_id: "child2".to_string(),
                     sub_goal: "goal2".to_string(),
-                    items: vec![
-                        serde_json::json!({"id": 4}),
-                        serde_json::json!({"id": 5}),
-                    ],
+                    items: vec![serde_json::json!({"id": 4}), serde_json::json!({"id": 5})],
                 },
             ],
             ..CrawlState::default()

@@ -126,11 +126,12 @@ impl AgentManager {
         parent_id: &str,
         task: Option<tokio::task::JoinHandle<()>>,
     ) -> Result<(), ForkLimitError> {
-        let parent = self.agents.get(parent_id).ok_or_else(|| {
-            ForkLimitError::ParentNotFound {
+        let parent = self
+            .agents
+            .get(parent_id)
+            .ok_or_else(|| ForkLimitError::ParentNotFound {
                 parent_id: parent_id.to_owned(),
-            }
-        })?;
+            })?;
 
         let active_children = self
             .agents
@@ -200,9 +201,7 @@ impl AgentManager {
     /// Depth of the given agent (0 for root / unknown).
     #[must_use]
     pub fn get_depth(&self, agent_id: &str) -> usize {
-        self.agents
-            .get(agent_id)
-            .map_or(0, |a| a.depth)
+        self.agents.get(agent_id).map_or(0, |a| a.depth)
     }
 
     /// Mark an agent as [`AgentStatus::Done`].
@@ -252,10 +251,7 @@ mod tests {
         let mut mgr = AgentManager::new(3, 3, 10);
         mgr.register_root("root");
         assert_eq!(mgr.get_depth("root"), 0);
-        assert_eq!(
-            mgr.agents.get("root").unwrap().status,
-            AgentStatus::Active
-        );
+        assert_eq!(mgr.agents.get("root").unwrap().status, AgentStatus::Active);
         assert!(mgr.agents.get("root").unwrap().parent_id.is_none());
     }
 
@@ -335,10 +331,7 @@ mod tests {
         mgr.register_child("c1", "root", None).unwrap();
 
         mgr.mark_done("c1");
-        assert_eq!(
-            mgr.agents.get("c1").unwrap().status,
-            AgentStatus::Done
-        );
+        assert_eq!(mgr.agents.get("c1").unwrap().status, AgentStatus::Done);
     }
 
     #[test]

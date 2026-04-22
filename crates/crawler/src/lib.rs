@@ -3,24 +3,24 @@ use serde_json::json;
 pub mod agent;
 pub mod browser;
 pub mod fetcher;
+pub mod manager;
 pub mod output;
 pub mod playwright;
 pub mod prompt;
+pub mod shared_client;
 pub mod state;
 pub mod tool_registry;
 pub mod tools;
-pub mod manager;
-pub mod shared_client;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
+pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
+pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
 pub use tool_registry::{ToolHandler, ToolRegistry};
-pub use manager::{AgentManager, AgentInfo, AgentStatus, ForkLimitError, SharedAgentManager};
-pub use shared_client::SharedApiClient;
 
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {

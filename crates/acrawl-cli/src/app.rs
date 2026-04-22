@@ -944,12 +944,10 @@ fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bo
             rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
                 .ok()
         } else {
-            tokio::runtime::Runtime::new()
-                .ok()
-                .and_then(|rt| {
-                    rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
-                        .ok()
-                })
+            tokio::runtime::Runtime::new().ok().and_then(|rt| {
+                rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
+                    .ok()
+            })
         }
         .unwrap_or_default()
     })
@@ -1079,34 +1077,45 @@ impl ApiClient for LlmRuntimeClient {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 let mut stdout = io::stdout();
-            let mut sink = io::sink();
-            let out: &mut dyn Write = if self.emit_output {
-                &mut stdout
-            } else {
-                &mut sink
-            };
-            let renderer = TerminalRenderer::new();
-            let mut markdown_stream = MarkdownStreamState::default();
-            let mut events = Vec::new();
-            let mut pending_tool: Option<(String, String, String)> = None;
-            let mut saw_stop = false;
+                let mut sink = io::sink();
+                let out: &mut dyn Write = if self.emit_output {
+                    &mut stdout
+                } else {
+                    &mut sink
+                };
+                let renderer = TerminalRenderer::new();
+                let mut markdown_stream = MarkdownStreamState::default();
+                let mut events = Vec::new();
+                let mut pending_tool: Option<(String, String, String)> = None;
+                let mut saw_stop = false;
 
-            let mut stream = self
-                .provider
-                .stream_message(&message_request)
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
+                let mut stream = self
+                    .provider
+                    .stream_message(&message_request)
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
 
-            while let Some(event) = stream
-                .next_event()
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))?
-            {
-                match event {
-                    ApiStreamEvent::MessageStart(start) => {
-                        for block in start.message.content {
+                while let Some(event) = stream
+                    .next_event()
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?
+                {
+                    match event {
+                        ApiStreamEvent::MessageStart(start) => {
+                            for block in start.message.content {
+                                push_output_block(
+                                    block,
+                                    out,
+                                    &mut events,
+                                    &mut pending_tool,
+                                    true,
+                                    self.ui_tx.as_ref(),
+                                )?;
+                            }
+                        }
+                        ApiStreamEvent::ContentBlockStart(start) => {
                             push_output_block(
-                                block,
+                                start.content_block,
                                 out,
                                 &mut events,
                                 &mut pending_tool,
@@ -1114,111 +1123,102 @@ impl ApiClient for LlmRuntimeClient {
                                 self.ui_tx.as_ref(),
                             )?;
                         }
-                    }
-                    ApiStreamEvent::ContentBlockStart(start) => {
-                        push_output_block(
-                            start.content_block,
-                            out,
-                            &mut events,
-                            &mut pending_tool,
-                            true,
-                            self.ui_tx.as_ref(),
-                        )?;
-                    }
-                    ApiStreamEvent::ContentBlockDelta(delta) => match delta.delta {
-                        ContentBlockDelta::TextDelta { text } => {
-                            if !text.is_empty() {
-                                // Send raw delta to TUI immediately for zero-lag typewriter
-                                self.send_ui_stream(&text);
+                        ApiStreamEvent::ContentBlockDelta(delta) => match delta.delta {
+                            ContentBlockDelta::TextDelta { text } => {
+                                if !text.is_empty() {
+                                    // Send raw delta to TUI immediately for zero-lag typewriter
+                                    self.send_ui_stream(&text);
 
-                                if let Some(rendered) = markdown_stream.push(&renderer, &text) {
-                                    write!(out, "{rendered}")
-                                        .and_then(|()| out.flush())
-                                        .map_err(|error| RuntimeError::new(error.to_string()))?;
+                                    if let Some(rendered) = markdown_stream.push(&renderer, &text) {
+                                        write!(out, "{rendered}")
+                                            .and_then(|()| out.flush())
+                                            .map_err(|error| {
+                                                RuntimeError::new(error.to_string())
+                                            })?;
+                                    }
+                                    events.push(AssistantEvent::TextDelta(text));
                                 }
-                                events.push(AssistantEvent::TextDelta(text));
+                            }
+                            ContentBlockDelta::InputJsonDelta { partial_json } => {
+                                if let Some((_, _, input)) = &mut pending_tool {
+                                    input.push_str(&partial_json);
+                                }
+                            }
+                        },
+                        ApiStreamEvent::ContentBlockStop(_) => {
+                            if let Some(rendered) = markdown_stream.flush(&renderer) {
+                                write!(out, "{rendered}")
+                                    .and_then(|()| out.flush())
+                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
+                            }
+                            if let Some((id, name, input)) = pending_tool.take() {
+                                let input = if input.is_empty() {
+                                    "{}".to_string()
+                                } else {
+                                    input
+                                };
+                                let tool_banner = format_tool_call_start(&name, &input);
+                                writeln!(out, "\n{tool_banner}")
+                                    .and_then(|()| out.flush())
+                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
+                                if let Some(tx) = &self.ui_tx {
+                                    let _ = tx.send(ReplTuiEvent::ToolCallStart {
+                                        name: name.clone(),
+                                        input: input.clone(),
+                                    });
+                                } else {
+                                    self.send_ui_stream(format!("\n{tool_banner}"));
+                                }
+                                events.push(AssistantEvent::ToolUse { id, name, input });
                             }
                         }
-                        ContentBlockDelta::InputJsonDelta { partial_json } => {
-                            if let Some((_, _, input)) = &mut pending_tool {
-                                input.push_str(&partial_json);
+                        ApiStreamEvent::MessageDelta(delta) => {
+                            events.push(AssistantEvent::Usage(TokenUsage {
+                                input_tokens: delta.usage.input_tokens,
+                                output_tokens: delta.usage.output_tokens,
+                                cache_creation_input_tokens: 0,
+                                cache_read_input_tokens: 0,
+                            }));
+                        }
+                        ApiStreamEvent::MessageStop(_) => {
+                            saw_stop = true;
+                            if let Some(rendered) = markdown_stream.flush(&renderer) {
+                                write!(out, "{rendered}")
+                                    .and_then(|()| out.flush())
+                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
                             }
+                            events.push(AssistantEvent::MessageStop);
                         }
-                    },
-                    ApiStreamEvent::ContentBlockStop(_) => {
-                        if let Some(rendered) = markdown_stream.flush(&renderer) {
-                            write!(out, "{rendered}")
-                                .and_then(|()| out.flush())
-                                .map_err(|error| RuntimeError::new(error.to_string()))?;
-                        }
-                        if let Some((id, name, input)) = pending_tool.take() {
-                            let input = if input.is_empty() {
-                                "{}".to_string()
-                            } else {
-                                input
-                            };
-                            let tool_banner = format_tool_call_start(&name, &input);
-                            writeln!(out, "\n{tool_banner}")
-                                .and_then(|()| out.flush())
-                                .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            if let Some(tx) = &self.ui_tx {
-                                let _ = tx.send(ReplTuiEvent::ToolCallStart {
-                                    name: name.clone(),
-                                    input: input.clone(),
-                                });
-                            } else {
-                                self.send_ui_stream(format!("\n{tool_banner}"));
-                            }
-                            events.push(AssistantEvent::ToolUse { id, name, input });
-                        }
-                    }
-                    ApiStreamEvent::MessageDelta(delta) => {
-                        events.push(AssistantEvent::Usage(TokenUsage {
-                            input_tokens: delta.usage.input_tokens,
-                            output_tokens: delta.usage.output_tokens,
-                            cache_creation_input_tokens: 0,
-                            cache_read_input_tokens: 0,
-                        }));
-                    }
-                    ApiStreamEvent::MessageStop(_) => {
-                        saw_stop = true;
-                        if let Some(rendered) = markdown_stream.flush(&renderer) {
-                            write!(out, "{rendered}")
-                                .and_then(|()| out.flush())
-                                .map_err(|error| RuntimeError::new(error.to_string()))?;
-                        }
-                        events.push(AssistantEvent::MessageStop);
                     }
                 }
-            }
-            if !saw_stop
-                && events.iter().any(|event| {
-                    matches!(event, AssistantEvent::TextDelta(text) if !text.is_empty())
-                        || matches!(event, AssistantEvent::ToolUse { .. })
-                })
-            {
-                events.push(AssistantEvent::MessageStop);
-            }
-            if events
-                .iter()
-                .any(|event| matches!(event, AssistantEvent::MessageStop))
-            {
-                return Ok(events);
-            }
-            if self.provider.supports_send_message() {
-                let response = self
-                    .provider
-                    .send_message(&MessageRequest {
-                        stream: false,
-                        ..message_request.clone()
+                if !saw_stop
+                    && events.iter().any(|event| {
+                        matches!(event, AssistantEvent::TextDelta(text) if !text.is_empty())
+                            || matches!(event, AssistantEvent::ToolUse { .. })
                     })
-                    .await
-                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                response_to_events(response, out, self.ui_tx.as_ref())
-            } else {
-                Ok(events)
-            }
-        })
+                {
+                    events.push(AssistantEvent::MessageStop);
+                }
+                if events
+                    .iter()
+                    .any(|event| matches!(event, AssistantEvent::MessageStop))
+                {
+                    return Ok(events);
+                }
+                if self.provider.supports_send_message() {
+                    let response = self
+                        .provider
+                        .send_message(&MessageRequest {
+                            stream: false,
+                            ..message_request.clone()
+                        })
+                        .await
+                        .map_err(|error| RuntimeError::new(error.to_string()))?;
+                    response_to_events(response, out, self.ui_tx.as_ref())
+                } else {
+                    Ok(events)
+                }
+            })
         })
     }
 }

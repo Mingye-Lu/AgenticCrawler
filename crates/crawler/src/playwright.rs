@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use std::fmt;
 use std::io;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -525,10 +525,7 @@ impl PlaywrightBridge {
         }
     }
 
-    pub async fn new_page(
-        &mut self,
-        url: Option<&str>,
-    ) -> Result<usize, PlaywrightBridgeError> {
+    pub async fn new_page(&mut self, url: Option<&str>) -> Result<usize, PlaywrightBridgeError> {
         let mut cmd = serde_json::json!({ "action": "new_page" });
         if let Some(url) = url {
             cmd["url"] = serde_json::Value::String(url.to_string());
@@ -538,9 +535,7 @@ impl PlaywrightBridge {
             .get("pageIndex")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| {
-                PlaywrightBridgeError::Protocol(
-                    "new_page response missing pageIndex".to_string(),
-                )
+                PlaywrightBridgeError::Protocol("new_page response missing pageIndex".to_string())
             })?;
         usize::try_from(page_index).map_err(|_| {
             PlaywrightBridgeError::Protocol(format!(
@@ -549,10 +544,7 @@ impl PlaywrightBridge {
         })
     }
 
-    pub async fn close_page(
-        &mut self,
-        page_index: usize,
-    ) -> Result<(), PlaywrightBridgeError> {
+    pub async fn close_page(&mut self, page_index: usize) -> Result<(), PlaywrightBridgeError> {
         let cmd = serde_json::json!({
             "action": "close_page",
             "pageIndex": page_index,
@@ -1080,7 +1072,10 @@ for line in sys.stdin:
             .expect("switch_tab should succeed");
 
         assert_eq!(page_index, 1);
-        assert_eq!(tab.get("url").and_then(serde_json::Value::as_str), Some("https://example.com/"));
+        assert_eq!(
+            tab.get("url").and_then(serde_json::Value::as_str),
+            Some("https://example.com/")
+        );
 
         bridge
             .close()

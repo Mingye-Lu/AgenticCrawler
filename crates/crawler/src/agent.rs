@@ -70,6 +70,8 @@ pub trait CrawlAgent {
     }
 }
 
+type ChildTaskMap = HashMap<String, (String, tokio::task::JoinHandle<Option<Vec<Value>>>)>;
+
 pub struct CrawlerAgent {
     browser: Option<BrowserContext>,
     registry: ToolRegistry,
@@ -78,8 +80,7 @@ pub struct CrawlerAgent {
     agent_manager: SharedAgentManager,
     shared_bridge: Option<SharedBridge>,
     crawl_state: CrawlState,
-    pub(crate) child_tasks:
-        HashMap<String, (String, tokio::task::JoinHandle<Option<Vec<Value>>>)>,
+    pub(crate) child_tasks: ChildTaskMap,
     api_client_arc: Option<SharedApiClient>,
     #[cfg(test)]
     fork_page_index_override: Option<usize>,
@@ -195,13 +196,9 @@ impl CrawlerAgent {
         let max_steps = self.max_steps;
         let system_prompt = build_system_prompt(&mvp_tool_specs());
 
-        let mut runtime = ConversationRuntime::new(
-            Session::new(),
-            shared_client.clone(),
-            self,
-            system_prompt,
-        )
-        .with_max_iterations(max_steps);
+        let mut runtime =
+            ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
+                .with_max_iterations(max_steps);
         let result = runtime.run_turn(goal).await;
         let agent_id = runtime.tool_executor_mut().agent_id.clone();
         let agent_manager = runtime.tool_executor_mut().agent_manager.clone();
@@ -218,16 +215,15 @@ impl CrawlerAgent {
             return Ok(());
         }
 
-        let shared_bridge = match &self.shared_bridge {
-            Some(shared_bridge) => shared_bridge.clone(),
-            None => {
-                let bridge = crate::PlaywrightBridge::new()
-                    .await
-                    .map_err(|error| ToolError::new(error.to_string()))?;
-                let shared_bridge = Arc::new(Mutex::new(bridge));
-                self.shared_bridge = Some(shared_bridge.clone());
-                shared_bridge
-            }
+        let shared_bridge = if let Some(shared_bridge) = &self.shared_bridge {
+            shared_bridge.clone()
+        } else {
+            let bridge = crate::PlaywrightBridge::new()
+                .await
+                .map_err(|error| ToolError::new(error.to_string()))?;
+            let shared_bridge = Arc::new(Mutex::new(bridge));
+            self.shared_bridge = Some(shared_bridge.clone());
+            shared_bridge
         };
 
         self.browser = Some(BrowserContext::new(shared_bridge));
@@ -235,14 +231,13 @@ impl CrawlerAgent {
     }
 
     async fn handle_fork(&mut self, input: &str) -> Result<String, ToolError> {
-        let params: Value = serde_json::from_str(input)
-            .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+        let params: Value =
+            serde_json::from_str(input).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
 
         let sub_goal = params
             .get("sub_goal")
             .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or("")
+            .map_or("", str::trim)
             .to_string();
 
         if sub_goal.is_empty() {
@@ -259,7 +254,10 @@ impl CrawlerAgent {
             manager.can_fork(&self.agent_id)
         };
         if !can_fork {
-            return Ok(format!("Cannot fork: limits exceeded for agent {}", self.agent_id));
+            return Ok(format!(
+                "Cannot fork: limits exceeded for agent {}",
+                self.agent_id
+            ));
         }
 
         self.ensure_browser().await?;
@@ -278,9 +276,7 @@ impl CrawlerAgent {
             .shared_bridge
             .clone()
             .ok_or_else(|| ToolError::new("fork: browser bridge not initialized"))?;
-        let target_url = url
-            .clone()
-            .or_else(|| self.crawl_state.current_url.clone());
+        let target_url = url.clone().or_else(|| self.crawl_state.current_url.clone());
 
         let page_index = self
             .create_child_page(shared_bridge.clone(), target_url.as_deref())
@@ -330,9 +326,9 @@ impl CrawlerAgent {
         }
 
         let settings = runtime::load_settings();
-        let wait_timeout_secs = runtime::settings_get_fork_wait_timeout_secs(&settings) as u64;
+        let wait_timeout_secs = u64::from(runtime::settings_get_fork_wait_timeout_secs(&settings));
         let timeout = std::time::Duration::from_secs(wait_timeout_secs);
-        let tasks: Vec<(String, String, tokio::task::JoinHandle<Option<Vec<Value>>>)> = self
+        let tasks: Vec<_> = self
             .child_tasks
             .drain()
             .map(|(child_id, (sub_goal, handle))| (child_id, sub_goal, handle))
@@ -344,7 +340,7 @@ impl CrawlerAgent {
         for (child_id, sub_goal, mut handle) in tasks {
             let items = match tokio::time::timeout(timeout, &mut handle).await {
                 Ok(Ok(Some(items))) => items,
-                Ok(Ok(None)) | Ok(Err(_)) => Vec::new(),
+                Ok(Ok(None) | Err(_)) => Vec::new(),
                 Err(_) => {
                     handle.abort();
                     Vec::new()
@@ -361,16 +357,15 @@ impl CrawlerAgent {
             self.agent_manager.lock().await.mark_done(&child_id);
         }
 
-        let msg =
-            format!("Waited for {task_count} subagent(s). Collected {total_items} item(s).");
+        let msg = format!("Waited for {task_count} subagent(s). Collected {total_items} item(s).");
         self.crawl_state.action_history.push(msg.clone());
 
         Ok(msg)
     }
 
     async fn handle_done(&mut self, input: &str) -> Result<String, ToolError> {
-        let params: Value = serde_json::from_str(input)
-            .unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+        let params: Value =
+            serde_json::from_str(input).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
 
         let summary = params
             .get("summary")
@@ -383,7 +378,7 @@ impl CrawlerAgent {
         }
 
         self.crawl_state.done = true;
-        self.crawl_state.done_reason = summary.clone();
+        self.crawl_state.done_reason.clone_from(&summary);
 
         Ok(summary)
     }
@@ -801,7 +796,10 @@ mod tests {
         agent.fork_page_index_override = Some(1);
 
         let observation = agent
-            .execute("fork", r#"{"sub_goal":"check result","url":"https://example.com"}"#)
+            .execute(
+                "fork",
+                r#"{"sub_goal":"check result","url":"https://example.com"}"#,
+            )
             .await
             .expect("fork should succeed");
 
@@ -841,7 +839,10 @@ mod tests {
             .await
             .expect("fork should succeed");
 
-        assert_eq!(observation, "Forked subagent root-child-1 for: collect details");
+        assert_eq!(
+            observation,
+            "Forked subagent root-child-1 for: collect details"
+        );
 
         for (_, (_, handle)) in agent.child_tasks.drain() {
             handle.abort();
@@ -914,7 +915,9 @@ mod tests {
     async fn test_done_sets_state_done() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
-        let result = agent.execute("done", r#"{"summary":"Task complete"}"#).await;
+        let result = agent
+            .execute("done", r#"{"summary":"Task complete"}"#)
+            .await;
 
         assert_eq!(result.unwrap(), "Task complete");
         assert!(agent.crawl_state.done);
@@ -937,7 +940,10 @@ mod tests {
             .child_tasks
             .insert("child-1".to_string(), ("goal".to_string(), handle));
 
-        let result = agent.execute("done", r#"{"summary":"Finished"}"#).await.unwrap();
+        let result = agent
+            .execute("done", r#"{"summary":"Finished"}"#)
+            .await
+            .unwrap();
 
         assert_eq!(result, "Finished");
         assert!(agent.crawl_state.done);
