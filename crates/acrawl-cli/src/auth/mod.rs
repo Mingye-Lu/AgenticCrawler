@@ -135,7 +135,7 @@ fn run_bedrock_auth() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     persist_preset_credentials(
-        "bedrock",
+        "amazon-bedrock",
         api::StoredProviderConfig {
             auth_method: "api_key".to_string(),
             api_key: Some(access_key),
@@ -194,7 +194,7 @@ pub(crate) fn run_preset_auth(
     if preset.id == "copilot" {
         return run_copilot_device_code_auth();
     }
-    if preset.id == "bedrock" {
+    if preset.id == "amazon-bedrock" {
         return run_bedrock_auth();
     }
     if preset.id == "azure" {

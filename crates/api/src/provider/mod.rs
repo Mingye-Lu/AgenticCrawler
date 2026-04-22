@@ -494,7 +494,7 @@ mod tests {
             },
         );
         store.providers.insert(
-            "bedrock".into(),
+            "amazon-bedrock".into(),
             StoredProviderConfig {
                 auth_method: "api_key".into(),
                 api_key: Some("AKIDEXAMPLE".into()),
@@ -506,8 +506,10 @@ mod tests {
 
         let registry = ProviderRegistry::from_credentials(&store);
         let anthropic_client = registry.build_client("anthropic/claude-sonnet-4-6", &store);
-        let bedrock_client =
-            registry.build_client("bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0", &store);
+        let bedrock_client = registry.build_client(
+            "amazon-bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0",
+            &store,
+        );
 
         assert!(anthropic_client.is_ok());
         assert!(matches!(anthropic_client.unwrap(), ProviderClient::Anthropic(_)));
@@ -527,7 +529,7 @@ mod tests {
             },
         );
         store.providers.insert(
-            "bedrock".into(),
+            "amazon-bedrock".into(),
             StoredProviderConfig {
                 auth_method: "api_key".into(),
                 api_key: Some("AKIDEXAMPLE".into()),
@@ -539,7 +541,7 @@ mod tests {
 
         let registry = ProviderRegistry::from_credentials(&store);
         let client = registry.build_client(
-            "bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0",
+            "amazon-bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0",
             &store,
         );
 
@@ -573,7 +575,7 @@ mod tests {
         };
 
         let client = ProviderClient::from_stored_config(
-            "bedrock",
+            "amazon-bedrock",
             &config,
             "anthropic.claude-sonnet-4-6-20250514-v1:0",
         );

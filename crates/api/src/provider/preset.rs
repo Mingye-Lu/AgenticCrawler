@@ -89,8 +89,8 @@ static BUILTIN_PRESETS: [ProviderPreset; 24] = [
         transform_id: None,
     },
     ProviderPreset {
-        id: "bedrock",
-        display_name: "AWS Bedrock",
+        id: "amazon-bedrock",
+        display_name: "Amazon Bedrock",
         base_url: "",
         chat_path: "",
         api_key_env_var: Some("AWS_ACCESS_KEY_ID"),
@@ -456,7 +456,7 @@ mod tests {
     fn test_builtin_presets_contains_bedrock() {
         let preset = builtin_presets()
             .into_iter()
-            .find(|preset| preset.id == "bedrock")
+            .find(|preset| preset.id == "amazon-bedrock")
             .expect("bedrock preset should exist");
 
         assert_eq!(preset.api_key_env_var, Some("AWS_ACCESS_KEY_ID"));
@@ -721,7 +721,7 @@ mod tests {
                     );
                 }
                 ProviderProtocol::Bedrock => {
-                    assert_eq!(p.id, "bedrock", "only bedrock should use Bedrock protocol");
+                    assert_eq!(p.id, "amazon-bedrock", "only amazon-bedrock should use Bedrock protocol");
                 }
                 ProviderProtocol::Gemini => {
                     assert!(

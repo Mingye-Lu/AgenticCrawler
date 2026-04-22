@@ -1006,7 +1006,7 @@ fn bedrock_models() -> Vec<ModelInfo> {
             id: "anthropic.claude-sonnet-4-6-20250514-v1:0".into(),
             display_name: "Claude Sonnet 4.6 (Bedrock)".into(),
             aliases: vec![],
-            provider_id: "bedrock".into(),
+            provider_id: "amazon-bedrock".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
             capabilities: ModelCapabilities {
@@ -1022,7 +1022,7 @@ fn bedrock_models() -> Vec<ModelInfo> {
             id: "anthropic.claude-haiku-4-5-20251213-v1:0".into(),
             display_name: "Claude Haiku 4.5 (Bedrock)".into(),
             aliases: vec![],
-            provider_id: "bedrock".into(),
+            provider_id: "amazon-bedrock".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
             capabilities: ModelCapabilities {
@@ -1038,7 +1038,7 @@ fn bedrock_models() -> Vec<ModelInfo> {
             id: "amazon.nova-pro-v1:0".into(),
             display_name: "Amazon Nova Pro".into(),
             aliases: vec![],
-            provider_id: "bedrock".into(),
+            provider_id: "amazon-bedrock".into(),
             max_output_tokens: 5_120,
             context_window: 300_000,
             capabilities: ModelCapabilities {
@@ -1054,7 +1054,7 @@ fn bedrock_models() -> Vec<ModelInfo> {
             id: "amazon.nova-lite-v1:0".into(),
             display_name: "Amazon Nova Lite".into(),
             aliases: vec![],
-            provider_id: "bedrock".into(),
+            provider_id: "amazon-bedrock".into(),
             max_output_tokens: 5_120,
             context_window: 300_000,
             capabilities: ModelCapabilities {
@@ -1393,7 +1393,7 @@ const MODELS_DEV_PROVIDER_MAP: &[(&str, &str)] = &[
     ("cloudflare", "cloudflare-workers-ai"),
     ("sap", "sap-ai-core"),
     ("google", "google"),
-    ("bedrock", "amazon-bedrock"),
+    ("amazon-bedrock", "amazon-bedrock"),
     ("azure", "azure"),
     ("vertex", "google-vertex"),
     ("copilot", "github-copilot"),
@@ -1571,7 +1571,7 @@ mod tests {
             "cloudflare",
             "sap",
             "google",
-            "bedrock",
+            "amazon-bedrock",
             "azure",
             "vertex",
             "copilot",
