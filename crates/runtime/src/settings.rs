@@ -34,6 +34,26 @@ pub struct Settings {
     /// Auto-compact input tokens threshold (default: 200000)
     #[serde(default)]
     pub auto_compact_input_tokens: Option<u64>,
+
+    /// Max concurrent subagents per parent (default: 5)
+    #[serde(default)]
+    pub max_concurrent_per_parent: Option<u32>,
+
+    /// Max fork depth (default: 3)
+    #[serde(default)]
+    pub max_fork_depth: Option<u32>,
+
+    /// Max total agents across all parents (default: 10)
+    #[serde(default)]
+    pub max_total_agents: Option<u32>,
+
+    /// Max steps for forked child agents (default: 15)
+    #[serde(default)]
+    pub fork_child_max_steps: Option<u32>,
+
+    /// Timeout in seconds for wait_for_subagents (default: 60)
+    #[serde(default)]
+    pub fork_wait_timeout_secs: Option<u32>,
 }
 
 impl Default for Settings {
@@ -46,6 +66,11 @@ impl Default for Settings {
             workspace_dir: Some("workspace".to_string()),
             classic_repl: Some(false),
             auto_compact_input_tokens: Some(200_000),
+            max_concurrent_per_parent: Some(5),
+            max_fork_depth: Some(3),
+            max_total_agents: Some(10),
+            fork_child_max_steps: Some(15),
+            fork_wait_timeout_secs: Some(60),
         }
     }
 }
@@ -136,6 +161,36 @@ pub fn settings_get_workspace_dir(s: &Settings) -> &str {
 #[must_use]
 pub fn settings_get_auto_compact_tokens(s: &Settings) -> u64 {
     s.auto_compact_input_tokens.unwrap_or(200_000)
+}
+
+/// Get `max_concurrent_per_parent` setting, with default fallback.
+#[must_use]
+pub fn settings_get_max_concurrent_per_parent(s: &Settings) -> u32 {
+    s.max_concurrent_per_parent.unwrap_or(5)
+}
+
+/// Get `max_fork_depth` setting, with default fallback.
+#[must_use]
+pub fn settings_get_max_fork_depth(s: &Settings) -> u32 {
+    s.max_fork_depth.unwrap_or(3)
+}
+
+/// Get `max_total_agents` setting, with default fallback.
+#[must_use]
+pub fn settings_get_max_total_agents(s: &Settings) -> u32 {
+    s.max_total_agents.unwrap_or(10)
+}
+
+/// Get `fork_child_max_steps` setting, with default fallback.
+#[must_use]
+pub fn settings_get_fork_child_max_steps(s: &Settings) -> u32 {
+    s.fork_child_max_steps.unwrap_or(15)
+}
+
+/// Get `fork_wait_timeout_secs` setting, with default fallback.
+#[must_use]
+pub fn settings_get_fork_wait_timeout_secs(s: &Settings) -> u32 {
+    s.fork_wait_timeout_secs.unwrap_or(60)
 }
 
 /// Helper to get home directory.
@@ -236,6 +291,11 @@ mod tests {
             workspace_dir: Some("custom_workspace".to_string()),
             classic_repl: Some(true),
             auto_compact_input_tokens: Some(500_000),
+            max_concurrent_per_parent: Some(8),
+            max_fork_depth: Some(5),
+            max_total_agents: Some(20),
+            fork_child_max_steps: Some(25),
+            fork_wait_timeout_secs: Some(120),
         };
 
         save_settings(&original).expect("Failed to save settings");
@@ -377,6 +437,11 @@ mod tests {
             workspace_dir: Some("custom_workspace".to_string()),
             classic_repl: Some(true),
             auto_compact_input_tokens: Some(123_456),
+            max_concurrent_per_parent: Some(7),
+            max_fork_depth: Some(4),
+            max_total_agents: Some(15),
+            fork_child_max_steps: Some(20),
+            fork_wait_timeout_secs: Some(90),
         })
         .expect("save settings");
 
@@ -393,7 +458,105 @@ mod tests {
         assert_eq!(loaded.workspace_dir, Some("custom_workspace".to_string()));
         assert_eq!(loaded.classic_repl, Some(true));
         assert_eq!(loaded.auto_compact_input_tokens, Some(123_456));
+        assert_eq!(loaded.max_concurrent_per_parent, Some(7));
+        assert_eq!(loaded.max_fork_depth, Some(4));
+        assert_eq!(loaded.max_total_agents, Some(15));
+        assert_eq!(loaded.fork_child_max_steps, Some(20));
+        assert_eq!(loaded.fork_wait_timeout_secs, Some(90));
 
         cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn test_fork_settings_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.max_concurrent_per_parent, Some(5));
+        assert_eq!(settings.max_fork_depth, Some(3));
+        assert_eq!(settings.max_total_agents, Some(10));
+        assert_eq!(settings.fork_child_max_steps, Some(15));
+        assert_eq!(settings.fork_wait_timeout_secs, Some(60));
+    }
+
+    #[test]
+    fn test_fork_settings_round_trip() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        let original = Settings {
+            headless: Some(true),
+            max_steps: Some(50),
+            model: None,
+            reasoning_effort: None,
+            workspace_dir: Some("workspace".to_string()),
+            classic_repl: Some(false),
+            auto_compact_input_tokens: Some(200_000),
+            max_concurrent_per_parent: Some(8),
+            max_fork_depth: Some(4),
+            max_total_agents: Some(16),
+            fork_child_max_steps: Some(20),
+            fork_wait_timeout_secs: Some(75),
+        };
+
+        save_settings(&original).expect("Failed to save settings");
+        let loaded = load_settings();
+
+        assert_eq!(loaded.max_concurrent_per_parent, Some(8));
+        assert_eq!(loaded.max_fork_depth, Some(4));
+        assert_eq!(loaded.max_total_agents, Some(16));
+        assert_eq!(loaded.fork_child_max_steps, Some(20));
+        assert_eq!(loaded.fork_wait_timeout_secs, Some(75));
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn test_fork_settings_partial_json() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        let settings_path = temp_dir.join("settings.json");
+        fs::write(
+            &settings_path,
+            r#"{"max_fork_depth": 6, "fork_wait_timeout_secs": 120}"#,
+        )
+        .expect("Failed to write test settings");
+
+        let settings = load_settings();
+
+        assert_eq!(settings.max_fork_depth, Some(6));
+        assert_eq!(settings.fork_wait_timeout_secs, Some(120));
+        assert_eq!(settings.max_concurrent_per_parent, None);
+        assert_eq!(settings.max_total_agents, None);
+        assert_eq!(settings.fork_child_max_steps, None);
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn test_fork_settings_getters_with_none() {
+        let settings = Settings {
+            headless: None,
+            max_steps: None,
+            model: None,
+            reasoning_effort: None,
+            workspace_dir: None,
+            classic_repl: None,
+            auto_compact_input_tokens: None,
+            max_concurrent_per_parent: None,
+            max_fork_depth: None,
+            max_total_agents: None,
+            fork_child_max_steps: None,
+            fork_wait_timeout_secs: None,
+        };
+
+        assert_eq!(settings_get_max_concurrent_per_parent(&settings), 5);
+        assert_eq!(settings_get_max_fork_depth(&settings), 3);
+        assert_eq!(settings_get_max_total_agents(&settings), 10);
+        assert_eq!(settings_get_fork_child_max_steps(&settings), 15);
+        assert_eq!(settings_get_fork_wait_timeout_secs(&settings), 60);
     }
 }
