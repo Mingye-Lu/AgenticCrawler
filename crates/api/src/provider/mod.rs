@@ -329,15 +329,8 @@ impl ProviderRegistry {
     }
 
     #[must_use]
-    pub fn resolve_model(&self, model_or_alias: &str) -> Option<&ModelInfo> {
-        self.catalog
-            .iter()
-            .find(|m| m.id == model_or_alias || m.aliases.iter().any(|a| a == model_or_alias))
-    }
-
-    #[must_use]
-    pub fn resolve_alias<'a>(&'a self, model: &'a str) -> &'a str {
-        self.resolve_model(model).map_or(model, |m| m.id.as_str())
+    pub fn resolve_model(&self, model: &str) -> Option<&ModelInfo> {
+        self.catalog.iter().find(|m| m.id == model)
     }
 
     #[must_use]
@@ -430,20 +423,12 @@ mod tests {
     use crate::credentials::{CredentialStore, StoredProviderConfig};
 
     #[test]
-    fn registry_resolves_alias_to_canonical_id() {
+    fn registry_resolves_model_by_id() {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
-        assert_eq!(registry.resolve_alias("sonnet"), "claude-sonnet-4-6");
-        assert_eq!(registry.resolve_alias("opus"), "claude-opus-4-6");
-        assert_eq!(registry.resolve_alias("4o"), "gpt-4o");
-        assert_eq!(registry.resolve_alias("codex"), "codex-mini-latest");
-    }
-
-    #[test]
-    fn registry_resolves_unknown_alias_to_self() {
-        let store = CredentialStore::default();
-        let registry = ProviderRegistry::from_credentials(&store);
-        assert_eq!(registry.resolve_alias("unknown-model"), "unknown-model");
+        assert!(registry.resolve_model("claude-sonnet-4-6").is_some());
+        assert!(registry.resolve_model("gpt-4o").is_some());
+        assert!(registry.resolve_model("unknown-model").is_none());
     }
 
     #[test]

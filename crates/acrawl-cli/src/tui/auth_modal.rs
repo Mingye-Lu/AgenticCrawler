@@ -224,9 +224,7 @@ impl AuthModal {
             .get(provider_str)
             .cloned()
             .unwrap_or_default();
-        let registry = api::provider::ProviderRegistry::from_credentials(&store);
-        let canonical_model = registry.resolve_alias(model_id.trim());
-        config.default_model = Some(canonical_model.to_string());
+        config.default_model = Some(model_id.trim().to_string());
         store.active_provider = Some(provider_str.to_string());
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);

@@ -56,11 +56,10 @@ pub(crate) enum Provider {
 
 pub(crate) fn initial_model_from_credentials() -> Option<String> {
     let store = api::load_credentials().unwrap_or_default();
-    let registry = ProviderRegistry::from_credentials(&store);
     if let Some(provider_name) = &store.active_provider {
         if let Some(config) = store.providers.get(provider_name) {
             if let Some(model) = &config.default_model {
-                return Some(registry.resolve_alias(model).to_string());
+                return Some(model.clone());
             }
         }
     }
@@ -526,9 +525,6 @@ impl LiveCli {
                 persist_after: false,
             });
         };
-        let store = api::load_credentials().unwrap_or_default();
-        let registry = ProviderRegistry::from_credentials(&store);
-        let model = registry.resolve_alias(&model).to_string();
         if model == self.model {
             return Ok(CommandUiResult {
                 message: format_model_report(
@@ -988,12 +984,6 @@ impl LlmRuntimeClient {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let store = api::load_credentials().unwrap_or_default();
         let registry = ProviderRegistry::from_credentials(&store);
-        let resolved_model = registry.resolve_alias(model.as_str());
-        let model = if resolved_model == model {
-            model
-        } else {
-            resolved_model.to_string()
-        };
         let provider = registry
             .build_client(&model, &store)
             .unwrap_or_else(|_| ProviderClient::no_auth_placeholder());
@@ -1419,12 +1409,12 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn resolves_known_model_aliases() {
+    fn resolves_known_models_by_id() {
         let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
-        assert_eq!(registry.resolve_alias("opus"), "claude-opus-4-6");
-        assert_eq!(registry.resolve_alias("sonnet"), "claude-sonnet-4-6");
-        assert_eq!(registry.resolve_alias("haiku"), "claude-haiku-4-5-20251213");
-        assert_eq!(registry.resolve_alias("claude-opus"), "claude-opus");
+        assert!(registry.resolve_model("claude-opus-4-6").is_some());
+        assert!(registry.resolve_model("claude-sonnet-4-6").is_some());
+        assert!(registry.resolve_model("claude-haiku-4-5-20251213").is_some());
+        assert!(registry.resolve_model("not-a-real-model").is_none());
     }
 
     #[test]

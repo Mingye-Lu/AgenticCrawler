@@ -173,15 +173,11 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 let value = args
                     .get(index + 1)
                     .ok_or_else(|| "missing value for --model".to_string())?;
-                let store = api::load_credentials().unwrap_or_default();
-                let registry = api::provider::ProviderRegistry::from_credentials(&store);
-                model = Some(registry.resolve_alias(value).to_string());
+                model = Some(value.clone());
                 index += 2;
             }
             flag if flag.starts_with("--model=") => {
-                let store = api::load_credentials().unwrap_or_default();
-                let registry = api::provider::ProviderRegistry::from_credentials(&store);
-                model = Some(registry.resolve_alias(&flag[8..]).to_string());
+                model = Some(flag[8..].to_string());
                 index += 1;
             }
             "--output-format" => {
@@ -217,11 +213,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 let model = model.clone().ok_or_else(|| {
                     "missing model: set --model, set env model vars, or run `acrawl auth` to configure a default model".to_string()
                 })?;
-                let store = api::load_credentials().unwrap_or_default();
-                let registry = api::provider::ProviderRegistry::from_credentials(&store);
                 return Ok(CliAction::Prompt {
                     prompt,
-                    model: registry.resolve_alias(&model).to_string(),
+                    model: model.clone(),
                     output_format,
                     allowed_tools: normalize_allowed_tools(&allowed_tool_values)?,
                 });
@@ -652,11 +646,11 @@ mod tests {
     }
 
     #[test]
-    fn resolves_model_aliases_in_args() {
+    fn passes_model_through_without_alias_resolution() {
         with_clean_config_env(|| {
             let args = vec![
                 "--model".to_string(),
-                "opus".to_string(),
+                "claude-opus-4-6".to_string(),
                 "explain".to_string(),
                 "this".to_string(),
             ];

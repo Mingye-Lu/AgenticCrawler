@@ -83,7 +83,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-opus-4-6".into(),
             display_name: "Claude Opus 4.6".into(),
-            aliases: vec!["opus".into()],
+            aliases: vec![],
             provider_id: "anthropic".into(),
             max_output_tokens: 32_000,
             context_window: 200_000,
@@ -104,7 +104,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-sonnet-4-6".into(),
             display_name: "Claude Sonnet 4.6".into(),
-            aliases: vec!["sonnet".into()],
+            aliases: vec![],
             provider_id: "anthropic".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -125,7 +125,7 @@ fn anthropic_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-haiku-4-5-20251213".into(),
             display_name: "Claude Haiku 4.5".into(),
-            aliases: vec!["haiku".into()],
+            aliases: vec![],
             provider_id: "anthropic".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -153,7 +153,7 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4o".into(),
             display_name: "GPT-4o".into(),
-            aliases: vec!["gpt4o".into(), "4o".into()],
+            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 16_384,
             context_window: 128_000,
@@ -174,7 +174,7 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4-turbo".into(),
             display_name: "GPT-4 Turbo".into(),
-            aliases: vec!["gpt4".into()],
+            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 4_096,
             context_window: 128_000,
@@ -237,7 +237,7 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "codex-mini-latest".into(),
             display_name: "Codex Mini".into(),
-            aliases: vec!["codex".into()],
+            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 100_000,
             context_window: 200_000,
@@ -1559,13 +1559,16 @@ mod tests {
     }
 
     #[test]
-    fn aliases_resolve_correctly() {
+    fn no_models_have_aliases() {
         let models = builtin_models();
-        let sonnet = models
-            .iter()
-            .find(|m| m.aliases.contains(&"sonnet".to_string()));
-        assert!(sonnet.is_some(), "alias 'sonnet' should resolve");
-        assert_eq!(sonnet.unwrap().id, "claude-sonnet-4-6");
+        for model in &models {
+            assert!(
+                model.aliases.is_empty(),
+                "model '{}' should have no aliases, found {:?}",
+                model.id,
+                model.aliases
+            );
+        }
     }
 
     #[test]
