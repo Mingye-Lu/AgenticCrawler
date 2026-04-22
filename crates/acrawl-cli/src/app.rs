@@ -1447,7 +1447,9 @@ mod tests {
         let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
         assert!(registry.resolve_model("claude-opus-4-6").is_some());
         assert!(registry.resolve_model("claude-sonnet-4-6").is_some());
-        assert!(registry.resolve_model("claude-haiku-4-5-20251213").is_some());
+        assert!(registry
+            .resolve_model("claude-haiku-4-5-20251213")
+            .is_some());
         assert!(registry.resolve_model("not-a-real-model").is_none());
     }
 
@@ -1461,7 +1463,9 @@ mod tests {
     fn provider_for_model_accepts_prefixed_model() {
         let registry = ProviderRegistry::from_credentials(&api::CredentialStore::default());
         assert_eq!(
-            registry.provider_for_model("anthropic/claude-sonnet-4-6").unwrap(),
+            registry
+                .provider_for_model("anthropic/claude-sonnet-4-6")
+                .unwrap(),
             "anthropic"
         );
     }
