@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn build_system_prompt_lists_all_15_tools() {
+    fn build_system_prompt_lists_all_18_tools() {
         let specs = crate::mvp_tool_specs();
         let prompt = build_system_prompt(&specs);
         let first = &prompt[0];
