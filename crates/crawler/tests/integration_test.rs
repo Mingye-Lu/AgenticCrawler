@@ -54,8 +54,8 @@ fn mock_registry() -> ToolRegistry {
     registry
 }
 
-#[test]
-fn crawler_agent_execute_dispatches_registered_tool() {
+#[tokio::test]
+async fn crawler_agent_execute_dispatches_registered_tool() {
     let mut agent = CrawlerAgent::new_lazy(mock_registry());
 
     let output = agent
@@ -63,6 +63,7 @@ fn crawler_agent_execute_dispatches_registered_tool() {
             "extract_data",
             r#"{"instruction":"extract title","data":{"url":"https://example.com"}}"#,
         )
+        .await
         .expect("extract_data should execute successfully");
 
     let parsed: Value = serde_json::from_str(&output).expect("tool output should be valid JSON");

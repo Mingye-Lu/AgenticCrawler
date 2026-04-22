@@ -38,8 +38,9 @@ pub trait ApiClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
 }
 
+#[allow(async_fn_in_trait)]
 pub trait ToolExecutor {
-    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError>;
+    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,7 +182,10 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn run_turn(&mut self, user_input: impl Into<String>) -> Result<TurnSummary, RuntimeError> {
+    pub async fn run_turn(
+        &mut self,
+        user_input: impl Into<String>,
+    ) -> Result<TurnSummary, RuntimeError> {
         self.session
             .messages
             .push(ConversationMessage::user_text(user_input.into()));
@@ -190,7 +194,7 @@ where
         let mut tool_results = Vec::new();
         let mut iterations = 0;
 
-        loop {
+        'outer: loop {
             if self.cancel_flag.load(Ordering::Acquire) {
                 self.cancel_flag.store(false, Ordering::Release);
                 return Err(RuntimeError::new("interrupted by user"));
@@ -231,6 +235,7 @@ where
             }
 
             for (tool_use_id, tool_name, input) in pending_tool_uses {
+                let is_done_tool = tool_name == "done";
                 let result_message = {
                     let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
                     if pre_hook_result.is_denied() {
@@ -243,7 +248,7 @@ where
                         )
                     } else {
                         let (mut output, mut is_error) =
-                            match self.tool_executor.execute(&tool_name, &input) {
+                            match self.tool_executor.execute(&tool_name, &input).await {
                                 Ok(output) => (output, false),
                                 Err(error) => (error.to_string(), true),
                             };
@@ -264,6 +269,11 @@ where
                         ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
                     }
                 };
+                if is_done_tool {
+                    self.session.messages.push(result_message.clone());
+                    tool_results.push(result_message);
+                    break 'outer;
+                }
                 self.session.messages.push(result_message.clone());
                 tool_results.push(result_message);
             }
@@ -454,7 +464,7 @@ impl StaticToolExecutor {
 }
 
 impl ToolExecutor for StaticToolExecutor {
-    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
         self.handlers
             .get_mut(tool_name)
             .ok_or_else(|| ToolError::new(format!("unknown tool: {tool_name}")))?(input)
@@ -526,8 +536,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
+    #[tokio::test]
+    async fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
         let api_client = ScriptedApiClient { call_count: 0 };
         let tool_executor = StaticToolExecutor::new().register("add", |input| {
             let total = input
@@ -550,6 +560,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("what is 2 + 2?")
+            .await
             .expect("conversation loop should succeed");
 
         assert_eq!(summary.iterations, 2);
@@ -571,9 +582,9 @@ mod tests {
         ));
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn denies_tool_use_when_pre_tool_hook_blocks() {
+    async fn denies_tool_use_when_pre_tool_hook_blocks() {
         struct SingleCallApiClient;
         impl ApiClient for SingleCallApiClient {
             fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
@@ -613,6 +624,7 @@ mod tests {
 
         let summary = runtime
             .run_turn("use the tool")
+            .await
             .expect("conversation should continue after hook denial");
 
         assert_eq!(summary.tool_results.len(), 1);
@@ -632,8 +644,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn appends_post_tool_hook_feedback_to_tool_result() {
+    #[tokio::test]
+    async fn appends_post_tool_hook_feedback_to_tool_result() {
         struct TwoCallApiClient {
             calls: usize,
         }
@@ -676,7 +688,10 @@ mod tests {
             )),
         );
 
-        let summary = runtime.run_turn("use add").expect("tool loop succeeds");
+        let summary = runtime
+            .run_turn("use add")
+            .await
+            .expect("tool loop succeeds");
 
         assert_eq!(summary.tool_results.len(), 1);
         let ContentBlock::ToolResult {
@@ -744,8 +759,8 @@ mod tests {
         assert_eq!(runtime.usage().cumulative_usage().total_tokens(), 21);
     }
 
-    #[test]
-    fn compacts_session_after_turns() {
+    #[tokio::test]
+    async fn compacts_session_after_turns() {
         struct SimpleApi;
         impl ApiClient for SimpleApi {
             fn stream(
@@ -765,9 +780,9 @@ mod tests {
             StaticToolExecutor::new(),
             vec!["system".to_string()],
         );
-        runtime.run_turn("a").expect("turn a");
-        runtime.run_turn("b").expect("turn b");
-        runtime.run_turn("c").expect("turn c");
+        runtime.run_turn("a").await.expect("turn a");
+        runtime.run_turn("b").await.expect("turn b");
+        runtime.run_turn("c").await.expect("turn c");
 
         let result = runtime.compact(CompactionConfig {
             preserve_recent_messages: 2,
@@ -790,8 +805,8 @@ mod tests {
         script.to_string()
     }
 
-    #[test]
-    fn auto_compacts_when_cumulative_input_threshold_is_crossed() {
+    #[tokio::test]
+    async fn auto_compacts_when_cumulative_input_threshold_is_crossed() {
         struct SimpleApi;
         impl ApiClient for SimpleApi {
             fn stream(
@@ -834,7 +849,10 @@ mod tests {
         )
         .with_auto_compaction_input_tokens_threshold(100_000);
 
-        let summary = runtime.run_turn("trigger").expect("turn should succeed");
+        let summary = runtime
+            .run_turn("trigger")
+            .await
+            .expect("turn should succeed");
 
         assert_eq!(
             summary.auto_compaction,
@@ -845,8 +863,8 @@ mod tests {
         assert_eq!(runtime.session().messages[0].role, MessageRole::System);
     }
 
-    #[test]
-    fn skips_auto_compaction_below_threshold() {
+    #[tokio::test]
+    async fn skips_auto_compaction_below_threshold() {
         struct SimpleApi;
         impl ApiClient for SimpleApi {
             fn stream(
@@ -874,7 +892,10 @@ mod tests {
         )
         .with_auto_compaction_input_tokens_threshold(100_000);
 
-        let summary = runtime.run_turn("trigger").expect("turn should succeed");
+        let summary = runtime
+            .run_turn("trigger")
+            .await
+            .expect("turn should succeed");
         assert_eq!(summary.auto_compaction, None);
         assert_eq!(runtime.session().messages.len(), 2);
     }

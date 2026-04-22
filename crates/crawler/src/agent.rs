@@ -118,8 +118,13 @@ impl CrawlerAgent {
         let mut runtime = ConversationRuntime::new(Session::new(), api_client, self, system_prompt)
             .with_max_iterations(max_steps);
 
-        let summary = runtime
-            .run_turn(goal)
+        let runtime_handle = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| CrawlError::new(format!("runtime: {error}")))?;
+
+        let summary = runtime_handle
+            .block_on(runtime.run_turn(goal))
             .map_err(|e| CrawlError::new(e.to_string()))?;
 
         Ok(build_crawl_result(&summary))
@@ -164,7 +169,7 @@ impl CrawlerAgent {
 }
 
 impl ToolExecutor for CrawlerAgent {
-    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
         let input_value: Value = if input.is_empty() {
             Value::Object(serde_json::Map::new())
         } else {
@@ -189,17 +194,10 @@ impl ToolExecutor for CrawlerAgent {
                 .browser
                 .as_mut()
                 .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| {
-                    ToolError::new(format!("failed to create async runtime: {error}"))
-                })?;
-            let result = runtime
-                .block_on(
-                    self.registry
-                        .execute_async(tool_name, &input_value, browser),
-                )
+            let result = self
+                .registry
+                .execute_async(tool_name, &input_value, browser)
+                .await
                 .map_err(|error| ToolError::new(error.to_string()))?;
             return Ok(result.to_string());
         }
@@ -355,44 +353,47 @@ mod tests {
         registry
     }
 
-    #[test]
-    fn crawler_agent_dispatches_tool_through_registry() {
+    #[tokio::test]
+    async fn crawler_agent_dispatches_tool_through_registry() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
         let result = agent
             .execute("navigate", r#"{"url":"https://example.com"}"#)
+            .await
             .expect("navigate should succeed");
 
         assert!(result.contains("Navigated to https://example.com"));
     }
 
-    #[test]
-    fn crawler_agent_returns_error_for_unknown_tool() {
+    #[tokio::test]
+    async fn crawler_agent_returns_error_for_unknown_tool() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
         let err = agent
             .execute("nonexistent", "{}")
+            .await
             .expect_err("should fail for unknown tool");
 
         assert!(err.to_string().contains("unknown tool"));
     }
 
-    #[test]
-    fn crawler_agent_returns_error_for_invalid_json() {
+    #[tokio::test]
+    async fn crawler_agent_returns_error_for_invalid_json() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
         let err = agent
             .execute("navigate", "not-json")
+            .await
             .expect_err("should fail for invalid JSON");
 
         assert!(err.to_string().contains("invalid JSON"));
     }
 
-    #[test]
-    fn crawler_agent_handles_empty_input_as_empty_object() {
+    #[tokio::test]
+    async fn crawler_agent_handles_empty_input_as_empty_object() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
-        let result = agent.execute("navigate", "");
+        let result = agent.execute("navigate", "").await;
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(

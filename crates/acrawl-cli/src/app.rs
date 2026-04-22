@@ -22,6 +22,17 @@ use runtime::{
 };
 use serde_json::json;
 
+fn block_on_runtime_future<F, T>(future: F) -> Result<T, RuntimeError>
+where
+    F: std::future::Future<Output = Result<T, RuntimeError>>,
+{
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| RuntimeError::new(format!("failed to create async runtime: {error}")))?
+        .block_on(future)
+}
+
 use crate::format::{
     format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
     format_model_switch_report, format_resume_report, format_status_report, render_config_report,
@@ -284,7 +295,7 @@ impl LiveCli {
         if let Some(tx) = &self.ui_tx {
             let _ = tx.send(ReplTuiEvent::TurnStarting);
         }
-        let result = self.runtime.run_turn(input);
+        let result = block_on_runtime_future(self.runtime.run_turn(input));
         let finish: Result<(), String> = match &result {
             Ok(summary) => {
                 if let Some(ev) = summary.auto_compaction {
@@ -335,7 +346,7 @@ impl LiveCli {
             TerminalRenderer::new().color_theme(),
             &mut stdout,
         )?;
-        let result = self.runtime.run_turn(input);
+        let result = block_on_runtime_future(self.runtime.run_turn(input));
         match result {
             Ok(summary) => {
                 spinner.finish(
@@ -386,7 +397,7 @@ impl LiveCli {
             self.allowed_tools.clone(),
             self.ui_sender(),
         )?;
-        let summary = runtime.run_turn(input)?;
+        let summary = block_on_runtime_future(runtime.run_turn(input))?;
         self.runtime = runtime;
         self.persist_session()?;
         println!(
@@ -1330,7 +1341,7 @@ impl CliToolExecutor {
     }
 }
 impl ToolExecutor for CliToolExecutor {
-    fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
         if self
             .allowed_tools
             .as_ref()
@@ -1347,7 +1358,7 @@ impl ToolExecutor for CliToolExecutor {
             });
         }
 
-        match self.agent.execute(tool_name, input) {
+        match self.agent.execute(tool_name, input).await {
             Ok(output) => {
                 if self.emit_output {
                     let markdown = format_tool_result(tool_name, &output, false);
