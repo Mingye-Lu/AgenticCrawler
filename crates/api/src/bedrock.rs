@@ -83,9 +83,7 @@ impl BedrockClient {
             BedrockAuth::SigV4 { .. } => {
                 self.signed_request(&request.model, &body, SystemTime::now())?
             }
-            BedrockAuth::BearerToken(token) => {
-                self.bearer_request(&request.model, &body, token)?
-            }
+            BedrockAuth::BearerToken(token) => self.bearer_request(&request.model, &body, token)?,
         };
         let response = self.http.execute(req).await.map_err(ApiError::from)?;
         let status = response.status();
@@ -159,10 +157,7 @@ impl BedrockClient {
         self.http
             .post(&endpoint)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {token}"),
-            )
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
             .body(body.to_string())
             .build()
             .map_err(ApiError::from)

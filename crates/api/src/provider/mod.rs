@@ -400,14 +400,19 @@ mod tests {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
         assert!(registry.resolve_model("claude-sonnet-4-6").is_some());
-        assert!(registry.resolve_model("anthropic/claude-sonnet-4-6").is_some());
+        assert!(registry
+            .resolve_model("anthropic/claude-sonnet-4-6")
+            .is_some());
         assert!(registry.resolve_model("gpt-4o").is_some());
         assert!(registry.resolve_model("unknown-model").is_none());
     }
 
     #[test]
     fn model_api_id_strips_prefix() {
-        assert_eq!(model_api_id("anthropic/claude-sonnet-4-6"), "claude-sonnet-4-6");
+        assert_eq!(
+            model_api_id("anthropic/claude-sonnet-4-6"),
+            "claude-sonnet-4-6"
+        );
         assert_eq!(
             model_api_id("bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0"),
             "anthropic.claude-sonnet-4-6-20250514-v1:0"
@@ -436,19 +441,31 @@ mod tests {
         let store = CredentialStore::default();
         let registry = ProviderRegistry::from_credentials(&store);
         assert_eq!(
-            registry.provider_for_model("anthropic/claude-sonnet-4-6").unwrap(),
+            registry
+                .provider_for_model("anthropic/claude-sonnet-4-6")
+                .unwrap(),
             "anthropic"
         );
         assert_eq!(
-            registry.provider_for_model("anthropic/claude-sonnet-4-6").unwrap(),
+            registry
+                .provider_for_model("anthropic/claude-sonnet-4-6")
+                .unwrap(),
             "anthropic"
         );
-        assert_eq!(registry.provider_for_model("openai/gpt-4o").unwrap(), "openai");
         assert_eq!(
-            registry.provider_for_model("openai/codex-mini-latest").unwrap(),
+            registry.provider_for_model("openai/gpt-4o").unwrap(),
             "openai"
         );
-        assert_eq!(registry.provider_for_model("other/llama3.2").unwrap(), "other");
+        assert_eq!(
+            registry
+                .provider_for_model("openai/codex-mini-latest")
+                .unwrap(),
+            "openai"
+        );
+        assert_eq!(
+            registry.provider_for_model("other/llama3.2").unwrap(),
+            "other"
+        );
     }
 
     #[test]
@@ -528,9 +545,15 @@ mod tests {
         );
 
         assert!(anthropic_client.is_ok());
-        assert!(matches!(anthropic_client.unwrap(), ProviderClient::Anthropic(_)));
+        assert!(matches!(
+            anthropic_client.unwrap(),
+            ProviderClient::Anthropic(_)
+        ));
         assert!(bedrock_client.is_ok());
-        assert!(matches!(bedrock_client.unwrap(), ProviderClient::Bedrock(_)));
+        assert!(matches!(
+            bedrock_client.unwrap(),
+            ProviderClient::Bedrock(_)
+        ));
     }
 
     #[test]
@@ -799,5 +822,4 @@ mod tests {
             );
         }
     }
-
 }

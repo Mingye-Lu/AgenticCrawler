@@ -721,7 +721,10 @@ mod tests {
                     );
                 }
                 ProviderProtocol::Bedrock => {
-                    assert_eq!(p.id, "amazon-bedrock", "only amazon-bedrock should use Bedrock protocol");
+                    assert_eq!(
+                        p.id, "amazon-bedrock",
+                        "only amazon-bedrock should use Bedrock protocol"
+                    );
                 }
                 ProviderProtocol::Gemini => {
                     assert!(

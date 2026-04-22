@@ -15,7 +15,11 @@ pub fn build_client(
         .api_key
         .clone()
         .filter(|v| !v.is_empty())
-        .or_else(|| std::env::var("AWS_ACCESS_KEY_ID").ok().filter(|v| !v.is_empty()));
+        .or_else(|| {
+            std::env::var("AWS_ACCESS_KEY_ID")
+                .ok()
+                .filter(|v| !v.is_empty())
+        });
 
     let secret_access_key = config
         .aws_secret_access_key
@@ -48,18 +52,14 @@ pub fn build_client(
                 None => ProviderClient::Bedrock(client),
             })
         }
-        (Some(token), None) => {
-            Ok(ProviderClient::Bedrock(
-                crate::bedrock::BedrockClient::from_bearer_token(token, region),
-            ))
-        }
-        (None, _) if bearer_token.is_some() => {
+        (Some(token), None) => Ok(ProviderClient::Bedrock(
+            crate::bedrock::BedrockClient::from_bearer_token(token, region),
+        )),
+        (None, _) if bearer_token.is_some() =>
+        {
             #[allow(clippy::unwrap_used)]
             Ok(ProviderClient::Bedrock(
-                crate::bedrock::BedrockClient::from_bearer_token(
-                    bearer_token.unwrap(),
-                    region,
-                ),
+                crate::bedrock::BedrockClient::from_bearer_token(bearer_token.unwrap(), region),
             ))
         }
         _ => Err(ApiError::Auth(
