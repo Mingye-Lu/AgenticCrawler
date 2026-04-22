@@ -48,7 +48,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
 
     if let Some(ref selector) = parsed.selector {
         let found = browser
-            .bridge_mut()
+            .acquire_bridge()
+            .await
             .wait_for_selector(selector, parsed.timeout_ms)
             .await
             .map_err(|e| CrawlError::new(e.to_string()))?;

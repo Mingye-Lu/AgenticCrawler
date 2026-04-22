@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::fmt;
 use std::io;
 use std::process::Stdio;
@@ -6,6 +7,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -43,7 +45,11 @@ async function bootstrap() {
   let page = await browser.newPage();
   const pages = [page];
   const context = browser.contexts()[0];
-  context.on('page', (p) => { pages.push(p); });
+  context.on('page', (p) => {
+    if (!pages.includes(p)) {
+      pages.push(p);
+    }
+  });
   process.stdout.write(JSON.stringify({ event: 'bridge_bootstrap', ok: true }) + '\n');
 
   const wire = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -85,6 +91,71 @@ async function bootstrap() {
       await browser.close().catch(() => {});
       process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { closed: true } }) + '\n');
       process.exit(0);
+    }
+
+    if (command.action === 'new_page') {
+      try {
+        const newPage = await context.newPage();
+        if (!pages.includes(newPage)) {
+          pages.push(newPage);
+        }
+        const pageIndex = pages.indexOf(newPage);
+        page = newPage;
+        let currentUrl = newPage.url();
+        if (command.url) {
+          await newPage.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          currentUrl = newPage.url();
+        }
+        await newPage.bringToFront();
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { pageIndex, url: currentUrl }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'new_page_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'close_page') {
+      try {
+        const pageIndex = command.pageIndex;
+        if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= pages.length || !pages[pageIndex]) {
+          process.stdout.write(JSON.stringify({
+            event: 'bridge_response',
+            ok: false,
+            error: { kind: 'close_page_failed', message: `Invalid page index ${pageIndex}` }
+          }) + '\n');
+          continue;
+        }
+        const targetPage = pages[pageIndex];
+        await targetPage.close();
+        pages[pageIndex] = null;
+        if (page === targetPage) {
+          const fallbackPage = pages.find((entry) => entry);
+          if (fallbackPage) {
+            page = fallbackPage;
+            await page.bringToFront().catch(() => {});
+          }
+        }
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { closed: true }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'close_page_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
     }
 
     if (command.action === 'click') {
@@ -233,7 +304,7 @@ async function bootstrap() {
       try {
         const idx = command.index === undefined ? -1 : command.index;
         const targetIdx = idx === -1 ? pages.length - 1 : idx;
-        if (targetIdx < 0 || targetIdx >= pages.length) {
+        if (targetIdx < 0 || targetIdx >= pages.length || !pages[targetIdx]) {
           process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'switch_tab_failed', message: `Invalid tab index ${idx}, have ${pages.length} tab(s)` } }) + '\n');
         } else {
           page = pages[targetIdx];
@@ -354,6 +425,8 @@ pub struct PlaywrightBridge {
     stdout: BufReader<ChildStdout>,
 }
 
+pub type SharedBridge = Arc<Mutex<PlaywrightBridge>>;
+
 impl PlaywrightBridge {
     pub async fn new() -> Result<Self, PlaywrightBridgeError> {
         Self::new_with_invocation(
@@ -450,6 +523,42 @@ impl PlaywrightBridge {
                 timeout: DEFAULT_SHUTDOWN_TIMEOUT,
             })
         }
+    }
+
+    pub async fn new_page(
+        &mut self,
+        url: Option<&str>,
+    ) -> Result<usize, PlaywrightBridgeError> {
+        let mut cmd = serde_json::json!({ "action": "new_page" });
+        if let Some(url) = url {
+            cmd["url"] = serde_json::Value::String(url.to_string());
+        }
+        let result = self.send_raw_command(&cmd).await?;
+        let page_index = result
+            .get("pageIndex")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| {
+                PlaywrightBridgeError::Protocol(
+                    "new_page response missing pageIndex".to_string(),
+                )
+            })?;
+        usize::try_from(page_index).map_err(|_| {
+            PlaywrightBridgeError::Protocol(format!(
+                "new_page returned out-of-range pageIndex {page_index}"
+            ))
+        })
+    }
+
+    pub async fn close_page(
+        &mut self,
+        page_index: usize,
+    ) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "close_page",
+            "pageIndex": page_index,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
     }
 
     pub async fn send_raw_command(
@@ -908,6 +1017,75 @@ for line in sys.stdin:
 
         bridge.close().await.expect("close should succeed");
         cleanup_temp_script(&script_path);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires node + playwright installed locally"]
+    async fn test_bridge_new_page_returns_index() {
+        let mut bridge = PlaywrightBridge::new()
+            .await
+            .expect("playwright bridge should launch");
+
+        let page_index = bridge
+            .new_page(None)
+            .await
+            .expect("new_page should succeed");
+
+        assert_eq!(page_index, 1);
+
+        bridge
+            .close()
+            .await
+            .expect("bridge should close without zombie process");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires node + playwright installed locally"]
+    async fn test_bridge_close_page_success() {
+        let mut bridge = PlaywrightBridge::new()
+            .await
+            .expect("playwright bridge should launch");
+
+        let page_index = bridge
+            .new_page(None)
+            .await
+            .expect("new_page should succeed");
+
+        bridge
+            .close_page(page_index)
+            .await
+            .expect("close_page should succeed");
+
+        bridge
+            .close()
+            .await
+            .expect("bridge should close without zombie process");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires node + playwright installed locally"]
+    async fn test_bridge_new_page_with_url() {
+        let mut bridge = PlaywrightBridge::new()
+            .await
+            .expect("playwright bridge should launch");
+
+        let page_index = bridge
+            .new_page(Some("https://example.com"))
+            .await
+            .expect("new_page should succeed");
+
+        let tab = bridge
+            .switch_tab(page_index as i64)
+            .await
+            .expect("switch_tab should succeed");
+
+        assert_eq!(page_index, 1);
+        assert_eq!(tab.get("url").and_then(serde_json::Value::as_str), Some("https://example.com/"));
+
+        bridge
+            .close()
+            .await
+            .expect("bridge should close without zombie process");
     }
 
     #[tokio::test]

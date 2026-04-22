@@ -29,7 +29,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let (direction, pixels) = parse_input(input)?;
 
     browser
-        .bridge_mut()
+        .acquire_bridge()
+        .await
         .scroll(&direction, pixels)
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

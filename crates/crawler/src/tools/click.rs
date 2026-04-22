@@ -26,7 +26,8 @@ fn parse_input(input: &Value) -> Result<ClickInput, CrawlError> {
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
     let params = parse_input(input)?;
     browser
-        .bridge_mut()
+        .acquire_bridge()
+        .await
         .click(&params.selector)
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

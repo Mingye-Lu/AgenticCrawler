@@ -1,27 +1,35 @@
-use crate::PlaywrightBridge;
+use tokio::sync::MutexGuard;
 
-#[derive(Debug)]
+use crate::{PlaywrightBridge, SharedBridge};
+
+#[derive(Debug, Clone)]
 pub struct BrowserContext {
-    bridge: PlaywrightBridge,
+    bridge: SharedBridge,
+    page_index: usize,
 }
 
 impl BrowserContext {
     #[must_use]
-    pub fn new(bridge: PlaywrightBridge) -> Self {
-        Self { bridge }
+    pub fn new(bridge: SharedBridge) -> Self {
+        Self::new_shared(bridge, 0)
     }
 
     #[must_use]
-    pub fn bridge(&self) -> &PlaywrightBridge {
+    pub fn new_shared(bridge: SharedBridge, page_index: usize) -> Self {
+        Self { bridge, page_index }
+    }
+
+    #[must_use]
+    pub fn bridge(&self) -> &SharedBridge {
         &self.bridge
     }
 
-    pub fn bridge_mut(&mut self) -> &mut PlaywrightBridge {
-        &mut self.bridge
+    pub async fn acquire_bridge(&self) -> MutexGuard<'_, PlaywrightBridge> {
+        self.bridge.lock().await
     }
 
     #[must_use]
-    pub fn into_bridge(self) -> PlaywrightBridge {
-        self.bridge
+    pub fn page_index(&self) -> usize {
+        self.page_index
     }
 }

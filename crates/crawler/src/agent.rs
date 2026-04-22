@@ -1,9 +1,11 @@
 use std::fmt::{Display, Formatter};
+use std::sync::Arc;
 
 use runtime::{
     ApiClient, ContentBlock, ConversationRuntime, Session, ToolError, ToolExecutor, TurnSummary,
 };
 use serde_json::Value;
+use tokio::sync::Mutex;
 
 use crate::prompt::build_system_prompt;
 use crate::state::CrawlState;
@@ -135,7 +137,7 @@ impl CrawlerAgent {
         let bridge = runtime
             .block_on(crate::PlaywrightBridge::new())
             .map_err(|error| ToolError::new(error.to_string()))?;
-        self.browser = Some(BrowserContext::new(bridge));
+        self.browser = Some(BrowserContext::new(Arc::new(Mutex::new(bridge))));
         Ok(())
     }
 

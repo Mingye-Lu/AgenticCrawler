@@ -50,7 +50,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let path_str = target.to_string_lossy().to_string();
 
     let saved_path = browser
-        .bridge_mut()
+        .acquire_bridge()
+        .await
         .save_file(&parsed.url, &path_str)
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

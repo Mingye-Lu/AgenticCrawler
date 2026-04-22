@@ -341,7 +341,8 @@ impl FetchRouter {
         url: &str,
     ) -> Result<FetchedPage, FetchError> {
         let page_info: PageInfo = ctx
-            .bridge_mut()
+            .acquire_bridge()
+            .await
             .navigate(url)
             .await
             .map_err(|e| FetchError::Browser(e.to_string()))?;

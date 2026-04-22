@@ -15,7 +15,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let index = parse_input(input)?;
 
     let result = browser
-        .bridge_mut()
+        .acquire_bridge()
+        .await
         .switch_tab(index)
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

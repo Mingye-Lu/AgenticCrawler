@@ -56,7 +56,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
 
     for (selector, value) in &params.fields {
         browser
-            .bridge_mut()
+            .acquire_bridge()
+            .await
             .fill(selector, value)
             .await
             .map_err(|e| CrawlError::new(format!("failed to fill '{selector}': {e}")))?;
@@ -68,7 +69,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
             params.form_selector.replace('\'', "\\'")
         );
         browser
-            .bridge_mut()
+            .acquire_bridge()
+            .await
             .evaluate(&js)
             .await
             .map_err(|e| CrawlError::new(format!("failed to submit form: {e}")))?;

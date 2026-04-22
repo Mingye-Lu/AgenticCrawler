@@ -15,7 +15,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let selector = parse_input(input)?;
 
     browser
-        .bridge_mut()
+        .acquire_bridge()
+        .await
         .hover(&selector)
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

@@ -27,7 +27,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let parsed = parse_input(input)?;
 
     browser
-        .bridge_mut()
+        .acquire_bridge()
+        .await
         .press_key(&parsed.key, parsed.selector.as_deref())
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;
