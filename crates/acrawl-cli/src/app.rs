@@ -28,7 +28,7 @@ where
 {
     crate::TOKIO_RUNTIME
         .get()
-        .expect("tokio runtime not initialized")
+        .ok_or_else(|| RuntimeError::new("tokio runtime not initialized"))?
         .block_on(future)
 }
 
