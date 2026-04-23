@@ -6,6 +6,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc;
 
+use crate::error::CliError;
 use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
 use api::{
     provider::{ProviderClient, ProviderRegistry},
@@ -87,20 +88,20 @@ pub(crate) fn slash_command_completion_candidates() -> Vec<String> {
 pub(crate) fn run_repl(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), CliError> {
     let classic =
         runtime::load_settings().classic_repl.unwrap_or(false) || !io::stdout().is_terminal();
     if classic {
         run_repl_classic(model, allowed_tools)
     } else {
-        crate::tui::run_repl_ratatui(model, allowed_tools)
+        Ok(crate::tui::run_repl_ratatui(model, allowed_tools)?)
     }
 }
 
 fn run_repl_classic(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), CliError> {
     let mut cli = LiveCli::new(model, true, allowed_tools)?;
     let mut editor = input::LineEditor::new("> ", slash_command_completion_candidates());
     println!("{}", cli.startup_banner());
@@ -161,7 +162,7 @@ impl LiveCli {
         model: String,
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
@@ -205,7 +206,7 @@ impl LiveCli {
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
         ui_tx: mpsc::Sender<ReplTuiEvent>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
@@ -290,7 +291,7 @@ impl LiveCli {
         self.runtime.cancel_flag()
     }
 
-    pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), CliError> {
         if let Some(tx) = &self.ui_tx {
             let _ = tx.send(ReplTuiEvent::TurnStarting);
         }
@@ -337,7 +338,7 @@ impl LiveCli {
         )
     }
 
-    pub(crate) fn run_turn(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn run_turn(&mut self, input: &str) -> Result<(), CliError> {
         let mut spinner = Spinner::new();
         let mut stdout = io::stdout();
         spinner.tick(
@@ -369,7 +370,7 @@ impl LiveCli {
                     TerminalRenderer::new().color_theme(),
                     &mut stdout,
                 )?;
-                Err(Box::new(error))
+                Err(CliError::from(error))
             }
         }
     }
@@ -378,14 +379,14 @@ impl LiveCli {
         &mut self,
         input: &str,
         output_format: super::CliOutputFormat,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), CliError> {
         match output_format {
             super::CliOutputFormat::Text => self.run_turn(input),
             super::CliOutputFormat::Json => self.run_prompt_json(input),
         }
     }
 
-    fn run_prompt_json(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_prompt_json(&mut self, input: &str) -> Result<(), CliError> {
         let session = self.runtime.session().clone();
         let mut runtime = build_runtime(
             session,
@@ -426,7 +427,7 @@ impl LiveCli {
     pub(crate) fn handle_repl_command(
         &mut self,
         command: SlashCommand,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<bool, CliError> {
         Ok(match command {
             SlashCommand::Help => {
                 println!("{}", render_repl_help());
@@ -510,7 +511,7 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn persist_session(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn persist_session(&self) -> Result<(), CliError> {
         self.runtime.session().save_to_path(&self.session.path)?;
         Ok(())
     }
@@ -519,7 +520,7 @@ impl LiveCli {
         self.runtime.tool_executor_mut().reset_browser();
     }
 
-    pub(crate) fn status_report(&self) -> Result<String, Box<dyn std::error::Error>> {
+    pub(crate) fn status_report(&self) -> Result<String, CliError> {
         let cumulative = self.runtime.usage().cumulative_usage();
         let latest = self.runtime.usage().current_turn_usage();
         Ok(format_status_report(
@@ -538,7 +539,7 @@ impl LiveCli {
     pub(crate) fn model_command(
         &mut self,
         model: Option<String>,
-    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, CliError> {
         let Some(model) = model else {
             return Ok(CommandUiResult {
                 message: format_model_report(
@@ -592,7 +593,7 @@ impl LiveCli {
     pub(crate) fn clear_session_command(
         &mut self,
         confirm: bool,
-    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, CliError> {
         if !confirm {
             return Ok(CommandUiResult {
                 message:
@@ -628,7 +629,7 @@ impl LiveCli {
     pub(crate) fn resume_session_command(
         &mut self,
         session_path: Option<String>,
-    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, CliError> {
         let Some(session_ref) = session_path else {
             return Ok(CommandUiResult {
                 message: "Usage: /resume <session-path>".to_string(),
@@ -665,8 +666,8 @@ impl LiveCli {
 
     pub(crate) fn config_report(
         section: Option<&str>,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        render_config_report(section)
+    ) -> Result<String, CliError> {
+        Ok(render_config_report(section)?)
     }
     pub(crate) fn version_report() -> String {
         render_version_report()
@@ -675,7 +676,7 @@ impl LiveCli {
     pub(crate) fn export_session_report(
         &self,
         requested_path: Option<&str>,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) -> Result<String, CliError> {
         let export_path = resolve_export_path(requested_path, self.runtime.session())?;
         fs::write(&export_path, render_export_text(self.runtime.session()))?;
         Ok(format!(
@@ -689,7 +690,7 @@ impl LiveCli {
         &mut self,
         action: Option<&str>,
         target: Option<&str>,
-    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, CliError> {
         match action {
             None | Some("list") => Ok(CommandUiResult {
                 message: render_session_list(&self.session.id)?,
@@ -742,7 +743,7 @@ impl LiveCli {
         }
     }
 
-    fn run_auth(&mut self, provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_auth(&mut self, provider: Option<&str>) -> Result<(), CliError> {
         let choice = match provider {
             Some(p) => resolve_provider_arg(p)?,
             None => prompt_provider_choice()?,
@@ -763,7 +764,7 @@ impl LiveCli {
         Ok(())
     }
 
-    pub(crate) fn refresh_runtime_auth(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) fn refresh_runtime_auth(&mut self) -> Result<(), CliError> {
         let session = self.runtime.session().clone();
         self.runtime = build_runtime(
             session,
@@ -779,7 +780,7 @@ impl LiveCli {
 
     pub(crate) fn compact_command(
         &mut self,
-    ) -> Result<CommandUiResult, Box<dyn std::error::Error>> {
+    ) -> Result<CommandUiResult, CliError> {
         let result = self.runtime.compact(CompactionConfig::default());
         let removed = result.removed_message_count;
         let kept = result.compacted_session.messages.len();
@@ -800,8 +801,8 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn debug_tool_call_report(&self) -> Result<String, Box<dyn std::error::Error>> {
-        render_last_tool_debug_report(self.runtime.session())
+    pub(crate) fn debug_tool_call_report(&self) -> Result<String, CliError> {
+        Ok(render_last_tool_debug_report(self.runtime.session())?)
     }
 }
 
@@ -816,7 +817,7 @@ pub(crate) fn run_resume_command(
     session_path: &Path,
     session: &Session,
     command: &SlashCommand,
-) -> Result<ResumeCommandOutcome, Box<dyn std::error::Error>> {
+) -> Result<ResumeCommandOutcome, CliError> {
     match command {
         SlashCommand::Help => Ok(ResumeCommandOutcome {
             session: session.clone(),
@@ -953,7 +954,7 @@ fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bo
     })
 }
 
-fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn build_system_prompt() -> Result<Vec<String>, CliError> {
     let mut sections = crawler::prompt::build_system_prompt(&mvp_tool_specs());
     sections.extend(load_system_prompt(
         env::current_dir()?,
@@ -965,7 +966,7 @@ fn build_system_prompt() -> Result<Vec<String>, Box<dyn std::error::Error>> {
 }
 
 fn build_runtime_feature_config(
-) -> Result<runtime::RuntimeFeatureConfig, Box<dyn std::error::Error>> {
+) -> Result<runtime::RuntimeFeatureConfig, CliError> {
     let cwd = env::current_dir()?;
     Ok(ConfigLoader::default_for(cwd)
         .load()?
@@ -982,7 +983,7 @@ fn build_runtime(
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
     ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, Box<dyn std::error::Error>> {
+) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, CliError> {
     session.model = Some(model.clone());
     let max_steps = settings_get_max_steps(&load_settings()) as usize;
     let fork_client = SharedApiClient::new(LlmRuntimeClient::new(
