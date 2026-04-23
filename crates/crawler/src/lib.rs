@@ -1,16 +1,16 @@
 use serde_json::json;
 
-pub mod agent;
-pub mod browser;
-pub mod fetcher;
-pub mod manager;
-pub mod output;
-pub mod playwright;
-pub mod prompt;
-pub mod shared_client;
-pub mod state;
-pub mod tool_registry;
-pub mod tools;
+mod agent;
+mod browser;
+mod fetcher;
+mod manager;
+mod output;
+mod playwright;
+mod prompt;
+mod shared_client;
+mod state;
+mod tool_registry;
+mod tools;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
@@ -21,6 +21,7 @@ pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBr
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
 pub use tool_registry::{ToolHandler, ToolRegistry};
+pub use prompt::build_system_prompt;
 
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {

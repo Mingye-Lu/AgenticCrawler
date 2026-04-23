@@ -955,7 +955,7 @@ fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bo
 }
 
 fn build_system_prompt() -> Result<Vec<String>, CliError> {
-    let mut sections = crawler::prompt::build_system_prompt(&mvp_tool_specs());
+    let mut sections = crawler::build_system_prompt(&mvp_tool_specs());
     sections.extend(load_system_prompt(
         env::current_dir()?,
         DEFAULT_DATE,
