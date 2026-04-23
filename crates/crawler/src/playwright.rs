@@ -42,9 +42,9 @@ function parseHeadless() {
 
 async function bootstrap() {
   const browser = await playwright.chromium.launch({ headless: parseHeadless() });
-  let page = await browser.newPage();
+  const context = await browser.newContext();
+  let page = await context.newPage();
   const pages = [page];
-  const context = browser.contexts()[0];
   context.on('page', (p) => {
     if (!pages.includes(p)) {
       pages.push(p);
