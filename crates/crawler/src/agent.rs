@@ -319,14 +319,13 @@ impl CrawlerAgent {
         child_agent.api_client_arc = Some(child_api_client.clone());
 
         let child_sub_goal = sub_goal.clone();
+        let rt_handle = tokio::runtime::Handle::current();
         let join_handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
             tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .expect("child runtime should initialize");
-                let result = runtime.block_on(child_agent.run(&child_sub_goal, child_api_client));
-                result.ok().map(|crawl_result| crawl_result.extracted_data)
+                rt_handle
+                    .block_on(child_agent.run(&child_sub_goal, child_api_client))
+                    .ok()
+                    .map(|crawl_result| crawl_result.extracted_data)
             });
         self.child_tasks
             .insert(child_id.clone(), (sub_goal.clone(), join_handle));
