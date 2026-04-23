@@ -255,57 +255,56 @@ impl CrawlerAgent {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
 
+        let settings = runtime::load_settings();
+        let child_max_steps = runtime::settings_get_fork_child_max_steps(&settings) as usize;
+        let child_id = format!("{}-child-{}", self.agent_id, self.child_tasks.len() + 1);
+
+        // Atomic: ensure root registered + claim child slot in one lock scope.
         {
             let mut mgr = self.agent_manager.lock().await;
             if !mgr.contains(&self.agent_id) {
-                let settings = runtime::load_settings();
                 mgr.max_concurrent_per_parent =
                     runtime::settings_get_max_concurrent_per_parent(&settings) as usize;
                 mgr.max_depth = runtime::settings_get_max_fork_depth(&settings) as usize;
                 mgr.max_total = runtime::settings_get_max_total_agents(&settings) as usize;
                 mgr.register_root(self.agent_id.clone());
             }
-        }
-
-        let can_fork = {
-            let manager = self.agent_manager.lock().await;
-            manager.can_fork(&self.agent_id)
-        };
-        if !can_fork {
-            return Ok(format!(
-                "Cannot fork: limits exceeded for agent {}",
-                self.agent_id
-            ));
-        }
-
-        self.ensure_browser().await?;
-
-        let settings = runtime::load_settings();
-        let child_max_steps = runtime::settings_get_fork_child_max_steps(&settings) as usize;
-        let child_state = self
-            .crawl_state
-            .fork(&sub_goal, url.as_deref(), child_max_steps);
-        let child_id = format!("{}-child-{}", self.agent_id, self.child_tasks.len() + 1);
-        let child_api_client = self
-            .api_client_arc
-            .clone()
-            .ok_or_else(|| ToolError::new("fork: api_client not initialized"))?;
-        let shared_bridge = self
-            .shared_bridge
-            .clone()
-            .ok_or_else(|| ToolError::new("fork: browser bridge not initialized"))?;
-        let target_url = url.clone().or_else(|| self.crawl_state.current_url.clone());
-
-        let page_index = self
-            .create_child_page(shared_bridge.clone(), target_url.as_deref())
-            .await?;
-
-        {
-            let mut manager = self.agent_manager.lock().await;
-            manager
-                .register_child(child_id.clone(), &self.agent_id, None)
+            mgr.register_child(child_id.clone(), &self.agent_id, None)
                 .map_err(|error| ToolError::new(error.to_string()))?;
         }
+
+        // Expensive setup — if anything below fails, release the claimed slot.
+        let setup = async {
+            self.ensure_browser().await?;
+
+            let child_state = self
+                .crawl_state
+                .fork(&sub_goal, url.as_deref(), child_max_steps);
+            let child_api_client = self
+                .api_client_arc
+                .clone()
+                .ok_or_else(|| ToolError::new("fork: api_client not initialized"))?;
+            let shared_bridge = self
+                .shared_bridge
+                .clone()
+                .ok_or_else(|| ToolError::new("fork: browser bridge not initialized"))?;
+            let target_url = url.clone().or_else(|| self.crawl_state.current_url.clone());
+
+            let page_index = self
+                .create_child_page(shared_bridge.clone(), target_url.as_deref())
+                .await?;
+
+            Ok::<_, ToolError>((child_state, child_api_client, shared_bridge, page_index))
+        }
+        .await;
+
+        let (child_state, child_api_client, shared_bridge, page_index) = match setup {
+            Ok(values) => values,
+            Err(e) => {
+                self.agent_manager.lock().await.mark_done(&child_id);
+                return Err(e);
+            }
+        };
 
         let mut child_agent = CrawlerAgent::new(
             BrowserContext::new_shared(shared_bridge.clone(), page_index),
@@ -876,12 +875,15 @@ mod tests {
             .with_agent_manager(manager);
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
 
-        let observation = agent
+        let err = agent
             .execute("fork", r#"{"sub_goal":"blocked"}"#)
             .await
-            .expect("fork limit should return an observation");
+            .expect_err("fork at limit should return an error");
 
-        assert_eq!(observation, "Cannot fork: limits exceeded for agent root");
+        assert!(
+            err.to_string().contains("active children"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
