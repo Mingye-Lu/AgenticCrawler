@@ -29,13 +29,19 @@ pub trait ProviderTransform: Send + Sync {
     fn requires_alternating_roles(&self) -> bool {
         false
     }
+
+    fn clone_boxed(&self) -> Box<dyn ProviderTransform>;
 }
 
 /// No-op transform that passes all requests through unchanged.
 #[derive(Debug, Clone, Copy)]
 pub struct NoOpTransform;
 
-impl ProviderTransform for NoOpTransform {}
+impl ProviderTransform for NoOpTransform {
+    fn clone_boxed(&self) -> Box<dyn ProviderTransform> {
+        Box::new(*self)
+    }
+}
 
 /// Mistral-specific transform that scrubs tool call IDs to 9-char alphanumeric.
 ///
@@ -56,6 +62,10 @@ impl ProviderTransform for MistralTransform {
             // Pad with '0' to reach exactly 9 characters
             format!("{alphanumeric:0<9}")
         }
+    }
+
+    fn clone_boxed(&self) -> Box<dyn ProviderTransform> {
+        Box::new(*self)
     }
 }
 

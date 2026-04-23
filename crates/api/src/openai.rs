@@ -100,7 +100,7 @@ impl Clone for ChatCompletionsClient {
             base_url: self.base_url.clone(),
             chat_path: self.chat_path.clone(),
             default_model: self.default_model.clone(),
-            transform: Box::new(NoOpTransform),
+            transform: self.transform.clone_boxed(),
             extra_headers: self.extra_headers.clone(),
         }
     }
