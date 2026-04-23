@@ -166,6 +166,12 @@ impl CrawlerAgent {
         self
     }
 
+    #[must_use]
+    pub fn with_api_client(mut self, client: SharedApiClient) -> Self {
+        self.api_client_arc = Some(client);
+        self
+    }
+
     /// Drop the current browser context so the next tool call will spawn a
     /// fresh Playwright bridge.  This is used by `/headed` and `/headless` to
     /// make the mode switch take effect immediately.
@@ -249,6 +255,18 @@ impl CrawlerAgent {
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
 
+        {
+            let mut mgr = self.agent_manager.lock().await;
+            if !mgr.contains(&self.agent_id) {
+                let settings = runtime::load_settings();
+                mgr.max_concurrent_per_parent =
+                    runtime::settings_get_max_concurrent_per_parent(&settings) as usize;
+                mgr.max_depth = runtime::settings_get_max_fork_depth(&settings) as usize;
+                mgr.max_total = runtime::settings_get_max_total_agents(&settings) as usize;
+                mgr.register_root(self.agent_id.clone());
+            }
+        }
+
         let can_fork = {
             let manager = self.agent_manager.lock().await;
             manager.can_fork(&self.agent_id)
@@ -303,7 +321,7 @@ impl CrawlerAgent {
         let child_sub_goal = sub_goal.clone();
         let join_handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
             tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
+                let runtime = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
                     .expect("child runtime should initialize");

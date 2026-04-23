@@ -25,7 +25,10 @@ impl BrowserContext {
     }
 
     pub async fn acquire_bridge(&self) -> MutexGuard<'_, PlaywrightBridge> {
-        self.bridge.lock().await
+        let page_idx = i64::try_from(self.page_index).unwrap_or(0);
+        let mut guard = self.bridge.lock().await;
+        let _ = guard.switch_tab(page_idx).await;
+        guard
     }
 
     #[must_use]

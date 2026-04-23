@@ -14,7 +14,7 @@ use api::{
     ToolResultContentBlock,
 };
 use commands::{slash_command_specs, SlashCommand};
-use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
+use crawler::{mvp_tool_specs, CrawlerAgent, SharedApiClient, ToolRegistry};
 use runtime::{
     load_settings, load_system_prompt, settings_get_max_steps, ApiClient, ApiRequest,
     AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage, ConversationRuntime,
@@ -985,6 +985,13 @@ fn build_runtime(
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, Box<dyn std::error::Error>> {
     session.model = Some(model.clone());
     let max_steps = settings_get_max_steps(&load_settings()) as usize;
+    let fork_client = SharedApiClient::new(LlmRuntimeClient::new(
+        model.clone(),
+        enable_tools,
+        false,
+        allowed_tools.clone(),
+        None,
+    ));
     Ok(ConversationRuntime::new_with_features(
         session,
         LlmRuntimeClient::new(
@@ -994,7 +1001,7 @@ fn build_runtime(
             allowed_tools.clone(),
             ui_tx.clone(),
         ),
-        CliToolExecutor::new(allowed_tools, emit_output, ui_tx),
+        CliToolExecutor::new(allowed_tools, emit_output, ui_tx, fork_client),
         system_prompt,
         &build_runtime_feature_config()?,
     )
@@ -1330,12 +1337,14 @@ impl CliToolExecutor {
         allowed_tools: Option<AllowedToolSet>,
         emit_output: bool,
         ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
+        fork_client: SharedApiClient,
     ) -> Self {
         Self {
             renderer: TerminalRenderer::new(),
             emit_output,
             allowed_tools,
-            agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools()),
+            agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools())
+                .with_api_client(fork_client),
             ui_tx,
         }
     }
