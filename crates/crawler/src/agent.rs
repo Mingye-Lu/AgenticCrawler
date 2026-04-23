@@ -321,7 +321,7 @@ impl CrawlerAgent {
         let child_sub_goal = sub_goal.clone();
         let join_handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
             tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Builder::new_current_thread()
+                let runtime = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
                     .expect("child runtime should initialize");
