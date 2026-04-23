@@ -438,6 +438,14 @@ impl CrawlerAgent {
     }
 }
 
+impl Drop for CrawlerAgent {
+    fn drop(&mut self) {
+        for (_, (_, handle)) in self.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+}
+
 impl ToolExecutor for CrawlerAgent {
     async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
         if tool_name == "fork" {
