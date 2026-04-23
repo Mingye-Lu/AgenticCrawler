@@ -3,16 +3,16 @@ use serde_json::{json, Value};
 use crate::browser::BrowserContext;
 use crate::CrawlError;
 
-pub fn parse_input(input: &Value) -> Result<i64, CrawlError> {
-    Ok(input
+pub fn parse_input(input: &Value) -> i64 {
+    input
         .get("tab_index")
         .or_else(|| input.get("index"))
         .and_then(serde_json::Value::as_i64)
-        .unwrap_or(-1))
+        .unwrap_or(-1)
 }
 
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
-    let index = parse_input(input)?;
+    let index = parse_input(input);
 
     let result = browser
         .acquire_bridge()
@@ -53,21 +53,21 @@ mod tests {
     #[test]
     fn parses_tab_index() {
         let input = json!({"tab_index": 2});
-        let idx = parse_input(&input).unwrap();
+        let idx = parse_input(&input);
         assert_eq!(idx, 2);
     }
 
     #[test]
     fn parses_index_alias() {
         let input = json!({"index": 0});
-        let idx = parse_input(&input).unwrap();
+        let idx = parse_input(&input);
         assert_eq!(idx, 0);
     }
 
     #[test]
     fn defaults_to_negative_one() {
         let input = json!({});
-        let idx = parse_input(&input).unwrap();
+        let idx = parse_input(&input);
         assert_eq!(idx, -1);
     }
 }
