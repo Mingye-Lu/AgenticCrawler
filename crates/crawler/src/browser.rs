@@ -1,6 +1,6 @@
 use tokio::sync::MutexGuard;
 
-use crate::{PlaywrightBridge, SharedBridge};
+use crate::{PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
 
 #[derive(Debug, Clone)]
 pub struct BrowserContext {
@@ -24,15 +24,21 @@ impl BrowserContext {
         &self.bridge
     }
 
-    pub async fn acquire_bridge(&self) -> MutexGuard<'_, PlaywrightBridge> {
+    pub async fn acquire_bridge(
+        &self,
+    ) -> Result<MutexGuard<'_, PlaywrightBridge>, PlaywrightBridgeError> {
         let page_idx = i64::try_from(self.page_index).unwrap_or(0);
         let mut guard = self.bridge.lock().await;
-        let _ = guard.switch_tab(page_idx).await;
-        guard
+        guard.switch_tab(page_idx).await?;
+        Ok(guard)
     }
 
     #[must_use]
     pub fn page_index(&self) -> usize {
         self.page_index
+    }
+
+    pub fn set_page_index(&mut self, page_index: usize) {
+        self.page_index = page_index;
     }
 }

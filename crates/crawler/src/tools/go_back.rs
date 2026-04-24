@@ -9,6 +9,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let url = browser
         .acquire_bridge()
         .await
+        .map_err(|e| CrawlError::new(e.to_string()))?
         .go_back()
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

@@ -15,11 +15,20 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let index = parse_input(input);
 
     let result = browser
-        .acquire_bridge()
+        .bridge()
+        .lock()
         .await
         .switch_tab(index)
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;
+
+    if let Some(page_index) = result
+        .get("pageIndex")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+    {
+        browser.set_page_index(page_index);
+    }
 
     let url = result
         .get("url")

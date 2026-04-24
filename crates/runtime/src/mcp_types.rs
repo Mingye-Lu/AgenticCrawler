@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::io;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -29,6 +30,25 @@ impl<T> JsonRpcRequest<T> {
         Self {
             jsonrpc: "2.0".to_string(),
             id,
+            method: method.into(),
+            params,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JsonRpcNotification<T = JsonValue> {
+    pub jsonrpc: String,
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub params: Option<T>,
+}
+
+impl<T> JsonRpcNotification<T> {
+    #[must_use]
+    pub fn new(method: impl Into<String>, params: Option<T>) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
             method: method.into(),
             params,
         }
@@ -224,6 +244,11 @@ pub enum McpServerManagerError {
         method: &'static str,
         details: String,
     },
+    Timeout {
+        server_name: String,
+        method: &'static str,
+        timeout: Duration,
+    },
     UnknownTool {
         qualified_name: String,
     },
@@ -253,6 +278,14 @@ impl std::fmt::Display for McpServerManagerError {
                 f,
                 "MCP server `{server_name}` returned invalid response for {method}: {details}"
             ),
+            Self::Timeout {
+                server_name,
+                method,
+                timeout,
+            } => write!(
+                f,
+                "MCP server `{server_name}` timed out after {timeout:?} while handling {method}"
+            ),
             Self::UnknownTool { qualified_name } => {
                 write!(f, "unknown MCP tool `{qualified_name}`")
             }
@@ -267,6 +300,7 @@ impl std::error::Error for McpServerManagerError {
             Self::Io(error) => Some(error),
             Self::JsonRpc { .. }
             | Self::InvalidResponse { .. }
+            | Self::Timeout { .. }
             | Self::UnknownTool { .. }
             | Self::UnknownServer { .. } => None,
         }

@@ -13,6 +13,7 @@ use tokio::time::timeout;
 const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_mins(1);
+const CLOSE_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[allow(clippy::needless_raw_string_hashes)]
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"
@@ -311,7 +312,7 @@ async function bootstrap() {
           await page.bringToFront();
           const url = page.url();
           const title = await page.title();
-          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url, title, tab_count: pages.length } }) + '\n');
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url, title, tab_count: pages.length, pageIndex: targetIdx } }) + '\n');
         }
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'switch_tab_failed', message: String(error) } }) + '\n');
@@ -508,10 +509,13 @@ impl PlaywrightBridge {
 
     pub async fn close(mut self) -> Result<(), PlaywrightBridgeError> {
         let _ = self
-            .send_bridge_command(BridgeCommandEnvelope {
-                action: "close",
-                url: None,
-            })
+            .send_bridge_command_with_timeout(
+                BridgeCommandEnvelope {
+                    action: "close",
+                    url: None,
+                },
+                CLOSE_COMMAND_TIMEOUT,
+            )
             .await;
 
         if let Ok(wait_result) = timeout(DEFAULT_SHUTDOWN_TIMEOUT, self.child.wait()).await {
@@ -784,15 +788,24 @@ impl PlaywrightBridge {
         &mut self,
         command: BridgeCommandEnvelope<'_>,
     ) -> Result<BridgeResponseMessage, PlaywrightBridgeError> {
+        self.send_bridge_command_with_timeout(command, DEFAULT_COMMAND_TIMEOUT)
+            .await
+    }
+
+    async fn send_bridge_command_with_timeout(
+        &mut self,
+        command: BridgeCommandEnvelope<'_>,
+        command_timeout: Duration,
+    ) -> Result<BridgeResponseMessage, PlaywrightBridgeError> {
         let payload = serde_json::to_string(&command)?;
         self.stdin.write_all(payload.as_bytes()).await?;
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
 
-        let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
+        let line = timeout(command_timeout, self.read_bridge_line())
             .await
             .map_err(|_| PlaywrightBridgeError::CommandTimeout {
-                timeout: DEFAULT_COMMAND_TIMEOUT,
+                timeout: command_timeout,
             })??;
         let response: BridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {

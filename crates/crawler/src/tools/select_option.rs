@@ -31,6 +31,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     browser
         .acquire_bridge()
         .await
+        .map_err(|e| CrawlError::new(e.to_string()))?
         .select_option(&parsed.selector, &parsed.value)
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;
