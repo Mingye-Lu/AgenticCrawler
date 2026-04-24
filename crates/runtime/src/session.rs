@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use crate::json::{JsonError, JsonValue};
@@ -91,7 +92,14 @@ impl Session {
     }
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), SessionError> {
-        fs::write(path, self.to_json().render())?;
+        let path = path.as_ref();
+        let temp_path = path.with_extension("tmp");
+        {
+            let mut file = fs::File::create(&temp_path)?;
+            file.write_all(self.to_json().render().as_bytes())?;
+            file.sync_all()?;
+        }
+        fs::rename(temp_path, path)?;
         Ok(())
     }
 
@@ -132,6 +140,11 @@ impl Session {
             .ok_or_else(|| SessionError::Format("missing version".to_string()))?;
         let version = u32::try_from(version)
             .map_err(|_| SessionError::Format("version out of range".to_string()))?;
+        if version != 1 {
+            return Err(SessionError::Format(format!(
+                "unsupported session version {version}"
+            )));
+        }
         let model = object
             .get("model")
             .and_then(JsonValue::as_str)
@@ -480,5 +493,14 @@ mod tests {
             &restored.messages[0].blocks[1],
             ContentBlock::Text { text } if text == "result"
         ));
+    }
+
+    #[test]
+    fn rejects_unsupported_session_version() {
+        let value =
+            crate::json::JsonValue::parse(r#"{"version":999,"messages":[]}"#).expect("valid json");
+        let error = Session::from_json(&value).expect_err("version should be rejected");
+
+        assert!(error.to_string().contains("unsupported session version"));
     }
 }

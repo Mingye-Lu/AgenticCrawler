@@ -29,6 +29,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     browser
         .acquire_bridge()
         .await
+        .map_err(|e| CrawlError::new(e.to_string()))?
         .press_key(&parsed.key, parsed.selector.as_deref())
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

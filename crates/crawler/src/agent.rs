@@ -177,6 +177,7 @@ impl CrawlerAgent {
     /// make the mode switch take effect immediately.
     pub fn reset_browser(&mut self) {
         self.browser = None;
+        self.shared_bridge = None;
     }
 
     pub async fn run(
@@ -237,8 +238,8 @@ impl CrawlerAgent {
     }
 
     async fn handle_fork(&mut self, input: &str) -> Result<String, ToolError> {
-        let params: Value =
-            serde_json::from_str(input).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+        let params: Value = serde_json::from_str(input)
+            .map_err(|error| ToolError::new(format!("fork input must be valid JSON: {error}")))?;
 
         let sub_goal = params
             .get("sub_goal")
@@ -344,6 +345,7 @@ impl CrawlerAgent {
         let settings = runtime::load_settings();
         let wait_timeout_secs = u64::from(runtime::settings_get_fork_wait_timeout_secs(&settings));
         let timeout = std::time::Duration::from_secs(wait_timeout_secs);
+        let deadline = tokio::time::Instant::now() + timeout;
         let tasks: Vec<_> = self
             .child_tasks
             .drain()
@@ -354,12 +356,20 @@ impl CrawlerAgent {
         let mut total_items = 0_usize;
 
         for (child_id, sub_goal, mut handle) in tasks {
-            let items = match tokio::time::timeout(timeout, &mut handle).await {
-                Ok(Ok(Some(items))) => items,
-                Ok(Ok(None) | Err(_)) => Vec::new(),
-                Err(_) => {
-                    handle.abort();
-                    Vec::new()
+            let remaining = deadline
+                .checked_duration_since(tokio::time::Instant::now())
+                .unwrap_or_default();
+            let items = if remaining.is_zero() {
+                handle.abort();
+                Vec::new()
+            } else {
+                match tokio::time::timeout(remaining, &mut handle).await {
+                    Ok(Ok(Some(items))) => items,
+                    Ok(Ok(None) | Err(_)) => Vec::new(),
+                    Err(_) => {
+                        handle.abort();
+                        Vec::new()
+                    }
                 }
             };
 
@@ -380,8 +390,8 @@ impl CrawlerAgent {
     }
 
     async fn handle_done(&mut self, input: &str) -> Result<String, ToolError> {
-        let params: Value =
-            serde_json::from_str(input).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
+        let params: Value = serde_json::from_str(input)
+            .map_err(|error| ToolError::new(format!("done input must be valid JSON: {error}")))?;
 
         let summary = params
             .get("summary")

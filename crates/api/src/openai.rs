@@ -13,7 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::client::AuthSource;
+use crate::client::{default_http_client, AuthSource};
 use crate::error::ApiError;
 use crate::provider::transform::{NoOpTransform, ProviderTransform};
 use crate::types::{
@@ -113,7 +113,7 @@ impl ChatCompletionsClient {
     #[must_use]
     pub fn with_auth(auth: AuthSource) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http_client(),
             auth: Some(auth),
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             chat_path: "/chat/completions".to_string(),
@@ -126,7 +126,7 @@ impl ChatCompletionsClient {
     #[must_use]
     pub fn with_no_auth(model: impl Into<String>, base_url: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http_client(),
             auth: None,
             base_url: base_url.into(),
             chat_path: "/chat/completions".to_string(),
@@ -258,14 +258,12 @@ impl OpenAiMessageStream {
                 return Ok(None);
             }
 
-            match self.response.chunk().await? {
-                Some(chunk) => {
-                    self.buffer.extend_from_slice(&chunk);
-                    self.drain_frames()?;
-                }
-                None => {
-                    self.done = true;
-                }
+            if let Some(chunk) = self.response.chunk().await? {
+                self.buffer.extend_from_slice(&chunk);
+                self.drain_frames()?;
+            } else {
+                self.finish_buffer()?;
+                self.done = true;
             }
         }
     }
@@ -291,31 +289,48 @@ impl OpenAiMessageStream {
             let frame: Vec<u8> = self.buffer.drain(..pos + sep_len).collect();
             let frame_str = String::from_utf8_lossy(&frame[..frame.len().saturating_sub(sep_len)]);
 
-            let mut data_lines: Vec<&str> = Vec::new();
-            for line in frame_str.lines() {
-                if line.starts_with(':') {
-                    continue;
-                }
-                if let Some(data) = line.strip_prefix("data:") {
-                    data_lines.push(data.trim_start());
-                }
-            }
-
-            if data_lines.is_empty() {
-                continue;
-            }
-
-            let payload = data_lines.join("\n");
-            if payload == "[DONE]" {
-                self.done = true;
+            self.process_frame(&frame_str)?;
+            if self.done {
                 break;
             }
-
-            let chunk: OpenAiChunk = serde_json::from_str(&payload)?;
-            let events = self.state.process_chunk(&chunk);
-            self.pending.extend(events);
         }
 
+        Ok(())
+    }
+
+    fn finish_buffer(&mut self) -> Result<(), ApiError> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+
+        let frame = String::from_utf8_lossy(&std::mem::take(&mut self.buffer)).into_owned();
+        self.process_frame(&frame)
+    }
+
+    fn process_frame(&mut self, frame: &str) -> Result<(), ApiError> {
+        let mut data_lines: Vec<&str> = Vec::new();
+        for line in frame.lines() {
+            if line.starts_with(':') {
+                continue;
+            }
+            if let Some(data) = line.strip_prefix("data:") {
+                data_lines.push(data.trim_start());
+            }
+        }
+
+        if data_lines.is_empty() {
+            return Ok(());
+        }
+
+        let payload = data_lines.join("\n");
+        if payload == "[DONE]" {
+            self.done = true;
+            return Ok(());
+        }
+
+        let chunk: OpenAiChunk = serde_json::from_str(&payload)?;
+        let events = self.state.process_chunk(&chunk);
+        self.pending.extend(events);
         Ok(())
     }
 }

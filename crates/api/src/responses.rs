@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{Map, Value};
 
-use crate::client::AuthSource;
+use crate::client::{default_http_client, AuthSource};
 use crate::error::ApiError;
 use crate::types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
@@ -29,7 +29,7 @@ impl OpenAiResponsesClient {
     #[must_use]
     pub fn new(auth: AuthSource, model: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http_client(),
             auth,
             base_url: DEFAULT_OPENAI_BASE_URL.to_string(),
             model: model.into(),
@@ -329,14 +329,12 @@ impl ResponsesMessageStream {
                 return Ok(None);
             }
 
-            match self.response.chunk().await? {
-                Some(chunk) => {
-                    self.buffer.extend_from_slice(&chunk);
-                    self.drain_lines()?;
-                }
-                None => {
-                    self.done = true;
-                }
+            if let Some(chunk) = self.response.chunk().await? {
+                self.buffer.extend_from_slice(&chunk);
+                self.drain_lines()?;
+            } else {
+                self.finish_buffer()?;
+                self.done = true;
             }
         }
     }
@@ -356,6 +354,18 @@ impl ResponsesMessageStream {
             }
         }
 
+        Ok(())
+    }
+
+    fn finish_buffer(&mut self) -> Result<(), ApiError> {
+        if !self.buffer.is_empty() {
+            let line = std::mem::take(&mut self.buffer);
+            let events = self.state.push_line(&line)?;
+            self.pending.extend(events);
+        }
+
+        let events = self.state.finish_pending_event()?;
+        self.pending.extend(events);
         Ok(())
     }
 }

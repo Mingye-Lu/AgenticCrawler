@@ -9,6 +9,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
     let (screenshot_base64, size_bytes) = browser
         .acquire_bridge()
         .await
+        .map_err(|e| CrawlError::new(e.to_string()))?
         .screenshot()
         .await
         .map_err(|e| CrawlError::new(e.to_string()))?;

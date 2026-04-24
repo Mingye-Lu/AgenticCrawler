@@ -58,6 +58,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
         browser
             .acquire_bridge()
             .await
+            .map_err(|e| CrawlError::new(e.to_string()))?
             .fill(selector, value)
             .await
             .map_err(|e| CrawlError::new(format!("failed to fill '{selector}': {e}")))?;
@@ -71,6 +72,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
         browser
             .acquire_bridge()
             .await
+            .map_err(|e| CrawlError::new(e.to_string()))?
             .evaluate(&js)
             .await
             .map_err(|e| CrawlError::new(format!("failed to submit form: {e}")))?;

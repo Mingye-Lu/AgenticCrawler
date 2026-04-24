@@ -7,16 +7,20 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::time::{timeout, Duration};
 
 use crate::config::{McpTransport, RuntimeConfig, ScopedMcpServerConfig};
 use crate::mcp::mcp_tool_name;
 use crate::mcp_client::{McpClientBootstrap, McpClientTransport, McpStdioTransport};
 use crate::mcp_types::{
-    JsonRpcId, JsonRpcRequest, JsonRpcResponse, ManagedMcpTool, McpInitializeClientInfo,
-    McpInitializeParams, McpInitializeResult, McpListResourcesParams, McpListResourcesResult,
-    McpListToolsParams, McpListToolsResult, McpReadResourceParams, McpReadResourceResult,
-    McpServerManagerError, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
+    JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ManagedMcpTool,
+    McpInitializeClientInfo, McpInitializeParams, McpInitializeResult, McpListResourcesParams,
+    McpListResourcesResult, McpListToolsParams, McpListToolsResult, McpReadResourceParams,
+    McpReadResourceResult, McpServerManagerError, McpToolCallParams, McpToolCallResult,
+    UnsupportedMcpServer,
 };
+
+const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ToolRoute {
@@ -109,14 +113,21 @@ impl McpServerManager {
                             details: "server process missing after initialization".to_string(),
                         }
                     })?;
-                    process
-                        .list_tools(
+                    timeout(
+                        MCP_REQUEST_TIMEOUT,
+                        process.list_tools(
                             request_id,
                             Some(McpListToolsParams {
                                 cursor: cursor.clone(),
                             }),
-                        )
-                        .await?
+                        ),
+                    )
+                    .await
+                    .map_err(|_| McpServerManagerError::Timeout {
+                        server_name: server_name.clone(),
+                        method: "tools/list",
+                        timeout: MCP_REQUEST_TIMEOUT,
+                    })??
                 };
 
                 if let Some(error) = response.error {
@@ -188,16 +199,23 @@ impl McpServerManager {
                         details: "server process missing after initialization".to_string(),
                     }
                 })?;
-                process
-                    .call_tool(
+                timeout(
+                    MCP_REQUEST_TIMEOUT,
+                    process.call_tool(
                         request_id,
                         McpToolCallParams {
                             name: route.raw_name,
                             arguments,
                             meta: None,
                         },
-                    )
-                    .await?
+                    ),
+                )
+                .await
+                .map_err(|_| McpServerManagerError::Timeout {
+                    server_name: route.server_name.clone(),
+                    method: "tools/call",
+                    timeout: MCP_REQUEST_TIMEOUT,
+                })??
             };
         Ok(response)
     }
@@ -274,9 +292,16 @@ impl McpServerManager {
                         details: "server process missing before initialize".to_string(),
                     }
                 })?;
-                process
-                    .initialize(request_id, default_initialize_params())
-                    .await?
+                timeout(
+                    MCP_REQUEST_TIMEOUT,
+                    process.initialize(request_id, default_initialize_params()),
+                )
+                .await
+                .map_err(|_| McpServerManagerError::Timeout {
+                    server_name: server_name.to_string(),
+                    method: "initialize",
+                    timeout: MCP_REQUEST_TIMEOUT,
+                })??
             };
 
             if let Some(error) = response.error {
@@ -293,6 +318,25 @@ impl McpServerManager {
                     method: "initialize",
                     details: "missing result payload".to_string(),
                 });
+            }
+
+            {
+                let server = self.server_mut(server_name)?;
+                let process = server.process.as_mut().ok_or_else(|| {
+                    McpServerManagerError::InvalidResponse {
+                        server_name: server_name.to_string(),
+                        method: "notifications/initialized",
+                        details: "server process missing before initialized notification"
+                            .to_string(),
+                    }
+                })?;
+                timeout(MCP_REQUEST_TIMEOUT, process.notify_initialized())
+                    .await
+                    .map_err(|_| McpServerManagerError::Timeout {
+                        server_name: server_name.to_string(),
+                        method: "notifications/initialized",
+                        timeout: MCP_REQUEST_TIMEOUT,
+                    })??;
             }
 
             let server = self.server_mut(server_name)?;
@@ -426,6 +470,13 @@ impl McpStdioProcess {
         self.write_jsonrpc_message(request).await
     }
 
+    pub async fn send_notification<T: Serialize>(
+        &mut self,
+        notification: &JsonRpcNotification<T>,
+    ) -> io::Result<()> {
+        self.write_jsonrpc_message(notification).await
+    }
+
     pub async fn read_response<T: DeserializeOwned>(&mut self) -> io::Result<JsonRpcResponse<T>> {
         self.read_jsonrpc_message().await
     }
@@ -447,6 +498,11 @@ impl McpStdioProcess {
         params: McpInitializeParams,
     ) -> io::Result<JsonRpcResponse<McpInitializeResult>> {
         self.request(id, "initialize", Some(params)).await
+    }
+
+    pub async fn notify_initialized(&mut self) -> io::Result<()> {
+        let notification = JsonRpcNotification::<JsonValue>::new("notifications/initialized", None);
+        self.send_notification(&notification).await
     }
 
     pub async fn list_tools(
@@ -495,6 +551,14 @@ impl McpStdioProcess {
         }
         let _ = self.child.wait().await?;
         Ok(())
+    }
+}
+
+impl Drop for McpStdioProcess {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.start_kill();
+        }
     }
 }
 
@@ -1385,7 +1449,12 @@ mod tests {
             assert_eq!(log.lines().filter(|line| *line == "initialize").count(), 1);
             assert_eq!(
                 log.lines().collect::<Vec<_>>(),
-                vec!["initialize", "tools/list", "tools/call"]
+                vec![
+                    "initialize",
+                    "notifications/initialized",
+                    "tools/list",
+                    "tools/call"
+                ]
             );
 
             manager.shutdown().await.expect("shutdown");
