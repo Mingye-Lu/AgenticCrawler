@@ -255,11 +255,7 @@ pub(super) fn render_bash_success(
         })
         .unwrap_or_else(|| input_summary.to_string());
 
-    let cmd_display = if cmd.len() > 60 {
-        format!("{}…", &cmd[..60])
-    } else {
-        cmd
-    };
+    let cmd_display = truncate_with_ellipsis(&cmd, 60);
 
     let mut header_spans = vec![
         Span::styled("✓", green),
@@ -579,11 +575,7 @@ pub(super) fn render_tool_call_lines(
                         "done".to_string()
                     } else {
                         let trimmed = strip_ansi(output.trim()).replace('\n', " ");
-                        if trimmed.len() > 60 {
-                            format!("{}…", &trimmed[..60])
-                        } else {
-                            trimmed
-                        }
+                        truncate_with_ellipsis(&trimmed, 60)
                     };
                     let line = Line::from(vec![
                         Span::styled("✓", Style::default().fg(Color::Green)),
@@ -602,11 +594,7 @@ pub(super) fn render_tool_call_lines(
             let icon_style = Style::default().fg(Color::Red);
             let name_style = Style::default().add_modifier(Modifier::BOLD);
             let err_style = Style::default().fg(Color::Red);
-            let truncated = if msg.len() > 120 {
-                format!("{}…", &msg[..120])
-            } else {
-                msg.clone()
-            };
+            let truncated = truncate_with_ellipsis(msg, 120);
             let line = Line::from(vec![
                 Span::styled("✗", icon_style),
                 Span::styled(format!(" {name} "), name_style),
@@ -618,6 +606,19 @@ pub(super) fn render_tool_call_lines(
     }
     debug_assert_eq!(items.len(), text_lines.len());
     (items, text_lines)
+}
+
+/// Truncate `s` to at most `max_bytes` bytes, snapping to a char boundary,
+/// and appending '…' when truncation occurs.
+pub(super) fn truncate_with_ellipsis(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
 
 pub(super) fn tool_input_summary(name: &str, input: &str) -> String {
@@ -643,11 +644,7 @@ pub(super) fn tool_input_summary(name: &str, input: &str) -> String {
         | "list_resources" | "save_file" => "",
         _ => input,
     };
-    if key_param.len() > 60 {
-        format!("{}…", &key_param[..60])
-    } else {
-        key_param.to_string()
-    }
+    truncate_with_ellipsis(key_param, 60)
 }
 
 #[allow(clippy::too_many_lines)]
