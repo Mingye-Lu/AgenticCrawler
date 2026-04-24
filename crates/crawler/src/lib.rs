@@ -82,7 +82,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Pass all field values as a JSON object in `fields`. Set `submit` to true to submit the form after filling. Use `form_selector` when the page has multiple forms."),
+            instructions: Some("Keys in `fields` can be CSS selectors (`#email`, `input[name=\"q\"]`) or plain field names/IDs that are resolved automatically. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms."),
         },
         ToolSpec {
             name: "extract_data",

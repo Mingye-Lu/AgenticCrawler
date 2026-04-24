@@ -41,6 +41,24 @@ function parseHeadless() {
   return !(v === 'false' || v === '0' || v === 'no' || v === 'off');
 }
 
+async function resolveFillSelector(pg, raw) {
+  if (/[#.\[\]:>~+\s]/.test(raw)) return raw;
+  const candidates = [
+    `#${raw}`,
+    `[name="${raw}"]`,
+    `input[name="${raw}"]`,
+    `textarea[name="${raw}"]`,
+    `select[name="${raw}"]`,
+  ];
+  for (const sel of candidates) {
+    try {
+      const el = await pg.$(sel);
+      if (el) return sel;
+    } catch (_) {}
+  }
+  return raw;
+}
+
 async function bootstrap() {
   const browser = await playwright.chromium.launch({ headless: parseHeadless() });
   const context = await browser.newContext();
@@ -171,8 +189,9 @@ async function bootstrap() {
 
     if (command.action === 'fill') {
       try {
-        await page.fill(command.selector, command.value);
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true } }) + '\n');
+        const sel = await resolveFillSelector(page, command.selector);
+        await page.fill(sel, command.value, { timeout: 5000 });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'fill_failed', message: String(error) } }) + '\n');
       }
