@@ -19,11 +19,11 @@ pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
+pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
 pub use tool_effect::{FinishSpec, ForkSpec, ToolEffect, ToolError, WaitSpec};
 pub use tool_registry::{ToolHandler, ToolRegistry};
-pub use prompt::build_system_prompt;
 
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {

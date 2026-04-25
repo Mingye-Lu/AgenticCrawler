@@ -36,8 +36,7 @@ impl ProviderClient {
                 ProviderProtocol::ChatCompletions => {
                     if preset.id == "azure" {
                         let resource = config.resource_name.as_deref().unwrap_or("default");
-                        let deployment =
-                            config.deployment_name.as_deref().unwrap_or("gpt-4o");
+                        let deployment = config.deployment_name.as_deref().unwrap_or("gpt-4o");
                         let base_url = format!(
                             "https://{resource}.openai.azure.com/openai/deployments/{deployment}"
                         );

@@ -17,7 +17,9 @@ pub use mcp_config::{
     McpWebSocketServerConfig, ScopedMcpServerConfig,
 };
 
-use features::{parse_optional_hooks_config, parse_optional_oauth_config, parse_optional_sandbox_config};
+use features::{
+    parse_optional_hooks_config, parse_optional_oauth_config, parse_optional_sandbox_config,
+};
 use mcp_config::parse_mcp_server_config;
 
 pub const ACRAWL_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
@@ -118,8 +120,9 @@ fn optional_u16(
                     "{context}: field {key} must be an integer"
                 )));
             };
-            let number = u16::try_from(number)
-                .map_err(|_| ConfigError::Parse(format!("{context}: field {key} is out of range")))?;
+            let number = u16::try_from(number).map_err(|_| {
+                ConfigError::Parse(format!("{context}: field {key} is out of range"))
+            })?;
             Ok(Some(number))
         }
         None => Ok(None),
@@ -185,7 +188,10 @@ fn read_optional_json_object(
     Ok(Some(object.clone()))
 }
 
-fn deep_merge_objects(target: &mut BTreeMap<String, JsonValue>, source: &BTreeMap<String, JsonValue>) {
+fn deep_merge_objects(
+    target: &mut BTreeMap<String, JsonValue>,
+    source: &BTreeMap<String, JsonValue>,
+) {
     for (key, value) in source {
         match (target.get_mut(key), value) {
             (Some(JsonValue::Object(existing)), JsonValue::Object(incoming)) => {

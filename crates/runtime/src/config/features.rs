@@ -84,7 +84,9 @@ impl RuntimeHookConfig {
     }
 }
 
-pub(super) fn parse_optional_hooks_config(root: &JsonValue) -> Result<RuntimeHookConfig, ConfigError> {
+pub(super) fn parse_optional_hooks_config(
+    root: &JsonValue,
+) -> Result<RuntimeHookConfig, ConfigError> {
     let Some(object) = root.as_object() else {
         return Ok(RuntimeHookConfig::default());
     };
@@ -100,7 +102,9 @@ pub(super) fn parse_optional_hooks_config(root: &JsonValue) -> Result<RuntimeHoo
     })
 }
 
-pub(super) fn parse_optional_sandbox_config(root: &JsonValue) -> Result<SandboxConfig, ConfigError> {
+pub(super) fn parse_optional_sandbox_config(
+    root: &JsonValue,
+) -> Result<SandboxConfig, ConfigError> {
     let Some(object) = root.as_object() else {
         return Ok(SandboxConfig::default());
     };
@@ -148,7 +152,8 @@ pub(super) fn parse_optional_oauth_config(
     let authorize_url = expect_string(object, "authorizeUrl", context)?.to_string();
     let token_url = expect_string(object, "tokenUrl", context)?.to_string();
     let callback_port = optional_u16(object, "callbackPort", context)?;
-    let manual_redirect_url = optional_string(object, "manualRedirectUrl", context)?.map(str::to_string);
+    let manual_redirect_url =
+        optional_string(object, "manualRedirectUrl", context)?.map(str::to_string);
     let scopes = optional_string_array(object, "scopes", context)?.unwrap_or_default();
     Ok(Some(OAuthConfig {
         client_id,
@@ -292,7 +297,10 @@ mod tests {
         let hooks = RuntimeHookConfig::new(vec!["before".to_string()], vec!["after".to_string()]);
         let feature_config = RuntimeFeatureConfig::default().with_hooks(hooks.clone());
 
-        assert_eq!(RuntimeFeatureConfig::default().hooks(), &RuntimeHookConfig::default());
+        assert_eq!(
+            RuntimeFeatureConfig::default().hooks(),
+            &RuntimeHookConfig::default()
+        );
         assert_eq!(feature_config.hooks(), &hooks);
         assert!(feature_config.mcp().servers().is_empty());
         assert!(feature_config.oauth().is_none());
@@ -317,7 +325,11 @@ mod tests {
 
     #[test]
     fn config_source_variants_construct_and_compare_in_expected_order() {
-        let variants = [ConfigSource::User, ConfigSource::Project, ConfigSource::Local];
+        let variants = [
+            ConfigSource::User,
+            ConfigSource::Project,
+            ConfigSource::Local,
+        ];
 
         assert_eq!(variants[0], ConfigSource::User);
         assert_eq!(variants[1], ConfigSource::Project);

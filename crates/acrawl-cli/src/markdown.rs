@@ -588,7 +588,6 @@ impl TerminalRenderer {
 
         colored_output
     }
-
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

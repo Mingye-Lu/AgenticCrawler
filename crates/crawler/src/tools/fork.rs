@@ -26,7 +26,8 @@ mod tests {
 
     #[test]
     fn fork_returns_spawn_effect() {
-        let effect = execute(&json!({"sub_goal": "collect details"})).expect("fork should parse sub_goal");
+        let effect =
+            execute(&json!({"sub_goal": "collect details"})).expect("fork should parse sub_goal");
         match effect {
             ToolEffect::Spawn(spec) => {
                 assert_eq!(spec.goal, "collect details");

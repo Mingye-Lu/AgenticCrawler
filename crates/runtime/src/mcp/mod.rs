@@ -5,7 +5,7 @@ mod server_manager;
 mod types;
 
 pub use client::{
-    McpClientAuth, McpClientBootstrap, McpClientTransport, McpClaudeAiProxyTransport,
+    McpClaudeAiProxyTransport, McpClientAuth, McpClientBootstrap, McpClientTransport,
     McpRemoteTransport, McpSdkTransport, McpStdioTransport,
 };
 pub use naming::{

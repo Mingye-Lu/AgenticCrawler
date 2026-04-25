@@ -198,8 +198,9 @@ impl CrawlerAgent {
 
         let max_steps = self.max_steps;
         let system_prompt = build_system_prompt(&mvp_tool_specs());
-        let mut runtime = ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
-            .with_max_iterations(max_steps);
+        let mut runtime =
+            ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
+                .with_max_iterations(max_steps);
         let result = runtime.run_turn(goal).await;
         let agent_id = runtime.tool_executor_mut().agent_id.clone();
         let agent_manager = runtime.tool_executor_mut().agent_manager.clone();
@@ -479,7 +480,9 @@ mod tests {
             "extract_data",
             Box::new(|input| {
                 let data = input.get("data").cloned().unwrap_or(Value::Null);
-                Ok(ToolEffect::reply_json(&serde_json::json!({"title": "Example", "extracted": data})))
+                Ok(ToolEffect::reply_json(
+                    &serde_json::json!({"title": "Example", "extracted": data}),
+                ))
             }),
         );
         registry.register(
@@ -525,7 +528,10 @@ mod tests {
             .await
             .expect("spawn effect should fork child");
 
-        assert_eq!(observation, "Forked subagent root-child-1 for: collect details");
+        assert_eq!(
+            observation,
+            "Forked subagent root-child-1 for: collect details"
+        );
         assert_eq!(agent.child_tasks.len(), 1);
         for (_, (_, handle)) in agent.child_tasks.drain() {
             handle.abort();
@@ -625,7 +631,10 @@ mod tests {
     async fn run_collects_extracted_data_from_tool_results() {
         let agent = CrawlerAgent::new_for_testing(mock_registry());
         let result = agent
-            .run("extract titles from example.com", ExtractDataApiClient { call_count: 0 })
+            .run(
+                "extract titles from example.com",
+                ExtractDataApiClient { call_count: 0 },
+            )
             .await
             .expect("should succeed");
         assert_eq!(result.extracted_data.len(), 1);
@@ -647,7 +656,10 @@ mod tests {
         struct InfiniteLoopApiClient;
 
         impl ApiClient for InfiniteLoopApiClient {
-            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 Ok(vec![
                     AssistantEvent::ToolUse {
                         id: "call-loop".to_string(),
@@ -812,7 +824,9 @@ mod tests {
     async fn test_done_sets_state_done() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
-        let result = agent.execute("done", r#"{"summary":"Task complete"}"#).await;
+        let result = agent
+            .execute("done", r#"{"summary":"Task complete"}"#)
+            .await;
 
         assert_eq!(result.unwrap(), "Task complete");
         assert!(agent.crawl_state.done);
@@ -912,7 +926,6 @@ mod tests {
         assert_eq!(result.summary, "All done.");
     }
 
-
     #[tokio::test]
     async fn test_fork_full_lifecycle() {
         let mut parent = CrawlerAgent::new_for_testing(mock_registry());
@@ -1002,9 +1015,11 @@ mod tests {
     #[test]
     fn build_crawl_result_merges_child_data() {
         let summary = TurnSummary {
-            assistant_messages: vec![runtime::ConversationMessage::assistant(vec![ContentBlock::Text {
-                text: "final answer".to_string(),
-            }])],
+            assistant_messages: vec![runtime::ConversationMessage::assistant(vec![
+                ContentBlock::Text {
+                    text: "final answer".to_string(),
+                },
+            ])],
             tool_results: vec![runtime::ConversationMessage::tool_result(
                 "call-1".to_string(),
                 "extract_data".to_string(),
@@ -1034,5 +1049,4 @@ mod tests {
         assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
         assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
     }
-
 }

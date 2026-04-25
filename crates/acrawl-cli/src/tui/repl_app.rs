@@ -9,7 +9,18 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
+use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
+use crate::format::render_repl_help;
 use crate::markdown::PredictiveMarkdownBuffer;
+use crate::tui::active_modal::ActiveModal;
+use crate::tui::auth_modal::{AuthModal, AuthModalStep};
+use crate::tui::modal::{Modal, ModalAction};
+use crate::tui::repl_render::{
+    ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
+    rect_contains_mouse, suspend_for_stdout, tool_input_summary,
+};
+use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
@@ -21,17 +32,6 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListState;
 use ratatui::DefaultTerminal;
-use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
-use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
-use crate::format::render_repl_help;
-use crate::tui::active_modal::ActiveModal;
-use crate::tui::auth_modal::{AuthModal, AuthModalStep};
-use crate::tui::modal::{Modal, ModalAction};
-use crate::tui::repl_render::{
-    ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
-    rect_contains_mouse, suspend_for_stdout, tool_input_summary,
-};
-use crate::tui::ReplTuiEvent;
 
 const MAX_INPUT_LINES: usize = 5;
 pub(super) const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
@@ -112,7 +112,6 @@ impl Default for HeaderSnapshot {
         }
     }
 }
-
 
 pub(super) struct MouseCaptureGuard;
 
@@ -829,7 +828,7 @@ impl ReplTuiState {
                 ReplTuiEvent::StreamAnsi(s) => {
                     // Enqueue raw chars for typewriter reveal.
                     for c in s.chars() {
-                self.typewriter.chars.push_back(c);
+                        self.typewriter.chars.push_back(c);
                     }
                 }
                 ReplTuiEvent::TurnStarting => {
@@ -959,7 +958,6 @@ impl ReplTuiState {
         }
     }
 }
-
 
 #[allow(clippy::too_many_lines)]
 fn handle_slash_command_tui(

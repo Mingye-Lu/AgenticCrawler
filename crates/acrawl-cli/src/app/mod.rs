@@ -19,25 +19,23 @@ use crate::format::{
     render_export_text, render_last_tool_debug_report, render_repl_help, render_version_report,
     resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
-use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
 use crate::markdown::{Spinner, TerminalRenderer};
+use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
 use crate::session_mgr::{
     create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
 };
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crawler::mvp_tool_specs;
-use runtime::{
-    CompactionConfig, ConversationRuntime, RuntimeError, Session, TokenUsage,
-};
+use runtime::{CompactionConfig, ConversationRuntime, RuntimeError, Session, TokenUsage};
 use serde_json::json;
 
 #[cfg(test)]
 use api::provider::ProviderRegistry;
 
+use self::api_client::LlmRuntimeClient;
 #[cfg(test)]
 use self::api_client::{convert_messages, push_output_block, response_to_events};
-use self::api_client::LlmRuntimeClient;
 use self::model_support::{model_reasoning_efforts, model_supports_reasoning};
 use self::runtime_builder::{build_runtime, build_system_prompt};
 use self::tool_executor::CliToolExecutor;
@@ -180,7 +178,9 @@ impl LiveCli {
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
-            cli.runtime.api_client_mut().set_reasoning_effort(Some(effort));
+            cli.runtime
+                .api_client_mut()
+                .set_reasoning_effort(Some(effort));
         }
         cli.persist_session()?;
         Ok(cli)
@@ -223,7 +223,9 @@ impl LiveCli {
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
-            cli.runtime.api_client_mut().set_reasoning_effort(Some(effort));
+            cli.runtime
+                .api_client_mut()
+                .set_reasoning_effort(Some(effort));
         }
         cli.persist_session()?;
         Ok(cli)
@@ -255,7 +257,9 @@ impl LiveCli {
             None => *available.last().unwrap_or(&api::ReasoningEffort::High),
         };
         self.reasoning_effort = Some(next);
-        self.runtime.api_client_mut().set_reasoning_effort(Some(next));
+        self.runtime
+            .api_client_mut()
+            .set_reasoning_effort(Some(next));
         let effort_str = next.as_str().to_string();
         let _ = runtime::update_settings(|s| {
             s.reasoning_effort = Some(effort_str);
@@ -404,10 +408,7 @@ impl LiveCli {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle_repl_command(
-        &mut self,
-        command: SlashCommand,
-    ) -> Result<bool, CliError> {
+    pub(crate) fn handle_repl_command(&mut self, command: SlashCommand) -> Result<bool, CliError> {
         Ok(match command {
             SlashCommand::Help => {
                 println!("{}", render_repl_help());
@@ -555,7 +556,9 @@ impl LiveCli {
         if model_supports_reasoning(&model) {
             let effort = self.reasoning_effort.unwrap_or(api::ReasoningEffort::High);
             self.reasoning_effort = Some(effort);
-            self.runtime.api_client_mut().set_reasoning_effort(Some(effort));
+            self.runtime
+                .api_client_mut()
+                .set_reasoning_effort(Some(effort));
         } else {
             self.reasoning_effort = None;
         }
@@ -1005,28 +1008,26 @@ mod tests {
 
     #[test]
     fn response_to_events_preserves_empty_object_json_input_outside_streaming() {
-        let events = response_to_events(
-            MessageResponse {
-                id: "msg-1".to_string(),
-                kind: "message".to_string(),
-                model: "claude-opus-4-6".to_string(),
-                role: "assistant".to_string(),
-                content: vec![OutputContentBlock::ToolUse {
-                    id: "tool-1".to_string(),
-                    name: "read_file".to_string(),
-                    input: json!({}),
-                }],
-                stop_reason: Some("tool_use".to_string()),
-                stop_sequence: None,
-                usage: Usage {
-                    input_tokens: 1,
-                    output_tokens: 1,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: 0,
-                },
-                request_id: None,
+        let events = response_to_events(MessageResponse {
+            id: "msg-1".to_string(),
+            kind: "message".to_string(),
+            model: "claude-opus-4-6".to_string(),
+            role: "assistant".to_string(),
+            content: vec![OutputContentBlock::ToolUse {
+                id: "tool-1".to_string(),
+                name: "read_file".to_string(),
+                input: json!({}),
+            }],
+            stop_reason: Some("tool_use".to_string()),
+            stop_sequence: None,
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
             },
-        );
+            request_id: None,
+        });
         assert!(
             matches!(&events[0], AssistantEvent::ToolUse { name, input, .. } if name == "read_file" && input == "{}")
         );
@@ -1034,28 +1035,26 @@ mod tests {
 
     #[test]
     fn response_to_events_preserves_non_empty_json_input_outside_streaming() {
-        let events = response_to_events(
-            MessageResponse {
-                id: "msg-2".to_string(),
-                kind: "message".to_string(),
-                model: "claude-opus-4-6".to_string(),
-                role: "assistant".to_string(),
-                content: vec![OutputContentBlock::ToolUse {
-                    id: "tool-2".to_string(),
-                    name: "read_file".to_string(),
-                    input: json!({ "path": "rust/Cargo.toml" }),
-                }],
-                stop_reason: Some("tool_use".to_string()),
-                stop_sequence: None,
-                usage: Usage {
-                    input_tokens: 1,
-                    output_tokens: 1,
-                    cache_creation_input_tokens: 0,
-                    cache_read_input_tokens: 0,
-                },
-                request_id: None,
+        let events = response_to_events(MessageResponse {
+            id: "msg-2".to_string(),
+            kind: "message".to_string(),
+            model: "claude-opus-4-6".to_string(),
+            role: "assistant".to_string(),
+            content: vec![OutputContentBlock::ToolUse {
+                id: "tool-2".to_string(),
+                name: "read_file".to_string(),
+                input: json!({ "path": "rust/Cargo.toml" }),
+            }],
+            stop_reason: Some("tool_use".to_string()),
+            stop_sequence: None,
+            usage: Usage {
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
             },
-        );
+            request_id: None,
+        });
         assert!(
             matches!(&events[0], AssistantEvent::ToolUse { name, input, .. } if name == "read_file" && input == "{\"path\":\"rust/Cargo.toml\"}")
         );

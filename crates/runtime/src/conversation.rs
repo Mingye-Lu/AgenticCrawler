@@ -253,12 +253,7 @@ where
                             let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
                             let message = format_hook_message(&pre_hook_result, &deny_message);
                             notify_observer_system_message(&mut self.observer, &message);
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                message,
-                                true,
-                            )
+                            ConversationMessage::tool_result(tool_use_id, tool_name, message, true)
                         } else {
                             let (mut output, mut is_error) =
                                 match self.tool_executor.execute(&tool_name, &input).await {
@@ -291,7 +286,12 @@ where
                                 post_hook_result.is_denied(),
                             );
 
-                            ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
+                            ConversationMessage::tool_result(
+                                tool_use_id,
+                                tool_name,
+                                output,
+                                is_error,
+                            )
                         }
                     };
                     notify_observer_tool_result(&mut self.observer, &result_message);

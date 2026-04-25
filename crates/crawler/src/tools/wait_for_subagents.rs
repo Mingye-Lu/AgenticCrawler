@@ -8,7 +8,9 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
         .map(|value| {
             value
                 .as_array()
-                .ok_or_else(|| ToolError("wait_for_subagents child_ids must be an array".to_string()))
+                .ok_or_else(|| {
+                    ToolError("wait_for_subagents child_ids must be an array".to_string())
+                })
                 .and_then(|values| {
                     values
                         .iter()
@@ -40,7 +42,10 @@ mod tests {
             .expect("wait should parse child_ids");
         match effect {
             ToolEffect::Wait(spec) => {
-                assert_eq!(spec.child_ids, Some(vec!["child-1".to_string(), "child-2".to_string()]));
+                assert_eq!(
+                    spec.child_ids,
+                    Some(vec!["child-1".to_string(), "child-2".to_string()])
+                );
             }
             _ => panic!("expected wait effect"),
         }

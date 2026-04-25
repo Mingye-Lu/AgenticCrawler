@@ -43,10 +43,6 @@ pub use mcp::{
     mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
     scoped_mcp_config_hash, unwrap_ccr_proxy_url,
 };
-pub use mcp::{
-    McpClaudeAiProxyTransport, McpClientAuth, McpClientBootstrap, McpClientTransport,
-    McpRemoteTransport, McpSdkTransport, McpStdioTransport,
-};
 pub use mcp::{spawn_mcp_stdio_process, McpServerManager, McpStdioProcess};
 pub use mcp::{
     JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ManagedMcpTool,
@@ -55,6 +51,10 @@ pub use mcp::{
     McpReadResourceParams, McpReadResourceResult, McpResource, McpResourceContents,
     McpServerManagerError, McpTool, McpToolCallContent, McpToolCallParams, McpToolCallResult,
     UnsupportedMcpServer,
+};
+pub use mcp::{
+    McpClaudeAiProxyTransport, McpClientAuth, McpClientBootstrap, McpClientTransport,
+    McpRemoteTransport, McpSdkTransport, McpStdioTransport,
 };
 pub use oauth::{
     clear_oauth_credentials, code_challenge_s256, credentials_path, generate_pkce_pair,

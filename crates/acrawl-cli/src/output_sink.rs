@@ -4,8 +4,8 @@ use std::sync::mpsc;
 use runtime::{RuntimeObserver, TokenUsage};
 
 use crate::markdown::{MarkdownStreamState, TerminalRenderer};
-use crate::tui::events::ReplTuiEvent;
 use crate::tool_format::{format_tool_call_start, format_tool_result};
+use crate::tui::events::ReplTuiEvent;
 
 pub trait OutputSink: Send {
     fn on_text_delta(&mut self, raw_text: &str);
