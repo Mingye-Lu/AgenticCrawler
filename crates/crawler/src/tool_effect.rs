@@ -1,6 +1,3 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use serde_json::Value;
 
 /// Control-flow instruction returned by a tool handler.
@@ -60,20 +57,6 @@ impl From<crate::CrawlError> for ToolError {
     }
 }
 
-/// A tool handler function type.
-#[allow(clippy::type_complexity)]
-pub type ToolHandler = Box<
-    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Result<ToolEffect, ToolError>> + Send>>
-        + Send
-        + Sync,
->;
-
-/// Pairs a tool's static spec with its handler function.
-pub struct ToolDef {
-    pub name: &'static str,
-    pub handler: ToolHandler,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,27 +80,6 @@ mod tests {
 
         assert_eq!(spec.goal, "visit detail page");
         assert_eq!(spec.page_index, Some(2));
-    }
-
-    #[test]
-    fn test_tool_def_creation() {
-        let tool_def = ToolDef {
-            name: "reply_tool",
-            handler: Box::new(|_input| Box::pin(async { Ok(ToolEffect::Reply("ok".to_string())) })),
-        };
-
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .expect("current-thread runtime should build");
-        let effect = runtime
-            .block_on((tool_def.handler)(serde_json::json!({})))
-            .expect("handler should return reply");
-
-        assert_eq!(tool_def.name, "reply_tool");
-        match effect {
-            ToolEffect::Reply(reply) => assert_eq!(reply, "ok"),
-            _ => panic!("expected reply effect"),
-        }
     }
 
     #[test]
