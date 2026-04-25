@@ -1,3 +1,31 @@
+//! Slash command registry and parsing for the acrawl REPL.
+//!
+//! This crate provides the canonical set of 16 slash commands available in the interactive REPL,
+//! along with parsing, help rendering, and execution logic. Each command is defined as a
+//! [`SlashCommandSpec`] with metadata including name, summary, optional argument hints, and
+//! whether it is resume-safe.
+//!
+//! ## Resume-Safe Commands
+//!
+//! A subset of 8 commands are marked `resume_supported: true`, meaning they can be safely
+//! replayed when resuming a saved session via `--resume SESSION.json`. These include:
+//! `/help`, `/status`, `/compact`, `/clear`, `/cost`, `/config`, `/version`, and `/export`.
+//!
+//! Commands that are not resume-safe (e.g., `/model`, `/resume`, `/session`, `/auth`, `/headed`,
+//! `/headless`, `/debug`, `/exit`) are skipped during session replay because they either:
+//! - Require user interaction or runtime state (e.g., `/model` to switch providers)
+//! - Are only meaningful in the live REPL (e.g., `/resume` to load another session)
+//! - Modify browser or authentication state that should not be replayed
+//!
+//! ## Command Registry Pattern
+//!
+//! The module exports:
+//! - [`slash_command_specs()`] — returns the full 16-command spec list
+//! - [`resume_supported_slash_commands()`] — filters to the 8 resume-safe commands
+//! - [`SlashCommand::parse()`] — parses user input into a [`SlashCommand`] enum
+//! - [`handle_slash_command()`] — executes a command and returns a [`SlashCommandResult`]
+//! - [`render_slash_command_help()`] — generates the help text shown by `/help`
+
 use runtime::{compact_session, CompactionConfig, Session};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
