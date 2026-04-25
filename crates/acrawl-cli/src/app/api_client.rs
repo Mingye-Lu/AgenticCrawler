@@ -5,7 +5,7 @@ use api::{
     ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
     OutputContentBlock, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
-use crate::render::{MarkdownStreamState, TerminalRenderer};
+use crate::markdown::{MarkdownStreamState, TerminalRenderer};
 use runtime::{ApiClient, AssistantEvent, ConversationMessage, MessageRole, RuntimeError, TokenUsage};
 use serde_json::json;
 
