@@ -69,7 +69,8 @@ mod tests {
     #[tokio::test]
     async fn test_browser_lazy_init() {
         let shared_bridge = test_bridge().await;
-        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new()).with_agent_id("root".to_string());
+        let mut agent =
+            CrawlerAgent::new_for_testing(ToolRegistry::new()).with_agent_id("root".to_string());
         agent.shared_bridge = Some(shared_bridge.clone());
 
         agent
@@ -112,7 +113,10 @@ mod tests {
             .ensure_browser()
             .await
             .expect("second initialization should reuse existing browser");
-        let reused_bridge = agent.shared_bridge.clone().expect("bridge should still exist");
+        let reused_bridge = agent
+            .shared_bridge
+            .clone()
+            .expect("bridge should still exist");
         assert!(Arc::ptr_eq(&first_bridge, &reused_bridge));
 
         agent.reset_browser();
@@ -123,7 +127,10 @@ mod tests {
             .ensure_browser()
             .await
             .expect("reinitialization after reset should succeed");
-        let second_bridge = agent.shared_bridge.clone().expect("bridge should be recreated");
+        let second_bridge = agent
+            .shared_bridge
+            .clone()
+            .expect("bridge should be recreated");
         assert!(!Arc::ptr_eq(&first_bridge, &second_bridge));
     }
 

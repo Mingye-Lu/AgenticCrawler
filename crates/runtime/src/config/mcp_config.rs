@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use crate::json::JsonValue;
 
-use super::{expect_object, expect_string, optional_bool, optional_string, optional_u16, ConfigError, ConfigSource};
+use super::{
+    expect_object, expect_string, optional_bool, optional_string, optional_u16, ConfigError,
+    ConfigSource,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct McpConfigCollection {
@@ -122,8 +125,12 @@ pub(super) fn parse_mcp_server_config(
             args: super::optional_string_array(object, "args", context)?.unwrap_or_default(),
             env: optional_string_map(object, "env", context)?.unwrap_or_default(),
         })),
-        "sse" => Ok(McpServerConfig::Sse(parse_mcp_remote_server_config(object, context)?)),
-        "http" => Ok(McpServerConfig::Http(parse_mcp_remote_server_config(object, context)?)),
+        "sse" => Ok(McpServerConfig::Sse(parse_mcp_remote_server_config(
+            object, context,
+        )?)),
+        "http" => Ok(McpServerConfig::Http(parse_mcp_remote_server_config(
+            object, context,
+        )?)),
         "ws" => Ok(McpServerConfig::Ws(McpWebSocketServerConfig {
             url: expect_string(object, "url", context)?.to_string(),
             headers: optional_string_map(object, "headers", context)?.unwrap_or_default(),
@@ -132,10 +139,12 @@ pub(super) fn parse_mcp_server_config(
         "sdk" => Ok(McpServerConfig::Sdk(McpSdkServerConfig {
             name: expect_string(object, "name", context)?.to_string(),
         })),
-        "claudeai-proxy" => Ok(McpServerConfig::ClaudeAiProxy(McpClaudeAiProxyServerConfig {
-            url: expect_string(object, "url", context)?.to_string(),
-            id: expect_string(object, "id", context)?.to_string(),
-        })),
+        "claudeai-proxy" => Ok(McpServerConfig::ClaudeAiProxy(
+            McpClaudeAiProxyServerConfig {
+                url: expect_string(object, "url", context)?.to_string(),
+                id: expect_string(object, "id", context)?.to_string(),
+            },
+        )),
         other => Err(ConfigError::Parse(format!(
             "{context}: unsupported MCP server type for {server_name}: {other}"
         ))),
@@ -165,7 +174,8 @@ fn parse_optional_mcp_oauth_config(
     Ok(Some(McpOAuthConfig {
         client_id: optional_string(oauth, "clientId", context)?.map(str::to_string),
         callback_port: optional_u16(oauth, "callbackPort", context)?,
-        auth_server_metadata_url: optional_string(oauth, "authServerMetadataUrl", context)?.map(str::to_string),
+        auth_server_metadata_url: optional_string(oauth, "authServerMetadataUrl", context)?
+            .map(str::to_string),
         xaa: optional_bool(oauth, "xaa", context)?,
     }))
 }

@@ -3,7 +3,9 @@ use api::{
     ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
     OutputContentBlock, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
-use runtime::{ApiClient, AssistantEvent, ConversationMessage, MessageRole, RuntimeError, TokenUsage};
+use runtime::{
+    ApiClient, AssistantEvent, ConversationMessage, MessageRole, RuntimeError, TokenUsage,
+};
 use serde_json::json;
 
 use super::{filter_tool_specs, AllowedToolSet};
@@ -53,7 +55,10 @@ impl LlmRuntimeClient {
 
 impl ApiClient for LlmRuntimeClient {
     #[allow(clippy::too_many_lines)]
-    fn stream(&mut self, request: runtime::ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+    fn stream(
+        &mut self,
+        request: runtime::ApiRequest,
+    ) -> Result<Vec<AssistantEvent>, RuntimeError> {
         let message_request = MessageRequest {
             model: api::provider::model_api_id(&self.model).to_string(),
             max_tokens: self.registry.max_tokens(&self.model),

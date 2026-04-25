@@ -46,16 +46,21 @@ impl<'a> ForkSupervisor<'a> {
 
 impl CrawlerAgent {
     pub(super) async fn handle_spawn(&mut self, fork_spec: ForkSpec) -> Result<String, ToolError> {
-        let child_max_steps = runtime::settings_get_fork_child_max_steps(&runtime::load_settings()) as usize;
+        let child_max_steps =
+            runtime::settings_get_fork_child_max_steps(&runtime::load_settings()) as usize;
         let child_id = ForkSupervisor::new(self).next_child_id();
-        ForkSupervisor::new(self).claim_child_slot(&child_id).await?;
+        ForkSupervisor::new(self)
+            .claim_child_slot(&child_id)
+            .await?;
 
         let setup = async {
             self.ensure_browser().await?;
 
-            let child_state = self
-                .crawl_state
-                .fork(&fork_spec.goal, self.crawl_state.current_url.as_deref(), child_max_steps);
+            let child_state = self.crawl_state.fork(
+                &fork_spec.goal,
+                self.crawl_state.current_url.as_deref(),
+                child_max_steps,
+            );
             let child_api_client = self
                 .api_client_arc
                 .clone()
@@ -76,7 +81,9 @@ impl CrawlerAgent {
         let (child_state, child_api_client, shared_bridge, page_index) = match setup {
             Ok(values) => values,
             Err(error) => {
-                ForkSupervisor::new(self).release_child_slot(&child_id).await;
+                ForkSupervisor::new(self)
+                    .release_child_slot(&child_id)
+                    .await;
                 return Err(error);
             }
         };
@@ -112,14 +119,20 @@ impl CrawlerAgent {
         Ok(observation)
     }
 
-    pub(super) async fn handle_wait_effect(&mut self, wait_spec: WaitSpec) -> Result<String, ToolError> {
-        let child_ids = wait_spec.child_ids.unwrap_or_else(|| self.child_tasks.keys().cloned().collect());
+    pub(super) async fn handle_wait_effect(
+        &mut self,
+        wait_spec: WaitSpec,
+    ) -> Result<String, ToolError> {
+        let child_ids = wait_spec
+            .child_ids
+            .unwrap_or_else(|| self.child_tasks.keys().cloned().collect());
         if child_ids.is_empty() {
             return Ok("No active subagents".to_string());
         }
 
-        let wait_timeout_secs =
-            u64::from(runtime::settings_get_fork_wait_timeout_secs(&runtime::load_settings()));
+        let wait_timeout_secs = u64::from(runtime::settings_get_fork_wait_timeout_secs(
+            &runtime::load_settings(),
+        ));
         let deadline = Instant::now() + Duration::from_secs(wait_timeout_secs);
         let tasks = child_ids
             .into_iter()
@@ -272,8 +285,14 @@ mod tests {
             .await
             .expect("fork should succeed");
 
-        assert_eq!(observation, "Forked subagent root-child-1 for: collect details");
-        assert_eq!(agent.child_tasks.get("root-child-1").unwrap().0, "collect details");
+        assert_eq!(
+            observation,
+            "Forked subagent root-child-1 for: collect details"
+        );
+        assert_eq!(
+            agent.child_tasks.get("root-child-1").unwrap().0,
+            "collect details"
+        );
         for (_, (_, handle)) in agent.child_tasks.drain() {
             handle.abort();
         }
@@ -295,7 +314,10 @@ mod tests {
         agent.fork_page_index_override = Some(1);
 
         let observation = agent
-            .execute("fork", r#"{"sub_goal":"check result","url":"https://example.com"}"#)
+            .execute(
+                "fork",
+                r#"{"sub_goal":"check result","url":"https://example.com"}"#,
+            )
             .await
             .expect("fork should succeed");
 
@@ -342,9 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_wait_no_children_returns_immediately() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-        let result = agent
-            .handle_wait_effect(WaitSpec { child_ids: None })
-            .await;
+        let result = agent.handle_wait_effect(WaitSpec { child_ids: None }).await;
         assert_eq!(result.unwrap(), "No active subagents");
     }
 

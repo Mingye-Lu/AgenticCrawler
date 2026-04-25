@@ -19,8 +19,8 @@ use crate::format::VERSION;
 
 use super::repl_app::{
     HeaderSnapshot, ReplTuiState, ToolCallStatus, TranscriptEntry, SLASH_OVERLAY_HINT_TEXT,
-    SLASH_OVERLAY_VISIBLE_ITEMS,
-    WELCOME_BOX_MAX_WIDTH, WELCOME_BOX_MIN_WIDTH, WELCOME_BOX_SIDE_GUTTER,
+    SLASH_OVERLAY_VISIBLE_ITEMS, WELCOME_BOX_MAX_WIDTH, WELCOME_BOX_MIN_WIDTH,
+    WELCOME_BOX_SIDE_GUTTER,
 };
 
 pub(super) fn format_compact_tokens(tokens: u32) -> String {
@@ -405,10 +405,8 @@ pub(super) fn render_edit_success(
                             Some('-') => Style::default().fg(Color::Red),
                             _ => dim,
                         };
-                        diff_lines.push(ListItem::new(Line::from(Span::styled(
-                            line.clone(),
-                            style,
-                        ))));
+                        diff_lines
+                            .push(ListItem::new(Line::from(Span::styled(line.clone(), style))));
                         diff_text.push(line);
                     }
                 }
@@ -464,7 +462,10 @@ pub(super) fn render_glob_success(
     if let Some(filenames) = parsed.get("filenames").and_then(|v| v.as_array()) {
         for filename in filenames.iter().take(8).filter_map(|v| v.as_str()) {
             let filename = filename.to_string();
-            items.push(ListItem::new(Line::from(Span::styled(filename.clone(), dim))));
+            items.push(ListItem::new(Line::from(Span::styled(
+                filename.clone(),
+                dim,
+            ))));
             text_lines.push(filename);
         }
     }
@@ -512,7 +513,10 @@ pub(super) fn render_grep_success(
     } else if let Some(filenames) = parsed.get("filenames").and_then(|v| v.as_array()) {
         for filename in filenames.iter().take(8).filter_map(|v| v.as_str()) {
             let filename = filename.to_string();
-            items.push(ListItem::new(Line::from(Span::styled(filename.clone(), dim))));
+            items.push(ListItem::new(Line::from(Span::styled(
+                filename.clone(),
+                dim,
+            ))));
             text_lines.push(filename);
         }
     } else {
@@ -661,7 +665,9 @@ pub(super) fn build_wrapped_list(
     text_out.push(" ".to_string());
 
     let system_style = Style::default().fg(Color::DarkGray).italic();
-    let user_prefix_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let user_prefix_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
 
     for entry in entries {
         match entry {
@@ -720,7 +726,10 @@ pub(super) fn build_wrapped_list(
                     .saturating_sub(1);
                 let header = format!("{title_prefix}{}┐", "─".repeat(title_fill));
                 text_out.push(header.clone());
-                out.push(ListItem::new(Line::from(Span::styled(header, border_style))));
+                out.push(ListItem::new(Line::from(Span::styled(
+                    header,
+                    border_style,
+                ))));
 
                 // Content rows: │ key  value   │
                 let max_key_len = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
@@ -767,7 +776,10 @@ pub(super) fn build_wrapped_list(
                 let bottom_fill = w.saturating_sub(2);
                 let bottom = format!("└{}┘", "─".repeat(bottom_fill));
                 text_out.push(bottom.clone());
-                out.push(ListItem::new(Line::from(Span::styled(bottom, border_style))));
+                out.push(ListItem::new(Line::from(Span::styled(
+                    bottom,
+                    border_style,
+                ))));
             }
             TranscriptEntry::ToolCall {
                 name,
@@ -850,7 +862,10 @@ pub(super) fn base64_encode(input: &[u8]) -> String {
 
 pub(super) fn copy_osc52(text: &str) {
     let encoded = base64_encode(text.as_bytes());
-    let _ = io::Write::write_all(&mut io::stdout(), format!("\x1b]52;c;{encoded}\x07").as_bytes());
+    let _ = io::Write::write_all(
+        &mut io::stdout(),
+        format!("\x1b]52;c;{encoded}\x07").as_bytes(),
+    );
     let _ = io::Write::flush(&mut io::stdout());
 }
 
@@ -865,11 +880,7 @@ pub(super) fn suspend_for_stdout(
     Ok(())
 }
 
-pub(super) fn draw_header(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    header: &HeaderSnapshot,
-) {
+pub(super) fn draw_header(frame: &mut ratatui::Frame<'_>, area: Rect, header: &HeaderSnapshot) {
     let mut spans = vec![
         Span::styled(
             " ACrawl ",
@@ -1048,7 +1059,10 @@ pub(super) fn draw_slash_overlay(
     let max_x = bounds
         .x
         .saturating_add(bounds.width.saturating_sub(overlay_w.saturating_add(1)));
-    let overlay_x = input_area.x.saturating_add(2).clamp(min_x, max_x.max(min_x));
+    let overlay_x = input_area
+        .x
+        .saturating_add(2)
+        .clamp(min_x, max_x.max(min_x));
     let overlay_y = input_area
         .y
         .saturating_sub(overlay_h)

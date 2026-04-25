@@ -182,33 +182,34 @@ impl McpServerManager {
 
         self.ensure_server_ready(&route.server_name).await?;
         let request_id = self.take_request_id();
-        let response = {
-            let server = self.server_mut(&route.server_name)?;
-            let process = server.process.as_mut().ok_or_else(|| {
-                McpServerManagerError::InvalidResponse {
+        let response =
+            {
+                let server = self.server_mut(&route.server_name)?;
+                let process = server.process.as_mut().ok_or_else(|| {
+                    McpServerManagerError::InvalidResponse {
+                        server_name: route.server_name.clone(),
+                        method: "tools/call",
+                        details: "server process missing after initialization".to_string(),
+                    }
+                })?;
+                timeout(
+                    MCP_REQUEST_TIMEOUT,
+                    process.call_tool(
+                        request_id,
+                        McpToolCallParams {
+                            name: route.raw_name,
+                            arguments,
+                            meta: None,
+                        },
+                    ),
+                )
+                .await
+                .map_err(|_| McpServerManagerError::Timeout {
                     server_name: route.server_name.clone(),
                     method: "tools/call",
-                    details: "server process missing after initialization".to_string(),
-                }
-            })?;
-            timeout(
-                MCP_REQUEST_TIMEOUT,
-                process.call_tool(
-                    request_id,
-                    McpToolCallParams {
-                        name: route.raw_name,
-                        arguments,
-                        meta: None,
-                    },
-                ),
-            )
-            .await
-            .map_err(|_| McpServerManagerError::Timeout {
-                server_name: route.server_name.clone(),
-                method: "tools/call",
-                timeout: MCP_REQUEST_TIMEOUT,
-            })??
-        };
+                    timeout: MCP_REQUEST_TIMEOUT,
+                })??
+            };
         Ok(response)
     }
 

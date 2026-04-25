@@ -27,7 +27,10 @@ fn parse_input(input: &Value) -> Result<ExtractDataInput, CrawlError> {
 }
 
 #[allow(clippy::unused_async)]
-pub async fn execute(input: &Value, _browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(
+    input: &Value,
+    _browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolError> {
     let params = parse_input(input)?;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::config::{McpOAuthConfig, McpServerConfig, ScopedMcpServerConfig};
 use super::naming::{mcp_server_signature, mcp_tool_prefix, normalize_name_for_mcp};
+use crate::config::{McpOAuthConfig, McpServerConfig, ScopedMcpServerConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpClientTransport {

@@ -148,7 +148,9 @@ mod tests {
         let result = run_resume_command(
             &path,
             &session,
-            &SlashCommand::Model { model: Some("gpt-4o".to_string()) },
+            &SlashCommand::Model {
+                model: Some("gpt-4o".to_string()),
+            },
         );
         assert!(result.is_err());
     }
@@ -157,7 +159,8 @@ mod tests {
     fn resume_clear_without_confirm_warns() {
         let session = Session::new();
         let path = PathBuf::from("/tmp/test-session.json");
-        let outcome = run_resume_command(&path, &session, &SlashCommand::Clear { confirm: false }).unwrap();
+        let outcome =
+            run_resume_command(&path, &session, &SlashCommand::Clear { confirm: false }).unwrap();
         let msg = outcome.message.expect("should produce warning");
         assert!(msg.contains("confirm"));
     }

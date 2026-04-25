@@ -23,9 +23,7 @@ impl ApiClient for SharedApiClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         self.0
             .lock()
-            .map_err(|e| {
-                RuntimeError::new(format!("SharedApiClient mutex poisoned: {e}"))
-            })?
+            .map_err(|e| RuntimeError::new(format!("SharedApiClient mutex poisoned: {e}")))?
             .stream(request)
     }
 }

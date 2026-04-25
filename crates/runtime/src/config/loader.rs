@@ -6,8 +6,8 @@ use crate::json::JsonValue;
 use super::{
     deep_merge_objects, expect_object, parse_mcp_server_config, parse_optional_hooks_config,
     parse_optional_oauth_config, parse_optional_sandbox_config, read_optional_json_object,
-    ConfigEntry, ConfigError, ConfigSource, McpConfigCollection, OAuthConfig,
-    RuntimeFeatureConfig, RuntimeHookConfig, ScopedMcpServerConfig,
+    ConfigEntry, ConfigError, ConfigSource, McpConfigCollection, OAuthConfig, RuntimeFeatureConfig,
+    RuntimeHookConfig, ScopedMcpServerConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,7 +94,9 @@ impl ConfigLoader {
 
         let feature_config = RuntimeFeatureConfig {
             hooks: parse_optional_hooks_config(&merged_value)?,
-            mcp: McpConfigCollection { servers: mcp_servers },
+            mcp: McpConfigCollection {
+                servers: mcp_servers,
+            },
             oauth: parse_optional_oauth_config(&merged_value, "merged settings.oauth")?,
             model: parse_optional_model(&merged_value),
             sandbox: parse_optional_sandbox_config(&merged_value)?,

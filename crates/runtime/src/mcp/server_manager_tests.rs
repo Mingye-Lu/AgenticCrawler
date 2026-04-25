@@ -8,8 +8,8 @@ use serde_json::json;
 use tokio::runtime::Builder;
 
 use crate::config::{
-    ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
-    McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
+    ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig, McpStdioServerConfig,
+    McpWebSocketServerConfig, ScopedMcpServerConfig,
 };
 
 use super::{mcp_tool_name, McpServerManager, McpServerManagerError};
@@ -208,11 +208,17 @@ fn test_server_manager_tool_routing() {
         assert_eq!(tools.len(), 2);
 
         let alpha = manager
-            .call_tool(&mcp_tool_name("alpha", "echo"), Some(json!({"text": "hello"})))
+            .call_tool(
+                &mcp_tool_name("alpha", "echo"),
+                Some(json!({"text": "hello"})),
+            )
             .await
             .expect("call alpha tool");
         let beta = manager
-            .call_tool(&mcp_tool_name("beta", "echo"), Some(json!({"text": "world"})))
+            .call_tool(
+                &mcp_tool_name("beta", "echo"),
+                Some(json!({"text": "world"})),
+            )
             .await
             .expect("call beta tool");
 
@@ -325,7 +331,10 @@ fn manager_reuses_spawned_server_between_discovery_and_call() {
 
         manager.discover_tools().await.expect("discover tools");
         let response = manager
-            .call_tool(&mcp_tool_name("alpha", "echo"), Some(json!({"text": "reuse"})))
+            .call_tool(
+                &mcp_tool_name("alpha", "echo"),
+                Some(json!({"text": "reuse"})),
+            )
             .await
             .expect("call tool");
 
@@ -372,7 +381,10 @@ fn manager_reports_unknown_qualified_tool_name() {
         let mut manager = McpServerManager::from_servers(&servers);
 
         let error = manager
-            .call_tool(&mcp_tool_name("alpha", "missing"), Some(json!({"text": "nope"})))
+            .call_tool(
+                &mcp_tool_name("alpha", "missing"),
+                Some(json!({"text": "nope"})),
+            )
             .await
             .expect_err("unknown qualified tool should fail");
 

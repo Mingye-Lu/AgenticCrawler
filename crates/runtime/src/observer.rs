@@ -31,7 +31,10 @@ pub trait RuntimeObserver: Send {
 #[cfg(test)]
 mod tests {
     use super::RuntimeObserver;
-    use crate::conversation::{ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError, StaticToolExecutor};
+    use crate::conversation::{
+        ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
+        StaticToolExecutor,
+    };
     use crate::session::Session;
     use crate::usage::TokenUsage;
     use std::sync::{Arc, Mutex};
@@ -158,7 +161,10 @@ mod tests {
                     AssistantEvent::MessageStop,
                 ]),
                 2 => {
-                    assert!(request.messages.iter().any(|message| message.role == crate::session::MessageRole::Tool));
+                    assert!(request
+                        .messages
+                        .iter()
+                        .any(|message| message.role == crate::session::MessageRole::Tool));
                     Ok(vec![
                         AssistantEvent::TextDelta("done".to_string()),
                         AssistantEvent::MessageStop,

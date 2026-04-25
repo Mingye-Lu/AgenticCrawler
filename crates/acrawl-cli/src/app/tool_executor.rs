@@ -9,10 +9,7 @@ pub(crate) struct CliToolExecutor {
 }
 
 impl CliToolExecutor {
-    pub(crate) fn new(
-        allowed_tools: Option<AllowedToolSet>,
-        fork_client: SharedApiClient,
-    ) -> Self {
+    pub(crate) fn new(allowed_tools: Option<AllowedToolSet>, fork_client: SharedApiClient) -> Self {
         Self {
             allowed_tools,
             agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools())

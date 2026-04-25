@@ -280,7 +280,10 @@ mod tests {
     use serde_json::json;
     use tokio::runtime::Builder;
 
-    use crate::config::{ConfigSource, McpServerConfig, McpSdkServerConfig, McpStdioServerConfig, ScopedMcpServerConfig};
+    use crate::config::{
+        ConfigSource, McpSdkServerConfig, McpServerConfig, McpStdioServerConfig,
+        ScopedMcpServerConfig,
+    };
     use crate::mcp::McpInitializeServerInfo;
 
     use super::{
@@ -835,7 +838,10 @@ mod tests {
             let transport = script_transport(&script_path);
             let mut process = McpStdioProcess::spawn(&transport).expect("spawn malformed server");
 
-            let error = process.read_frame().await.expect_err("missing header should fail");
+            let error = process
+                .read_frame()
+                .await
+                .expect_err("missing header should fail");
             assert_eq!(error.kind(), ErrorKind::InvalidData);
             assert_eq!(error.to_string(), "missing Content-Length header");
 
