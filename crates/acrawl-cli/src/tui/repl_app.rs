@@ -127,6 +127,27 @@ enum WorkerMsg {
     Shutdown,
 }
 
+struct InputEditorState {
+    text: String,
+    cursor: usize,
+    preferred_col: Option<usize>,
+}
+
+#[derive(Default)]
+pub(super) struct SelectionState {
+    pub(super) anchor: Option<(u16, usize)>,
+    pub(super) end: Option<(u16, usize)>,
+    pub(super) pending_copy: Option<bool>,
+    pub(super) mouse_drag_occurred: bool,
+}
+
+pub(super) struct TypewriterState {
+    chars: VecDeque<char>,
+    pub(super) live: String,
+    pub(super) live_ansi: String,
+    md_buffer: PredictiveMarkdownBuffer,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 pub(super) struct ReplTuiState {
     ui_state: AppUiState,
@@ -138,9 +159,7 @@ pub(super) struct ReplTuiState {
     pub(super) last_view_height: usize,
     pub(super) last_input_rect: Rect,
     pub(super) input_scroll_offset: usize,
-    input: String,
-    input_cursor: usize,
-    input_preferred_col: Option<usize>,
+    input: InputEditorState,
     status_line: String,
     pub(super) busy: bool,
     pending_model_after_auth: Option<String>,
@@ -158,21 +177,8 @@ pub(super) struct ReplTuiState {
     pub(super) cached_header: HeaderSnapshot,
     spinner_tick: u8,
     spinner_deadline: Instant,
-    /// Queue of plain-text chars waiting to be revealed by the typewriter.
-    typewriter_chars: VecDeque<char>,
-    /// The current line being built char-by-char (shown as live line).
-    pub(super) typewriter_live: String,
-    /// ANSI-styled version of the current line, built by the predictive markdown buffer.
-    pub(super) typewriter_live_ansi: String,
-    /// Streaming markdown state machine that produces styled ANSI as chars are revealed.
-    md_buffer: PredictiveMarkdownBuffer,
-    /// Mouse selection anchor (col screen-relative, row content-absolute).
-    pub(super) selection_anchor: Option<(u16, usize)>,
-    /// Mouse selection moving end (col screen-relative, row content-absolute).
-    pub(super) selection_end: Option<(u16, usize)>,
-    /// Set when right-click requests a copy of the current selection.
-    pub(super) pending_copy: Option<bool>,
-    mouse_drag_occurred: bool,
+    pub(super) typewriter: TypewriterState,
+    pub(super) selection: SelectionState,
     last_esc_at: Option<Instant>,
 }
 
@@ -188,9 +194,11 @@ impl ReplTuiState {
             last_view_height: 0,
             last_input_rect: Rect::default(),
             input_scroll_offset: 0,
-            input: String::new(),
-            input_cursor: 0,
-            input_preferred_col: None,
+            input: InputEditorState {
+                text: String::new(),
+                cursor: 0,
+                preferred_col: None,
+            },
             status_line: String::new(),
             busy: false,
             pending_model_after_auth: None,
@@ -207,14 +215,13 @@ impl ReplTuiState {
             cached_header: HeaderSnapshot::default(),
             spinner_tick: 0,
             spinner_deadline: Instant::now() + Duration::from_millis(120),
-            typewriter_chars: VecDeque::new(),
-            typewriter_live: String::new(),
-            typewriter_live_ansi: String::new(),
-            md_buffer: PredictiveMarkdownBuffer::new(),
-            selection_anchor: None,
-            selection_end: None,
-            pending_copy: None,
-            mouse_drag_occurred: false,
+            typewriter: TypewriterState {
+                chars: VecDeque::new(),
+                live: String::new(),
+                live_ansi: String::new(),
+                md_buffer: PredictiveMarkdownBuffer::new(),
+            },
+            selection: SelectionState::default(),
             last_esc_at: None,
         }
     }
@@ -263,37 +270,42 @@ impl ReplTuiState {
     /// Advance the typewriter: reveal `chars_per_tick` chars from the queue.
     fn tick_typewriter(&mut self, chars_per_tick: usize) {
         for _ in 0..chars_per_tick {
-            match self.typewriter_chars.pop_front() {
+            match self.typewriter.chars.pop_front() {
                 None => break,
                 Some('\n') => {
-                    self.md_buffer
-                        .feed_char('\n', &mut self.typewriter_live_ansi);
-                    let ansi = std::mem::take(&mut self.typewriter_live_ansi);
+                    self.typewriter
+                        .md_buffer
+                        .feed_char('\n', &mut self.typewriter.live_ansi);
+                    let ansi = std::mem::take(&mut self.typewriter.live_ansi);
                     for styled_line in ansi_to_lines(&ansi) {
                         self.entries.push(TranscriptEntry::Stream(styled_line));
                     }
-                    self.typewriter_live.clear();
+                    self.typewriter.live.clear();
                 }
                 Some(c) => {
-                    self.typewriter_live.push(c);
-                    self.md_buffer.feed_char(c, &mut self.typewriter_live_ansi);
+                    self.typewriter.live.push(c);
+                    self.typewriter
+                        .md_buffer
+                        .feed_char(c, &mut self.typewriter.live_ansi);
                 }
             }
         }
     }
 
     fn flush_typewriter(&mut self) {
-        if !self.typewriter_chars.is_empty() {
-            let count = self.typewriter_chars.len();
+        if !self.typewriter.chars.is_empty() {
+            let count = self.typewriter.chars.len();
             self.tick_typewriter(count);
         }
-        if !self.typewriter_live.is_empty() {
-            self.md_buffer.flush(&mut self.typewriter_live_ansi);
-            let ansi = std::mem::take(&mut self.typewriter_live_ansi);
+        if !self.typewriter.live.is_empty() {
+            self.typewriter
+                .md_buffer
+                .flush(&mut self.typewriter.live_ansi);
+            let ansi = std::mem::take(&mut self.typewriter.live_ansi);
             for styled_line in ansi_to_lines(&ansi) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
-            self.typewriter_live.clear();
+            self.typewriter.live.clear();
         }
     }
 
@@ -303,60 +315,61 @@ impl ReplTuiState {
     }
 
     fn input_char_len(&self) -> usize {
-        self.input.chars().count()
+        self.input.text.chars().count()
     }
 
     fn input_char_to_byte(&self, char_idx: usize) -> usize {
         self.input
+            .text
             .char_indices()
             .nth(char_idx)
-            .map_or(self.input.len(), |(idx, _)| idx)
+            .map_or(self.input.text.len(), |(idx, _)| idx)
     }
 
     fn clamp_input_cursor(&mut self) {
-        self.input_cursor = self.input_cursor.min(self.input_char_len());
+        self.input.cursor = self.input.cursor.min(self.input_char_len());
     }
 
     fn insert_input_char(&mut self, ch: char) {
         self.clamp_input_cursor();
-        let idx = self.input_char_to_byte(self.input_cursor);
-        self.input.insert(idx, ch);
-        self.input_cursor = self.input_cursor.saturating_add(1);
-        self.input_preferred_col = None;
+        let idx = self.input_char_to_byte(self.input.cursor);
+        self.input.text.insert(idx, ch);
+        self.input.cursor = self.input.cursor.saturating_add(1);
+        self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn backspace_input_char(&mut self) {
         self.clamp_input_cursor();
-        if self.input_cursor == 0 {
+        if self.input.cursor == 0 {
             return;
         }
-        let prev = self.input_cursor - 1;
+        let prev = self.input.cursor - 1;
         let start = self.input_char_to_byte(prev);
         let end = self.input_char_to_byte(prev + 1);
-        self.input.replace_range(start..end, "");
-        self.input_cursor -= 1;
-        self.input_preferred_col = None;
+        self.input.text.replace_range(start..end, "");
+        self.input.cursor -= 1;
+        self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn delete_input_char(&mut self) {
         self.clamp_input_cursor();
-        if self.input_cursor >= self.input_char_len() {
+        if self.input.cursor >= self.input_char_len() {
             return;
         }
-        let start = self.input_char_to_byte(self.input_cursor);
-        let end = self.input_char_to_byte(self.input_cursor + 1);
-        self.input.replace_range(start..end, "");
-        self.input_preferred_col = None;
+        let start = self.input_char_to_byte(self.input.cursor);
+        let end = self.input_char_to_byte(self.input.cursor + 1);
+        self.input.text.replace_range(start..end, "");
+        self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn input_cursor_line_col(&self) -> (usize, usize) {
         let mut line = 0usize;
         let mut col = 0usize;
-        for (idx, ch) in self.input.chars().enumerate() {
-            if idx == self.input_cursor {
+        for (idx, ch) in self.input.text.chars().enumerate() {
+            if idx == self.input.cursor {
                 break;
             }
             if ch == '\n' {
@@ -370,7 +383,7 @@ impl ReplTuiState {
     }
 
     fn input_lines(&self) -> Vec<&str> {
-        self.input.split('\n').collect()
+        self.input.text.split('\n').collect()
     }
 
     fn set_input_cursor_line_col(&mut self, target_line: usize, target_col: usize) {
@@ -382,26 +395,26 @@ impl ReplTuiState {
             cursor += input_line.chars().count() + 1;
         }
         cursor += col;
-        self.input_cursor = cursor.min(self.input_char_len());
+        self.input.cursor = cursor.min(self.input_char_len());
         self.input_scroll_offset = usize::MAX;
     }
 
     fn move_input_cursor_left(&mut self) {
-        self.input_cursor = self.input_cursor.saturating_sub(1);
-        self.input_preferred_col = None;
+        self.input.cursor = self.input.cursor.saturating_sub(1);
+        self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn move_input_cursor_right(&mut self) {
-        self.input_cursor = (self.input_cursor + 1).min(self.input_char_len());
-        self.input_preferred_col = None;
+        self.input.cursor = (self.input.cursor + 1).min(self.input_char_len());
+        self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn move_input_cursor_home(&mut self) {
         let (line, _) = self.input_cursor_line_col();
         self.set_input_cursor_line_col(line, 0);
-        self.input_preferred_col = Some(0);
+        self.input.preferred_col = Some(0);
     }
 
     fn move_input_cursor_end(&mut self) {
@@ -411,19 +424,19 @@ impl ReplTuiState {
             .get(line)
             .map_or(0, |input_line| text_display_width(input_line));
         self.set_input_cursor_line_col(line, target);
-        self.input_preferred_col = Some(target);
+        self.input.preferred_col = Some(target);
     }
 
     fn move_input_cursor_up(&mut self) {
         let (line, col) = self.input_cursor_line_col();
         if line == 0 {
             self.set_input_cursor_line_col(0, 0);
-            self.input_preferred_col = Some(0);
+            self.input.preferred_col = Some(0);
             return;
         }
-        let target_col = self.input_preferred_col.unwrap_or(col);
+        let target_col = self.input.preferred_col.unwrap_or(col);
         self.set_input_cursor_line_col(line - 1, target_col);
-        self.input_preferred_col = Some(target_col);
+        self.input.preferred_col = Some(target_col);
     }
 
     fn move_input_cursor_down(&mut self) {
@@ -435,26 +448,28 @@ impl ReplTuiState {
         let (line, col) = self.input_cursor_line_col();
         if line + 1 >= line_widths.len() {
             self.set_input_cursor_line_col(line, line_widths[line]);
-            self.input_preferred_col = Some(line_widths[line]);
+            self.input.preferred_col = Some(line_widths[line]);
             return;
         }
-        let target_col = self.input_preferred_col.unwrap_or(col);
+        let target_col = self.input.preferred_col.unwrap_or(col);
         self.set_input_cursor_line_col(line + 1, target_col);
-        self.input_preferred_col = Some(target_col);
+        self.input.preferred_col = Some(target_col);
     }
 
     fn handle_tool_call_start(&mut self, name: String, input: &str) {
-        if !self.typewriter_chars.is_empty() {
-            let count = self.typewriter_chars.len();
+        if !self.typewriter.chars.is_empty() {
+            let count = self.typewriter.chars.len();
             self.tick_typewriter(count);
         }
-        if !self.typewriter_live.is_empty() {
-            self.md_buffer.flush(&mut self.typewriter_live_ansi);
-            let ansi = std::mem::take(&mut self.typewriter_live_ansi);
+        if !self.typewriter.live.is_empty() {
+            self.typewriter
+                .md_buffer
+                .flush(&mut self.typewriter.live_ansi);
+            let ansi = std::mem::take(&mut self.typewriter.live_ansi);
             for styled_line in ansi_to_lines(&ansi) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
-            self.typewriter_live.clear();
+            self.typewriter.live.clear();
         }
         let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
@@ -501,11 +516,11 @@ impl ReplTuiState {
         model_label: &str,
     ) -> (u16, Vec<Line<'static>>, usize, Option<(u16, u16)>) {
         self.clamp_input_cursor();
-        let is_placeholder = self.input.is_empty();
+        let is_placeholder = self.input.text.is_empty();
         let placeholder_text = self.input_placeholder();
-        let mut input_with_caret = self.input.clone();
+        let mut input_with_caret = self.input.text.clone();
         if !is_placeholder {
-            let caret_idx = self.input_char_to_byte(self.input_cursor);
+            let caret_idx = self.input_char_to_byte(self.input.cursor);
             input_with_caret.insert(caret_idx, INPUT_CARET_MARKER);
         }
         let source = if is_placeholder {
@@ -719,7 +734,7 @@ impl ReplTuiState {
     }
 
     fn refresh_slash_overlay(&mut self) {
-        let trimmed = self.input.trim();
+        let trimmed = self.input.text.trim();
         if !trimmed.starts_with('/') || trimmed.contains(char::is_whitespace) {
             self.slash_overlay = None;
             self.last_slash_overlay_rect = None;
@@ -814,7 +829,7 @@ impl ReplTuiState {
                 ReplTuiEvent::StreamAnsi(s) => {
                     // Enqueue raw chars for typewriter reveal.
                     for c in s.chars() {
-                        self.typewriter_chars.push_back(c);
+                self.typewriter.chars.push_back(c);
                     }
                 }
                 ReplTuiEvent::TurnStarting => {
@@ -1489,8 +1504,8 @@ fn run_loop(
             modal.process_loading();
         }
 
-        if !state.typewriter_chars.is_empty() {
-            let q_len = state.typewriter_chars.len();
+        if !state.typewriter.chars.is_empty() {
+            let q_len = state.typewriter.chars.len();
             let count = if q_len > 100 {
                 8
             } else if q_len > 30 {
@@ -1502,7 +1517,7 @@ fn run_loop(
         }
 
         // Shorter poll when typewriter has pending chars so reveal feels smooth
-        let poll_ms = if state.typewriter_chars.is_empty() {
+        let poll_ms = if state.typewriter.chars.is_empty() {
             50
         } else {
             16
@@ -1568,9 +1583,9 @@ fn run_loop(
                         MouseEventKind::Down(MouseButton::Left) => {
                             let col = me.column.saturating_sub(tr.x);
                             let row = cur + usize::from(me.row.saturating_sub(tr.y));
-                            state.selection_anchor = Some((col, row));
-                            state.selection_end = Some((col, row));
-                            state.mouse_drag_occurred = false;
+                            state.selection.anchor = Some((col, row));
+                            state.selection.end = Some((col, row));
+                            state.selection.mouse_drag_occurred = false;
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
                             let col = me
@@ -1581,11 +1596,11 @@ fn run_loop(
                                 + usize::from(
                                     me.row.saturating_sub(tr.y).min(tr.height.saturating_sub(1)),
                                 );
-                            state.selection_end = Some((col, row));
-                            state.mouse_drag_occurred = true;
+                            state.selection.end = Some((col, row));
+                            state.selection.mouse_drag_occurred = true;
                         }
                         MouseEventKind::Up(MouseButton::Left) => {
-                            if state.mouse_drag_occurred {
+                            if state.selection.mouse_drag_occurred {
                                 let col = me
                                     .column
                                     .saturating_sub(tr.x)
@@ -1596,22 +1611,22 @@ fn run_loop(
                                             .saturating_sub(tr.y)
                                             .min(tr.height.saturating_sub(1)),
                                     );
-                                state.selection_end = Some((col, row));
+                                state.selection.end = Some((col, row));
                             } else {
-                                state.selection_anchor = None;
-                                state.selection_end = None;
+                                state.selection.anchor = None;
+                                state.selection.end = None;
                             }
                         }
                         MouseEventKind::Down(MouseButton::Right)
-                            if state.selection_anchor.is_some() =>
+                            if state.selection.anchor.is_some() =>
                         {
-                            state.pending_copy = Some(true);
+                            state.selection.pending_copy = Some(true);
                         }
                         _ => {}
                     }
                 } else if in_input || state.ui_state == AppUiState::WelcomeMode {
-                    state.selection_anchor = None;
-                    state.selection_end = None;
+                    state.selection.anchor = None;
+                    state.selection.end = None;
                     match me.kind {
                         MouseEventKind::ScrollUp => {
                             state.input_scroll_offset = state.input_scroll_offset.saturating_sub(1);
@@ -1625,8 +1640,8 @@ fn run_loop(
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
-                    state.selection_anchor = None;
-                    state.selection_end = None;
+                    state.selection.anchor = None;
+                    state.selection.end = None;
                 }
 
                 let mut modal_action = None;
@@ -1791,7 +1806,7 @@ fn run_loop(
                     if state.busy {
                         continue;
                     }
-                    if state.input.is_empty() {
+                    if state.input.text.is_empty() {
                         state.exit = true;
                         state.persist_on_exit = true;
                     }
@@ -1829,13 +1844,13 @@ fn run_loop(
                             continue;
                         }
                         if state.slash_overlay.is_some() {
-                            let trimmed = state.input.trim().to_string();
+                            let trimmed = state.input.text.trim().to_string();
                             if let Some(selected) = state.selected_slash_command() {
                                 if selected != trimmed {
-                                    state.input = selected;
-                                    state.input.push(' ');
-                                    state.input_cursor = state.input.chars().count();
-                                    state.input_preferred_col = None;
+                                    state.input.text = selected;
+                                    state.input.text.push(' ');
+                                    state.input.cursor = state.input.text.chars().count();
+                                    state.input.preferred_col = None;
                                     state.input_scroll_offset = usize::MAX;
                                     state.wake_input_caret();
                                     state.refresh_slash_overlay();
@@ -1844,9 +1859,9 @@ fn run_loop(
                             }
                         }
 
-                        let line = std::mem::take(&mut state.input);
-                        state.input_cursor = 0;
-                        state.input_preferred_col = None;
+                        let line = std::mem::take(&mut state.input.text);
+                        state.input.cursor = 0;
+                        state.input.preferred_col = None;
                         state.input_scroll_offset = 0;
                         let trimmed = line.trim().to_string();
                         state.refresh_slash_overlay();
@@ -1915,29 +1930,29 @@ fn run_loop(
                         state.wake_input_caret();
                     }
                     KeyCode::Tab => {
-                        if state.busy || !state.input.trim_start().starts_with('/') {
+                        if state.busy || !state.input.text.trim_start().starts_with('/') {
                             continue;
                         }
                         if let Some(selected) = state.selected_slash_command() {
-                            state.input = selected;
-                            state.input.push(' ');
-                            state.input_cursor = state.input.chars().count();
-                            state.input_preferred_col = None;
+                            state.input.text = selected;
+                            state.input.text.push(' ');
+                            state.input.cursor = state.input.text.chars().count();
+                            state.input.preferred_col = None;
                             state.input_scroll_offset = usize::MAX;
                             state.wake_input_caret();
                             state.refresh_slash_overlay();
                         } else {
-                            let prefix = state.input.to_ascii_lowercase();
+                            let prefix = state.input.text.to_ascii_lowercase();
                             let candidates = slash_command_completion_candidates();
                             let matches: Vec<_> = candidates
                                 .into_iter()
                                 .filter(|candidate| candidate.starts_with(&prefix))
                                 .collect();
                             if matches.len() == 1 {
-                                state.input.clone_from(&matches[0]);
-                                state.input.push(' ');
-                                state.input_cursor = state.input.chars().count();
-                                state.input_preferred_col = None;
+                                state.input.text.clone_from(&matches[0]);
+                                state.input.text.push(' ');
+                                state.input.cursor = state.input.text.chars().count();
+                                state.input.preferred_col = None;
                                 state.input_scroll_offset = usize::MAX;
                                 state.wake_input_caret();
                                 state.refresh_slash_overlay();
@@ -2311,21 +2326,21 @@ mod tests {
     #[test]
     fn input_cursor_uses_display_width_for_wide_chars() {
         let mut state = ReplTuiState::new();
-        state.input = "a中\nbc".to_string();
-        state.input_cursor = 2;
+        state.input.text = "a中\nbc".to_string();
+        state.input.cursor = 2;
 
         assert_eq!(state.input_cursor_line_col(), (0, 3));
 
         state.move_input_cursor_down();
         assert_eq!(state.input_cursor_line_col(), (1, 2));
-        assert_eq!(state.input_cursor, 5);
+        assert_eq!(state.input.cursor, 5);
     }
 
     #[test]
     fn calculate_input_dimensions_places_cursor_after_wide_char() {
         let mut state = ReplTuiState::new();
-        state.input = "中a".to_string();
-        state.input_cursor = 1;
+        state.input.text = "中a".to_string();
+        state.input.cursor = 1;
 
         let (_, _, _, cursor_pos) = state.calculate_input_dimensions(20, "model");
         let prompt_width = u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX);
@@ -2339,7 +2354,7 @@ mod tests {
         let mut state = ReplTuiState::new();
 
         for c in "hello\n".chars() {
-            state.typewriter_chars.push_back(c);
+            state.typewriter.chars.push_back(c);
         }
 
         tx.send(ReplTuiEvent::ToolCallStart {

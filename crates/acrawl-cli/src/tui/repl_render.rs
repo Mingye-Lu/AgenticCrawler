@@ -1162,10 +1162,10 @@ pub(super) fn draw_chat(
     let main_inner = main_block.inner(main_area);
     frame.render_widget(main_block, main_area);
 
-    let live_line = if state.typewriter_live.is_empty() {
+    let live_line = if state.typewriter.live.is_empty() {
         None
     } else {
-        Some(state.typewriter_live_ansi.as_str())
+        Some(state.typewriter.live_ansi.as_str())
     };
     let (wrapped, wrapped_text) = build_wrapped_list(
         &state.entries,
@@ -1186,7 +1186,7 @@ pub(super) fn draw_chat(
         .scroll_padding(2);
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
 
-    if let (Some(anchor), Some(end)) = (state.selection_anchor, state.selection_end) {
+    if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {
         let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
             (anchor, end)
         } else {
@@ -1218,7 +1218,7 @@ pub(super) fn draw_chat(
             }
         }
 
-        if state.pending_copy.take().is_some() {
+        if state.selection.pending_copy.take().is_some() {
             let text = (s_start.1..=s_end.1)
                 .filter_map(|row| wrapped_text.get(row).map(|line| (row, line)))
                 .map(|(row, line)| {
@@ -1244,8 +1244,8 @@ pub(super) fn draw_chat(
             if !text.trim().is_empty() {
                 copy_osc52(&text);
             }
-            state.selection_anchor = None;
-            state.selection_end = None;
+            state.selection.anchor = None;
+            state.selection.end = None;
         }
     }
 
