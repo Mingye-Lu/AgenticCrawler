@@ -168,7 +168,7 @@ impl ApiClient for LlmRuntimeClient {
     }
 }
 
-pub(crate) fn push_output_block(
+pub(super) fn push_output_block(
     block: OutputContentBlock,
     events: &mut Vec<AssistantEvent>,
     pending_tool: &mut Option<(String, String, String)>,
@@ -194,7 +194,7 @@ pub(crate) fn push_output_block(
     }
 }
 
-pub(crate) fn response_to_events(response: MessageResponse) -> Vec<AssistantEvent> {
+pub(super) fn response_to_events(response: MessageResponse) -> Vec<AssistantEvent> {
     let mut events = Vec::new();
     let mut pending_tool = None;
     for block in response.content {
@@ -213,7 +213,7 @@ pub(crate) fn response_to_events(response: MessageResponse) -> Vec<AssistantEven
     events
 }
 
-pub(crate) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMessage> {
+pub(super) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMessage> {
     messages
         .iter()
         .filter_map(|message| {
