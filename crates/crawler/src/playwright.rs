@@ -305,15 +305,15 @@ async function bootstrap() {
       try {
         const fs = require('node:fs');
         const nodePath = require('node:path');
-        const resp = await page.evaluate(async (url) => {
-          const r = await fetch(url);
-          const buf = await r.arrayBuffer();
-          return Array.from(new Uint8Array(buf));
-        }, command.url);
+        const response = await context.request.get(command.url, { timeout: 30000 });
+        if (!response.ok()) {
+          throw new Error(`HTTP ${response.status()} ${response.statusText()} for ${command.url}`);
+        }
+        const body = await response.body();
         const dir = nodePath.dirname(command.path);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(command.path, Buffer.from(resp));
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { path: command.path } }) + '\n');
+        fs.writeFileSync(command.path, body);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { path: command.path, size_bytes: body.length } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'save_file_failed', message: String(error) } }) + '\n');
       }
