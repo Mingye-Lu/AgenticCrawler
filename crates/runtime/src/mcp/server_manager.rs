@@ -10,9 +10,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::{timeout, Duration};
 
 use crate::config::{McpTransport, RuntimeConfig, ScopedMcpServerConfig};
-use crate::mcp::mcp_tool_name;
-use crate::mcp_client::{McpClientBootstrap, McpClientTransport, McpStdioTransport};
-use crate::mcp_types::{
+use super::naming::mcp_tool_name;
+use super::client::{McpClientBootstrap, McpClientTransport, McpStdioTransport};
+use super::types::{
     JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ManagedMcpTool,
     McpInitializeClientInfo, McpInitializeParams, McpInitializeResult, McpListResourcesParams,
     McpListResourcesResult, McpListToolsParams, McpListToolsResult, McpReadResourceParams,
@@ -615,8 +615,8 @@ mod tests {
         ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
         McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
     };
-    use crate::mcp::mcp_tool_name;
-    use crate::mcp_client::McpClientBootstrap;
+    use crate::mcp::naming::mcp_tool_name;
+    use crate::mcp::client::McpClientBootstrap;
 
     use super::{
         spawn_mcp_stdio_process, JsonRpcId, JsonRpcRequest, JsonRpcResponse,
@@ -932,8 +932,8 @@ mod tests {
         McpClientBootstrap::from_scoped_config("stdio server", &config)
     }
 
-    fn script_transport(script_path: &Path) -> crate::mcp_client::McpStdioTransport {
-        crate::mcp_client::McpStdioTransport {
+    fn script_transport(script_path: &Path) -> crate::mcp::client::McpStdioTransport {
+        crate::mcp::client::McpStdioTransport {
             command: "python3".to_string(),
             args: vec![script_path.to_string_lossy().into_owned()],
             env: BTreeMap::new(),
@@ -1097,7 +1097,7 @@ mod tests {
             .expect("runtime");
         runtime.block_on(async {
             let script_path = write_echo_script();
-            let transport = crate::mcp_client::McpStdioTransport {
+            let transport = crate::mcp::client::McpStdioTransport {
                 command: "/bin/sh".to_string(),
                 args: vec![script_path.to_string_lossy().into_owned()],
                 env: BTreeMap::from([("MCP_TEST_TOKEN".to_string(), "direct-secret".to_string())]),
