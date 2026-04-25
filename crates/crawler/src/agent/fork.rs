@@ -388,4 +388,92 @@ mod tests {
         assert!(agent.crawl_state.done);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
     }
+
+    #[tokio::test]
+    async fn test_wait_filters_by_specific_child_ids() {
+        let manager = super::super::default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle1: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"from": "child-1"})]) });
+        let handle2: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"from": "child-2"})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal-1".to_string(), handle1));
+        agent
+            .child_tasks
+            .insert("child-2".to_string(), ("goal-2".to_string(), handle2));
+
+        let result = agent
+            .handle_wait_effect(WaitSpec {
+                child_ids: Some(vec!["child-1".to_string()]),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.contains("Waited for 1 subagent(s)"));
+        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(agent.crawl_state.child_blocks[0].child_id, "child-1");
+        assert!(agent.child_tasks.contains_key("child-2"));
+        for (_, (_, handle)) in agent.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wait_with_nonexistent_ids_returns_no_active() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"data": 1})]) });
+        agent
+            .child_tasks
+            .insert("real-child".to_string(), ("goal".to_string(), handle));
+
+        let result = agent
+            .handle_wait_effect(WaitSpec {
+                child_ids: Some(vec!["nonexistent".to_string()]),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result, "No active subagents");
+        assert!(agent.child_tasks.contains_key("real-child"));
+        for (_, (_, handle)) in agent.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wait_collects_from_multiple_children() {
+        let manager = super::super::default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle1: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"a": 1})]) });
+        let handle2: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
+            Some(vec![
+                serde_json::json!({"b": 2}),
+                serde_json::json!({"c": 3}),
+            ])
+        });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal-1".to_string(), handle1));
+        agent
+            .child_tasks
+            .insert("child-2".to_string(), ("goal-2".to_string(), handle2));
+
+        let result = agent
+            .handle_wait_effect(WaitSpec { child_ids: None })
+            .await
+            .unwrap();
+
+        assert!(result.contains("Waited for 2 subagent(s)"));
+        assert!(result.contains("Collected 3 item(s)"));
+        assert_eq!(agent.crawl_state.child_blocks.len(), 2);
+        assert!(agent.child_tasks.is_empty());
+    }
 }

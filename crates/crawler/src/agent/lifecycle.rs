@@ -126,4 +126,48 @@ mod tests {
         let second_bridge = agent.shared_bridge.clone().expect("bridge should be recreated");
         assert!(!Arc::ptr_eq(&first_bridge, &second_bridge));
     }
+
+    #[tokio::test]
+    async fn test_ensure_browser_creates_bridge_from_scratch() {
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new());
+        assert!(agent.shared_bridge.is_none());
+        assert!(agent.browser.is_none());
+
+        agent
+            .ensure_browser()
+            .await
+            .expect("should create browser from scratch");
+
+        assert!(agent.shared_bridge.is_some());
+        assert!(agent.browser.is_some());
+        let browser = agent.browser.as_ref().unwrap();
+        assert_eq!(browser.page_index(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_double_reset_is_idempotent() {
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new());
+        agent.shared_bridge = Some(test_bridge().await);
+        agent
+            .ensure_browser()
+            .await
+            .expect("initial ensure should succeed");
+
+        agent.reset_browser();
+        agent.reset_browser();
+
+        assert!(agent.browser.is_none());
+        assert!(agent.shared_bridge.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_browser_session_initialize_reuses_bridge() {
+        let shared_bridge = test_bridge().await;
+        let session = BrowserSession::initialize(Some(shared_bridge.clone()))
+            .await
+            .expect("should initialize with existing bridge");
+
+        assert!(Arc::ptr_eq(&session.shared_bridge, &shared_bridge));
+        assert_eq!(session.browser.page_index(), 0);
+    }
 }
