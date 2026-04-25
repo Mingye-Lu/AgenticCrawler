@@ -1,27 +1,53 @@
+mod api_client;
+mod model_support;
+mod runtime_builder;
+mod tool_executor;
+
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc;
 
 use crate::error::CliError;
-use crate::render::{MarkdownStreamState, Spinner, TerminalRenderer};
-use api::{
-    provider::{ProviderClient, ProviderRegistry},
-    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
-    OutputContentBlock, StreamEvent as ApiStreamEvent, ToolChoice, ToolDefinition,
-    ToolResultContentBlock,
+use crate::format::{
+    format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
+    format_model_switch_report, format_resume_report, format_status_report, render_config_report,
+    render_export_text, render_last_tool_debug_report, render_repl_help, render_version_report,
+    resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
+use crate::input;
+use crate::render::{Spinner, TerminalRenderer};
+use crate::session_mgr::{
+    create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
+};
+use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
-use crawler::{mvp_tool_specs, CrawlerAgent, SharedApiClient, ToolRegistry};
+use crawler::mvp_tool_specs;
 use runtime::{
-    load_settings, load_system_prompt, settings_get_max_steps, ApiClient, ApiRequest,
-    AssistantEvent, CompactionConfig, ConfigLoader, ConversationMessage, ConversationRuntime,
-    MessageRole, RuntimeError, Session, TokenUsage, ToolError, ToolExecutor,
+    CompactionConfig, ConversationRuntime, RuntimeError, Session, TokenUsage,
 };
 use serde_json::json;
+
+#[cfg(test)]
+use api::provider::ProviderRegistry;
+
+#[cfg(test)]
+use self::api_client::{convert_messages, push_output_block, response_to_events};
+use self::api_client::LlmRuntimeClient;
+use self::model_support::{model_reasoning_efforts, model_supports_reasoning};
+use self::runtime_builder::{build_runtime, build_system_prompt};
+use self::tool_executor::CliToolExecutor;
+
+pub(crate) use crate::auth::{
+    bind_oauth_listener, default_oauth_config, open_browser, parse_provider_arg, run_auth_cli,
+    run_login, run_logout, wait_for_oauth_callback_cancellable,
+};
+use crate::auth::{
+    interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
+};
 
 fn block_on_runtime_future<F, T>(future: F) -> Result<T, RuntimeError>
 where
@@ -32,30 +58,6 @@ where
         .ok_or_else(|| RuntimeError::new("tokio runtime not initialized"))?
         .block_on(future)
 }
-
-use crate::format::{
-    format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
-    format_model_switch_report, format_resume_report, format_status_report, render_config_report,
-    render_export_text, render_last_tool_debug_report, render_repl_help, render_version_report,
-    resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
-};
-use crate::input;
-use crate::session_mgr::{
-    create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
-};
-use crate::tui::tool_panel::{format_tool_call_start, format_tool_result};
-use crate::tui::ReplTuiEvent;
-
-#[path = "auth/mod.rs"]
-mod auth;
-
-pub(crate) use self::auth::{
-    bind_oauth_listener, default_oauth_config, open_browser, parse_provider_arg, run_auth_cli,
-    run_login, run_logout, wait_for_oauth_callback_cancellable,
-};
-use self::auth::{
-    interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
-};
 
 pub(crate) type AllowedToolSet = BTreeSet<String>;
 
@@ -664,11 +666,10 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn config_report(
-        section: Option<&str>,
-    ) -> Result<String, CliError> {
+    pub(crate) fn config_report(section: Option<&str>) -> Result<String, CliError> {
         Ok(render_config_report(section)?)
     }
+
     pub(crate) fn version_report() -> String {
         render_version_report()
     }
@@ -778,9 +779,7 @@ impl LiveCli {
         Ok(())
     }
 
-    pub(crate) fn compact_command(
-        &mut self,
-    ) -> Result<CommandUiResult, CliError> {
+    pub(crate) fn compact_command(&mut self) -> Result<CommandUiResult, CliError> {
         let result = self.runtime.compact(CompactionConfig::default());
         let removed = result.removed_message_count;
         let kept = result.compacted_session.messages.len();
@@ -895,7 +894,14 @@ pub(crate) fn run_resume_command(
         SlashCommand::Export { path } => {
             let export_path = resolve_export_path(path.as_deref(), session)?;
             fs::write(&export_path, render_export_text(session))?;
-            Ok(ResumeCommandOutcome { session: session.clone(), message: Some(format!("Export\n  Result           wrote transcript\n  File             {}\n  Messages         {}", export_path.display(), session.messages.len())) })
+            Ok(ResumeCommandOutcome {
+                session: session.clone(),
+                message: Some(format!(
+                    "Export\n  Result           wrote transcript\n  File             {}\n  Messages         {}",
+                    export_path.display(),
+                    session.messages.len()
+                )),
+            })
         }
         SlashCommand::Debug
         | SlashCommand::Resume { .. }
@@ -905,329 +911,6 @@ pub(crate) fn run_resume_command(
         | SlashCommand::Headed
         | SlashCommand::Headless
         | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),
-    }
-}
-
-fn model_supports_reasoning(model: &str) -> bool {
-    let api_model = api::provider::model_api_id(model);
-    let store = api::load_credentials().unwrap_or_default();
-    let registry = ProviderRegistry::from_credentials(&store);
-    if let Some(info) = registry.resolve_model(api_model) {
-        return info.capabilities.reasoning;
-    }
-    models_dev_reasoning_cache()
-        .get(api_model)
-        .copied()
-        .unwrap_or(false)
-}
-
-fn model_reasoning_efforts(model: &str) -> Vec<api::ReasoningEffort> {
-    let api_model = api::provider::model_api_id(model);
-    let store = api::load_credentials().unwrap_or_default();
-    let registry = ProviderRegistry::from_credentials(&store);
-    if let Some(info) = registry.resolve_model(api_model) {
-        return info.capabilities.reasoning_efforts.clone();
-    }
-    if model_supports_reasoning(model) {
-        api::ReasoningEffort::OPENAI.to_vec()
-    } else {
-        vec![]
-    }
-}
-
-fn models_dev_reasoning_cache() -> &'static std::collections::HashMap<String, bool> {
-    use std::collections::HashMap;
-    use std::sync::OnceLock;
-
-    static CACHE: OnceLock<HashMap<String, bool>> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        if let Some(rt) = crate::TOKIO_RUNTIME.get() {
-            rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
-                .ok()
-        } else {
-            tokio::runtime::Runtime::new().ok().and_then(|rt| {
-                rt.block_on(api::provider::catalog::fetch_models_dev_reasoning())
-                    .ok()
-            })
-        }
-        .unwrap_or_default()
-    })
-}
-
-fn build_system_prompt() -> Result<Vec<String>, CliError> {
-    let mut sections = crawler::build_system_prompt(&mvp_tool_specs());
-    sections.extend(load_system_prompt(
-        env::current_dir()?,
-        DEFAULT_DATE,
-        env::consts::OS,
-        "unknown",
-    )?);
-    Ok(sections)
-}
-
-fn build_runtime_feature_config(
-) -> Result<runtime::RuntimeFeatureConfig, CliError> {
-    let cwd = env::current_dir()?;
-    Ok(ConfigLoader::default_for(cwd)
-        .load()?
-        .feature_config()
-        .clone())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_runtime(
-    mut session: Session,
-    model: String,
-    system_prompt: Vec<String>,
-    enable_tools: bool,
-    emit_output: bool,
-    allowed_tools: Option<AllowedToolSet>,
-    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, CliError> {
-    session.model = Some(model.clone());
-    let max_steps = settings_get_max_steps(&load_settings()) as usize;
-    let fork_client = SharedApiClient::new(LlmRuntimeClient::new(
-        model.clone(),
-        enable_tools,
-        false,
-        allowed_tools.clone(),
-        None,
-    ));
-    Ok(ConversationRuntime::new_with_features(
-        session,
-        LlmRuntimeClient::new(
-            model,
-            enable_tools,
-            emit_output,
-            allowed_tools.clone(),
-            ui_tx.clone(),
-        ),
-        CliToolExecutor::new(allowed_tools, emit_output, ui_tx, fork_client),
-        system_prompt,
-        &build_runtime_feature_config()?,
-    )
-    .with_max_iterations(max_steps))
-}
-
-pub(crate) struct LlmRuntimeClient {
-    registry: ProviderRegistry,
-    provider: ProviderClient,
-    model: String,
-    enable_tools: bool,
-    emit_output: bool,
-    allowed_tools: Option<AllowedToolSet>,
-    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-    reasoning_effort: Option<api::ReasoningEffort>,
-}
-
-impl LlmRuntimeClient {
-    fn new(
-        model: String,
-        enable_tools: bool,
-        emit_output: bool,
-        allowed_tools: Option<AllowedToolSet>,
-        ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-    ) -> Self {
-        let store = api::load_credentials().unwrap_or_default();
-        let registry = ProviderRegistry::from_credentials(&store);
-        let provider = if model.is_empty() {
-            ProviderClient::no_auth_placeholder()
-        } else {
-            match registry.build_client(&model, &store) {
-                Ok(client) => client,
-                Err(e) => {
-                    eprintln!("Warning: {e}");
-                    ProviderClient::no_auth_placeholder()
-                }
-            }
-        };
-        Self {
-            registry,
-            provider,
-            model,
-            enable_tools,
-            emit_output,
-            allowed_tools,
-            ui_tx,
-            reasoning_effort: None,
-        }
-    }
-
-    fn send_ui_stream(&self, chunk: impl Into<String>) {
-        if let Some(tx) = &self.ui_tx {
-            let _ = tx.send(ReplTuiEvent::StreamAnsi(chunk.into()));
-        }
-    }
-}
-
-impl ApiClient for LlmRuntimeClient {
-    #[allow(clippy::too_many_lines)]
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-        let message_request = MessageRequest {
-            model: api::provider::model_api_id(&self.model).to_string(),
-            max_tokens: self.registry.max_tokens(&self.model),
-            messages: convert_messages(&request.messages),
-            system: (!request.system_prompt.is_empty()).then(|| request.system_prompt.join("\n\n")),
-            tools: self.enable_tools.then(|| {
-                filter_tool_specs(self.allowed_tools.as_ref())
-                    .into_iter()
-                    .map(|spec| ToolDefinition {
-                        name: spec.name.to_string(),
-                        description: Some(spec.description.to_string()),
-                        input_schema: spec.input_schema,
-                    })
-                    .collect()
-            }),
-            tool_choice: self.enable_tools.then_some(ToolChoice::Auto),
-            stream: true,
-            reasoning_effort: self.reasoning_effort,
-        };
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut stdout = io::stdout();
-                let mut sink = io::sink();
-                let out: &mut dyn Write = if self.emit_output {
-                    &mut stdout
-                } else {
-                    &mut sink
-                };
-                let renderer = TerminalRenderer::new();
-                let mut markdown_stream = MarkdownStreamState::default();
-                let mut events = Vec::new();
-                let mut pending_tool: Option<(String, String, String)> = None;
-                let mut saw_stop = false;
-
-                let mut stream = self
-                    .provider
-                    .stream_message(&message_request)
-                    .await
-                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-
-                while let Some(event) = stream
-                    .next_event()
-                    .await
-                    .map_err(|error| RuntimeError::new(error.to_string()))?
-                {
-                    match event {
-                        ApiStreamEvent::MessageStart(start) => {
-                            for block in start.message.content {
-                                push_output_block(
-                                    block,
-                                    out,
-                                    &mut events,
-                                    &mut pending_tool,
-                                    true,
-                                    self.ui_tx.as_ref(),
-                                )?;
-                            }
-                        }
-                        ApiStreamEvent::ContentBlockStart(start) => {
-                            push_output_block(
-                                start.content_block,
-                                out,
-                                &mut events,
-                                &mut pending_tool,
-                                true,
-                                self.ui_tx.as_ref(),
-                            )?;
-                        }
-                        ApiStreamEvent::ContentBlockDelta(delta) => match delta.delta {
-                            ContentBlockDelta::TextDelta { text } => {
-                                if !text.is_empty() {
-                                    // Send raw delta to TUI immediately for zero-lag typewriter
-                                    self.send_ui_stream(&text);
-
-                                    if let Some(rendered) = markdown_stream.push(&renderer, &text) {
-                                        write!(out, "{rendered}")
-                                            .and_then(|()| out.flush())
-                                            .map_err(|error| {
-                                                RuntimeError::new(error.to_string())
-                                            })?;
-                                    }
-                                    events.push(AssistantEvent::TextDelta(text));
-                                }
-                            }
-                            ContentBlockDelta::InputJsonDelta { partial_json } => {
-                                if let Some((_, _, input)) = &mut pending_tool {
-                                    input.push_str(&partial_json);
-                                }
-                            }
-                        },
-                        ApiStreamEvent::ContentBlockStop(_) => {
-                            if let Some(rendered) = markdown_stream.flush(&renderer) {
-                                write!(out, "{rendered}")
-                                    .and_then(|()| out.flush())
-                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            }
-                            if let Some((id, name, input)) = pending_tool.take() {
-                                let input = if input.is_empty() {
-                                    "{}".to_string()
-                                } else {
-                                    input
-                                };
-                                let tool_banner = format_tool_call_start(&name, &input);
-                                writeln!(out, "\n{tool_banner}")
-                                    .and_then(|()| out.flush())
-                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                                if let Some(tx) = &self.ui_tx {
-                                    let _ = tx.send(ReplTuiEvent::ToolCallStart {
-                                        name: name.clone(),
-                                        input: input.clone(),
-                                    });
-                                } else {
-                                    self.send_ui_stream(format!("\n{tool_banner}"));
-                                }
-                                events.push(AssistantEvent::ToolUse { id, name, input });
-                            }
-                        }
-                        ApiStreamEvent::MessageDelta(delta) => {
-                            events.push(AssistantEvent::Usage(TokenUsage {
-                                input_tokens: delta.usage.input_tokens,
-                                output_tokens: delta.usage.output_tokens,
-                                cache_creation_input_tokens: 0,
-                                cache_read_input_tokens: 0,
-                            }));
-                        }
-                        ApiStreamEvent::MessageStop(_) => {
-                            saw_stop = true;
-                            if let Some(rendered) = markdown_stream.flush(&renderer) {
-                                write!(out, "{rendered}")
-                                    .and_then(|()| out.flush())
-                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            }
-                            events.push(AssistantEvent::MessageStop);
-                        }
-                    }
-                }
-                if !saw_stop
-                    && events.iter().any(|event| {
-                        matches!(event, AssistantEvent::TextDelta(text) if !text.is_empty())
-                            || matches!(event, AssistantEvent::ToolUse { .. })
-                    })
-                {
-                    events.push(AssistantEvent::MessageStop);
-                }
-                if events
-                    .iter()
-                    .any(|event| matches!(event, AssistantEvent::MessageStop))
-                {
-                    return Ok(events);
-                }
-                if self.provider.supports_send_message() {
-                    let response = self
-                        .provider
-                        .send_message(&MessageRequest {
-                            stream: false,
-                            ..message_request.clone()
-                        })
-                        .await
-                        .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    response_to_events(response, out, self.ui_tx.as_ref())
-                } else {
-                    Ok(events)
-                }
-            })
-        })
     }
 }
 
@@ -1264,198 +947,23 @@ pub(crate) fn collect_tool_uses(summary: &runtime::TurnSummary) -> Vec<serde_jso
 }
 
 pub(crate) fn collect_tool_results(summary: &runtime::TurnSummary) -> Vec<serde_json::Value> {
-    summary.tool_results.iter().flat_map(|message| message.blocks.iter()).filter_map(|block| match block { runtime::ContentBlock::ToolResult { tool_use_id, tool_name, output, is_error } => Some(json!({"tool_use_id": tool_use_id, "tool_name": tool_name, "output": output, "is_error": is_error})), _ => None }).collect()
-}
-
-pub(crate) fn push_output_block(
-    block: OutputContentBlock,
-    out: &mut (impl Write + ?Sized),
-    events: &mut Vec<AssistantEvent>,
-    pending_tool: &mut Option<(String, String, String)>,
-    streaming_tool_input: bool,
-    ui_tx: Option<&mpsc::Sender<ReplTuiEvent>>,
-) -> Result<(), RuntimeError> {
-    match block {
-        OutputContentBlock::Text { text } => {
-            if !text.is_empty() {
-                let rendered = TerminalRenderer::new().markdown_to_ansi(&text);
-                write!(out, "{rendered}")
-                    .and_then(|()| out.flush())
-                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                if let Some(tx) = ui_tx {
-                    let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
-                }
-                events.push(AssistantEvent::TextDelta(text));
-            }
-        }
-        OutputContentBlock::ToolUse { id, name, input } => {
-            let initial_input = if streaming_tool_input
-                && input.is_object()
-                && input.as_object().is_some_and(serde_json::Map::is_empty)
-            {
-                String::new()
-            } else {
-                input.to_string()
-            };
-            *pending_tool = Some((id, name, initial_input));
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn response_to_events(
-    response: MessageResponse,
-    out: &mut (impl Write + ?Sized),
-    ui_tx: Option<&mpsc::Sender<ReplTuiEvent>>,
-) -> Result<Vec<AssistantEvent>, RuntimeError> {
-    let mut events = Vec::new();
-    let mut pending_tool = None;
-    for block in response.content {
-        push_output_block(block, out, &mut events, &mut pending_tool, false, ui_tx)?;
-        if let Some((id, name, input)) = pending_tool.take() {
-            events.push(AssistantEvent::ToolUse { id, name, input });
-        }
-    }
-    events.push(AssistantEvent::Usage(TokenUsage {
-        input_tokens: response.usage.input_tokens,
-        output_tokens: response.usage.output_tokens,
-        cache_creation_input_tokens: response.usage.cache_creation_input_tokens,
-        cache_read_input_tokens: response.usage.cache_read_input_tokens,
-    }));
-    events.push(AssistantEvent::MessageStop);
-    Ok(events)
-}
-
-struct CliToolExecutor {
-    renderer: TerminalRenderer,
-    emit_output: bool,
-    allowed_tools: Option<AllowedToolSet>,
-    agent: CrawlerAgent,
-    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-}
-impl CliToolExecutor {
-    fn new(
-        allowed_tools: Option<AllowedToolSet>,
-        emit_output: bool,
-        ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-        fork_client: SharedApiClient,
-    ) -> Self {
-        Self {
-            renderer: TerminalRenderer::new(),
-            emit_output,
-            allowed_tools,
-            agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools())
-                .with_api_client(fork_client),
-            ui_tx,
-        }
-    }
-
-    fn reset_browser(&mut self) {
-        self.agent.reset_browser();
-    }
-}
-impl ToolExecutor for CliToolExecutor {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
-        if self
-            .allowed_tools
-            .as_ref()
-            .is_some_and(|allowed| !allowed.contains(tool_name))
-        {
-            return Err(ToolError::new(format!(
-                "tool `{tool_name}` is not enabled by the current --allowedTools setting"
-            )));
-        }
-        if let Some(tx) = &self.ui_tx {
-            let _ = tx.send(ReplTuiEvent::ToolStarting {
-                name: tool_name.to_string(),
-                input: input.to_string(),
-            });
-        }
-
-        match self.agent.execute(tool_name, input).await {
-            Ok(output) => {
-                if self.emit_output {
-                    let markdown = format_tool_result(tool_name, &output, false);
-                    self.renderer
-                        .stream_markdown(&markdown, &mut io::stdout())
-                        .map_err(|error: io::Error| ToolError::new(error.to_string()))?;
-                } else if let Some(tx) = &self.ui_tx {
-                    let _ = tx.send(ReplTuiEvent::ToolCallComplete {
-                        name: tool_name.to_string(),
-                        output: output.clone(),
-                        is_error: false,
-                    });
-                }
-                Ok(output)
-            }
-            Err(error) => {
-                if self.emit_output {
-                    let rendered_error = error.to_string();
-                    let markdown = format_tool_result(tool_name, &rendered_error, true);
-                    self.renderer
-                        .stream_markdown(&markdown, &mut io::stdout())
-                        .map_err(|stream_error: io::Error| {
-                            ToolError::new(stream_error.to_string())
-                        })?;
-                } else if let Some(tx) = &self.ui_tx {
-                    let _ = tx.send(ReplTuiEvent::ToolCallComplete {
-                        name: tool_name.to_string(),
-                        output: error.to_string(),
-                        is_error: true,
-                    });
-                }
-                Err(error)
-            }
-        }
-    }
-}
-
-pub(crate) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMessage> {
-    messages
+    summary
+        .tool_results
         .iter()
-        .filter_map(|message| {
-            let role = match message.role {
-                MessageRole::System | MessageRole::User | MessageRole::Tool => "user",
-                MessageRole::Assistant => "assistant",
-            };
-            let content = message
-                .blocks
-                .iter()
-                .map(|block| match block {
-                    runtime::ContentBlock::Text { text } => {
-                        InputContentBlock::Text { text: text.clone() }
-                    }
-                    runtime::ContentBlock::ToolUse { id, name, input } => {
-                        InputContentBlock::ToolUse {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input: serde_json::from_str(input)
-                                .unwrap_or_else(|_| json!({ "raw": input })),
-                        }
-                    }
-                    runtime::ContentBlock::ToolResult {
-                        tool_use_id,
-                        output,
-                        is_error,
-                        ..
-                    } => InputContentBlock::ToolResult {
-                        tool_use_id: tool_use_id.clone(),
-                        content: vec![ToolResultContentBlock::Text {
-                            text: output.clone(),
-                        }],
-                        is_error: *is_error,
-                    },
-                    runtime::ContentBlock::Reasoning { data } => {
-                        let parsed = serde_json::from_str::<serde_json::Value>(data)
-                            .unwrap_or_else(|_| json!({}));
-                        InputContentBlock::Reasoning { data: parsed }
-                    }
-                })
-                .collect::<Vec<_>>();
-            (!content.is_empty()).then(|| InputMessage {
-                role: role.to_string(),
-                content,
-            })
+        .flat_map(|message| message.blocks.iter())
+        .filter_map(|block| match block {
+            runtime::ContentBlock::ToolResult {
+                tool_use_id,
+                tool_name,
+                output,
+                is_error,
+            } => Some(json!({
+                "tool_use_id": tool_use_id,
+                "tool_name": tool_name,
+                "output": output,
+                "is_error": is_error
+            })),
+            _ => None,
         })
         .collect()
 }
@@ -1732,7 +1240,6 @@ mod tests {
         let handle =
             std::thread::spawn(move || wait_for_oauth_callback_cancellable(listener, cancel_rx));
 
-        // Give the listener time to start polling
         std::thread::sleep(std::time::Duration::from_millis(250));
         cancel_tx.send(()).expect("send cancel signal");
 
