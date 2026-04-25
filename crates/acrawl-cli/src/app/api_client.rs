@@ -1,11 +1,8 @@
-use std::io::{self, Write};
-
 use api::{
     provider::{ProviderClient, ProviderRegistry},
     ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
     OutputContentBlock, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
-use crate::markdown::{MarkdownStreamState, TerminalRenderer};
 use runtime::{ApiClient, AssistantEvent, ConversationMessage, MessageRole, RuntimeError, TokenUsage};
 use serde_json::json;
 
@@ -74,10 +71,6 @@ impl ApiClient for LlmRuntimeClient {
         };
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let mut sink = io::sink();
-                let out = &mut sink;
-                let renderer = TerminalRenderer::new();
-                let mut markdown_stream = MarkdownStreamState::default();
                 let mut events = Vec::new();
                 let mut pending_tool: Option<(String, String, String)> = None;
                 let mut saw_stop = false;
@@ -96,32 +89,20 @@ impl ApiClient for LlmRuntimeClient {
                     match event {
                         api::StreamEvent::MessageStart(start) => {
                             for block in start.message.content {
-                                push_output_block(
-                                    block,
-                                    out,
-                                    &mut events,
-                                    &mut pending_tool,
-                                    true,
-                                )?;
+                                push_output_block(block, &mut events, &mut pending_tool, true);
                             }
                         }
                         api::StreamEvent::ContentBlockStart(start) => {
                             push_output_block(
                                 start.content_block,
-                                out,
                                 &mut events,
                                 &mut pending_tool,
                                 true,
-                            )?;
+                            );
                         }
                         api::StreamEvent::ContentBlockDelta(delta) => match delta.delta {
                             ContentBlockDelta::TextDelta { text } => {
                                 if !text.is_empty() {
-                                    if let Some(rendered) = markdown_stream.push(&renderer, &text) {
-                                        write!(out, "{rendered}")
-                                            .and_then(|()| out.flush())
-                                            .map_err(|error| RuntimeError::new(error.to_string()))?;
-                                    }
                                     events.push(AssistantEvent::TextDelta(text));
                                 }
                             }
@@ -132,11 +113,6 @@ impl ApiClient for LlmRuntimeClient {
                             }
                         },
                         api::StreamEvent::ContentBlockStop(_) => {
-                            if let Some(rendered) = markdown_stream.flush(&renderer) {
-                                write!(out, "{rendered}")
-                                    .and_then(|()| out.flush())
-                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            }
                             if let Some((id, name, input)) = pending_tool.take() {
                                 let input = if input.is_empty() {
                                     "{}".to_string()
@@ -156,11 +132,6 @@ impl ApiClient for LlmRuntimeClient {
                         }
                         api::StreamEvent::MessageStop(_) => {
                             saw_stop = true;
-                            if let Some(rendered) = markdown_stream.flush(&renderer) {
-                                write!(out, "{rendered}")
-                                    .and_then(|()| out.flush())
-                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                            }
                             events.push(AssistantEvent::MessageStop);
                         }
                     }
@@ -188,7 +159,7 @@ impl ApiClient for LlmRuntimeClient {
                         })
                         .await
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    response_to_events(response, out)
+                    Ok(response_to_events(response))
                 } else {
                     Ok(events)
                 }
@@ -199,17 +170,13 @@ impl ApiClient for LlmRuntimeClient {
 
 pub(crate) fn push_output_block(
     block: OutputContentBlock,
-    out: &mut impl Write,
     events: &mut Vec<AssistantEvent>,
     pending_tool: &mut Option<(String, String, String)>,
     streaming_tool_input: bool,
-) -> Result<(), RuntimeError> {
+) {
     match block {
         OutputContentBlock::Text { text } => {
             if !text.is_empty() {
-                TerminalRenderer::new()
-                    .stream_markdown(&text, out)
-                    .map_err(|error| RuntimeError::new(error.to_string()))?;
                 events.push(AssistantEvent::TextDelta(text));
             }
         }
@@ -225,17 +192,13 @@ pub(crate) fn push_output_block(
             *pending_tool = Some((id, name, initial_input));
         }
     }
-    Ok(())
 }
 
-pub(crate) fn response_to_events(
-    response: MessageResponse,
-    out: &mut impl Write,
-) -> Result<Vec<AssistantEvent>, RuntimeError> {
+pub(crate) fn response_to_events(response: MessageResponse) -> Vec<AssistantEvent> {
     let mut events = Vec::new();
     let mut pending_tool = None;
     for block in response.content {
-        push_output_block(block, out, &mut events, &mut pending_tool, false)?;
+        push_output_block(block, &mut events, &mut pending_tool, false);
         if let Some((id, name, input)) = pending_tool.take() {
             events.push(AssistantEvent::ToolUse { id, name, input });
         }
@@ -247,7 +210,7 @@ pub(crate) fn response_to_events(
         cache_read_input_tokens: response.usage.cache_read_input_tokens,
     }));
     events.push(AssistantEvent::MessageStop);
-    Ok(events)
+    events
 }
 
 pub(crate) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMessage> {

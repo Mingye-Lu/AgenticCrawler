@@ -19,11 +19,6 @@ use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, Share
 mod fork;
 mod lifecycle;
 
-#[allow(unused_imports)]
-pub(crate) use fork::*;
-#[allow(unused_imports)]
-pub(crate) use lifecycle::*;
-
 const DEFAULT_MAX_STEPS: usize = 50;
 const DEFAULT_MAX_CONCURRENT_PER_PARENT: usize = 5;
 const DEFAULT_MAX_FORK_DEPTH: usize = 3;

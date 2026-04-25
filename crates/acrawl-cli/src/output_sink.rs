@@ -3,6 +3,7 @@ use std::sync::mpsc;
 
 use runtime::{RuntimeObserver, TokenUsage};
 
+use crate::markdown::{MarkdownStreamState, TerminalRenderer};
 use crate::tui::events::ReplTuiEvent;
 use crate::tool_format::{format_tool_call_start, format_tool_result};
 
@@ -15,22 +16,28 @@ pub trait OutputSink: Send {
     fn on_turn_finished(&mut self, result: &Result<(), String>);
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Default)]
-pub struct StdoutSink;
+#[derive(Debug)]
+pub struct StdoutSink {
+    renderer: TerminalRenderer,
+    markdown_stream: MarkdownStreamState,
+}
 
 impl StdoutSink {
-    #[allow(dead_code)]
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            renderer: TerminalRenderer::new(),
+            markdown_stream: MarkdownStreamState::default(),
+        }
     }
 }
 
 impl OutputSink for StdoutSink {
     fn on_text_delta(&mut self, raw_text: &str) {
-        print!("{raw_text}");
-        let _ = io::stdout().flush();
+        if let Some(rendered) = self.markdown_stream.push(&self.renderer, raw_text) {
+            print!("{rendered}");
+            let _ = io::stdout().flush();
+        }
     }
 
     fn on_tool_call(&mut self, name: &str, input: &str) {
@@ -48,6 +55,10 @@ impl OutputSink for StdoutSink {
     fn on_turn_start(&mut self) {}
 
     fn on_turn_finished(&mut self, result: &Result<(), String>) {
+        if let Some(rendered) = self.markdown_stream.flush(&self.renderer) {
+            print!("{rendered}");
+            let _ = io::stdout().flush();
+        }
         match result {
             Ok(()) => println!("\n✔ Turn complete"),
             Err(error) => eprintln!("\n✘ Turn failed: {error}"),
@@ -55,14 +66,12 @@ impl OutputSink for StdoutSink {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ChannelSink {
     tx: mpsc::Sender<ReplTuiEvent>,
 }
 
 impl ChannelSink {
-    #[allow(dead_code)]
     #[must_use]
     pub fn new(tx: mpsc::Sender<ReplTuiEvent>) -> Self {
         Self { tx }
