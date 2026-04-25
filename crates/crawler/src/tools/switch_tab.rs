@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{ToolEffect, ToolError};
 
 pub fn parse_input(input: &Value) -> i64 {
     input
@@ -11,7 +11,7 @@ pub fn parse_input(input: &Value) -> i64 {
         .unwrap_or(-1)
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let index = parse_input(input);
 
     let result = browser
@@ -20,7 +20,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
         .await
         .switch_tab(index)
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?;
+        .map_err(|e| ToolError(e.to_string()))?;
 
     if let Some(page_index) = result
         .get("pageIndex")
@@ -45,12 +45,12 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Valu
         .and_then(serde_json::Value::as_i64)
         .unwrap_or(0);
 
-    Ok(json!({
+    Ok(ToolEffect::reply_json(&json!({
         "success": true,
         "url": url,
         "title": title,
         "tab_count": tab_count
-    }))
+    })))
 }
 
 #[cfg(test)]

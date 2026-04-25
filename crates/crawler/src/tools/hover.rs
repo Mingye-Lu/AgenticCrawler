@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{CrawlError, ToolEffect, ToolError};
 
 pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
     input
@@ -11,21 +11,21 @@ pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
         .ok_or_else(|| CrawlError::new("hover requires 'selector' field"))
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let selector = parse_input(input)?;
 
     browser
         .acquire_bridge()
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?
+        .map_err(|e| ToolError(e.to_string()))?
         .hover(&selector)
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?;
+        .map_err(|e| ToolError(e.to_string()))?;
 
-    Ok(json!({
+    Ok(ToolEffect::reply_json(&json!({
         "success": true,
         "message": format!("Hovered over: {selector}")
-    }))
+    })))
 }
 
 #[cfg(test)]

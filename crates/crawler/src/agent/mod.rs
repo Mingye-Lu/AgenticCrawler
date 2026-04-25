@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
 use crate::state::CrawlState;
+use crate::tool_effect::{FinishSpec, ToolEffect};
 use crate::tool_registry::ToolRegistry;
 use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
 
@@ -214,23 +215,16 @@ impl CrawlerAgent {
         Ok(build_crawl_result(&summary, &crawl_state))
     }
 
-    async fn handle_done(&mut self, input: &str) -> Result<String, ToolError> {
-        let params: Value = serde_json::from_str(input)
-            .map_err(|error| ToolError::new(format!("done input must be valid JSON: {error}")))?;
-
-        let summary = params
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or("Task complete")
-            .to_string();
-
+    async fn handle_finish(&mut self, spec: FinishSpec) -> Result<String, ToolError> {
         if !self.child_tasks.is_empty() {
-            let _ = self.handle_wait_for_subagents().await;
+            let _ = self
+                .handle_wait_effect(crate::WaitSpec { child_ids: None })
+                .await;
         }
 
         self.crawl_state.done = true;
-        self.crawl_state.done_reason.clone_from(&summary);
-        Ok(summary)
+        self.crawl_state.done_reason.clone_from(&spec.summary);
+        Ok(spec.summary)
     }
 
     fn supports_async(tool_name: &str) -> bool {
@@ -265,18 +259,6 @@ impl Drop for CrawlerAgent {
 
 impl ToolExecutor for CrawlerAgent {
     async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
-        if tool_name == "fork" {
-            return self.handle_fork(input).await;
-        }
-
-        if tool_name == "wait_for_subagents" {
-            return self.handle_wait_for_subagents().await;
-        }
-
-        if tool_name == "done" {
-            return self.handle_done(input).await;
-        }
-
         let input_value: Value = if input.is_empty() {
             Value::Object(serde_json::Map::new())
         } else {
@@ -284,32 +266,56 @@ impl ToolExecutor for CrawlerAgent {
                 .map_err(|error| ToolError::new(format!("invalid JSON input: {error}")))?
         };
 
-        if let Some(handler) = self.registry.get(tool_name) {
+        let tool_effect = if let Some(handler) = self.registry.get(tool_name) {
             match handler(&input_value) {
-                Ok(result) => return Ok(result.to_string()),
+                Ok(effect) => effect,
                 Err(error)
                     if error
                         .to_string()
-                        .contains("requires async execution via execute_async") => {}
+                        .contains("requires async execution via execute_async") =>
+                {
+                    if !Self::supports_async(tool_name) {
+                        return Err(ToolError::new(error.to_string()));
+                    }
+
+                    self.ensure_browser().await?;
+                    let browser = self
+                        .browser
+                        .as_mut()
+                        .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+                    self.registry
+                        .execute_async(tool_name, &input_value, browser)
+                        .await
+                        .map_err(|error| ToolError::new(error.to_string()))?
+                }
                 Err(error) => return Err(ToolError::new(error.to_string())),
             }
-        }
-
-        if Self::supports_async(tool_name) {
+        } else if Self::supports_async(tool_name) {
             self.ensure_browser().await?;
             let browser = self
                 .browser
                 .as_mut()
                 .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
-            let result = self
-                .registry
+            self.registry
                 .execute_async(tool_name, &input_value, browser)
                 .await
-                .map_err(|error| ToolError::new(error.to_string()))?;
-            return Ok(result.to_string());
-        }
+                .map_err(|error| ToolError::new(error.to_string()))?
+        } else {
+            return Err(ToolError::new(format!("unknown tool: `{tool_name}`")));
+        };
 
-        Err(ToolError::new(format!("unknown tool: `{tool_name}`")))
+        self.dispatch_tool_effect(tool_effect).await
+    }
+}
+
+impl CrawlerAgent {
+    async fn dispatch_tool_effect(&mut self, tool_effect: ToolEffect) -> Result<String, ToolError> {
+        match tool_effect {
+            ToolEffect::Reply(output) => Ok(output),
+            ToolEffect::Spawn(spec) => self.handle_spawn(spec).await,
+            ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
+            ToolEffect::Finish(spec) => self.handle_finish(spec).await,
+        }
     }
 }
 
@@ -471,17 +477,102 @@ mod tests {
                     .get("url")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                Ok(Value::String(format!("Navigated to {url}")))
+                Ok(ToolEffect::Reply(format!("Navigated to {url}")))
             }),
         );
         registry.register(
             "extract_data",
             Box::new(|input| {
                 let data = input.get("data").cloned().unwrap_or(Value::Null);
-                Ok(serde_json::json!({"title": "Example", "extracted": data}))
+                Ok(ToolEffect::reply_json(&serde_json::json!({"title": "Example", "extracted": data})))
             }),
         );
+        registry.register(
+            "wait_for_subagents",
+            Box::new(crate::tools::wait_for_subagents::execute),
+        );
+        registry.register("done", Box::new(crate::tools::done::execute));
         registry
+    }
+
+    #[tokio::test]
+    async fn test_reply_effect_adds_to_conversation() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Reply("reply payload".to_string()))
+            .await
+            .expect("reply effect should return output");
+
+        assert_eq!(result, "reply payload");
+    }
+
+    #[tokio::test]
+    async fn test_spawn_effect_triggers_fork() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager.clone());
+        agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            crate::PlaywrightBridge::new()
+                .await
+                .expect("bridge should initialize for spawn test"),
+        )));
+        agent.fork_page_index_override = Some(1);
+
+        let observation = agent
+            .dispatch_tool_effect(ToolEffect::Spawn(crate::ForkSpec {
+                goal: "collect details".to_string(),
+                page_index: None,
+            }))
+            .await
+            .expect("spawn effect should fork child");
+
+        assert_eq!(observation, "Forked subagent root-child-1 for: collect details");
+        assert_eq!(agent.child_tasks.len(), 1);
+        for (_, (_, handle)) in agent.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wait_effect_triggers_join() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal".to_string(), handle));
+
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Wait(crate::WaitSpec {
+                child_ids: Some(vec!["child-1".to_string()]),
+            }))
+            .await
+            .expect("wait effect should collect child results");
+
+        assert_eq!(result, "Waited for 1 subagent(s). Collected 1 item(s).");
+        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_finish_effect_ends_loop() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
+                summary: "Task complete".to_string(),
+            }))
+            .await
+            .expect("finish effect should mark agent done");
+
+        assert_eq!(result, "Task complete");
+        assert!(agent.crawl_state.done);
+        assert_eq!(agent.crawl_state.done_reason, "Task complete");
     }
 
     #[tokio::test]
@@ -495,7 +586,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crawler_agent_returns_error_for_unknown_tool() {
+    async fn test_unknown_tool_returns_error() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
         let err = agent
             .execute("nonexistent", "{}")
@@ -697,7 +788,9 @@ mod tests {
     async fn test_wait_no_children_returns_immediately() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
-        let result = agent.handle_wait_for_subagents().await;
+        let result = agent
+            .handle_wait_effect(crate::WaitSpec { child_ids: None })
+            .await;
 
         assert_eq!(result.unwrap(), "No active subagents");
     }

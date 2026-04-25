@@ -1,4 +1,4 @@
-use crawler::{CrawlerAgent, ToolRegistry};
+use crawler::{CrawlerAgent, ToolEffect, ToolRegistry};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolExecutor};
 use serde_json::{json, Value};
 
@@ -44,11 +44,11 @@ fn mock_registry() -> ToolRegistry {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
 
-            Ok(json!({
+            Ok(ToolEffect::reply_json(&json!({
                 "instruction": instruction,
                 "url": source_url,
                 "title": "Example Domain"
-            }))
+            })))
         }),
     );
     registry

@@ -1,22 +1,22 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{ToolEffect, ToolError};
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let _ = input;
 
     let url = browser
         .acquire_bridge()
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?
+        .map_err(|e| ToolError(e.to_string()))?
         .go_back()
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?;
+        .map_err(|e| ToolError(e.to_string()))?;
 
-    Ok(serde_json::json!({
+    Ok(ToolEffect::reply_json(&serde_json::json!({
         "url": url
-    }))
+    })))
 }
 
 #[cfg(test)]
