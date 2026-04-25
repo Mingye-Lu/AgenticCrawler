@@ -26,7 +26,6 @@ pub(super) fn build_runtime_feature_config() -> Result<runtime::RuntimeFeatureCo
         .clone())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_runtime(
     mut session: Session,
     model: String,

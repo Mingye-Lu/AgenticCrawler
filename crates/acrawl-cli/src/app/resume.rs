@@ -16,7 +16,6 @@ pub(crate) struct ResumeCommandOutcome {
     pub(crate) message: Option<String>,
 }
 
-#[allow(clippy::too_many_lines)]
 pub(crate) fn run_resume_command(
     session_path: &Path,
     session: &Session,

@@ -1,10 +1,5 @@
 pub mod active_modal;
 pub mod auth_modal;
-#[allow(
-    clippy::format_push_string,
-    clippy::redundant_closure_for_method_calls,
-    clippy::map_unwrap_or
-)]
 pub mod events;
 pub mod grouped_model_list;
 pub mod modal;
