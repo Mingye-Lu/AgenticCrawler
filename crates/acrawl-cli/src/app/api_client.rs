@@ -9,12 +9,12 @@ use serde_json::json;
 use super::{filter_tool_specs, AllowedToolSet};
 
 pub(crate) struct LlmRuntimeClient {
-    pub(crate) registry: ProviderRegistry,
+    registry: ProviderRegistry,
     provider: ProviderClient,
     model: String,
     enable_tools: bool,
     allowed_tools: Option<AllowedToolSet>,
-    pub(crate) reasoning_effort: Option<api::ReasoningEffort>,
+    reasoning_effort: Option<api::ReasoningEffort>,
 }
 
 impl LlmRuntimeClient {
@@ -44,6 +44,10 @@ impl LlmRuntimeClient {
             allowed_tools,
             reasoning_effort: None,
         }
+    }
+
+    pub(crate) fn set_reasoning_effort(&mut self, effort: Option<api::ReasoningEffort>) {
+        self.reasoning_effort = effort;
     }
 }
 
