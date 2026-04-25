@@ -1,4 +1,5 @@
 mod app;
+mod auth;
 mod display_width;
 mod error;
 mod format;
@@ -26,6 +27,8 @@ use app::{
     run_resume_command, AllowedToolSet, LiveCli,
 };
 use format::{render_version_report, DEFAULT_DATE, VERSION};
+
+pub(crate) use app::Provider;
 
 fn main() {
     // Load settings.json and set env vars consumed by child processes / the crawler.
