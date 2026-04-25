@@ -1466,6 +1466,38 @@ mod tests {
     use api::{MessageResponse, OutputContentBlock, Usage};
     use runtime::{AssistantEvent, ContentBlock, ConversationMessage, MessageRole};
     use serde_json::json;
+    use std::fs;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn with_clean_config_env<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = test_env_lock();
+        let saved_config_home = std::env::var_os("ACRAWL_CONFIG_HOME");
+        let temp_dir = std::env::temp_dir().join(format!(
+            "app-tests-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should be after epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&temp_dir).expect("create temp config home");
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+        let result = f();
+        match saved_config_home {
+            Some(value) => std::env::set_var("ACRAWL_CONFIG_HOME", value),
+            None => std::env::remove_var("ACRAWL_CONFIG_HOME"),
+        }
+        fs::remove_dir_all(temp_dir).expect("cleanup temp config home");
+        result
+    }
 
     #[test]
     fn resolves_known_models_by_id() {
@@ -1732,5 +1764,81 @@ mod tests {
             model_supports_reasoning("gpt-5.3-codex"),
             "gpt-5.3-codex should be detected as a reasoning model"
         );
+    }
+
+    #[test]
+    fn model_supports_reasoning_matches_catalog_capabilities() {
+        with_clean_config_env(|| {
+            assert!(model_supports_reasoning("o3"));
+            assert!(!model_supports_reasoning("claude-sonnet-4-6"));
+        });
+    }
+
+    #[test]
+    fn model_reasoning_efforts_returns_expected_efforts_for_reasoning_models() {
+        with_clean_config_env(|| {
+            assert_eq!(
+                model_reasoning_efforts("o4-mini"),
+                api::ReasoningEffort::OPENAI.to_vec()
+            );
+            assert!(model_reasoning_efforts("gpt-4o").is_empty());
+        });
+    }
+
+    #[test]
+    fn filter_tool_specs_without_allowlist_returns_all_specs() {
+        let filtered = filter_tool_specs(None);
+        let all = mvp_tool_specs();
+
+        assert_eq!(filtered.len(), all.len());
+        assert_eq!(
+            filtered.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            all.iter().map(|spec| spec.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn filter_tool_specs_with_specific_names_returns_only_matching_specs() {
+        let allowed = ["navigate", "extract_data"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+
+        let filtered = filter_tool_specs(Some(&allowed));
+
+        assert_eq!(
+            filtered.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            vec!["navigate", "extract_data"]
+        );
+    }
+
+    #[test]
+    fn final_assistant_text_returns_joined_text_from_last_assistant_message() {
+        let summary = runtime::TurnSummary {
+            assistant_messages: vec![
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "ignored".to_string(),
+                }]),
+                ConversationMessage::assistant(vec![
+                    ContentBlock::Text {
+                        text: "hello".to_string(),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "navigate".to_string(),
+                        input: "{}".to_string(),
+                    },
+                    ContentBlock::Text {
+                        text: " world".to_string(),
+                    },
+                ]),
+            ],
+            tool_results: vec![],
+            iterations: 2,
+            usage: runtime::TokenUsage::default(),
+            auto_compaction: None,
+        };
+
+        assert_eq!(final_assistant_text(&summary), "hello world");
     }
 }

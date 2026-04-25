@@ -791,10 +791,13 @@ fn deep_merge_objects(
 #[cfg(test)]
 mod tests {
     use super::{
-        ConfigLoader, ConfigSource, McpServerConfig, McpTransport, ACRAWL_SETTINGS_SCHEMA_NAME,
+        ConfigLoader, ConfigSource, McpRemoteServerConfig, McpServerConfig,
+        McpStdioServerConfig, McpTransport, RuntimeConfig, RuntimeFeatureConfig,
+        RuntimeHookConfig, ACRAWL_SETTINGS_SCHEMA_NAME,
     };
     use crate::json::JsonValue;
     use crate::sandbox::FilesystemIsolationMode;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1071,5 +1074,142 @@ mod tests {
             .contains("mcpServers.broken: missing string field url"));
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn config_loader_new_preserves_cwd_and_config_home() {
+        let cwd = std::path::PathBuf::from("project");
+        let config_home = std::path::PathBuf::from("home/.acrawl");
+
+        let loader = ConfigLoader::new(&cwd, &config_home);
+
+        let discovered = loader.discover();
+        assert_eq!(discovered[1].path, config_home.join("settings.json"));
+        assert_eq!(discovered[2].path, cwd.join(".acrawl.json"));
+    }
+
+    #[test]
+    fn load_returns_empty_runtime_config_when_no_files_exist() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(&cwd).expect("project dir");
+        fs::create_dir_all(&home).expect("home dir");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("missing config files should succeed");
+
+        assert_eq!(loaded, RuntimeConfig::empty());
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_parses_present_config_file() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(&cwd).expect("project dir");
+        fs::create_dir_all(&home).expect("home dir");
+        fs::write(
+            home.join("settings.json"),
+            r#"{"model":"anthropic/claude-opus-4-6","hooks":{"PreToolUse":["echo pre"]}}"#,
+        )
+        .expect("write settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+
+        assert_eq!(loaded.loaded_entries().len(), 1);
+        assert_eq!(loaded.loaded_entries()[0].source, ConfigSource::User);
+        assert_eq!(loaded.model(), Some("anthropic/claude-opus-4-6"));
+        assert_eq!(loaded.hooks().pre_tool_use(), &["echo pre".to_string()]);
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn runtime_config_empty_has_expected_default_values() {
+        let config = RuntimeConfig::empty();
+
+        assert!(config.merged().is_empty());
+        assert!(config.loaded_entries().is_empty());
+        assert_eq!(config.as_json(), JsonValue::Object(BTreeMap::default()));
+        assert_eq!(config.feature_config(), &RuntimeFeatureConfig::default());
+        assert_eq!(config.hooks().pre_tool_use(), &[] as &[String]);
+        assert_eq!(config.hooks().post_tool_use(), &[] as &[String]);
+        assert!(config.oauth().is_none());
+        assert!(config.model().is_none());
+        assert_eq!(config.sandbox().allowed_mounts, Vec::<String>::new());
+    }
+
+    #[test]
+    fn runtime_feature_config_defaults_and_with_hooks_work() {
+        let hooks = RuntimeHookConfig::new(vec!["before".to_string()], vec!["after".to_string()]);
+        let feature_config = RuntimeFeatureConfig::default().with_hooks(hooks.clone());
+
+        assert_eq!(RuntimeFeatureConfig::default().hooks(), &RuntimeHookConfig::default());
+        assert_eq!(feature_config.hooks(), &hooks);
+        assert!(feature_config.mcp().servers().is_empty());
+        assert!(feature_config.oauth().is_none());
+        assert!(feature_config.model().is_none());
+        assert_eq!(feature_config.sandbox().filesystem_mode, None);
+    }
+
+    #[test]
+    fn mcp_server_config_transport_matches_stdio_sse_and_http_variants() {
+        let stdio = McpServerConfig::Stdio(McpStdioServerConfig {
+            command: "uvx".to_string(),
+            args: vec!["server".to_string()],
+            env: BTreeMap::default(),
+        });
+        let sse = McpServerConfig::Sse(McpRemoteServerConfig {
+            url: "https://example.test/sse".to_string(),
+            headers: BTreeMap::default(),
+            headers_helper: None,
+            oauth: None,
+        });
+        let http = McpServerConfig::Http(McpRemoteServerConfig {
+            url: "https://example.test/http".to_string(),
+            headers: BTreeMap::default(),
+            headers_helper: Some("helper".to_string()),
+            oauth: None,
+        });
+
+        assert_eq!(stdio.transport(), McpTransport::Stdio);
+        assert_eq!(sse.transport(), McpTransport::Sse);
+        assert_eq!(http.transport(), McpTransport::Http);
+    }
+
+    #[test]
+    fn malformed_non_legacy_json_returns_parse_error() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(&cwd).expect("project dir");
+        fs::create_dir_all(&home).expect("home dir");
+        fs::write(home.join("settings.json"), "{not-json}").expect("write malformed settings");
+
+        let error = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect_err("malformed JSON should fail");
+
+        assert!(matches!(error, super::ConfigError::Parse(_)));
+        assert!(error.to_string().contains("settings.json"));
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn config_source_variants_construct_and_compare_in_expected_order() {
+        let variants = [ConfigSource::User, ConfigSource::Project, ConfigSource::Local];
+
+        assert_eq!(variants[0], ConfigSource::User);
+        assert_eq!(variants[1], ConfigSource::Project);
+        assert_eq!(variants[2], ConfigSource::Local);
+        assert!(variants[0] < variants[1]);
+        assert!(variants[1] < variants[2]);
     }
 }
