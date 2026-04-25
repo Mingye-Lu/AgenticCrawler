@@ -1,0 +1,107 @@
+use std::future::Future;
+use std::pin::Pin;
+
+/// Control-flow instruction returned by a tool handler.
+#[derive(Debug, Clone)]
+pub enum ToolEffect {
+    /// Tool produced a plain string reply (the most common case).
+    Reply(String),
+    /// Tool requests spawning a sub-agent with the given spec.
+    Spawn(ForkSpec),
+    /// Tool requests waiting for sub-agents to finish.
+    Wait(WaitSpec),
+    /// Tool signals the agent loop should terminate.
+    Finish(FinishSpec),
+}
+
+/// Parameters for spawning a sub-agent.
+#[derive(Debug, Clone)]
+pub struct ForkSpec {
+    pub goal: String,
+    pub page_index: Option<usize>,
+}
+
+/// Parameters for waiting on sub-agents.
+#[derive(Debug, Clone)]
+pub struct WaitSpec {
+    pub child_ids: Option<Vec<String>>,
+}
+
+/// Parameters for finishing the agent.
+#[derive(Debug, Clone)]
+pub struct FinishSpec {
+    pub summary: String,
+}
+
+/// Error type for tool execution failures.
+#[derive(Debug)]
+pub struct ToolError(pub String);
+
+impl std::fmt::Display for ToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ToolError {}
+
+/// A tool handler function type.
+#[allow(clippy::type_complexity)]
+pub type ToolHandler = Box<
+    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Result<ToolEffect, ToolError>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Pairs a tool's static spec with its handler function.
+pub struct ToolDef {
+    pub name: &'static str,
+    pub handler: ToolHandler,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_effect_reply_construction() {
+        let effect = ToolEffect::Reply("hello".to_string());
+
+        match effect {
+            ToolEffect::Reply(reply) => assert_eq!(reply, "hello"),
+            _ => panic!("expected reply effect"),
+        }
+    }
+
+    #[test]
+    fn test_fork_spec_fields() {
+        let spec = ForkSpec {
+            goal: "visit detail page".to_string(),
+            page_index: Some(2),
+        };
+
+        assert_eq!(spec.goal, "visit detail page");
+        assert_eq!(spec.page_index, Some(2));
+    }
+
+    #[test]
+    fn test_tool_def_creation() {
+        let tool_def = ToolDef {
+            name: "reply_tool",
+            handler: Box::new(|_input| Box::pin(async { Ok(ToolEffect::Reply("ok".to_string())) })),
+        };
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("current-thread runtime should build");
+        let effect = runtime
+            .block_on((tool_def.handler)(serde_json::json!({})))
+            .expect("handler should return reply");
+
+        assert_eq!(tool_def.name, "reply_tool");
+        match effect {
+            ToolEffect::Reply(reply) => assert_eq!(reply, "ok"),
+            _ => panic!("expected reply effect"),
+        }
+    }
+}
