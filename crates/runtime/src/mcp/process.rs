@@ -867,7 +867,7 @@ mod cross_platform_tests {
     use crate::config::{
         ConfigSource, McpRemoteServerConfig, McpServerConfig, ScopedMcpServerConfig,
     };
-    use crate::mcp::client::McpClientBootstrap;
+    use crate::mcp::McpClientBootstrap;
 
     use super::{default_initialize_params, encode_frame, spawn_mcp_stdio_process};
 
