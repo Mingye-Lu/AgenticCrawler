@@ -180,7 +180,7 @@ impl LiveCli {
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
-            cli.runtime.api_client_mut().reasoning_effort = Some(effort);
+            cli.runtime.api_client_mut().set_reasoning_effort(Some(effort));
         }
         cli.persist_session()?;
         Ok(cli)
@@ -223,7 +223,7 @@ impl LiveCli {
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
-            cli.runtime.api_client_mut().reasoning_effort = Some(effort);
+            cli.runtime.api_client_mut().set_reasoning_effort(Some(effort));
         }
         cli.persist_session()?;
         Ok(cli)
@@ -255,7 +255,7 @@ impl LiveCli {
             None => *available.last().unwrap_or(&api::ReasoningEffort::High),
         };
         self.reasoning_effort = Some(next);
-        self.runtime.api_client_mut().reasoning_effort = Some(next);
+        self.runtime.api_client_mut().set_reasoning_effort(Some(next));
         let effort_str = next.as_str().to_string();
         let _ = runtime::update_settings(|s| {
             s.reasoning_effort = Some(effort_str);
@@ -555,7 +555,7 @@ impl LiveCli {
         if model_supports_reasoning(&model) {
             let effort = self.reasoning_effort.unwrap_or(api::ReasoningEffort::High);
             self.reasoning_effort = Some(effort);
-            self.runtime.api_client_mut().reasoning_effort = Some(effort);
+            self.runtime.api_client_mut().set_reasoning_effort(Some(effort));
         } else {
             self.reasoning_effort = None;
         }
