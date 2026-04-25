@@ -62,28 +62,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tool_effect_reply_construction() {
-        let effect = ToolEffect::Reply("hello".to_string());
-
-        match effect {
-            ToolEffect::Reply(reply) => assert_eq!(reply, "hello"),
-            _ => panic!("expected reply effect"),
-        }
-    }
-
-    #[test]
-    fn test_fork_spec_fields() {
-        let spec = ForkSpec {
-            goal: "visit detail page".to_string(),
-            page_index: Some(2),
-        };
-
-        assert_eq!(spec.goal, "visit detail page");
-        assert_eq!(spec.page_index, Some(2));
-    }
-
-    #[test]
-    fn test_reply_json_serializes_complex_value() {
+    fn reply_json_serializes_complex_value() {
         let value = serde_json::json!({"items": [1, 2, 3], "nested": {"key": "val"}});
         let effect = ToolEffect::reply_json(&value);
         match effect {
@@ -98,26 +77,24 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_error_display_message() {
-        let err = ToolError("something went wrong".to_string());
-        assert_eq!(err.to_string(), "something went wrong");
-        assert!(err.to_string().contains("wrong"));
+    fn reply_json_roundtrips_null() {
+        let effect = ToolEffect::reply_json(&serde_json::json!(null));
+        match effect {
+            ToolEffect::Reply(s) => assert_eq!(s, "null"),
+            _ => panic!("expected Reply variant"),
+        }
     }
 
     #[test]
-    fn test_tool_error_from_crawl_error_conversion() {
+    fn tool_error_display_message() {
+        let err = ToolError("something went wrong".to_string());
+        assert_eq!(err.to_string(), "something went wrong");
+    }
+
+    #[test]
+    fn tool_error_from_crawl_error_conversion() {
         let crawl_err = crate::CrawlError::new("crawl failure");
         let tool_err: ToolError = crawl_err.into();
         assert_eq!(tool_err.to_string(), "crawl failure");
-    }
-
-    #[test]
-    fn test_finish_spec_stores_summary() {
-        let spec = FinishSpec {
-            summary: "All pages scraped".to_string(),
-        };
-        assert_eq!(spec.summary, "All pages scraped");
-        let cloned = spec.clone();
-        assert_eq!(cloned.summary, spec.summary);
     }
 }

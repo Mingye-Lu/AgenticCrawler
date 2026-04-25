@@ -121,25 +121,44 @@ pub(crate) fn run_resume_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
-    fn resume_command_outcome_holds_session_and_message() {
+    fn resume_help_returns_help_text() {
         let session = Session::new();
-        let outcome = ResumeCommandOutcome {
-            session: session.clone(),
-            message: Some("test message".to_string()),
-        };
-        assert_eq!(outcome.message, Some("test message".to_string()));
-        assert_eq!(outcome.session.messages.len(), 0);
+        let path = PathBuf::from("/tmp/test-session.json");
+        let outcome = run_resume_command(&path, &session, &SlashCommand::Help).unwrap();
+        let msg = outcome.message.expect("help should produce output");
+        assert!(msg.contains("help"), "help output should mention 'help'");
     }
 
     #[test]
-    fn resume_command_outcome_message_can_be_none() {
+    fn resume_version_returns_version() {
         let session = Session::new();
-        let outcome = ResumeCommandOutcome {
-            session,
-            message: None,
-        };
-        assert_eq!(outcome.message, None);
+        let path = PathBuf::from("/tmp/test-session.json");
+        let outcome = run_resume_command(&path, &session, &SlashCommand::Version).unwrap();
+        let msg = outcome.message.expect("version should produce output");
+        assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn resume_unsupported_command_returns_error() {
+        let session = Session::new();
+        let path = PathBuf::from("/tmp/test-session.json");
+        let result = run_resume_command(
+            &path,
+            &session,
+            &SlashCommand::Model { model: Some("gpt-4o".to_string()) },
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resume_clear_without_confirm_warns() {
+        let session = Session::new();
+        let path = PathBuf::from("/tmp/test-session.json");
+        let outcome = run_resume_command(&path, &session, &SlashCommand::Clear { confirm: false }).unwrap();
+        let msg = outcome.message.expect("should produce warning");
+        assert!(msg.contains("confirm"));
     }
 }
