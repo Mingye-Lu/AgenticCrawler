@@ -29,7 +29,7 @@ use crate::tui::auth_modal::{AuthModal, AuthModalStep};
 use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::repl_render::{
     ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
-    rect_contains_mouse, suspend_for_stdout, tool_input_summary, truncate_with_ellipsis,
+    rect_contains_mouse, suspend_for_stdout, tool_input_summary,
 };
 use crate::tui::ReplTuiEvent;
 
@@ -825,16 +825,6 @@ impl ReplTuiState {
                     self.entries.push(TranscriptEntry::Status(
                         "· Thinking about next move...".to_string(),
                     ));
-                }
-                ReplTuiEvent::ToolStarting { name, input } => {
-                    self.current_tool = Some(name.clone());
-                    let truncated_input = truncate_with_ellipsis(&input, 27);
-                    self.status_line = format!("Executing {name}({truncated_input})...");
-                    if let Some(idx) = self.status_entry_index {
-                        if let Some(TranscriptEntry::Status(s)) = self.entries.get_mut(idx) {
-                            *s = format!("· Executing {name}({truncated_input})...");
-                        }
-                    }
                 }
                 ReplTuiEvent::ToolCallStart { name, input } => {
                     self.handle_tool_call_start(name, &input);

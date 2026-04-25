@@ -9,11 +9,6 @@ pub enum ReplTuiEvent {
     TurnStarting,
     /// `Ok` when the model turn finished; `Err` is a user-visible error string.
     TurnFinished(Result<(), String>),
-    /// Notification that the AI has started executing a specific tool.
-    ToolStarting {
-        name: String,
-        input: String,
-    },
     SystemMessage(String),
     /// Notification that a tool call has started — creates a transcript entry in TUI mode.
     ToolCallStart {

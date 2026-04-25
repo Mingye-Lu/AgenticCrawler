@@ -192,10 +192,6 @@ impl LiveCli {
         allowed_tools: Option<AllowedToolSet>,
         event_tx: mpsc::Sender<ReplTuiEvent>,
     ) -> Result<Self, CliError> {
-        let _ = ReplTuiEvent::ToolStarting {
-            name: String::new(),
-            input: String::new(),
-        };
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
