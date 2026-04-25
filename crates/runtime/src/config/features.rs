@@ -214,7 +214,7 @@ mod tests {
     use crate::json::JsonValue;
     use crate::sandbox::FilesystemIsolationMode;
 
-    use super::{RuntimeFeatureConfig, RuntimeHookConfig};
+    use super::{OAuthConfig, RuntimeFeatureConfig, RuntimeHookConfig};
     use crate::config::{ConfigLoader, ConfigSource, RuntimeConfig};
 
     fn temp_dir() -> std::path::PathBuf {
@@ -324,5 +324,36 @@ mod tests {
         assert_eq!(variants[2], ConfigSource::Local);
         assert!(variants[0] < variants[1]);
         assert!(variants[1] < variants[2]);
+    }
+
+    #[test]
+    fn hook_config_new_stores_and_retrieves_command_lists() {
+        let hooks = RuntimeHookConfig::new(
+            vec!["pre-1".to_string(), "pre-2".to_string()],
+            vec!["post-1".to_string()],
+        );
+        assert_eq!(hooks.pre_tool_use(), &["pre-1", "pre-2"]);
+        assert_eq!(hooks.post_tool_use(), &["post-1"]);
+    }
+
+    #[test]
+    fn oauth_config_stores_all_fields_correctly() {
+        let oauth = OAuthConfig {
+            client_id: "client-123".to_string(),
+            authorize_url: "https://auth.example/authorize".to_string(),
+            token_url: "https://auth.example/token".to_string(),
+            callback_port: Some(8080),
+            manual_redirect_url: Some("https://auth.example/callback".to_string()),
+            scopes: vec!["read".to_string(), "write".to_string()],
+        };
+        assert_eq!(oauth.client_id, "client-123");
+        assert_eq!(oauth.authorize_url, "https://auth.example/authorize");
+        assert_eq!(oauth.token_url, "https://auth.example/token");
+        assert_eq!(oauth.callback_port, Some(8080));
+        assert_eq!(
+            oauth.manual_redirect_url.as_deref(),
+            Some("https://auth.example/callback")
+        );
+        assert_eq!(oauth.scopes, vec!["read", "write"]);
     }
 }

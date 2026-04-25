@@ -498,4 +498,58 @@ mod tests {
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
+
+    #[test]
+    fn discover_returns_five_entries_with_expected_sources() {
+        let loader = ConfigLoader::new("project", "home/.acrawl");
+        let entries = loader.discover();
+        assert_eq!(entries.len(), 5);
+        assert_eq!(entries[0].source, ConfigSource::User);
+        assert_eq!(entries[1].source, ConfigSource::User);
+        assert_eq!(entries[2].source, ConfigSource::Project);
+        assert_eq!(entries[3].source, ConfigSource::Project);
+        assert_eq!(entries[4].source, ConfigSource::Local);
+    }
+
+    #[test]
+    fn runtime_config_get_returns_none_for_absent_keys() {
+        let config = RuntimeConfig::empty();
+        assert!(config.get("nonexistent").is_none());
+        assert!(config.get("model").is_none());
+        assert!(config.get("env").is_none());
+    }
+
+    #[test]
+    fn as_json_produces_object_matching_merged_content() {
+        let root = temp_dir();
+        let cwd = root.join("project");
+        let home = root.join("home").join(".acrawl");
+        fs::create_dir_all(&cwd).expect("project dir");
+        fs::create_dir_all(&home).expect("home dir");
+        fs::write(
+            home.join("settings.json"),
+            r#"{"model":"test-model","headless":true}"#,
+        )
+        .expect("write settings");
+
+        let loaded = ConfigLoader::new(&cwd, &home)
+            .load()
+            .expect("config should load");
+
+        let json = loaded.as_json();
+        assert_eq!(
+            json.as_object()
+                .and_then(|o| o.get("model"))
+                .and_then(JsonValue::as_str),
+            Some("test-model")
+        );
+        assert_eq!(
+            json.as_object()
+                .and_then(|o| o.get("headless"))
+                .and_then(JsonValue::as_bool),
+            Some(true)
+        );
+
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
 }

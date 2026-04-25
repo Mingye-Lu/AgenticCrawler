@@ -124,8 +124,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::config::{
-        ConfigSource, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
-        McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
+        ConfigSource, McpClaudeAiProxyServerConfig, McpOAuthConfig, McpRemoteServerConfig,
+        McpSdkServerConfig, McpServerConfig, McpStdioServerConfig, McpWebSocketServerConfig,
+        ScopedMcpServerConfig,
     };
 
     use super::{McpClientAuth, McpClientBootstrap, McpClientTransport};
@@ -231,6 +232,58 @@ mod tests {
                 assert_eq!(transport.name, "sdk-server");
             }
             other => panic!("expected sdk transport, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sse_transport_from_config_maps_url_headers_and_auth() {
+        let config = ScopedMcpServerConfig {
+            scope: ConfigSource::User,
+            config: McpServerConfig::Sse(McpRemoteServerConfig {
+                url: "https://vendor.example/sse".to_string(),
+                headers: BTreeMap::from([("X-Token".to_string(), "abc".to_string())]),
+                headers_helper: None,
+                oauth: None,
+            }),
+        };
+        let bootstrap = McpClientBootstrap::from_scoped_config("sse server", &config);
+        match bootstrap.transport {
+            McpClientTransport::Sse(transport) => {
+                assert_eq!(transport.url, "https://vendor.example/sse");
+                assert_eq!(
+                    transport.headers.get("X-Token").map(String::as_str),
+                    Some("abc")
+                );
+                assert!(!transport.auth.requires_user_auth());
+            }
+            other => panic!("expected sse transport, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn auth_from_none_is_not_user_auth() {
+        let auth = McpClientAuth::from_oauth(None);
+        assert_eq!(auth, McpClientAuth::None);
+        assert!(!auth.requires_user_auth());
+    }
+
+    #[test]
+    fn claude_ai_proxy_bootstrap_maps_url_and_id() {
+        let config = ScopedMcpServerConfig {
+            scope: ConfigSource::Project,
+            config: McpServerConfig::ClaudeAiProxy(McpClaudeAiProxyServerConfig {
+                url: "https://proxy.example/mcp".to_string(),
+                id: "proxy-123".to_string(),
+            }),
+        };
+        let bootstrap = McpClientBootstrap::from_scoped_config("proxy server", &config);
+        assert_eq!(bootstrap.normalized_name, "proxy_server");
+        match bootstrap.transport {
+            McpClientTransport::ClaudeAiProxy(transport) => {
+                assert_eq!(transport.url, "https://proxy.example/mcp");
+                assert_eq!(transport.id, "proxy-123");
+            }
+            other => panic!("expected claude ai proxy transport, got {other:?}"),
         }
     }
 }

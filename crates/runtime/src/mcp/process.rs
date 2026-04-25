@@ -858,3 +858,58 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::NotFound);
     }
 }
+
+#[cfg(test)]
+mod cross_platform_tests {
+    use std::collections::BTreeMap;
+    use std::io::ErrorKind;
+
+    use crate::config::{
+        ConfigSource, McpRemoteServerConfig, McpServerConfig, ScopedMcpServerConfig,
+    };
+    use crate::mcp::client::McpClientBootstrap;
+
+    use super::{default_initialize_params, encode_frame, spawn_mcp_stdio_process};
+
+    #[test]
+    fn encode_frame_formats_content_length_and_preserves_payload() {
+        let payload = b"{\"jsonrpc\":\"2.0\",\"method\":\"test\"}";
+        let framed = encode_frame(payload);
+        let text = String::from_utf8(framed).expect("valid utf8");
+        assert!(text.starts_with(&format!("Content-Length: {}\r\n\r\n", payload.len())));
+        assert!(text.ends_with("{\"jsonrpc\":\"2.0\",\"method\":\"test\"}"));
+    }
+
+    #[test]
+    fn encode_frame_handles_empty_payload() {
+        let framed = encode_frame(b"");
+        let text = String::from_utf8(framed).expect("valid utf8");
+        assert_eq!(text, "Content-Length: 0\r\n\r\n");
+    }
+
+    #[test]
+    fn spawn_rejects_non_stdio_transport_with_descriptive_error() {
+        let config = ScopedMcpServerConfig {
+            scope: ConfigSource::Local,
+            config: McpServerConfig::Http(McpRemoteServerConfig {
+                url: "https://example.test/mcp".to_string(),
+                headers: BTreeMap::new(),
+                headers_helper: None,
+                oauth: None,
+            }),
+        };
+        let bootstrap = McpClientBootstrap::from_scoped_config("http-server", &config);
+        let error = spawn_mcp_stdio_process(&bootstrap).expect_err("non-stdio should fail");
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("http-server"));
+        assert!(error.to_string().contains("not stdio"));
+    }
+
+    #[test]
+    fn default_initialize_params_report_runtime_name_and_version() {
+        let params = default_initialize_params();
+        assert_eq!(params.client_info.name, "runtime");
+        assert!(!params.client_info.version.is_empty());
+        assert_eq!(params.protocol_version, "2025-03-26");
+    }
+}
