@@ -9,9 +9,16 @@ mod features;
 mod loader;
 mod mcp_config;
 
-pub use features::*;
-pub use loader::*;
-pub use mcp_config::*;
+pub use features::{OAuthConfig, RuntimeFeatureConfig, RuntimeHookConfig};
+pub use loader::{ConfigLoader, RuntimeConfig};
+pub use mcp_config::{
+    McpClaudeAiProxyServerConfig, McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig,
+    McpSdkServerConfig, McpServerConfig, McpStdioServerConfig, McpTransport,
+    McpWebSocketServerConfig, ScopedMcpServerConfig,
+};
+
+use features::{parse_optional_hooks_config, parse_optional_oauth_config, parse_optional_sandbox_config};
+use mcp_config::parse_mcp_server_config;
 
 pub const ACRAWL_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
 
