@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{CrawlError, ToolEffect, ToolError};
 
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
@@ -68,31 +68,31 @@ fn parse_timeout_ms(input: &Value) -> Result<u64, CrawlError> {
     Ok(millis as u64)
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let parsed = parse_input(input)?;
 
     if let Some(ref selector) = parsed.selector {
         let found = browser
             .acquire_bridge()
             .await
-            .map_err(|e| CrawlError::new(e.to_string()))?
+            .map_err(|e| ToolError(e.to_string()))?
             .wait_for_selector(selector, parsed.timeout_ms)
             .await
-            .map_err(|e| CrawlError::new(e.to_string()))?;
+            .map_err(|e| ToolError(e.to_string()))?;
 
-        Ok(json!({
+        Ok(ToolEffect::reply_json(&json!({
             "success": true,
             "found": found,
             "selector": selector,
             "timeout_ms": parsed.timeout_ms
-        }))
+        })))
     } else {
         tokio::time::sleep(Duration::from_millis(parsed.timeout_ms)).await;
 
-        Ok(json!({
+        Ok(ToolEffect::reply_json(&json!({
             "success": true,
             "waited_ms": parsed.timeout_ms
-        }))
+        })))
     }
 }
 

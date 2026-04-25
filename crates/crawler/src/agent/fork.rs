@@ -1,16 +1,10 @@
-use serde_json::Value;
 use tokio::time::{Duration, Instant};
 
 use runtime::ToolError;
 
 use super::CrawlerAgent;
 use crate::state::ChildBlock;
-use crate::{tool_effect::ForkSpec, BrowserContext, ToolRegistry};
-
-struct ForkInput {
-    sub_goal: String,
-    url: Option<String>,
-}
+use crate::{tool_effect::ForkSpec, tool_effect::WaitSpec, BrowserContext, ToolRegistry};
 
 pub(crate) struct ForkSupervisor<'a> {
     agent: &'a mut CrawlerAgent,
@@ -50,37 +44,8 @@ impl<'a> ForkSupervisor<'a> {
     }
 }
 
-impl ForkInput {
-    fn parse(input: &str) -> Result<Self, ToolError> {
-        let params: Value = serde_json::from_str(input)
-            .map_err(|error| ToolError::new(format!("fork input must be valid JSON: {error}")))?;
-
-        let sub_goal = params
-            .get("sub_goal")
-            .and_then(Value::as_str)
-            .map_or("", str::trim)
-            .to_string();
-        if sub_goal.is_empty() {
-            return Err(ToolError::new("fork requires non-empty sub_goal"));
-        }
-
-        Ok(Self {
-            sub_goal,
-            url: params.get("url").and_then(Value::as_str).map(str::to_owned),
-        })
-    }
-
-    fn fork_spec(&self, page_index: Option<usize>) -> ForkSpec {
-        ForkSpec {
-            goal: self.sub_goal.clone(),
-            page_index,
-        }
-    }
-}
-
 impl CrawlerAgent {
-    pub(super) async fn handle_fork(&mut self, input: &str) -> Result<String, ToolError> {
-        let fork_input = ForkInput::parse(input)?;
+    pub(super) async fn handle_spawn(&mut self, fork_spec: ForkSpec) -> Result<String, ToolError> {
         let child_max_steps = runtime::settings_get_fork_child_max_steps(&runtime::load_settings()) as usize;
         let child_id = ForkSupervisor::new(self).next_child_id();
         ForkSupervisor::new(self).claim_child_slot(&child_id).await?;
@@ -90,7 +55,7 @@ impl CrawlerAgent {
 
             let child_state = self
                 .crawl_state
-                .fork(&fork_input.sub_goal, fork_input.url.as_deref(), child_max_steps);
+                .fork(&fork_spec.goal, self.crawl_state.current_url.as_deref(), child_max_steps);
             let child_api_client = self
                 .api_client_arc
                 .clone()
@@ -99,10 +64,7 @@ impl CrawlerAgent {
                 .shared_bridge
                 .clone()
                 .ok_or_else(|| ToolError::new("fork: browser bridge not initialized"))?;
-            let target_url = fork_input
-                .url
-                .clone()
-                .or_else(|| self.crawl_state.current_url.clone());
+            let target_url = self.crawl_state.current_url.clone();
             let page_index = self
                 .create_child_page(shared_bridge.clone(), target_url.as_deref())
                 .await?;
@@ -130,7 +92,10 @@ impl CrawlerAgent {
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
 
-        let fork_spec = fork_input.fork_spec(Some(page_index));
+        let fork_spec = ForkSpec {
+            page_index: Some(page_index),
+            ..fork_spec
+        };
         let child_sub_goal = fork_spec.goal.clone();
         let runtime_handle = tokio::runtime::Handle::current();
         let join_handle = tokio::task::spawn_blocking(move || {
@@ -147,19 +112,27 @@ impl CrawlerAgent {
         Ok(observation)
     }
 
-    pub(super) async fn handle_wait_for_subagents(&mut self) -> Result<String, ToolError> {
-        if self.child_tasks.is_empty() {
+    pub(super) async fn handle_wait_effect(&mut self, wait_spec: WaitSpec) -> Result<String, ToolError> {
+        let child_ids = wait_spec.child_ids.unwrap_or_else(|| self.child_tasks.keys().cloned().collect());
+        if child_ids.is_empty() {
             return Ok("No active subagents".to_string());
         }
 
         let wait_timeout_secs =
             u64::from(runtime::settings_get_fork_wait_timeout_secs(&runtime::load_settings()));
         let deadline = Instant::now() + Duration::from_secs(wait_timeout_secs);
-        let tasks: Vec<_> = self
-            .child_tasks
-            .drain()
-            .map(|(child_id, (sub_goal, handle))| (child_id, sub_goal, handle))
-            .collect();
+        let tasks = child_ids
+            .into_iter()
+            .filter_map(|child_id| {
+                self.child_tasks
+                    .remove(&child_id)
+                    .map(|(sub_goal, handle)| (child_id, sub_goal, handle))
+            })
+            .collect::<Vec<_>>();
+
+        if tasks.is_empty() {
+            return Ok("No active subagents".to_string());
+        }
 
         let task_count = tasks.len();
         let mut total_items = 0_usize;
@@ -263,9 +236,14 @@ mod tests {
                     .get("url")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                Ok(Value::String(format!("Navigated to {url}")))
+                Ok(crate::ToolEffect::Reply(format!("Navigated to {url}")))
             }),
         );
+        registry.register(
+            "wait_for_subagents",
+            Box::new(crate::tools::wait_for_subagents::execute),
+        );
+        registry.register("done", Box::new(crate::tools::done::execute));
         registry
     }
 
@@ -364,7 +342,9 @@ mod tests {
     #[tokio::test]
     async fn test_wait_no_children_returns_immediately() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-        let result = agent.handle_wait_for_subagents().await;
+        let result = agent
+            .handle_wait_effect(WaitSpec { child_ids: None })
+            .await;
         assert_eq!(result.unwrap(), "No active subagents");
     }
 

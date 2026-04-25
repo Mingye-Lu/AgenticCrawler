@@ -1,6 +1,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use serde_json::Value;
+
 /// Control-flow instruction returned by a tool handler.
 #[derive(Debug, Clone)]
 pub enum ToolEffect {
@@ -12,6 +14,13 @@ pub enum ToolEffect {
     Wait(WaitSpec),
     /// Tool signals the agent loop should terminate.
     Finish(FinishSpec),
+}
+
+impl ToolEffect {
+    #[must_use]
+    pub fn reply_json(value: &Value) -> Self {
+        Self::Reply(value.to_string())
+    }
 }
 
 /// Parameters for spawning a sub-agent.
@@ -44,6 +53,12 @@ impl std::fmt::Display for ToolError {
 }
 
 impl std::error::Error for ToolError {}
+
+impl From<crate::CrawlError> for ToolError {
+    fn from(value: crate::CrawlError) -> Self {
+        Self(value.to_string())
+    }
+}
 
 /// A tool handler function type.
 #[allow(clippy::type_complexity)]

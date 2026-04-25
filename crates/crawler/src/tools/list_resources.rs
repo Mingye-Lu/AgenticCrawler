@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{ToolEffect, ToolError};
 
 pub fn parse_input(input: &Value) -> (Option<String>, Option<String>) {
     let type_pattern = input
@@ -15,26 +15,26 @@ pub fn parse_input(input: &Value) -> (Option<String>, Option<String>) {
     (type_pattern, name_pattern)
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let (_type_pattern, _name_pattern) = parse_input(input);
 
     let result = browser
         .acquire_bridge()
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?
+        .map_err(|e| ToolError(e.to_string()))?
         .list_resources()
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?;
+        .map_err(|e| ToolError(e.to_string()))?;
 
     let links = result.get("links").cloned().unwrap_or_else(|| json!([]));
     let images = result.get("images").cloned().unwrap_or_else(|| json!([]));
     let forms = result.get("forms").cloned().unwrap_or_else(|| json!([]));
 
-    Ok(json!({
+    Ok(ToolEffect::reply_json(&json!({
         "links": links,
         "images": images,
         "forms": forms
-    }))
+    })))
 }
 
 #[cfg(test)]
