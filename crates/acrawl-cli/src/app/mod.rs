@@ -1,5 +1,7 @@
 mod api_client;
+mod classic_repl;
 mod model_support;
+mod resume;
 mod runtime_builder;
 mod tool_executor;
 
@@ -7,7 +9,6 @@ use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::{self, IsTerminal};
-use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc;
 
@@ -18,7 +19,6 @@ use crate::format::{
     render_export_text, render_last_tool_debug_report, render_repl_help, render_version_report,
     resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
-use crate::input;
 use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
 use crate::markdown::{Spinner, TerminalRenderer};
 use crate::session_mgr::{
@@ -49,6 +49,9 @@ pub(crate) use crate::auth::{
 use crate::auth::{
     interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
 };
+
+pub(crate) use classic_repl::run_repl_classic;
+pub(crate) use resume::run_resume_command;
 
 fn block_on_runtime_future<F, T>(future: F) -> Result<T, RuntimeError>
 where
@@ -99,45 +102,6 @@ pub(crate) fn run_repl(
     } else {
         Ok(crate::tui::run_repl_ratatui(model, allowed_tools)?)
     }
-}
-
-fn run_repl_classic(
-    model: String,
-    allowed_tools: Option<AllowedToolSet>,
-) -> Result<(), CliError> {
-    let mut cli = LiveCli::new(model, true, allowed_tools)?;
-    let mut editor = input::LineEditor::new("> ", slash_command_completion_candidates());
-    println!("{}", cli.startup_banner());
-
-    loop {
-        match editor.read_line()? {
-            input::ReadOutcome::Submit(input) => {
-                let trimmed = input.trim().to_string();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if trimmed.eq_ignore_ascii_case("/exit") || trimmed.eq_ignore_ascii_case("/quit") {
-                    cli.persist_session()?;
-                    break;
-                }
-                if let Some(command) = SlashCommand::parse(&trimmed) {
-                    if cli.handle_repl_command(command)? {
-                        cli.persist_session()?;
-                    }
-                    continue;
-                }
-                editor.push_history(input);
-                cli.run_turn(&trimmed)?;
-            }
-            input::ReadOutcome::Cancel => {}
-            input::ReadOutcome::Exit => {
-                cli.persist_session()?;
-                break;
-            }
-        }
-    }
-
-    Ok(())
 }
 
 pub(crate) struct LiveCli {
@@ -813,115 +777,6 @@ impl LiveCli {
 
     pub(crate) fn debug_tool_call_report(&self) -> Result<String, CliError> {
         Ok(render_last_tool_debug_report(self.runtime.session())?)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ResumeCommandOutcome {
-    pub(crate) session: Session,
-    pub(crate) message: Option<String>,
-}
-
-#[allow(clippy::too_many_lines)]
-pub(crate) fn run_resume_command(
-    session_path: &Path,
-    session: &Session,
-    command: &SlashCommand,
-) -> Result<ResumeCommandOutcome, CliError> {
-    match command {
-        SlashCommand::Help => Ok(ResumeCommandOutcome {
-            session: session.clone(),
-            message: Some(render_repl_help()),
-        }),
-        SlashCommand::Compact => {
-            let result = runtime::compact_session(
-                session,
-                CompactionConfig {
-                    max_estimated_tokens: 0,
-                    ..CompactionConfig::default()
-                },
-            );
-            let removed = result.removed_message_count;
-            let kept = result.compacted_session.messages.len();
-            let skipped = removed == 0;
-            result.compacted_session.save_to_path(session_path)?;
-            Ok(ResumeCommandOutcome {
-                session: result.compacted_session,
-                message: Some(format_compact_report(removed, kept, skipped)),
-            })
-        }
-        SlashCommand::Clear { confirm } => {
-            if !confirm {
-                return Ok(ResumeCommandOutcome {
-                    session: session.clone(),
-                    message: Some(
-                        "clear: confirmation required; rerun with /clear --confirm".to_string(),
-                    ),
-                });
-            }
-            let cleared = Session::new();
-            cleared.save_to_path(session_path)?;
-            Ok(ResumeCommandOutcome {
-                session: cleared,
-                message: Some(format!(
-                    "Cleared resumed session file {}.",
-                    session_path.display()
-                )),
-            })
-        }
-        SlashCommand::Status => {
-            let tracker = runtime::UsageTracker::from_session(session);
-            let usage = tracker.cumulative_usage();
-            Ok(ResumeCommandOutcome {
-                session: session.clone(),
-                message: Some(format_status_report(
-                    session.model.as_deref().unwrap_or("unknown"),
-                    StatusUsage {
-                        message_count: session.messages.len(),
-                        turns: tracker.turns(),
-                        latest: tracker.current_turn_usage(),
-                        cumulative: usage,
-                        estimated_tokens: 0,
-                    },
-                    &status_context(Some(session_path))?,
-                )),
-            })
-        }
-        SlashCommand::Cost => {
-            let usage = runtime::UsageTracker::from_session(session).cumulative_usage();
-            Ok(ResumeCommandOutcome {
-                session: session.clone(),
-                message: Some(format_cost_report(usage)),
-            })
-        }
-        SlashCommand::Config { section } => Ok(ResumeCommandOutcome {
-            session: session.clone(),
-            message: Some(render_config_report(section.as_deref())?),
-        }),
-        SlashCommand::Version => Ok(ResumeCommandOutcome {
-            session: session.clone(),
-            message: Some(render_version_report()),
-        }),
-        SlashCommand::Export { path } => {
-            let export_path = resolve_export_path(path.as_deref(), session)?;
-            fs::write(&export_path, render_export_text(session))?;
-            Ok(ResumeCommandOutcome {
-                session: session.clone(),
-                message: Some(format!(
-                    "Export\n  Result           wrote transcript\n  File             {}\n  Messages         {}",
-                    export_path.display(),
-                    session.messages.len()
-                )),
-            })
-        }
-        SlashCommand::Debug
-        | SlashCommand::Resume { .. }
-        | SlashCommand::Model { .. }
-        | SlashCommand::Session { .. }
-        | SlashCommand::Auth { .. }
-        | SlashCommand::Headed
-        | SlashCommand::Headless
-        | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),
     }
 }
 
