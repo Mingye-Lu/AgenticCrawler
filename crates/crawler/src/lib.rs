@@ -9,6 +9,7 @@ mod playwright;
 mod prompt;
 mod shared_client;
 mod state;
+pub mod tool_effect;
 mod tool_registry;
 mod tools;
 
@@ -20,6 +21,7 @@ pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
+pub use tool_effect::{FinishSpec, ForkSpec, ToolDef, ToolEffect, ToolError, WaitSpec};
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use prompt::build_system_prompt;
 
