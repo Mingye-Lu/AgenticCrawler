@@ -4,6 +4,7 @@ mod error;
 mod format;
 mod init;
 mod input;
+mod output_sink;
 mod render;
 mod session_mgr;
 mod tui;
