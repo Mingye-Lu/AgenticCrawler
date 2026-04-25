@@ -119,4 +119,43 @@ mod tests {
             _ => panic!("expected reply effect"),
         }
     }
+
+    #[test]
+    fn test_reply_json_serializes_complex_value() {
+        let value = serde_json::json!({"items": [1, 2, 3], "nested": {"key": "val"}});
+        let effect = ToolEffect::reply_json(&value);
+        match effect {
+            ToolEffect::Reply(s) => {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&s).expect("should be valid JSON");
+                assert_eq!(parsed["items"][0], 1);
+                assert_eq!(parsed["nested"]["key"], "val");
+            }
+            _ => panic!("expected Reply variant"),
+        }
+    }
+
+    #[test]
+    fn test_tool_error_display_message() {
+        let err = ToolError("something went wrong".to_string());
+        assert_eq!(err.to_string(), "something went wrong");
+        assert!(err.to_string().contains("wrong"));
+    }
+
+    #[test]
+    fn test_tool_error_from_crawl_error_conversion() {
+        let crawl_err = crate::CrawlError::new("crawl failure");
+        let tool_err: ToolError = crawl_err.into();
+        assert_eq!(tool_err.to_string(), "crawl failure");
+    }
+
+    #[test]
+    fn test_finish_spec_stores_summary() {
+        let spec = FinishSpec {
+            summary: "All pages scraped".to_string(),
+        };
+        assert_eq!(spec.summary, "All pages scraped");
+        let cloned = spec.clone();
+        assert_eq!(cloned.summary, spec.summary);
+    }
 }
