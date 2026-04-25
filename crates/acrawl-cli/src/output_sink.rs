@@ -12,7 +12,6 @@ pub trait OutputSink: Send {
     fn on_tool_call(&mut self, name: &str, input: &str);
     fn on_tool_result(&mut self, name: &str, output: &str, is_error: bool);
     fn on_system(&mut self, msg: &str);
-    fn on_turn_start(&mut self);
     fn on_turn_finished(&mut self, result: &Result<(), String>);
 }
 
@@ -51,8 +50,6 @@ impl OutputSink for StdoutSink {
     fn on_system(&mut self, msg: &str) {
         println!("{msg}");
     }
-
-    fn on_turn_start(&mut self) {}
 
     fn on_turn_finished(&mut self, result: &Result<(), String>) {
         if let Some(rendered) = self.markdown_stream.flush(&self.renderer) {
@@ -100,10 +97,6 @@ impl OutputSink for ChannelSink {
 
     fn on_system(&mut self, msg: &str) {
         let _ = self.tx.send(ReplTuiEvent::SystemMessage(msg.to_string()));
-    }
-
-    fn on_turn_start(&mut self) {
-        let _ = self.tx.send(ReplTuiEvent::TurnStarting);
     }
 
     fn on_turn_finished(&mut self, result: &Result<(), String>) {
