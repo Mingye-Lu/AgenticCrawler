@@ -5,9 +5,10 @@ mod error;
 mod format;
 mod init;
 mod input;
+mod markdown;
 mod output_sink;
-mod render;
 mod session_mgr;
+mod tool_format;
 mod tui;
 
 use std::collections::BTreeMap;

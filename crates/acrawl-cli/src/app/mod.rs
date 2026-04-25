@@ -20,7 +20,7 @@ use crate::format::{
 };
 use crate::input;
 use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
-use crate::render::{Spinner, TerminalRenderer};
+use crate::markdown::{Spinner, TerminalRenderer};
 use crate::session_mgr::{
     create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
 };

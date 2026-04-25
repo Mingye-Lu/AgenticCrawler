@@ -12,7 +12,6 @@ pub mod model_list;
 pub mod model_modal;
 pub(super) mod repl_render;
 pub mod repl_app;
-pub mod tool_panel;
 
 pub use events::ReplTuiEvent;
 pub use repl_app::run_repl_ratatui;
