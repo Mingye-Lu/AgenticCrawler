@@ -7,9 +7,6 @@ mod file_ops;
 mod hooks;
 mod json;
 mod mcp;
-mod mcp_client;
-mod mcp_stdio;
-mod mcp_types;
 mod oauth;
 pub mod observer;
 mod prompt;
@@ -46,12 +43,12 @@ pub use mcp::{
     mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
     scoped_mcp_config_hash, unwrap_ccr_proxy_url,
 };
-pub use mcp_client::{
+pub use mcp::{
     McpClaudeAiProxyTransport, McpClientAuth, McpClientBootstrap, McpClientTransport,
     McpRemoteTransport, McpSdkTransport, McpStdioTransport,
 };
-pub use mcp_stdio::{spawn_mcp_stdio_process, McpServerManager, McpStdioProcess};
-pub use mcp_types::{
+pub use mcp::{spawn_mcp_stdio_process, McpServerManager, McpStdioProcess};
+pub use mcp::{
     JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ManagedMcpTool,
     McpInitializeClientInfo, McpInitializeParams, McpInitializeResult, McpInitializeServerInfo,
     McpListResourcesParams, McpListResourcesResult, McpListToolsParams, McpListToolsResult,
