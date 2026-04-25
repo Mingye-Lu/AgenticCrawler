@@ -204,7 +204,11 @@ fn optional_string_map(
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{McpRemoteServerConfig, McpServerConfig, McpStdioServerConfig, McpTransport};
+    use super::{
+        McpClaudeAiProxyServerConfig, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
+        McpStdioServerConfig, McpTransport, McpWebSocketServerConfig, ScopedMcpServerConfig,
+    };
+    use crate::config::ConfigSource;
 
     #[test]
     fn mcp_server_config_transport_matches_stdio_sse_and_http_variants() {
@@ -229,5 +233,39 @@ mod tests {
         assert_eq!(stdio.transport(), McpTransport::Stdio);
         assert_eq!(sse.transport(), McpTransport::Sse);
         assert_eq!(http.transport(), McpTransport::Http);
+    }
+
+    #[test]
+    fn ws_sdk_and_claude_ai_proxy_transport_detection() {
+        let ws = McpServerConfig::Ws(McpWebSocketServerConfig {
+            url: "wss://example.test/mcp".to_string(),
+            headers: BTreeMap::default(),
+            headers_helper: None,
+        });
+        let sdk = McpServerConfig::Sdk(McpSdkServerConfig {
+            name: "test-sdk".to_string(),
+        });
+        let proxy = McpServerConfig::ClaudeAiProxy(McpClaudeAiProxyServerConfig {
+            url: "https://proxy.test/mcp".to_string(),
+            id: "proxy-1".to_string(),
+        });
+
+        assert_eq!(ws.transport(), McpTransport::Ws);
+        assert_eq!(sdk.transport(), McpTransport::Sdk);
+        assert_eq!(proxy.transport(), McpTransport::ClaudeAiProxy);
+    }
+
+    #[test]
+    fn scoped_config_delegates_transport_to_inner_config() {
+        let scoped = ScopedMcpServerConfig {
+            scope: ConfigSource::Project,
+            config: McpServerConfig::Stdio(McpStdioServerConfig {
+                command: "test".to_string(),
+                args: Vec::new(),
+                env: BTreeMap::default(),
+            }),
+        };
+        assert_eq!(scoped.transport(), McpTransport::Stdio);
+        assert_eq!(scoped.transport(), scoped.config.transport());
     }
 }
