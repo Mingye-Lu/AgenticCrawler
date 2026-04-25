@@ -11,6 +11,7 @@ mod mcp_client;
 mod mcp_stdio;
 mod mcp_types;
 mod oauth;
+pub mod observer;
 mod prompt;
 mod remote;
 pub mod sandbox;
@@ -65,6 +66,7 @@ pub use oauth::{
     OAuthCallbackParams, OAuthRefreshRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
     PkceChallengeMethod, PkceCodePair,
 };
+pub use observer::RuntimeObserver;
 pub use prompt::{
     load_system_prompt, prepend_bullets, ProjectContext, PromptBuildError, SystemPromptBuilder,
     FRONTIER_MODEL_NAME, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,

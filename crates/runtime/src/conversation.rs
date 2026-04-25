@@ -8,6 +8,7 @@ use crate::compact::{
 };
 use crate::config::RuntimeFeatureConfig;
 use crate::hooks::{HookRunResult, HookRunner};
+use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
 
@@ -105,6 +106,7 @@ pub struct ConversationRuntime<C, T> {
     session: Session,
     api_client: C,
     tool_executor: T,
+    observer: Option<Box<dyn RuntimeObserver + Send>>,
     system_prompt: Vec<String>,
     max_iterations: usize,
     usage_tracker: UsageTracker,
@@ -147,6 +149,7 @@ where
             session,
             api_client,
             tool_executor,
+            observer: None,
             system_prompt,
             max_iterations: usize::MAX,
             usage_tracker,
@@ -159,6 +162,12 @@ where
     #[must_use]
     pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
         self.max_iterations = max_iterations;
+        self
+    }
+
+    #[must_use]
+    pub fn with_observer(mut self, observer: Box<dyn RuntimeObserver + Send>) -> Self {
+        self.observer = Some(observer);
         self
     }
 
@@ -186,108 +195,130 @@ where
         &mut self,
         user_input: impl Into<String>,
     ) -> Result<TurnSummary, RuntimeError> {
-        self.session
-            .messages
-            .push(ConversationMessage::user_text(user_input.into()));
+        let result = async {
+            self.session
+                .messages
+                .push(ConversationMessage::user_text(user_input.into()));
 
-        let mut assistant_messages = Vec::new();
-        let mut tool_results = Vec::new();
-        let mut iterations = 0;
+            let mut assistant_messages = Vec::new();
+            let mut tool_results = Vec::new();
+            let mut iterations = 0;
 
-        'outer: loop {
-            if self.cancel_flag.load(Ordering::Acquire) {
-                self.cancel_flag.store(false, Ordering::Release);
-                return Err(RuntimeError::new("interrupted by user"));
-            }
+            'outer: loop {
+                if self.cancel_flag.load(Ordering::Acquire) {
+                    self.cancel_flag.store(false, Ordering::Release);
+                    return Err(RuntimeError::new("interrupted by user"));
+                }
 
-            iterations += 1;
-            if iterations > self.max_iterations {
-                return Err(RuntimeError::new(
-                    "conversation loop exceeded the maximum number of iterations",
-                ));
-            }
+                iterations += 1;
+                if iterations > self.max_iterations {
+                    return Err(RuntimeError::new(
+                        "conversation loop exceeded the maximum number of iterations",
+                    ));
+                }
 
-            let request = ApiRequest {
-                system_prompt: self.system_prompt.clone(),
-                messages: self.session.messages.clone(),
-            };
-            let events = self.api_client.stream(request)?;
-            let (assistant_message, usage) = build_assistant_message(events)?;
-            if let Some(usage) = usage {
-                self.usage_tracker.record(usage);
-            }
-            let pending_tool_uses = assistant_message
-                .blocks
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::ToolUse { id, name, input } => {
-                        Some((id.clone(), name.clone(), input.clone()))
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-
-            self.session.messages.push(assistant_message.clone());
-            assistant_messages.push(assistant_message);
-
-            if pending_tool_uses.is_empty() {
-                break;
-            }
-
-            for (tool_use_id, tool_name, input) in pending_tool_uses {
-                let is_done_tool = tool_name == "done";
-                let result_message = {
-                    let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
-                    if pre_hook_result.is_denied() {
-                        let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
-                        ConversationMessage::tool_result(
-                            tool_use_id,
-                            tool_name,
-                            format_hook_message(&pre_hook_result, &deny_message),
-                            true,
-                        )
-                    } else {
-                        let (mut output, mut is_error) =
-                            match self.tool_executor.execute(&tool_name, &input).await {
-                                Ok(output) => (output, false),
-                                Err(error) => (error.to_string(), true),
-                            };
-                        output = merge_hook_feedback(pre_hook_result.messages(), output, false);
-
-                        let post_hook_result = self
-                            .hook_runner
-                            .run_post_tool_use(&tool_name, &input, &output, is_error);
-                        if post_hook_result.is_denied() {
-                            is_error = true;
-                        }
-                        output = merge_hook_feedback(
-                            post_hook_result.messages(),
-                            output,
-                            post_hook_result.is_denied(),
-                        );
-
-                        ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
-                    }
+                let request = ApiRequest {
+                    system_prompt: self.system_prompt.clone(),
+                    messages: self.session.messages.clone(),
                 };
-                if is_done_tool {
+                let events = self.api_client.stream(request)?;
+                notify_observer_about_events(&mut self.observer, &events);
+                let (assistant_message, usage) = build_assistant_message(events)?;
+                if let Some(usage) = usage {
+                    self.usage_tracker.record(usage);
+                }
+                let pending_tool_uses = assistant_message
+                    .blocks
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::ToolUse { id, name, input } => {
+                            Some((id.clone(), name.clone(), input.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+
+                self.session.messages.push(assistant_message.clone());
+                assistant_messages.push(assistant_message);
+
+                if pending_tool_uses.is_empty() {
+                    break;
+                }
+
+                for (tool_use_id, tool_name, input) in pending_tool_uses {
+                    let is_done_tool = tool_name == "done";
+                    let result_message = {
+                        let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
+                        if pre_hook_result.is_denied() {
+                            let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
+                            let message = format_hook_message(&pre_hook_result, &deny_message);
+                            notify_observer_system_message(&mut self.observer, &message);
+                            ConversationMessage::tool_result(
+                                tool_use_id,
+                                tool_name,
+                                message,
+                                true,
+                            )
+                        } else {
+                            let (mut output, mut is_error) =
+                                match self.tool_executor.execute(&tool_name, &input).await {
+                                    Ok(output) => (output, false),
+                                    Err(error) => (error.to_string(), true),
+                                };
+                            output = merge_hook_feedback(pre_hook_result.messages(), output, false);
+                            if !pre_hook_result.messages().is_empty() {
+                                notify_observer_system_message(
+                                    &mut self.observer,
+                                    &pre_hook_result.messages().join("\n"),
+                                );
+                            }
+
+                            let post_hook_result = self
+                                .hook_runner
+                                .run_post_tool_use(&tool_name, &input, &output, is_error);
+                            if post_hook_result.is_denied() {
+                                is_error = true;
+                            }
+                            if !post_hook_result.messages().is_empty() {
+                                notify_observer_system_message(
+                                    &mut self.observer,
+                                    &post_hook_result.messages().join("\n"),
+                                );
+                            }
+                            output = merge_hook_feedback(
+                                post_hook_result.messages(),
+                                output,
+                                post_hook_result.is_denied(),
+                            );
+
+                            ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
+                        }
+                    };
+                    notify_observer_tool_result(&mut self.observer, &result_message);
+                    if is_done_tool {
+                        self.session.messages.push(result_message.clone());
+                        tool_results.push(result_message);
+                        break 'outer;
+                    }
                     self.session.messages.push(result_message.clone());
                     tool_results.push(result_message);
-                    break 'outer;
                 }
-                self.session.messages.push(result_message.clone());
-                tool_results.push(result_message);
             }
+
+            let auto_compaction = self.maybe_auto_compact();
+
+            Ok(TurnSummary {
+                assistant_messages,
+                tool_results,
+                iterations,
+                usage: self.usage_tracker.cumulative_usage(),
+                auto_compaction,
+            })
         }
+        .await;
 
-        let auto_compaction = self.maybe_auto_compact();
-
-        Ok(TurnSummary {
-            assistant_messages,
-            tool_results,
-            iterations,
-            usage: self.usage_tracker.cumulative_usage(),
-            auto_compaction,
-        })
+        notify_observer_turn_finished(&mut self.observer, &result);
+        result
     }
 
     #[must_use]
@@ -403,6 +434,66 @@ fn build_assistant_message(
         ConversationMessage::assistant_with_usage(blocks, usage),
         usage,
     ))
+}
+
+fn notify_observer_about_events(
+    observer: &mut Option<Box<dyn RuntimeObserver + Send>>,
+    events: &[AssistantEvent],
+) {
+    let Some(observer) = observer.as_mut() else {
+        return;
+    };
+
+    for event in events {
+        match event {
+            AssistantEvent::TextDelta(delta) => observer.on_text_delta(delta),
+            AssistantEvent::ToolUse { id, name, input } => {
+                observer.on_tool_call_start(id, name, input);
+            }
+            AssistantEvent::Usage(usage) => observer.on_usage(usage),
+            AssistantEvent::Reasoning { .. } | AssistantEvent::MessageStop => {}
+        }
+    }
+}
+
+fn notify_observer_tool_result(
+    observer: &mut Option<Box<dyn RuntimeObserver + Send>>,
+    result_message: &ConversationMessage,
+) {
+    let Some(observer) = observer.as_mut() else {
+        return;
+    };
+
+    for block in &result_message.blocks {
+        if let ContentBlock::ToolResult {
+            tool_name,
+            output,
+            is_error,
+            ..
+        } = block
+        {
+            observer.on_tool_result(tool_name, output, *is_error);
+        }
+    }
+}
+
+fn notify_observer_system_message(
+    observer: &mut Option<Box<dyn RuntimeObserver + Send>>,
+    message: &str,
+) {
+    if let Some(observer) = observer.as_mut() {
+        observer.on_system_message(message);
+    }
+}
+
+fn notify_observer_turn_finished(
+    observer: &mut Option<Box<dyn RuntimeObserver + Send>>,
+    result: &Result<TurnSummary, RuntimeError>,
+) {
+    if let Some(observer) = observer.as_mut() {
+        let observer_result = result.as_ref().map(|_| ()).map_err(ToString::to_string);
+        observer.on_turn_finished(&observer_result);
+    }
 }
 
 fn flush_text_block(text: &mut String, blocks: &mut Vec<ContentBlock>) {
