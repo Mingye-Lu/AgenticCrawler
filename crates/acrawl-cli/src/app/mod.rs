@@ -19,6 +19,7 @@ use crate::format::{
     resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
 use crate::input;
+use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
 use crate::render::{Spinner, TerminalRenderer};
 use crate::session_mgr::{
     create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
@@ -145,12 +146,31 @@ pub(crate) struct LiveCli {
     system_prompt: Vec<String>,
     runtime: ConversationRuntime<LlmRuntimeClient, CliToolExecutor>,
     session: SessionHandle,
-    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
-    /// `false` when the TUI owns the terminal (raw-mode / alternate screen).
-    /// When `false`, LLM streaming and tool output are routed through `ui_tx`
-    /// instead of being written directly to stdout.
-    emit_output: bool,
+    output_mode: OutputMode,
     reasoning_effort: Option<api::ReasoningEffort>,
+}
+
+#[derive(Clone)]
+enum OutputMode {
+    Stdout,
+    Channel(mpsc::Sender<ReplTuiEvent>),
+}
+
+impl OutputMode {
+    fn observer(&self) -> Box<dyn runtime::RuntimeObserver + Send> {
+        let sink: Box<dyn OutputSink + Send> = match self {
+            Self::Stdout => Box::new(StdoutSink::new()),
+            Self::Channel(tx) => Box::new(ChannelSink::new(tx.clone())),
+        };
+        Box::new(sink)
+    }
+
+    fn sender(&self) -> Option<mpsc::Sender<ReplTuiEvent>> {
+        match self {
+            Self::Stdout => None,
+            Self::Channel(tx) => Some(tx.clone()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,14 +188,14 @@ impl LiveCli {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
+        let output_mode = OutputMode::Stdout;
         let runtime = build_runtime(
             Session::new(),
             model.clone(),
             system_prompt.clone(),
             enable_tools,
-            true,
             allowed_tools.clone(),
-            None,
+            output_mode.observer(),
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
             let saved = settings
@@ -192,8 +212,7 @@ impl LiveCli {
             system_prompt,
             runtime,
             session,
-            ui_tx: None,
-            emit_output: true,
+            output_mode,
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
@@ -207,19 +226,23 @@ impl LiveCli {
         model: String,
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
-        ui_tx: mpsc::Sender<ReplTuiEvent>,
+        event_tx: mpsc::Sender<ReplTuiEvent>,
     ) -> Result<Self, CliError> {
+        let _ = ReplTuiEvent::ToolStarting {
+            name: String::new(),
+            input: String::new(),
+        };
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
+        let output_mode = OutputMode::Channel(event_tx);
         let runtime = build_runtime(
             Session::new(),
             model.clone(),
             system_prompt.clone(),
             enable_tools,
-            false,
             allowed_tools.clone(),
-            Some(ui_tx.clone()),
+            output_mode.observer(),
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
             let saved = settings
@@ -236,8 +259,7 @@ impl LiveCli {
             system_prompt,
             runtime,
             session,
-            ui_tx: Some(ui_tx),
-            emit_output: false,
+            output_mode,
             reasoning_effort: initial_effort,
         };
         if let Some(effort) = initial_effort {
@@ -285,8 +307,8 @@ impl LiveCli {
         self.runtime.usage().cumulative_usage()
     }
 
-    fn ui_sender(&self) -> Option<mpsc::Sender<ReplTuiEvent>> {
-        self.ui_tx.clone()
+    fn event_sender(&self) -> Option<mpsc::Sender<ReplTuiEvent>> {
+        self.output_mode.sender()
     }
 
     pub(crate) fn cancel_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
@@ -294,7 +316,7 @@ impl LiveCli {
     }
 
     pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), CliError> {
-        if let Some(tx) = &self.ui_tx {
+        if let Some(tx) = self.event_sender() {
             let _ = tx.send(ReplTuiEvent::TurnStarting);
         }
         let result = block_on_runtime_future(self.runtime.run_turn(input));
@@ -302,7 +324,7 @@ impl LiveCli {
             Ok(summary) => {
                 if let Some(ev) = summary.auto_compaction {
                     let msg = format_auto_compaction_notice(ev.removed_message_count);
-                    if let Some(tx) = &self.ui_tx {
+                    if let Some(tx) = self.event_sender() {
                         let _ = tx.send(ReplTuiEvent::SystemMessage(msg));
                     }
                 }
@@ -310,9 +332,6 @@ impl LiveCli {
             }
             Err(e) => Err(e.to_string()),
         };
-        if let Some(tx) = &self.ui_tx {
-            let _ = tx.send(ReplTuiEvent::TurnFinished(finish.clone()));
-        }
         match result {
             Ok(_) => finish.map_err(std::convert::Into::into),
             Err(e) => Err(e.into()),
@@ -395,9 +414,8 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            false,
             self.allowed_tools.clone(),
-            self.ui_sender(),
+            self.output_mode.observer(),
         )?;
         let summary = block_on_runtime_future(runtime.run_turn(input))?;
         self.runtime = runtime;
@@ -570,9 +588,8 @@ impl LiveCli {
             model.clone(),
             self.system_prompt.clone(),
             true,
-            self.emit_output,
             self.allowed_tools.clone(),
-            self.ui_sender(),
+            self.output_mode.observer(),
         )?;
         self.model.clone_from(&model);
         if model_supports_reasoning(&model) {
@@ -610,9 +627,8 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            self.emit_output,
             self.allowed_tools.clone(),
-            self.ui_sender(),
+            self.output_mode.observer(),
         )?;
         Ok(CommandUiResult {
             message: format!(
@@ -647,9 +663,8 @@ impl LiveCli {
             model.clone(),
             self.system_prompt.clone(),
             true,
-            self.emit_output,
             self.allowed_tools.clone(),
-            self.ui_sender(),
+            self.output_mode.observer(),
         )?;
         self.model = model;
         let _ = runtime::update_settings(|s| {
@@ -716,9 +731,8 @@ impl LiveCli {
                     model.clone(),
                     self.system_prompt.clone(),
                     true,
-                    self.emit_output,
                     self.allowed_tools.clone(),
-                    self.ui_sender(),
+                    self.output_mode.observer(),
                 )?;
                 self.model = model;
                 let _ = runtime::update_settings(|s| {
@@ -757,9 +771,8 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            self.emit_output,
             self.allowed_tools.clone(),
-            self.ui_sender(),
+            self.output_mode.observer(),
         )?;
         println!("Auth\n  Provider         {label}\n  Result           authenticated");
         Ok(())
@@ -772,9 +785,8 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            self.emit_output,
             self.allowed_tools.clone(),
-            self.ui_sender(),
+            self.output_mode.observer(),
         )?;
         Ok(())
     }
@@ -789,9 +801,8 @@ impl LiveCli {
             self.model.clone(),
             self.system_prompt.clone(),
             true,
-            self.emit_output,
             self.allowed_tools.clone(),
-            self.ui_sender(),
+            self.output_mode.observer(),
         )?;
         self.persist_session()?;
         Ok(CommandUiResult {
@@ -1115,7 +1126,6 @@ mod tests {
             &mut events,
             &mut pending_tool,
             false,
-            None,
         )
         .expect("text block should render");
         let rendered = String::from_utf8(out).expect("utf8");
@@ -1138,7 +1148,6 @@ mod tests {
             &mut events,
             &mut pending_tool,
             true,
-            None,
         )
         .expect("tool block should accumulate");
         assert!(events.is_empty());
@@ -1173,7 +1182,6 @@ mod tests {
                 request_id: None,
             },
             &mut out,
-            None,
         )
         .expect("response conversion should succeed");
         assert!(
@@ -1206,7 +1214,6 @@ mod tests {
                 request_id: None,
             },
             &mut out,
-            None,
         )
         .expect("response conversion should succeed");
         assert!(

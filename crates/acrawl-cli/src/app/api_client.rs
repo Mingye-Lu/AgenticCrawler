@@ -1,5 +1,4 @@
 use std::io::{self, Write};
-use std::sync::mpsc;
 
 use api::{
     provider::{ProviderClient, ProviderRegistry},
@@ -7,8 +6,6 @@ use api::{
     OutputContentBlock, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 use crate::render::{MarkdownStreamState, TerminalRenderer};
-use crate::tui::ReplTuiEvent;
-use crate::tui::tool_panel::format_tool_call_start;
 use runtime::{ApiClient, AssistantEvent, ConversationMessage, MessageRole, RuntimeError, TokenUsage};
 use serde_json::json;
 
@@ -19,9 +16,7 @@ pub(crate) struct LlmRuntimeClient {
     provider: ProviderClient,
     model: String,
     enable_tools: bool,
-    emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
-    ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
     pub(crate) reasoning_effort: Option<api::ReasoningEffort>,
 }
 
@@ -29,9 +24,7 @@ impl LlmRuntimeClient {
     pub(crate) fn new(
         model: String,
         enable_tools: bool,
-        emit_output: bool,
         allowed_tools: Option<AllowedToolSet>,
-        ui_tx: Option<mpsc::Sender<ReplTuiEvent>>,
     ) -> Self {
         let store = api::load_credentials().unwrap_or_default();
         let registry = ProviderRegistry::from_credentials(&store);
@@ -51,16 +44,8 @@ impl LlmRuntimeClient {
             provider,
             model,
             enable_tools,
-            emit_output,
             allowed_tools,
-            ui_tx,
             reasoning_effort: None,
-        }
-    }
-
-    fn send_ui_stream(&self, chunk: impl Into<String>) {
-        if let Some(tx) = &self.ui_tx {
-            let _ = tx.send(ReplTuiEvent::StreamAnsi(chunk.into()));
         }
     }
 }
@@ -89,13 +74,8 @@ impl ApiClient for LlmRuntimeClient {
         };
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let mut stdout = io::stdout();
                 let mut sink = io::sink();
-                let out: &mut dyn Write = if self.emit_output {
-                    &mut stdout
-                } else {
-                    &mut sink
-                };
+                let out = &mut sink;
                 let renderer = TerminalRenderer::new();
                 let mut markdown_stream = MarkdownStreamState::default();
                 let mut events = Vec::new();
@@ -122,7 +102,6 @@ impl ApiClient for LlmRuntimeClient {
                                     &mut events,
                                     &mut pending_tool,
                                     true,
-                                    self.ui_tx.as_ref(),
                                 )?;
                             }
                         }
@@ -133,14 +112,11 @@ impl ApiClient for LlmRuntimeClient {
                                 &mut events,
                                 &mut pending_tool,
                                 true,
-                                self.ui_tx.as_ref(),
                             )?;
                         }
                         api::StreamEvent::ContentBlockDelta(delta) => match delta.delta {
                             ContentBlockDelta::TextDelta { text } => {
                                 if !text.is_empty() {
-                                    self.send_ui_stream(&text);
-
                                     if let Some(rendered) = markdown_stream.push(&renderer, &text) {
                                         write!(out, "{rendered}")
                                             .and_then(|()| out.flush())
@@ -167,18 +143,6 @@ impl ApiClient for LlmRuntimeClient {
                                 } else {
                                     input
                                 };
-                                let tool_banner = format_tool_call_start(&name, &input);
-                                writeln!(out, "\n{tool_banner}")
-                                    .and_then(|()| out.flush())
-                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
-                                if let Some(tx) = &self.ui_tx {
-                                    let _ = tx.send(ReplTuiEvent::ToolCallStart {
-                                        name: name.clone(),
-                                        input: input.clone(),
-                                    });
-                                } else {
-                                    self.send_ui_stream(format!("\n{tool_banner}"));
-                                }
                                 events.push(AssistantEvent::ToolUse { id, name, input });
                             }
                         }
@@ -224,7 +188,7 @@ impl ApiClient for LlmRuntimeClient {
                         })
                         .await
                         .map_err(|error| RuntimeError::new(error.to_string()))?;
-                    response_to_events(response, out, self.ui_tx.as_ref())
+                    response_to_events(response, out)
                 } else {
                     Ok(events)
                 }
@@ -235,22 +199,17 @@ impl ApiClient for LlmRuntimeClient {
 
 pub(crate) fn push_output_block(
     block: OutputContentBlock,
-    out: &mut (impl Write + ?Sized),
+    out: &mut impl Write,
     events: &mut Vec<AssistantEvent>,
     pending_tool: &mut Option<(String, String, String)>,
     streaming_tool_input: bool,
-    ui_tx: Option<&std::sync::mpsc::Sender<ReplTuiEvent>>,
 ) -> Result<(), RuntimeError> {
     match block {
         OutputContentBlock::Text { text } => {
             if !text.is_empty() {
-                let rendered = TerminalRenderer::new().markdown_to_ansi(&text);
-                write!(out, "{rendered}")
-                    .and_then(|()| out.flush())
+                TerminalRenderer::new()
+                    .stream_markdown(&text, out)
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
-                if let Some(tx) = ui_tx {
-                    let _ = tx.send(ReplTuiEvent::StreamAnsi(rendered));
-                }
                 events.push(AssistantEvent::TextDelta(text));
             }
         }
@@ -271,13 +230,12 @@ pub(crate) fn push_output_block(
 
 pub(crate) fn response_to_events(
     response: MessageResponse,
-    out: &mut (impl Write + ?Sized),
-    ui_tx: Option<&std::sync::mpsc::Sender<ReplTuiEvent>>,
+    out: &mut impl Write,
 ) -> Result<Vec<AssistantEvent>, RuntimeError> {
     let mut events = Vec::new();
     let mut pending_tool = None;
     for block in response.content {
-        push_output_block(block, out, &mut events, &mut pending_tool, false, ui_tx)?;
+        push_output_block(block, out, &mut events, &mut pending_tool, false)?;
         if let Some((id, name, input)) = pending_tool.take() {
             events.push(AssistantEvent::ToolUse { id, name, input });
         }
