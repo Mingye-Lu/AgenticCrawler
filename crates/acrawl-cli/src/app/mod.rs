@@ -969,28 +969,25 @@ mod tests {
     }
 
     #[test]
-    fn push_output_block_renders_markdown_text() {
-        let mut out = Vec::new();
+    fn push_output_block_emits_text_delta() {
         let mut events = Vec::new();
         let mut pending_tool = None;
         push_output_block(
             OutputContentBlock::Text {
                 text: "# Heading".to_string(),
             },
-            &mut out,
             &mut events,
             &mut pending_tool,
             false,
-        )
-        .expect("text block should render");
-        let rendered = String::from_utf8(out).expect("utf8");
-        assert!(rendered.contains("Heading"));
-        assert!(rendered.contains('\u{1b}'));
+        );
+        assert!(matches!(
+            &events[0],
+            AssistantEvent::TextDelta(text) if text == "# Heading"
+        ));
     }
 
     #[test]
     fn push_output_block_skips_empty_object_prefix_for_tool_streams() {
-        let mut out = Vec::new();
         let mut events = Vec::new();
         let mut pending_tool = None;
         push_output_block(
@@ -999,12 +996,10 @@ mod tests {
                 name: "read_file".to_string(),
                 input: json!({}),
             },
-            &mut out,
             &mut events,
             &mut pending_tool,
             true,
-        )
-        .expect("tool block should accumulate");
+        );
         assert!(events.is_empty());
         assert_eq!(
             pending_tool,
@@ -1014,7 +1009,6 @@ mod tests {
 
     #[test]
     fn response_to_events_preserves_empty_object_json_input_outside_streaming() {
-        let mut out = Vec::new();
         let events = response_to_events(
             MessageResponse {
                 id: "msg-1".to_string(),
@@ -1036,9 +1030,7 @@ mod tests {
                 },
                 request_id: None,
             },
-            &mut out,
-        )
-        .expect("response conversion should succeed");
+        );
         assert!(
             matches!(&events[0], AssistantEvent::ToolUse { name, input, .. } if name == "read_file" && input == "{}")
         );
@@ -1046,7 +1038,6 @@ mod tests {
 
     #[test]
     fn response_to_events_preserves_non_empty_json_input_outside_streaming() {
-        let mut out = Vec::new();
         let events = response_to_events(
             MessageResponse {
                 id: "msg-2".to_string(),
@@ -1068,9 +1059,7 @@ mod tests {
                 },
                 request_id: None,
             },
-            &mut out,
-        )
-        .expect("response conversion should succeed");
+        );
         assert!(
             matches!(&events[0], AssistantEvent::ToolUse { name, input, .. } if name == "read_file" && input == "{\"path\":\"rust/Cargo.toml\"}")
         );
