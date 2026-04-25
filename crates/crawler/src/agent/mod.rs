@@ -369,6 +369,7 @@ mod tests {
     use runtime::{ApiRequest, AssistantEvent, RuntimeError, TokenUsage};
 
     use super::*;
+    use crate::tool_registry::ToolRegistry;
 
     struct MockApiClient {
         call_count: usize,
@@ -413,6 +414,24 @@ mod tests {
         fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
             Ok(vec![
                 AssistantEvent::TextDelta("All done.".to_string()),
+                AssistantEvent::MessageStop,
+            ])
+        }
+    }
+
+    struct CountingTextOnlyApiClient {
+        call_count: Arc<std::sync::Mutex<usize>>,
+    }
+
+    impl ApiClient for CountingTextOnlyApiClient {
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            let mut call_count = self
+                .call_count
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *call_count += 1;
+            Ok(vec![
+                AssistantEvent::TextDelta("Child done.".to_string()),
                 AssistantEvent::MessageStop,
             ])
         }
@@ -563,6 +582,239 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_fork_dispatch_spawns_child() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let call_count = Arc::new(std::sync::Mutex::new(0usize));
+        let shared_client = SharedApiClient::new(CountingTextOnlyApiClient {
+            call_count: Arc::clone(&call_count),
+        });
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager.clone());
+        agent.api_client_arc = Some(shared_client);
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            crate::PlaywrightBridge::new()
+                .await
+                .expect("bridge should initialize for fork test"),
+        )));
+        agent.fork_page_index_override = Some(1);
+
+        let observation = agent
+            .execute(
+                "fork",
+                r#"{"sub_goal":"check result","url":"https://example.com"}"#,
+            )
+            .await
+            .expect("fork should succeed");
+
+        assert!(observation.contains("Forked subagent root-child-1 for: check result"));
+        assert_eq!(manager.lock().await.get_children("root").len(), 1);
+        assert_eq!(agent.child_tasks.len(), 1);
+        for (_, (_, handle)) in agent.child_tasks.drain() {
+            let _ = handle.await;
+        }
+
+        assert_eq!(
+            *call_count
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fork_returns_observation() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager);
+        agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            crate::PlaywrightBridge::new()
+                .await
+                .expect("bridge should initialize for fork test"),
+        )));
+        agent.fork_page_index_override = Some(1);
+
+        let observation = agent
+            .execute("fork", r#"{"sub_goal":"collect details"}"#)
+            .await
+            .expect("fork should succeed");
+
+        assert_eq!(
+            observation,
+            "Forked subagent root-child-1 for: collect details"
+        );
+
+        for (_, (_, handle)) in agent.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fork_at_limit_returns_error() {
+        let manager = Arc::new(Mutex::new(AgentManager::new(0, 3, 10)));
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager);
+        agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
+
+        let err = agent
+            .execute("fork", r#"{"sub_goal":"blocked"}"#)
+            .await
+            .expect_err("fork at limit should return an error");
+
+        assert!(
+            err.to_string().contains("active children"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fork_empty_subgoal_returns_error() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager);
+
+        let err = agent
+            .execute("fork", r#"{"sub_goal":"   "}"#)
+            .await
+            .expect_err("empty sub_goal should fail");
+
+        assert_eq!(err.to_string(), "fork requires non-empty sub_goal");
+    }
+
+    #[tokio::test]
+    async fn test_wait_no_children_returns_immediately() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent.handle_wait_for_subagents().await;
+
+        assert_eq!(result.unwrap(), "No active subagents");
+    }
+
+    #[tokio::test]
+    async fn test_wait_records_step() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async { None });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("search".to_string(), handle));
+
+        let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
+
+        assert_eq!(result, "Waited for 1 subagent(s). Collected 0 item(s).");
+        assert_eq!(agent.crawl_state.action_history.len(), 1);
+        assert_eq!(agent.crawl_state.action_history[0], result);
+    }
+
+    #[tokio::test]
+    async fn test_done_sets_state_done() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent.execute("done", r#"{"summary":"Task complete"}"#).await;
+
+        assert_eq!(result.unwrap(), "Task complete");
+        assert!(agent.crawl_state.done);
+        assert_eq!(agent.crawl_state.done_reason, "Task complete");
+    }
+
+    #[tokio::test]
+    async fn test_done_auto_waits_for_children() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+        manager
+            .lock()
+            .await
+            .register_child("child-1", "test-agent", None)
+            .expect("child registration should succeed");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal".to_string(), handle));
+
+        let result = agent
+            .execute("done", r#"{"summary":"Finished"}"#)
+            .await
+            .unwrap();
+
+        assert_eq!(result, "Finished");
+        assert!(agent.crawl_state.done);
+        assert_eq!(agent.crawl_state.done_reason, "Finished");
+        assert!(agent.child_tasks.is_empty());
+        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(agent.crawl_state.action_history.len(), 1);
+        assert_eq!(
+            agent.crawl_state.action_history[0],
+            "Waited for 1 subagent(s). Collected 1 item(s)."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge_child_data_to_parent() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+        manager
+            .lock()
+            .await
+            .register_child("child-1", "test-agent", None)
+            .expect("child registration should succeed");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"data": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("search".to_string(), handle));
+
+        let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
+
+        assert!(result.contains("Collected 1"));
+        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(agent.crawl_state.child_blocks[0].child_id, "child-1");
+        assert_eq!(agent.crawl_state.child_blocks[0].sub_goal, "search");
+        assert_eq!(agent.crawl_state.child_blocks[0].items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_merge_preserves_parent_data() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+        manager
+            .lock()
+            .await
+            .register_child("child-1", "test-agent", None)
+            .expect("child registration should succeed");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        agent.crawl_state.extracted_data = vec![serde_json::json!({"parent": 1})];
+
+        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal".to_string(), handle));
+
+        let _ = agent.execute("wait_for_subagents", "{}").await;
+
+        let all = agent.crawl_state.all_data();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
     async fn test_message_stop_still_works_without_done() {
         let result = CrawlerAgent::new_for_testing(mock_registry())
             .run("test", TextOnlyApiClient)
@@ -570,6 +822,66 @@ mod tests {
             .expect("text-only run should succeed");
         assert_eq!(result.steps_executed, 1);
         assert_eq!(result.summary, "All done.");
+    }
+
+
+    #[tokio::test]
+    async fn test_fork_full_lifecycle() {
+        let mut parent = CrawlerAgent::new_for_testing(mock_registry());
+        parent.crawl_state.extracted_data = vec![serde_json::json!({"parent": 1})];
+
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
+            Some(vec![
+                serde_json::json!({"child": 1}),
+                serde_json::json!({"child": 2}),
+            ])
+        });
+        parent
+            .child_tasks
+            .insert("child-1".to_string(), ("search page 2".to_string(), handle));
+
+        let wait_result = parent.execute("wait_for_subagents", "{}").await.unwrap();
+        assert!(wait_result.contains("Collected 2"));
+
+        let all = parent.crawl_state.all_data();
+        assert_eq!(all.len(), 3);
+        assert_eq!(parent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(parent.crawl_state.child_blocks[0].sub_goal, "search page 2");
+    }
+
+    #[tokio::test]
+    async fn test_fork_immediate_done_auto_waits() {
+        let mut parent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"found": "data"})]) });
+        parent
+            .child_tasks
+            .insert("child-1".to_string(), ("find data".to_string(), handle));
+
+        let done_result = parent
+            .execute("done", r#"{"summary": "all done"}"#)
+            .await
+            .unwrap();
+
+        assert_eq!(done_result, "all done");
+        assert!(parent.crawl_state.done);
+        assert_eq!(parent.crawl_state.done_reason, "all done");
+        assert_eq!(parent.crawl_state.child_blocks.len(), 1);
+        assert_eq!(parent.crawl_state.child_blocks[0].items.len(), 1);
+    }
+
+    #[test]
+    fn test_fork_depth_2_lifecycle() {
+        let mut mgr = AgentManager::new(10, 2, 20);
+        mgr.register_root("root");
+        mgr.register_child("child1", "root", None).unwrap();
+        mgr.register_child("grandchild1", "child1", None).unwrap();
+
+        assert_eq!(mgr.get_depth("root"), 0);
+        assert_eq!(mgr.get_depth("child1"), 1);
+        assert_eq!(mgr.get_depth("grandchild1"), 2);
+        assert!(!mgr.can_fork("grandchild1"));
     }
 
     #[test]
@@ -634,4 +946,5 @@ mod tests {
         assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
         assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
     }
+
 }
