@@ -155,11 +155,21 @@ pub enum InputContentBlock {
     },
 }
 
+/// Base64-encoded image source for the Anthropic Messages API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolResultContentBlock {
     Text { text: String },
     Json { value: Value },
+    Image { source: ImageSource },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,6 +374,27 @@ mod tests {
             }
             _ => panic!("Expected Reasoning variant"),
         }
+    }
+
+    #[test]
+    fn image_tool_result_block_serializes_to_anthropic_format() {
+        let block = ToolResultContentBlock::Image {
+            source: ImageSource {
+                source_type: "base64".to_string(),
+                media_type: "image/png".to_string(),
+                data: "iVBOR...".to_string(),
+            },
+        };
+
+        let serialized = serde_json::to_value(&block).expect("serialize");
+        assert_eq!(serialized["type"], "image");
+        assert_eq!(serialized["source"]["type"], "base64");
+        assert_eq!(serialized["source"]["media_type"], "image/png");
+        assert_eq!(serialized["source"]["data"], "iVBOR...");
+
+        let deserialized: ToolResultContentBlock =
+            serde_json::from_value(serialized).expect("deserialize");
+        assert_eq!(block, deserialized);
     }
 }
 

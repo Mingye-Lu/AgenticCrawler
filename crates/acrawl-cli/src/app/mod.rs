@@ -941,6 +941,74 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_tool_result_produces_image_content_block() {
+        use api::InputContentBlock;
+        let output = r#"{"screenshot_base64":"iVBORw0KGgo=","size_bytes":42}"#;
+        let messages = vec![ConversationMessage {
+            role: MessageRole::Tool,
+            blocks: vec![ContentBlock::ToolResult {
+                tool_use_id: "tool-1".to_string(),
+                tool_name: "screenshot".to_string(),
+                output: output.to_string(),
+                is_error: false,
+            }],
+            usage: None,
+        }];
+        let converted = convert_messages(&messages);
+        assert_eq!(converted.len(), 1);
+        let content = &converted[0].content;
+        assert_eq!(content.len(), 1);
+        match &content[0] {
+            InputContentBlock::ToolResult {
+                content, is_error, ..
+            } => {
+                assert!(!is_error);
+                assert_eq!(content.len(), 2);
+                match &content[0] {
+                    api::ToolResultContentBlock::Image { source } => {
+                        assert_eq!(source.source_type, "base64");
+                        assert_eq!(source.media_type, "image/png");
+                        assert_eq!(source.data, "iVBORw0KGgo=");
+                    }
+                    other => panic!("expected Image block, got {other:?}"),
+                }
+                match &content[1] {
+                    api::ToolResultContentBlock::Text { text } => {
+                        assert!(text.contains("42 bytes"), "got: {text}");
+                    }
+                    other => panic!("expected Text block, got {other:?}"),
+                }
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_screenshot_tool_result_stays_as_text() {
+        use api::InputContentBlock;
+        let messages = vec![ConversationMessage {
+            role: MessageRole::Tool,
+            blocks: vec![ContentBlock::ToolResult {
+                tool_use_id: "tool-1".to_string(),
+                tool_name: "navigate".to_string(),
+                output: r#"{"url":"https://example.com","status":200}"#.to_string(),
+                is_error: false,
+            }],
+            usage: None,
+        }];
+        let converted = convert_messages(&messages);
+        let content = &converted[0].content;
+        assert_eq!(content.len(), 1);
+        match &content[0] {
+            InputContentBlock::ToolResult { content, .. } => {
+                assert_eq!(content.len(), 1);
+                assert!(matches!(&content[0], api::ToolResultContentBlock::Text { .. }));
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn reasoning_block_converts_to_input_content_block() {
         use api::InputContentBlock;
 
