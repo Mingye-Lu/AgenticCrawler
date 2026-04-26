@@ -534,7 +534,7 @@ pub(super) fn render_tool_call_lines(
     name: &str,
     input_summary: &str,
     status: &ToolCallStatus,
-    _width: u16,
+    width: u16,
     spinner: char,
     debug_mode: bool,
 ) -> (Vec<ListItem<'static>>, Vec<String>) {
@@ -555,7 +555,7 @@ pub(super) fn render_tool_call_lines(
         }
         ToolCallStatus::Success { output } => {
             if debug_mode {
-                render_debug_success(&mut items, &mut text_lines, name, output);
+                render_debug_success(&mut items, &mut text_lines, name, output, width);
             } else {
                 let parsed: serde_json::Value =
                     serde_json::from_str(output).unwrap_or(serde_json::Value::String(output.clone()));
@@ -622,6 +622,7 @@ fn render_debug_success(
     text_lines: &mut Vec<String>,
     name: &str,
     output: &str,
+    width: u16,
 ) {
     let header = Line::from(vec![
         Span::styled("✓", Style::default().fg(Color::Green)),
@@ -634,11 +635,14 @@ fn render_debug_success(
     text_lines.push(line_to_plain_text(&header));
     items.push(ListItem::new(header));
 
-    let content_lines: Vec<String> = output
+    let wrapped: Vec<String> = output
         .lines()
-        .map(|l| format!("  {l}"))
+        .flat_map(|l| {
+            let indented = format!("  {l}");
+            wrap_plain_text(&indented, width)
+        })
         .collect();
-    let (capped_items, capped_text) = cap_content_lines(content_lines, 80);
+    let (capped_items, capped_text) = cap_content_lines(wrapped, 80);
     items.extend(capped_items);
     text_lines.extend(capped_text);
 }
