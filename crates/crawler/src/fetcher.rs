@@ -13,6 +13,7 @@ pub struct FetchedPage {
     pub title: Option<String>,
     pub html: String,
     pub text: String,
+    pub fetched_via_browser: bool,
 }
 
 #[derive(Debug)]
@@ -360,6 +361,7 @@ impl FetchRouter {
             title,
             html: page_info.html,
             text,
+            fetched_via_browser: true,
         })
     }
 }
@@ -372,6 +374,7 @@ fn http_response_to_page(resp: HttpResponse) -> FetchedPage {
         title,
         html: resp.body,
         text,
+        fetched_via_browser: false,
     }
 }
 
