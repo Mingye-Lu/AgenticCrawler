@@ -438,6 +438,7 @@ fn tool_result_response(content: &[ToolResultContentBlock], is_error: bool) -> V
         .map(|block| match block {
             ToolResultContentBlock::Text { text } => text.clone(),
             ToolResultContentBlock::Json { value } => value.to_string(),
+            ToolResultContentBlock::Image { .. } => "[image omitted]".to_string(),
         })
         .collect::<Vec<_>>()
         .join("\n");

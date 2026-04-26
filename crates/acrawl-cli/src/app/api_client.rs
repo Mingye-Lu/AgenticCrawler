@@ -1,7 +1,7 @@
 use api::{
     provider::{ProviderClient, ProviderRegistry},
-    ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
-    OutputContentBlock, ToolChoice, ToolDefinition, ToolResultContentBlock,
+    ContentBlockDelta, ImageSource, InputContentBlock, InputMessage, MessageRequest,
+    MessageResponse, OutputContentBlock, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 use runtime::{
     ApiClient, AssistantEvent, ConversationMessage, MessageRole, RuntimeError, TokenUsage,
@@ -252,9 +252,7 @@ pub(super) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMes
                         ..
                     } => InputContentBlock::ToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        content: vec![ToolResultContentBlock::Text {
-                            text: output.clone(),
-                        }],
+                        content: tool_result_content_blocks(output),
                         is_error: *is_error,
                     },
                     runtime::ContentBlock::Reasoning { data } => {
@@ -270,4 +268,30 @@ pub(super) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMes
             })
         })
         .collect()
+}
+
+fn tool_result_content_blocks(output: &str) -> Vec<ToolResultContentBlock> {
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(output) {
+        if let Some(base64_data) = parsed.get("screenshot_base64").and_then(|v| v.as_str()) {
+            let size_bytes = parsed
+                .get("size_bytes")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            return vec![
+                ToolResultContentBlock::Image {
+                    source: ImageSource {
+                        source_type: "base64".to_string(),
+                        media_type: "image/png".to_string(),
+                        data: base64_data.to_string(),
+                    },
+                },
+                ToolResultContentBlock::Text {
+                    text: format!("Screenshot captured ({size_bytes} bytes)"),
+                },
+            ];
+        }
+    }
+    vec![ToolResultContentBlock::Text {
+        text: output.to_string(),
+    }]
 }
