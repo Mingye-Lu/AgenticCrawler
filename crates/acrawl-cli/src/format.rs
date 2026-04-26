@@ -251,53 +251,63 @@ pub(crate) fn render_config_report(
 pub(crate) fn render_last_tool_debug_report(
     session: &Session,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let last_tool_use = session
+    let tool_uses: Vec<(String, String, String)> = session
         .messages
         .iter()
         .rev()
         .find_map(|message| {
-            message.blocks.iter().rev().find_map(|block| match block {
-                ContentBlock::ToolUse { id, name, input } => {
-                    Some((id.clone(), name.clone(), input.clone()))
-                }
-                _ => None,
-            })
+            let uses: Vec<_> = message
+                .blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::ToolUse { id, name, input } => {
+                        Some((id.clone(), name.clone(), input.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if uses.is_empty() { None } else { Some(uses) }
         })
         .ok_or_else(|| "no prior tool call found in session".to_string())?;
 
-    let tool_result = session.messages.iter().rev().find_map(|message| {
-        message.blocks.iter().rev().find_map(|block| match block {
-            ContentBlock::ToolResult {
-                tool_use_id,
-                tool_name,
-                output,
-                is_error,
-            } if tool_use_id == &last_tool_use.0 => {
-                Some((tool_name.clone(), output.clone(), *is_error))
-            }
-            _ => None,
-        })
-    });
+    let count = tool_uses.len();
+    let mut lines = vec![format!("Debug tool calls ({count} in last round)")];
 
-    let mut lines = vec![
-        "Debug tool call".to_string(),
-        format!("  Tool id          {}", last_tool_use.0),
-        format!("  Tool name        {}", last_tool_use.1),
-        "  Input".to_string(),
-        indent_block(&last_tool_use.2, 4),
-    ];
-
-    match tool_result {
-        Some((tool_name, output, is_error)) => {
-            lines.push("  Result".to_string());
-            lines.push(format!("    name           {tool_name}"));
-            lines.push(format!(
-                "    status         {}",
-                if is_error { "error" } else { "ok" }
-            ));
-            lines.push(indent_block(&output, 4));
+    for (idx, (id, name, input)) in tool_uses.iter().enumerate() {
+        if idx > 0 {
+            lines.push(String::new());
         }
-        None => lines.push("  Result           missing tool result".to_string()),
+        lines.push(format!("  [{}/{}] {name}", idx + 1, count));
+        lines.push(format!("  Tool id          {id}"));
+        lines.push("  Input".to_string());
+        lines.push(indent_block(input, 4));
+
+        let tool_result = session.messages.iter().rev().find_map(|message| {
+            message.blocks.iter().find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    tool_name,
+                    output,
+                    is_error,
+                } if tool_use_id == id => {
+                    Some((tool_name.clone(), output.clone(), *is_error))
+                }
+                _ => None,
+            })
+        });
+
+        match tool_result {
+            Some((tool_name, output, is_error)) => {
+                lines.push("  Result".to_string());
+                lines.push(format!("    name           {tool_name}"));
+                lines.push(format!(
+                    "    status         {}",
+                    if is_error { "error" } else { "ok" }
+                ));
+                lines.push(indent_block(&output, 4));
+            }
+            None => lines.push("  Result           pending".to_string()),
+        }
     }
 
     Ok(lines.join("\n"))

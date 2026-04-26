@@ -1065,7 +1065,7 @@ fn handle_slash_command_tui(
         }
         SlashCommand::Debug => {
             let report = cli.lock().expect("cli lock").debug_tool_call_report()?;
-            state.push_system("Debug Tool Call");
+            state.push_system("Debug Tool Calls");
             state.push_system(&report);
         }
         SlashCommand::Headed => {
