@@ -16,7 +16,7 @@ use crate::error::CliError;
 use crate::format::{
     format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
     format_model_switch_report, format_resume_report, format_status_report, render_config_report,
-    render_export_text, render_last_tool_debug_report, render_repl_help, render_version_report,
+    render_export_text, render_repl_help, render_version_report,
     resolve_export_path, status_context, StatusUsage, DEFAULT_DATE,
 };
 use crate::markdown::{Spinner, TerminalRenderer};
@@ -110,6 +110,7 @@ pub(crate) struct LiveCli {
     session: SessionHandle,
     output_mode: OutputMode,
     reasoning_effort: Option<api::ReasoningEffort>,
+    debug_mode: bool,
 }
 
 #[derive(Clone)]
@@ -176,6 +177,7 @@ impl LiveCli {
             session,
             output_mode,
             reasoning_effort: initial_effort,
+            debug_mode: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -221,6 +223,7 @@ impl LiveCli {
             session,
             output_mode,
             reasoning_effort: initial_effort,
+            debug_mode: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -419,7 +422,9 @@ impl LiveCli {
                 false
             }
             SlashCommand::Debug => {
-                println!("{}", self.debug_tool_call_report()?);
+                self.debug_mode = !self.debug_mode;
+                let label = if self.debug_mode { "ON" } else { "OFF" };
+                println!("Debug mode {label}");
                 false
             }
             SlashCommand::Compact => {
@@ -772,10 +777,6 @@ impl LiveCli {
             message: format_compact_report(removed, kept, skipped),
             persist_after: false,
         })
-    }
-
-    pub(crate) fn debug_tool_call_report(&self) -> Result<String, CliError> {
-        Ok(render_last_tool_debug_report(self.runtime.session())?)
     }
 }
 
