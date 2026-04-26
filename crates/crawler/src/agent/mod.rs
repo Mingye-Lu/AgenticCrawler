@@ -352,7 +352,10 @@ fn build_crawl_result(summary: &TurnSummary, crawl_state: &CrawlState) -> CrawlR
                 output,
                 is_error: false,
                 ..
-            } if tool_name == "extract_data" => serde_json::from_str(output).ok(),
+            } if tool_name == "extract_data" => {
+                let parsed: serde_json::Value = serde_json::from_str(output).ok()?;
+                Some(parsed.get("data").cloned().unwrap_or(parsed))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
