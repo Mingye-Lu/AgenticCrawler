@@ -637,7 +637,8 @@ fn render_debug_success(
     text_lines.push(line_to_plain_text(&header));
     items.push(ListItem::new(header));
 
-    let wrapped: Vec<String> = output
+    let filtered = filter_base64_fields(output);
+    let wrapped: Vec<String> = filtered
         .lines()
         .flat_map(|l| {
             let indented = format!("  {l}");
@@ -647,6 +648,26 @@ fn render_debug_success(
     let (capped_items, capped_text) = cap_content_lines(wrapped, 80);
     items.extend(capped_items);
     text_lines.extend(capped_text);
+}
+
+fn filter_base64_fields(output: &str) -> String {
+    let Ok(mut val) = serde_json::from_str::<serde_json::Value>(output) else {
+        return output.to_string();
+    };
+    if let Some(obj) = val.as_object_mut() {
+        for (key, v) in obj.iter_mut() {
+            if let Some(s) = v.as_str() {
+                if key.contains("base64") || (s.len() > 256 && looks_like_base64(s)) {
+                    *v = serde_json::Value::String(format!("<{} bytes>", s.len()));
+                }
+            }
+        }
+    }
+    serde_json::to_string_pretty(&val).unwrap_or_else(|_| output.to_string())
+}
+
+fn looks_like_base64(s: &str) -> bool {
+    s.len() > 256 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'\n')
 }
 
 /// Truncate `s` to at most `max_bytes` bytes, snapping to a char boundary,
