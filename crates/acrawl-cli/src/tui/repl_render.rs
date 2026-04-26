@@ -536,6 +536,7 @@ pub(super) fn render_tool_call_lines(
     status: &ToolCallStatus,
     _width: u16,
     spinner: char,
+    debug_mode: bool,
 ) -> (Vec<ListItem<'static>>, Vec<String>) {
     let mut items = Vec::new();
     let mut text_lines = Vec::new();
@@ -553,44 +554,48 @@ pub(super) fn render_tool_call_lines(
             items.push(ListItem::new(line));
         }
         ToolCallStatus::Success { output } => {
-            let parsed: serde_json::Value =
-                serde_json::from_str(output).unwrap_or(serde_json::Value::String(output.clone()));
-            match name {
-                "bash" | "Bash" => {
-                    render_bash_success(&mut items, &mut text_lines, name, input_summary, &parsed);
-                }
-                "read_file" | "Read" => {
-                    render_read_success(&mut items, &mut text_lines, name, &parsed);
-                }
-                "write_file" | "Write" => {
-                    render_write_success(&mut items, &mut text_lines, name, &parsed);
-                }
-                "edit_file" | "Edit" => {
-                    render_edit_success(&mut items, &mut text_lines, name, &parsed);
-                }
-                "glob_search" | "Glob" => {
-                    render_glob_success(&mut items, &mut text_lines, name, &parsed);
-                }
-                "grep_search" | "Grep" => {
-                    render_grep_success(&mut items, &mut text_lines, name, output, &parsed);
-                }
-                _ => {
-                    let summary = if output.trim().is_empty() {
-                        "done".to_string()
-                    } else {
-                        let trimmed = strip_ansi(output.trim()).replace('\n', " ");
-                        truncate_with_ellipsis(&trimmed, 60)
-                    };
-                    let line = Line::from(vec![
-                        Span::styled("✓", Style::default().fg(Color::Green)),
-                        Span::styled(
-                            format!(" {name} "),
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(summary, Style::default().add_modifier(Modifier::DIM)),
-                    ]);
-                    text_lines.push(line_to_plain_text(&line));
-                    items.push(ListItem::new(line));
+            if debug_mode {
+                render_debug_success(&mut items, &mut text_lines, name, output);
+            } else {
+                let parsed: serde_json::Value =
+                    serde_json::from_str(output).unwrap_or(serde_json::Value::String(output.clone()));
+                match name {
+                    "bash" | "Bash" => {
+                        render_bash_success(&mut items, &mut text_lines, name, input_summary, &parsed);
+                    }
+                    "read_file" | "Read" => {
+                        render_read_success(&mut items, &mut text_lines, name, &parsed);
+                    }
+                    "write_file" | "Write" => {
+                        render_write_success(&mut items, &mut text_lines, name, &parsed);
+                    }
+                    "edit_file" | "Edit" => {
+                        render_edit_success(&mut items, &mut text_lines, name, &parsed);
+                    }
+                    "glob_search" | "Glob" => {
+                        render_glob_success(&mut items, &mut text_lines, name, &parsed);
+                    }
+                    "grep_search" | "Grep" => {
+                        render_grep_success(&mut items, &mut text_lines, name, output, &parsed);
+                    }
+                    _ => {
+                        let summary = if output.trim().is_empty() {
+                            "done".to_string()
+                        } else {
+                            let trimmed = strip_ansi(output.trim()).replace('\n', " ");
+                            truncate_with_ellipsis(&trimmed, 60)
+                        };
+                        let line = Line::from(vec![
+                            Span::styled("✓", Style::default().fg(Color::Green)),
+                            Span::styled(
+                                format!(" {name} "),
+                                Style::default().add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(summary, Style::default().add_modifier(Modifier::DIM)),
+                        ]);
+                        text_lines.push(line_to_plain_text(&line));
+                        items.push(ListItem::new(line));
+                    }
                 }
             }
         }
@@ -598,11 +603,11 @@ pub(super) fn render_tool_call_lines(
             let icon_style = Style::default().fg(Color::Red);
             let name_style = Style::default().add_modifier(Modifier::BOLD);
             let err_style = Style::default().fg(Color::Red);
-            let truncated = truncate_with_ellipsis(msg, 120);
+            let display = if debug_mode { msg.clone() } else { truncate_with_ellipsis(msg, 120) };
             let line = Line::from(vec![
                 Span::styled("✗", icon_style),
                 Span::styled(format!(" {name} "), name_style),
-                Span::styled(truncated, err_style),
+                Span::styled(display, err_style),
             ]);
             text_lines.push(line_to_plain_text(&line));
             items.push(ListItem::new(line));
@@ -610,6 +615,32 @@ pub(super) fn render_tool_call_lines(
     }
     debug_assert_eq!(items.len(), text_lines.len());
     (items, text_lines)
+}
+
+fn render_debug_success(
+    items: &mut Vec<ListItem<'static>>,
+    text_lines: &mut Vec<String>,
+    name: &str,
+    output: &str,
+) {
+    let header = Line::from(vec![
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::styled(
+            format!(" {name} "),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("[debug]", Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM)),
+    ]);
+    text_lines.push(line_to_plain_text(&header));
+    items.push(ListItem::new(header));
+
+    let content_lines: Vec<String> = output
+        .lines()
+        .map(|l| format!("  {l}"))
+        .collect();
+    let (capped_items, capped_text) = cap_content_lines(content_lines, 80);
+    items.extend(capped_items);
+    text_lines.extend(capped_text);
 }
 
 /// Truncate `s` to at most `max_bytes` bytes, snapping to a char boundary,
@@ -657,6 +688,7 @@ pub(super) fn build_wrapped_list(
     width: u16,
     live_text: Option<&str>,
     spinner_char: char,
+    debug_mode: bool,
 ) -> (Vec<ListItem<'static>>, Vec<String>) {
     let mut out = Vec::new();
     let mut text_out = Vec::new();
@@ -787,7 +819,7 @@ pub(super) fn build_wrapped_list(
                 status,
             } => {
                 let (call_items, call_text) =
-                    render_tool_call_lines(name, input_summary, status, width, spinner_char);
+                    render_tool_call_lines(name, input_summary, status, width, spinner_char, debug_mode);
                 out.extend(call_items);
                 text_out.extend(call_text);
             }
@@ -1186,6 +1218,7 @@ pub(super) fn draw_chat(
         main_inner.width,
         live_line,
         state.spinner_char(),
+        state.debug_mode,
     );
     state.last_transcript_rect = main_inner;
     state.last_wrapped_len = wrapped.len();
