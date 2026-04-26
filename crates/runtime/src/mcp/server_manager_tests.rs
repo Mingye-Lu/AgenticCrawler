@@ -64,6 +64,8 @@ fn write_manager_mcp_server_script() -> PathBuf {
         "        break",
         "    method = request['method']",
         "    log(method)",
+        "    if 'id' not in request:",
+        "        continue",
         "    if method == 'initialize':",
         "        initialize_count += 1",
         "        send_message({",
