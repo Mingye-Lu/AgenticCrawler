@@ -206,13 +206,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::config::{
-        ConfigSource, McpRemoteServerConfig, McpServerConfig, McpStdioServerConfig,
-        McpWebSocketServerConfig, ScopedMcpServerConfig,
+        ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
+        McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
     };
 
     use super::{
-        mcp_server_signature, mcp_tool_name, normalize_name_for_mcp, scoped_mcp_config_hash,
-        unwrap_ccr_proxy_url,
+        mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
+        scoped_mcp_config_hash, unwrap_ccr_proxy_url,
     };
 
     #[test]
@@ -296,5 +296,32 @@ mod tests {
             scoped_mcp_config_hash(&user),
             scoped_mcp_config_hash(&changed)
         );
+    }
+
+    #[test]
+    fn mcp_tool_prefix_formats_with_double_underscore_delimiters() {
+        assert_eq!(mcp_tool_prefix("my-server"), "mcp__my-server__");
+        assert_eq!(mcp_tool_prefix("server.name"), "mcp__server_name__");
+        assert_eq!(
+            mcp_tool_prefix("claude.ai My Server"),
+            "mcp__claude_ai_My_Server__"
+        );
+    }
+
+    #[test]
+    fn unwrap_ccr_proxy_url_decodes_plus_signs_and_percent_encoding() {
+        let url = "https://api.anthropic.com/v2/ccr-sessions/s1?mcp_url=https%3A%2F%2Fexample.com%2Fpath+with+spaces";
+        assert_eq!(
+            unwrap_ccr_proxy_url(url),
+            "https://example.com/path with spaces"
+        );
+    }
+
+    #[test]
+    fn mcp_server_signature_returns_none_for_sdk_configs() {
+        let sdk = McpServerConfig::Sdk(McpSdkServerConfig {
+            name: "test-sdk".to_string(),
+        });
+        assert_eq!(mcp_server_signature(&sdk), None);
     }
 }

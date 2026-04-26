@@ -1,16 +1,17 @@
 use serde_json::json;
 
-pub mod agent;
-pub mod browser;
-pub mod fetcher;
-pub mod manager;
-pub mod output;
-pub mod playwright;
-pub mod prompt;
-pub mod shared_client;
-pub mod state;
-pub mod tool_registry;
-pub mod tools;
+mod agent;
+mod browser;
+mod fetcher;
+mod manager;
+mod output;
+mod playwright;
+mod prompt;
+mod shared_client;
+mod state;
+pub mod tool_effect;
+mod tool_registry;
+mod tools;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
@@ -18,8 +19,10 @@ pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
+pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
+pub use tool_effect::{FinishSpec, ForkSpec, ToolEffect, ToolError, WaitSpec};
 pub use tool_registry::{ToolHandler, ToolRegistry};
 
 /// Specification for a single tool that the agent can invoke.
@@ -81,7 +84,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Pass all field values as a JSON object in `fields`. Set `submit` to true to submit the form after filling. Use `form_selector` when the page has multiple forms."),
+            instructions: Some("Keys in `fields` can be CSS selectors (`#email`, `input[name=\"q\"]`) or plain field names/IDs that are resolved automatically. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms."),
         },
         ToolSpec {
             name: "extract_data",

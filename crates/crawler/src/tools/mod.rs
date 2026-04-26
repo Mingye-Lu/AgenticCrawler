@@ -1,6 +1,8 @@
 pub mod click;
+pub mod done;
 pub mod extract_data;
 pub mod fill_form;
+pub mod fork;
 pub mod go_back;
 pub mod navigate;
 pub mod screenshot;
@@ -14,3 +16,4 @@ pub mod scroll;
 pub mod select_option;
 pub mod switch_tab;
 pub mod wait;
+pub mod wait_for_subagents;

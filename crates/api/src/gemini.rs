@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::client::default_http_client;
 use crate::error::ApiError;
 use crate::sse::SseParser;
 use crate::types::{
@@ -27,7 +28,7 @@ impl GeminiClient {
     #[must_use]
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http_client(),
             base_url: DEFAULT_BASE_URL.to_string(),
             api_key: api_key.into(),
             use_bearer_auth: false,

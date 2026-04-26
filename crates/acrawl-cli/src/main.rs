@@ -1,10 +1,14 @@
 mod app;
+mod auth;
 mod display_width;
+mod error;
 mod format;
 mod init;
 mod input;
-mod render;
+mod markdown;
+mod output_sink;
 mod session_mgr;
+mod tool_format;
 mod tui;
 
 use std::collections::BTreeMap;
@@ -24,6 +28,8 @@ use app::{
     run_resume_command, AllowedToolSet, LiveCli,
 };
 use format::{render_version_report, DEFAULT_DATE, VERSION};
+
+pub(crate) use app::Provider;
 
 fn main() {
     // Load settings.json and set env vars consumed by child processes / the crawler.

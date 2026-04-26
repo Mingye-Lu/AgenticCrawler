@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{ToolEffect, ToolError};
 
-pub fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>), CrawlError> {
+pub fn parse_input(input: &Value) -> (Option<String>, Option<String>) {
     let type_pattern = input
         .get("type_pattern")
         .and_then(|v| v.as_str())
@@ -12,28 +12,29 @@ pub fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>), Cr
         .get("name_pattern")
         .and_then(|v| v.as_str())
         .map(String::from);
-    Ok((type_pattern, name_pattern))
+    (type_pattern, name_pattern)
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
-    let (_type_pattern, _name_pattern) = parse_input(input)?;
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+    let (_type_pattern, _name_pattern) = parse_input(input);
 
     let result = browser
         .acquire_bridge()
         .await
+        .map_err(|e| ToolError(e.to_string()))?
         .list_resources()
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?;
+        .map_err(|e| ToolError(e.to_string()))?;
 
     let links = result.get("links").cloned().unwrap_or_else(|| json!([]));
     let images = result.get("images").cloned().unwrap_or_else(|| json!([]));
     let forms = result.get("forms").cloned().unwrap_or_else(|| json!([]));
 
-    Ok(json!({
+    Ok(ToolEffect::reply_json(&json!({
         "links": links,
         "images": images,
         "forms": forms
-    }))
+    })))
 }
 
 #[cfg(test)]
@@ -45,7 +46,7 @@ mod tests {
     #[test]
     fn parses_empty_input() {
         let input = json!({});
-        let (tp, np) = parse_input(&input).unwrap();
+        let (tp, np) = parse_input(&input);
         assert!(tp.is_none());
         assert!(np.is_none());
     }
@@ -53,14 +54,14 @@ mod tests {
     #[test]
     fn parses_type_pattern() {
         let input = json!({"type_pattern": "image"});
-        let (tp, _np) = parse_input(&input).unwrap();
+        let (tp, _np) = parse_input(&input);
         assert_eq!(tp.as_deref(), Some("image"));
     }
 
     #[test]
     fn parses_name_pattern() {
         let input = json!({"name_pattern": "logo"});
-        let (_tp, np) = parse_input(&input).unwrap();
+        let (_tp, np) = parse_input(&input);
         assert_eq!(np.as_deref(), Some("logo"));
     }
 }

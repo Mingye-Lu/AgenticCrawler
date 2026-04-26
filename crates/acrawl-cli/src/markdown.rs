@@ -588,15 +588,6 @@ impl TerminalRenderer {
 
         colored_output
     }
-
-    pub fn stream_markdown(&self, markdown: &str, out: &mut impl Write) -> io::Result<()> {
-        let rendered_markdown = self.markdown_to_ansi(markdown);
-        write!(out, "{rendered_markdown}")?;
-        if !rendered_markdown.ends_with('\n') {
-            writeln!(out)?;
-        }
-        out.flush()
-    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

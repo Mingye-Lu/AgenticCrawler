@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{CrawlError, ToolEffect, ToolError};
 
 #[derive(Debug)]
 struct ExtractDataInput {
@@ -27,13 +27,16 @@ fn parse_input(input: &Value) -> Result<ExtractDataInput, CrawlError> {
 }
 
 #[allow(clippy::unused_async)]
-pub async fn execute(input: &Value, _browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(
+    input: &Value,
+    _browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolError> {
     let params = parse_input(input)?;
 
-    Ok(serde_json::json!({
+    Ok(ToolEffect::reply_json(&serde_json::json!({
         "instruction": params.instruction,
         "data": params.data
-    }))
+    })))
 }
 
 #[cfg(test)]

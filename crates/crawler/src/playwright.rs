@@ -13,6 +13,7 @@ use tokio::time::timeout;
 const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_mins(1);
+const CLOSE_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[allow(clippy::needless_raw_string_hashes)]
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"
@@ -38,6 +39,24 @@ function parseHeadless() {
   if (raw === undefined) return true;
   const v = String(raw).trim().toLowerCase();
   return !(v === 'false' || v === '0' || v === 'no' || v === 'off');
+}
+
+async function resolveFillSelector(pg, raw) {
+  if (/[#.\[\]:>~+\s]/.test(raw)) return raw;
+  const candidates = [
+    `#${raw}`,
+    `[name="${raw}"]`,
+    `input[name="${raw}"]`,
+    `textarea[name="${raw}"]`,
+    `select[name="${raw}"]`,
+  ];
+  for (const sel of candidates) {
+    try {
+      const el = await pg.$(sel);
+      if (el) return sel;
+    } catch (_) {}
+  }
+  return raw;
 }
 
 async function bootstrap() {
@@ -170,8 +189,9 @@ async function bootstrap() {
 
     if (command.action === 'fill') {
       try {
-        await page.fill(command.selector, command.value);
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true } }) + '\n');
+        const sel = await resolveFillSelector(page, command.selector);
+        await page.fill(sel, command.value, { timeout: 5000 });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'fill_failed', message: String(error) } }) + '\n');
       }
@@ -285,15 +305,15 @@ async function bootstrap() {
       try {
         const fs = require('node:fs');
         const nodePath = require('node:path');
-        const resp = await page.evaluate(async (url) => {
-          const r = await fetch(url);
-          const buf = await r.arrayBuffer();
-          return Array.from(new Uint8Array(buf));
-        }, command.url);
+        const response = await context.request.get(command.url, { timeout: 30000 });
+        if (!response.ok()) {
+          throw new Error(`HTTP ${response.status()} ${response.statusText()} for ${command.url}`);
+        }
+        const body = await response.body();
         const dir = nodePath.dirname(command.path);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(command.path, Buffer.from(resp));
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { path: command.path } }) + '\n');
+        fs.writeFileSync(command.path, body);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { path: command.path, size_bytes: body.length } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'save_file_failed', message: String(error) } }) + '\n');
       }
@@ -311,7 +331,7 @@ async function bootstrap() {
           await page.bringToFront();
           const url = page.url();
           const title = await page.title();
-          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url, title, tab_count: pages.length } }) + '\n');
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url, title, tab_count: pages.length, pageIndex: targetIdx } }) + '\n');
         }
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'switch_tab_failed', message: String(error) } }) + '\n');
@@ -508,10 +528,13 @@ impl PlaywrightBridge {
 
     pub async fn close(mut self) -> Result<(), PlaywrightBridgeError> {
         let _ = self
-            .send_bridge_command(BridgeCommandEnvelope {
-                action: "close",
-                url: None,
-            })
+            .send_bridge_command_with_timeout(
+                BridgeCommandEnvelope {
+                    action: "close",
+                    url: None,
+                },
+                CLOSE_COMMAND_TIMEOUT,
+            )
             .await;
 
         if let Ok(wait_result) = timeout(DEFAULT_SHUTDOWN_TIMEOUT, self.child.wait()).await {
@@ -784,15 +807,24 @@ impl PlaywrightBridge {
         &mut self,
         command: BridgeCommandEnvelope<'_>,
     ) -> Result<BridgeResponseMessage, PlaywrightBridgeError> {
+        self.send_bridge_command_with_timeout(command, DEFAULT_COMMAND_TIMEOUT)
+            .await
+    }
+
+    async fn send_bridge_command_with_timeout(
+        &mut self,
+        command: BridgeCommandEnvelope<'_>,
+        command_timeout: Duration,
+    ) -> Result<BridgeResponseMessage, PlaywrightBridgeError> {
         let payload = serde_json::to_string(&command)?;
         self.stdin.write_all(payload.as_bytes()).await?;
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
 
-        let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
+        let line = timeout(command_timeout, self.read_bridge_line())
             .await
             .map_err(|_| PlaywrightBridgeError::CommandTimeout {
-                timeout: DEFAULT_COMMAND_TIMEOUT,
+                timeout: command_timeout,
             })??;
         let response: BridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{CrawlError, ToolEffect, ToolError};
 
 pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
     let direction = input
@@ -25,20 +25,21 @@ pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
     Ok((direction, pixels))
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let (direction, pixels) = parse_input(input)?;
 
     browser
         .acquire_bridge()
         .await
+        .map_err(|e| ToolError(e.to_string()))?
         .scroll(&direction, pixels)
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?;
+        .map_err(|e| ToolError(e.to_string()))?;
 
-    Ok(json!({
+    Ok(ToolEffect::reply_json(&json!({
         "success": true,
         "message": format!("Scrolled {direction} {pixels}px")
-    }))
+    })))
 }
 
 #[cfg(test)]

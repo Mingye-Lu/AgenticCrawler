@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{CrawlError, ToolEffect, ToolError};
 
 #[derive(Debug)]
 struct ClickInput {
@@ -23,19 +23,20 @@ fn parse_input(input: &Value) -> Result<ClickInput, CrawlError> {
     })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Value, CrawlError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let params = parse_input(input)?;
     browser
         .acquire_bridge()
         .await
+        .map_err(|e| ToolError(e.to_string()))?
         .click(&params.selector)
         .await
-        .map_err(|e| CrawlError::new(e.to_string()))?;
+        .map_err(|e| ToolError(e.to_string()))?;
 
-    Ok(serde_json::json!({
+    Ok(ToolEffect::reply_json(&serde_json::json!({
         "success": true,
         "message": format!("Clicked element: {}", params.selector)
-    }))
+    })))
 }
 
 #[cfg(test)]

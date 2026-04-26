@@ -7,6 +7,7 @@ use aws_sigv4::sign::v4;
 use base64::Engine;
 use serde_json::Value;
 
+use crate::client::default_http_client;
 use crate::error::ApiError;
 use crate::types::{MessageRequest, StreamEvent};
 
@@ -35,7 +36,7 @@ impl BedrockClient {
     #[must_use]
     pub fn new(access_key_id: String, secret_access_key: String, region: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http_client(),
             region,
             auth: BedrockAuth::SigV4 {
                 access_key_id,
@@ -48,7 +49,7 @@ impl BedrockClient {
     #[must_use]
     pub fn from_bearer_token(token: String, region: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: default_http_client(),
             region,
             auth: BedrockAuth::BearerToken(token),
         }
