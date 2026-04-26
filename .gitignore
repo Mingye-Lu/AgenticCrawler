@@ -30,3 +30,8 @@ workspace/
 !.github/
 
 opencode/
+
+# Graphify
+.graphify_*
+graphify-out/
+crates/graphify-out/

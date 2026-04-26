@@ -3,11 +3,11 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::CrawlError;
+use crate::{ToolEffect, ToolError};
 
-pub type ToolHandler = Box<dyn Fn(&Value) -> Result<Value, CrawlError> + Send + Sync>;
+pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolError> + Send + Sync>;
 
-const CORE_TOOLS: &[&str] = &[
+const ASYNC_TOOLS: &[&str] = &[
     "navigate",
     "click",
     "fill_form",
@@ -39,17 +39,23 @@ impl ToolRegistry {
     #[must_use]
     pub fn new_with_core_tools() -> Self {
         let mut registry = Self::new();
-        for &name in CORE_TOOLS {
+        for &name in ASYNC_TOOLS {
             let tool_name = name.to_string();
             registry.register(
                 name,
                 Box::new(move |_| {
-                    Err(CrawlError::new(format!(
+                    Err(ToolError(format!(
                         "tool `{tool_name}` requires async execution via execute_async"
                     )))
                 }),
             );
         }
+        registry.register("fork", Box::new(crate::tools::fork::execute));
+        registry.register(
+            "wait_for_subagents",
+            Box::new(crate::tools::wait_for_subagents::execute),
+        );
+        registry.register("done", Box::new(crate::tools::done::execute));
         registry
     }
 
@@ -82,7 +88,7 @@ impl ToolRegistry {
         name: &str,
         input: &Value,
         browser: &mut BrowserContext,
-    ) -> Result<Value, CrawlError> {
+    ) -> Result<ToolEffect, ToolError> {
         match name {
             "navigate" => crate::tools::navigate::execute(input, browser).await,
             "click" => crate::tools::click::execute(input, browser).await,
@@ -103,7 +109,7 @@ impl ToolRegistry {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
                 } else {
-                    Err(CrawlError::new(format!("unknown tool: `{name}`")))
+                    Err(ToolError(format!("unknown tool: `{name}`")))
                 }
             }
         }
@@ -117,8 +123,9 @@ mod tests {
     #[test]
     fn new_with_core_tools_registers_all_fifteen() {
         let registry = ToolRegistry::new_with_core_tools();
-        assert_eq!(registry.len(), 15);
-        for &name in CORE_TOOLS {
+        let effect_tools = ["fork", "wait_for_subagents", "done"];
+        assert_eq!(registry.len(), 18);
+        for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
             assert!(registry.contains(name), "missing core tool: {name}");
         }
     }

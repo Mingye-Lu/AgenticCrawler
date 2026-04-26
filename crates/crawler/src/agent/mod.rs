@@ -11,9 +11,13 @@ use tokio::sync::Mutex;
 
 use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
-use crate::state::{ChildBlock, CrawlState};
+use crate::state::CrawlState;
+use crate::tool_effect::{FinishSpec, ToolEffect};
 use crate::tool_registry::ToolRegistry;
 use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
+
+mod fork;
+mod lifecycle;
 
 const DEFAULT_MAX_STEPS: usize = 50;
 const DEFAULT_MAX_CONCURRENT_PER_PARENT: usize = 5;
@@ -73,17 +77,17 @@ pub trait CrawlAgent {
 type ChildTaskMap = HashMap<String, (String, tokio::task::JoinHandle<Option<Vec<Value>>>)>;
 
 pub struct CrawlerAgent {
-    browser: Option<BrowserContext>,
+    pub(super) browser: Option<BrowserContext>,
     registry: ToolRegistry,
     max_steps: usize,
-    agent_id: String,
-    agent_manager: SharedAgentManager,
-    shared_bridge: Option<SharedBridge>,
-    crawl_state: CrawlState,
+    pub(super) agent_id: String,
+    pub(super) agent_manager: SharedAgentManager,
+    pub(super) shared_bridge: Option<SharedBridge>,
+    pub(super) crawl_state: CrawlState,
     pub(crate) child_tasks: ChildTaskMap,
-    api_client_arc: Option<SharedApiClient>,
+    pub(super) api_client_arc: Option<SharedApiClient>,
     #[cfg(test)]
-    fork_page_index_override: Option<usize>,
+    pub(super) fork_page_index_override: Option<usize>,
 }
 
 impl CrawlerAgent {
@@ -172,13 +176,6 @@ impl CrawlerAgent {
         self
     }
 
-    /// Drop the current browser context so the next tool call will spawn a
-    /// fresh Playwright bridge.  This is used by `/headed` and `/headless` to
-    /// make the mode switch take effect immediately.
-    pub fn reset_browser(&mut self) {
-        self.browser = None;
-    }
-
     pub async fn run(
         mut self,
         goal: &str,
@@ -201,7 +198,6 @@ impl CrawlerAgent {
 
         let max_steps = self.max_steps;
         let system_prompt = build_system_prompt(&mvp_tool_specs());
-
         let mut runtime =
             ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
                 .with_max_iterations(max_steps);
@@ -210,195 +206,21 @@ impl CrawlerAgent {
         let agent_manager = runtime.tool_executor_mut().agent_manager.clone();
         agent_manager.lock().await.mark_done(&agent_id);
 
-        let summary = result.map_err(|e| CrawlError::new(e.to_string()))?;
+        let summary = result.map_err(|error| CrawlError::new(error.to_string()))?;
         let crawl_state = runtime.tool_executor_mut().crawl_state.clone();
-
         Ok(build_crawl_result(&summary, &crawl_state))
     }
 
-    async fn ensure_browser(&mut self) -> Result<(), ToolError> {
-        if self.browser.is_some() {
-            return Ok(());
-        }
-
-        let shared_bridge = if let Some(shared_bridge) = &self.shared_bridge {
-            shared_bridge.clone()
-        } else {
-            let bridge = crate::PlaywrightBridge::new()
-                .await
-                .map_err(|error| ToolError::new(error.to_string()))?;
-            let shared_bridge = Arc::new(Mutex::new(bridge));
-            self.shared_bridge = Some(shared_bridge.clone());
-            shared_bridge
-        };
-
-        self.browser = Some(BrowserContext::new(shared_bridge));
-        Ok(())
-    }
-
-    async fn handle_fork(&mut self, input: &str) -> Result<String, ToolError> {
-        let params: Value =
-            serde_json::from_str(input).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
-
-        let sub_goal = params
-            .get("sub_goal")
-            .and_then(Value::as_str)
-            .map_or("", str::trim)
-            .to_string();
-
-        if sub_goal.is_empty() {
-            return Err(ToolError::new("fork requires non-empty sub_goal"));
-        }
-
-        let url = params
-            .get("url")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned);
-
-        {
-            let mut mgr = self.agent_manager.lock().await;
-            if !mgr.contains(&self.agent_id) {
-                let settings = runtime::load_settings();
-                mgr.max_concurrent_per_parent =
-                    runtime::settings_get_max_concurrent_per_parent(&settings) as usize;
-                mgr.max_depth = runtime::settings_get_max_fork_depth(&settings) as usize;
-                mgr.max_total = runtime::settings_get_max_total_agents(&settings) as usize;
-                mgr.register_root(self.agent_id.clone());
-            }
-        }
-
-        let can_fork = {
-            let manager = self.agent_manager.lock().await;
-            manager.can_fork(&self.agent_id)
-        };
-        if !can_fork {
-            return Ok(format!(
-                "Cannot fork: limits exceeded for agent {}",
-                self.agent_id
-            ));
-        }
-
-        self.ensure_browser().await?;
-
-        let settings = runtime::load_settings();
-        let child_max_steps = runtime::settings_get_fork_child_max_steps(&settings) as usize;
-        let child_state = self
-            .crawl_state
-            .fork(&sub_goal, url.as_deref(), child_max_steps);
-        let child_id = format!("{}-child-{}", self.agent_id, self.child_tasks.len() + 1);
-        let child_api_client = self
-            .api_client_arc
-            .clone()
-            .ok_or_else(|| ToolError::new("fork: api_client not initialized"))?;
-        let shared_bridge = self
-            .shared_bridge
-            .clone()
-            .ok_or_else(|| ToolError::new("fork: browser bridge not initialized"))?;
-        let target_url = url.clone().or_else(|| self.crawl_state.current_url.clone());
-
-        let page_index = self
-            .create_child_page(shared_bridge.clone(), target_url.as_deref())
-            .await?;
-
-        {
-            let mut manager = self.agent_manager.lock().await;
-            manager
-                .register_child(child_id.clone(), &self.agent_id, None)
-                .map_err(|error| ToolError::new(error.to_string()))?;
-        }
-
-        let mut child_agent = CrawlerAgent::new(
-            BrowserContext::new_shared(shared_bridge.clone(), page_index),
-            ToolRegistry::new_with_core_tools(),
-        )
-        .with_max_steps(child_max_steps)
-        .with_agent_id(child_id.clone())
-        .with_agent_manager(self.agent_manager.clone());
-        child_agent.shared_bridge = Some(shared_bridge);
-        child_agent.crawl_state = child_state;
-        child_agent.api_client_arc = Some(child_api_client.clone());
-
-        let child_sub_goal = sub_goal.clone();
-        let join_handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
-            tokio::task::spawn_blocking(move || {
-                let runtime = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()
-                    .expect("child runtime should initialize");
-                let result = runtime.block_on(child_agent.run(&child_sub_goal, child_api_client));
-                result.ok().map(|crawl_result| crawl_result.extracted_data)
-            });
-        self.child_tasks
-            .insert(child_id.clone(), (sub_goal.clone(), join_handle));
-
-        self.crawl_state
-            .action_history
-            .push(format!("Forked subagent {child_id} for: {sub_goal}"));
-
-        Ok(format!("Forked subagent {child_id} for: {sub_goal}"))
-    }
-
-    async fn handle_wait_for_subagents(&mut self) -> Result<String, ToolError> {
-        if self.child_tasks.is_empty() {
-            return Ok("No active subagents".to_string());
-        }
-
-        let settings = runtime::load_settings();
-        let wait_timeout_secs = u64::from(runtime::settings_get_fork_wait_timeout_secs(&settings));
-        let timeout = std::time::Duration::from_secs(wait_timeout_secs);
-        let tasks: Vec<_> = self
-            .child_tasks
-            .drain()
-            .map(|(child_id, (sub_goal, handle))| (child_id, sub_goal, handle))
-            .collect();
-
-        let task_count = tasks.len();
-        let mut total_items = 0_usize;
-
-        for (child_id, sub_goal, mut handle) in tasks {
-            let items = match tokio::time::timeout(timeout, &mut handle).await {
-                Ok(Ok(Some(items))) => items,
-                Ok(Ok(None) | Err(_)) => Vec::new(),
-                Err(_) => {
-                    handle.abort();
-                    Vec::new()
-                }
-            };
-
-            total_items += items.len();
-            self.crawl_state.child_blocks.push(ChildBlock {
-                child_id: child_id.clone(),
-                sub_goal,
-                items,
-            });
-
-            self.agent_manager.lock().await.mark_done(&child_id);
-        }
-
-        let msg = format!("Waited for {task_count} subagent(s). Collected {total_items} item(s).");
-        self.crawl_state.action_history.push(msg.clone());
-
-        Ok(msg)
-    }
-
-    async fn handle_done(&mut self, input: &str) -> Result<String, ToolError> {
-        let params: Value =
-            serde_json::from_str(input).unwrap_or_else(|_| Value::Object(serde_json::Map::new()));
-
-        let summary = params
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or("Task complete")
-            .to_string();
-
+    async fn handle_finish(&mut self, spec: FinishSpec) -> Result<String, ToolError> {
         if !self.child_tasks.is_empty() {
-            let _ = self.handle_wait_for_subagents().await;
+            let _ = self
+                .handle_wait_effect(crate::WaitSpec { child_ids: None })
+                .await;
         }
 
         self.crawl_state.done = true;
-        self.crawl_state.done_reason.clone_from(&summary);
-
-        Ok(summary)
+        self.crawl_state.done_reason.clone_from(&spec.summary);
+        Ok(spec.summary)
     }
 
     fn supports_async(tool_name: &str) -> bool {
@@ -421,72 +243,75 @@ impl CrawlerAgent {
                 | "save_file"
         )
     }
+}
 
-    async fn create_child_page(
-        &self,
-        shared_bridge: SharedBridge,
-        target_url: Option<&str>,
-    ) -> Result<usize, ToolError> {
-        #[cfg(test)]
-        if let Some(page_index) = self.fork_page_index_override {
-            return Ok(page_index);
+impl Drop for CrawlerAgent {
+    fn drop(&mut self) {
+        for (_, (_, handle)) in self.child_tasks.drain() {
+            handle.abort();
         }
-
-        let mut bridge = shared_bridge.lock().await;
-        bridge
-            .new_page(target_url)
-            .await
-            .map_err(|error| ToolError::new(error.to_string()))
     }
 }
 
 impl ToolExecutor for CrawlerAgent {
     async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
-        if tool_name == "fork" {
-            return self.handle_fork(input).await;
-        }
-
-        if tool_name == "wait_for_subagents" {
-            return self.handle_wait_for_subagents().await;
-        }
-
-        if tool_name == "done" {
-            return self.handle_done(input).await;
-        }
-
         let input_value: Value = if input.is_empty() {
             Value::Object(serde_json::Map::new())
         } else {
             serde_json::from_str(input)
-                .map_err(|e| ToolError::new(format!("invalid JSON input: {e}")))?
+                .map_err(|error| ToolError::new(format!("invalid JSON input: {error}")))?
         };
 
-        if let Some(handler) = self.registry.get(tool_name) {
+        let tool_effect = if let Some(handler) = self.registry.get(tool_name) {
             match handler(&input_value) {
-                Ok(result) => return Ok(result.to_string()),
+                Ok(effect) => effect,
                 Err(error)
                     if error
                         .to_string()
-                        .contains("requires async execution via execute_async") => {}
+                        .contains("requires async execution via execute_async") =>
+                {
+                    if !Self::supports_async(tool_name) {
+                        return Err(ToolError::new(error.to_string()));
+                    }
+
+                    self.ensure_browser().await?;
+                    let browser = self
+                        .browser
+                        .as_mut()
+                        .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+                    self.registry
+                        .execute_async(tool_name, &input_value, browser)
+                        .await
+                        .map_err(|error| ToolError::new(error.to_string()))?
+                }
                 Err(error) => return Err(ToolError::new(error.to_string())),
             }
-        }
-
-        if Self::supports_async(tool_name) {
+        } else if Self::supports_async(tool_name) {
             self.ensure_browser().await?;
             let browser = self
                 .browser
                 .as_mut()
                 .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
-            let result = self
-                .registry
+            self.registry
                 .execute_async(tool_name, &input_value, browser)
                 .await
-                .map_err(|error| ToolError::new(error.to_string()))?;
-            return Ok(result.to_string());
-        }
+                .map_err(|error| ToolError::new(error.to_string()))?
+        } else {
+            return Err(ToolError::new(format!("unknown tool: `{tool_name}`")));
+        };
 
-        Err(ToolError::new(format!("unknown tool: `{tool_name}`")))
+        self.dispatch_tool_effect(tool_effect).await
+    }
+}
+
+impl CrawlerAgent {
+    async fn dispatch_tool_effect(&mut self, tool_effect: ToolEffect) -> Result<String, ToolError> {
+        match tool_effect {
+            ToolEffect::Reply(output) => Ok(output),
+            ToolEffect::Spawn(spec) => self.handle_spawn(spec).await,
+            ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
+            ToolEffect::Finish(spec) => self.handle_finish(spec).await,
+        }
     }
 }
 
@@ -510,36 +335,25 @@ fn build_crawl_result(summary: &TurnSummary, crawl_state: &CrawlState) -> CrawlR
         .assistant_messages
         .iter()
         .rev()
-        .flat_map(|msg| msg.blocks.iter())
-        .find_map(|block| {
-            if let ContentBlock::Text { text } = block {
-                Some(text.clone())
-            } else {
-                None
-            }
+        .flat_map(|message| message.blocks.iter())
+        .find_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.clone()),
+            _ => None,
         })
         .unwrap_or_default();
 
     let mut extracted_data = summary
         .tool_results
         .iter()
-        .flat_map(|msg| msg.blocks.iter())
-        .filter_map(|block| {
-            if let ContentBlock::ToolResult {
+        .flat_map(|message| message.blocks.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
                 tool_name,
                 output,
                 is_error: false,
                 ..
-            } = block
-            {
-                if tool_name == "extract_data" {
-                    serde_json::from_str(output).ok()
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            } if tool_name == "extract_data" => serde_json::from_str(output).ok(),
+            _ => None,
         })
         .collect::<Vec<_>>();
 
@@ -657,110 +471,184 @@ mod tests {
             Box::new(|input| {
                 let url = input
                     .get("url")
-                    .and_then(|v| v.as_str())
+                    .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                Ok(Value::String(format!("Navigated to {url}")))
+                Ok(ToolEffect::Reply(format!("Navigated to {url}")))
             }),
         );
         registry.register(
             "extract_data",
             Box::new(|input| {
                 let data = input.get("data").cloned().unwrap_or(Value::Null);
-                Ok(serde_json::json!({"title": "Example", "extracted": data}))
+                Ok(ToolEffect::reply_json(
+                    &serde_json::json!({"title": "Example", "extracted": data}),
+                ))
             }),
         );
+        registry.register(
+            "wait_for_subagents",
+            Box::new(crate::tools::wait_for_subagents::execute),
+        );
+        registry.register("done", Box::new(crate::tools::done::execute));
         registry
+    }
+
+    #[tokio::test]
+    async fn test_reply_effect_adds_to_conversation() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Reply("reply payload".to_string()))
+            .await
+            .expect("reply effect should return output");
+
+        assert_eq!(result, "reply payload");
+    }
+
+    #[tokio::test]
+    async fn test_spawn_effect_triggers_fork() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("root");
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
+            .with_agent_id("root".to_string())
+            .with_agent_manager(manager.clone());
+        agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            crate::PlaywrightBridge::new()
+                .await
+                .expect("bridge should initialize for spawn test"),
+        )));
+        agent.fork_page_index_override = Some(1);
+
+        let observation = agent
+            .dispatch_tool_effect(ToolEffect::Spawn(crate::ForkSpec {
+                goal: "collect details".to_string(),
+                page_index: None,
+            }))
+            .await
+            .expect("spawn effect should fork child");
+
+        assert_eq!(
+            observation,
+            "Forked subagent root-child-1 for: collect details"
+        );
+        assert_eq!(agent.child_tasks.len(), 1);
+        for (_, (_, handle)) in agent.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_wait_effect_triggers_join() {
+        let manager = default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal".to_string(), handle));
+
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Wait(crate::WaitSpec {
+                child_ids: Some(vec!["child-1".to_string()]),
+            }))
+            .await
+            .expect("wait effect should collect child results");
+
+        assert_eq!(result, "Waited for 1 subagent(s). Collected 1 item(s).");
+        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_finish_effect_ends_loop() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
+                summary: "Task complete".to_string(),
+            }))
+            .await
+            .expect("finish effect should mark agent done");
+
+        assert_eq!(result, "Task complete");
+        assert!(agent.crawl_state.done);
+        assert_eq!(agent.crawl_state.done_reason, "Task complete");
     }
 
     #[tokio::test]
     async fn crawler_agent_dispatches_tool_through_registry() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
         let result = agent
             .execute("navigate", r#"{"url":"https://example.com"}"#)
             .await
             .expect("navigate should succeed");
-
         assert!(result.contains("Navigated to https://example.com"));
     }
 
     #[tokio::test]
-    async fn crawler_agent_returns_error_for_unknown_tool() {
+    async fn test_unknown_tool_returns_error() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
         let err = agent
             .execute("nonexistent", "{}")
             .await
             .expect_err("should fail for unknown tool");
-
         assert!(err.to_string().contains("unknown tool"));
     }
 
     #[tokio::test]
     async fn crawler_agent_returns_error_for_invalid_json() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
         let err = agent
             .execute("navigate", "not-json")
             .await
             .expect_err("should fail for invalid JSON");
-
         assert!(err.to_string().contains("invalid JSON"));
     }
 
     #[tokio::test]
     async fn crawler_agent_handles_empty_input_as_empty_object() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
-        let result = agent.execute("navigate", "").await;
-        assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(
-            output.contains("unknown"),
-            "expected fallback url in mock: {output}"
-        );
+        let output = agent
+            .execute("navigate", "")
+            .await
+            .expect("empty input should map to empty object");
+        assert!(output.contains("unknown"));
     }
 
     #[tokio::test]
     async fn run_executes_agent_loop_and_returns_result() {
         let agent = CrawlerAgent::new_for_testing(mock_registry()).with_max_steps(10);
-        let api_client = MockApiClient { call_count: 0 };
-
         let result = agent
-            .run("Navigate to example.com", api_client)
+            .run("Navigate to example.com", MockApiClient { call_count: 0 })
             .await
             .expect("agent run should succeed");
-
         assert_eq!(result.steps_executed, 2);
         assert_eq!(result.summary, "Found the page content.");
     }
 
     #[tokio::test]
-    async fn run_returns_immediately_when_llm_gives_text_only() {
+    async fn run_collects_extracted_data_from_tool_results() {
         let agent = CrawlerAgent::new_for_testing(mock_registry());
-        let api_client = TextOnlyApiClient;
-
         let result = agent
-            .run("just a question", api_client)
+            .run(
+                "extract titles from example.com",
+                ExtractDataApiClient { call_count: 0 },
+            )
             .await
             .expect("should succeed");
-
-        assert_eq!(result.steps_executed, 1);
-        assert_eq!(result.summary, "All done.");
+        assert_eq!(result.extracted_data.len(), 1);
+        assert_eq!(result.extracted_data[0]["title"], "Example");
     }
 
     #[tokio::test]
-    async fn run_collects_extracted_data_from_tool_results() {
-        let agent = CrawlerAgent::new_for_testing(mock_registry());
-        let api_client = ExtractDataApiClient { call_count: 0 };
-
-        let result = agent
-            .run("extract titles from example.com", api_client)
+    async fn run_returns_immediately_when_llm_gives_text_only() {
+        let result = CrawlerAgent::new_for_testing(mock_registry())
+            .run("just a question", TextOnlyApiClient)
             .await
             .expect("should succeed");
-
-        assert_eq!(result.extracted_data.len(), 1);
-        assert_eq!(result.extracted_data[0]["title"], "Example");
+        assert_eq!(result.steps_executed, 1);
+        assert_eq!(result.summary, "All done.");
     }
 
     #[tokio::test]
@@ -783,13 +671,11 @@ mod tests {
             }
         }
 
-        let agent = CrawlerAgent::new_for_testing(mock_registry()).with_max_steps(3);
-
-        let err = agent
+        let err = CrawlerAgent::new_for_testing(mock_registry())
+            .with_max_steps(3)
             .run("loop forever", InfiniteLoopApiClient)
             .await
             .expect_err("should fail due to max iterations");
-
         assert!(err.to_string().contains("maximum"));
     }
 
@@ -877,12 +763,15 @@ mod tests {
             .with_agent_manager(manager);
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
 
-        let observation = agent
+        let err = agent
             .execute("fork", r#"{"sub_goal":"blocked"}"#)
             .await
-            .expect("fork limit should return an observation");
+            .expect_err("fork at limit should return an error");
 
-        assert_eq!(observation, "Cannot fork: limits exceeded for agent root");
+        assert!(
+            err.to_string().contains("active children"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]
@@ -906,7 +795,9 @@ mod tests {
     async fn test_wait_no_children_returns_immediately() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
-        let result = agent.handle_wait_for_subagents().await;
+        let result = agent
+            .handle_wait_effect(crate::WaitSpec { child_ids: None })
+            .await;
 
         assert_eq!(result.unwrap(), "No active subagents");
     }
@@ -1027,82 +918,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_stop_still_works_without_done() {
-        let agent = CrawlerAgent::new_for_testing(mock_registry());
-        let api_client = TextOnlyApiClient;
-
-        let result = agent.run("test", api_client).await;
-
-        assert!(result.is_ok());
-        let result = result.unwrap();
+        let result = CrawlerAgent::new_for_testing(mock_registry())
+            .run("test", TextOnlyApiClient)
+            .await
+            .expect("text-only run should succeed");
         assert_eq!(result.steps_executed, 1);
         assert_eq!(result.summary, "All done.");
-    }
-
-    #[test]
-    fn build_crawl_result_extracts_last_assistant_text() {
-        let summary = TurnSummary {
-            assistant_messages: vec![
-                runtime::ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "first".to_string(),
-                }]),
-                runtime::ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "final answer".to_string(),
-                }]),
-            ],
-            tool_results: vec![],
-            iterations: 2,
-            usage: TokenUsage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            },
-            auto_compaction: None,
-        };
-        let crawl_state = CrawlState::default();
-
-        let result = build_crawl_result(&summary, &crawl_state);
-        assert_eq!(result.summary, "final answer");
-        assert_eq!(result.steps_executed, 2);
-    }
-
-    #[test]
-    fn build_crawl_result_merges_child_data() {
-        let summary = TurnSummary {
-            assistant_messages: vec![runtime::ConversationMessage::assistant(vec![
-                ContentBlock::Text {
-                    text: "final answer".to_string(),
-                },
-            ])],
-            tool_results: vec![runtime::ConversationMessage::tool_result(
-                "call-1".to_string(),
-                "extract_data".to_string(),
-                r#"{"parent":1}"#.to_string(),
-                false,
-            )],
-            iterations: 1,
-            usage: TokenUsage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            },
-            auto_compaction: None,
-        };
-        let crawl_state = CrawlState {
-            child_blocks: vec![ChildBlock {
-                child_id: "child-1".to_string(),
-                sub_goal: "goal".to_string(),
-                items: vec![serde_json::json!({"child": 1})],
-            }],
-            ..CrawlState::default()
-        };
-
-        let result = build_crawl_result(&summary, &crawl_state);
-
-        assert_eq!(result.extracted_data.len(), 2);
-        assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
-        assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
     }
 
     #[tokio::test]
@@ -1110,7 +931,6 @@ mod tests {
         let mut parent = CrawlerAgent::new_for_testing(mock_registry());
         parent.crawl_state.extracted_data = vec![serde_json::json!({"parent": 1})];
 
-        // Simulate a completed child task
         let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
             Some(vec![
                 serde_json::json!({"child": 1}),
@@ -1162,6 +982,71 @@ mod tests {
         assert_eq!(mgr.get_depth("root"), 0);
         assert_eq!(mgr.get_depth("child1"), 1);
         assert_eq!(mgr.get_depth("grandchild1"), 2);
-        assert!(!mgr.can_fork("grandchild1")); // depth 2, max_depth=2, child would be depth 3
+        assert!(!mgr.can_fork("grandchild1"));
+    }
+
+    #[test]
+    fn build_crawl_result_extracts_last_assistant_text() {
+        let summary = TurnSummary {
+            assistant_messages: vec![
+                runtime::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "first".to_string(),
+                }]),
+                runtime::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "final answer".to_string(),
+                }]),
+            ],
+            tool_results: vec![],
+            iterations: 2,
+            usage: TokenUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            auto_compaction: None,
+        };
+
+        let result = build_crawl_result(&summary, &CrawlState::default());
+        assert_eq!(result.summary, "final answer");
+        assert_eq!(result.steps_executed, 2);
+    }
+
+    #[test]
+    fn build_crawl_result_merges_child_data() {
+        let summary = TurnSummary {
+            assistant_messages: vec![runtime::ConversationMessage::assistant(vec![
+                ContentBlock::Text {
+                    text: "final answer".to_string(),
+                },
+            ])],
+            tool_results: vec![runtime::ConversationMessage::tool_result(
+                "call-1".to_string(),
+                "extract_data".to_string(),
+                r#"{"parent":1}"#.to_string(),
+                false,
+            )],
+            iterations: 1,
+            usage: TokenUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            auto_compaction: None,
+        };
+        let crawl_state = CrawlState {
+            child_blocks: vec![crate::state::ChildBlock {
+                child_id: "child-1".to_string(),
+                sub_goal: "goal".to_string(),
+                items: vec![serde_json::json!({"child": 1})],
+            }],
+            ..CrawlState::default()
+        };
+
+        let result = build_crawl_result(&summary, &crawl_state);
+        assert_eq!(result.extracted_data.len(), 2);
+        assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
+        assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
     }
 }
