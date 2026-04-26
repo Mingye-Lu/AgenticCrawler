@@ -43,6 +43,8 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         .await
         .map_err(|e| ToolError(e.to_string()))?;
 
+    browser.set_navigated_url(&page.url, page.fetched_via_browser);
+
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "title": page.title.unwrap_or_default(),
         "url": page.url,
