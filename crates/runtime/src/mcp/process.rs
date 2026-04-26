@@ -290,8 +290,9 @@ mod tests {
         default_initialize_params, encode_frame, spawn_mcp_stdio_process, JsonRpcId,
         JsonRpcRequest, JsonRpcResponse, McpClientBootstrap, McpInitializeClientInfo,
         McpInitializeParams, McpInitializeResult, McpListToolsResult, McpReadResourceParams,
-        McpReadResourceResult, McpStdioProcess, McpTool, McpToolCallParams,
+        McpReadResourceResult, McpStdioProcess, McpToolCallParams,
     };
+    use crate::mcp::McpTool;
 
     fn temp_dir() -> PathBuf {
         let nanos = SystemTime::now()
