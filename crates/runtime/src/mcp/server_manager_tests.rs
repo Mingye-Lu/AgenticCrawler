@@ -22,105 +22,104 @@ fn temp_dir() -> PathBuf {
     std::env::temp_dir().join(format!("runtime-mcp-manager-{nanos}"))
 }
 
+const MANAGER_MCP_SERVER_PY: &str = "\
+#!/usr/bin/env python3
+import json, os, sys
+
+LABEL = os.environ.get('MCP_SERVER_LABEL', 'server')
+LOG_PATH = os.environ.get('MCP_LOG_PATH')
+initialize_count = 0
+
+def log(method):
+    if LOG_PATH:
+        with open(LOG_PATH, 'a', encoding='utf-8') as handle:
+            handle.write(f'{method}\\n')
+
+def read_message():
+    header = b''
+    while not header.endswith(b'\\r\\n\\r\\n'):
+        chunk = sys.stdin.buffer.read(1)
+        if not chunk:
+            return None
+        header += chunk
+    length = 0
+    for line in header.decode().split('\\r\\n'):
+        if line.lower().startswith('content-length:'):
+            length = int(line.split(':', 1)[1].strip())
+    payload = sys.stdin.buffer.read(length)
+    return json.loads(payload.decode())
+
+def send_message(message):
+    payload = json.dumps(message).encode()
+    sys.stdout.buffer.write(f'Content-Length: {len(payload)}\\r\\n\\r\\n'.encode() + payload)
+    sys.stdout.buffer.flush()
+
+while True:
+    request = read_message()
+    if request is None:
+        break
+    method = request['method']
+    log(method)
+    if 'id' not in request:
+        continue
+    if method == 'initialize':
+        initialize_count += 1
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'result': {
+                'protocolVersion': request['params']['protocolVersion'],
+                'capabilities': {'tools': {}},
+                'serverInfo': {'name': LABEL, 'version': '1.0.0'}
+            }
+        })
+    elif method == 'tools/list':
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'result': {
+                'tools': [
+                    {
+                        'name': 'echo',
+                        'description': f'Echo tool for {LABEL}',
+                        'inputSchema': {
+                            'type': 'object',
+                            'properties': {'text': {'type': 'string'}},
+                            'required': ['text']
+                        }
+                    }
+                ]
+            }
+        })
+    elif method == 'tools/call':
+        args = request['params'].get('arguments') or {}
+        text = args.get('text', '')
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'result': {
+                'content': [{'type': 'text', 'text': f'{LABEL}:{text}'}],
+                'structuredContent': {
+                    'server': LABEL,
+                    'echoed': text,
+                    'initializeCount': initialize_count
+                },
+                'isError': False
+            }
+        })
+    else:
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'error': {'code': -32601, 'message': f'unknown method: {method}'},
+        })
+";
+
 fn write_manager_mcp_server_script() -> PathBuf {
     let root = temp_dir();
     fs::create_dir_all(&root).expect("temp dir");
     let script_path = root.join("manager-mcp-server.py");
-    let script = [
-        "#!/usr/bin/env python3",
-        "import json, os, sys",
-        "",
-        "LABEL = os.environ.get('MCP_SERVER_LABEL', 'server')",
-        "LOG_PATH = os.environ.get('MCP_LOG_PATH')",
-        "initialize_count = 0",
-        "",
-        "def log(method):",
-        "    if LOG_PATH:",
-        "        with open(LOG_PATH, 'a', encoding='utf-8') as handle:",
-        "            handle.write(f'{method}\\n')",
-        "",
-        "def read_message():",
-        "    header = b''",
-        r"    while not header.endswith(b'\r\n\r\n'):",
-        "        chunk = sys.stdin.buffer.read(1)",
-        "        if not chunk:",
-        "            return None",
-        "        header += chunk",
-        "    length = 0",
-        r"    for line in header.decode().split('\r\n'):",
-        r"        if line.lower().startswith('content-length:'):",
-        r"            length = int(line.split(':', 1)[1].strip())",
-        "    payload = sys.stdin.buffer.read(length)",
-        "    return json.loads(payload.decode())",
-        "",
-        "def send_message(message):",
-        "    payload = json.dumps(message).encode()",
-        r"    sys.stdout.buffer.write(f'Content-Length: {len(payload)}\r\n\r\n'.encode() + payload)",
-        "    sys.stdout.buffer.flush()",
-        "",
-        "while True:",
-        "    request = read_message()",
-        "    if request is None:",
-        "        break",
-        "    method = request['method']",
-        "    log(method)",
-        "    if 'id' not in request:",
-        "        continue",
-        "    if method == 'initialize':",
-        "        initialize_count += 1",
-        "        send_message({",
-        "            'jsonrpc': '2.0',",
-        "            'id': request['id'],",
-        "            'result': {",
-        "                'protocolVersion': request['params']['protocolVersion'],",
-        "                'capabilities': {'tools': {}},",
-        "                'serverInfo': {'name': LABEL, 'version': '1.0.0'}",
-        "            }",
-        "        })",
-        "    elif method == 'tools/list':",
-        "        send_message({",
-        "            'jsonrpc': '2.0',",
-        "            'id': request['id'],",
-        "            'result': {",
-        "                'tools': [",
-        "                    {",
-        "                        'name': 'echo',",
-        "                        'description': f'Echo tool for {LABEL}',",
-        "                        'inputSchema': {",
-        "                            'type': 'object',",
-        "                            'properties': {'text': {'type': 'string'}},",
-        "                            'required': ['text']",
-        "                        }",
-        "                    }",
-        "                ]",
-        "            }",
-        "        })",
-        "    elif method == 'tools/call':",
-        "        args = request['params'].get('arguments') or {}",
-        "        text = args.get('text', '')",
-        "        send_message({",
-        "            'jsonrpc': '2.0',",
-        "            'id': request['id'],",
-        "            'result': {",
-        "                'content': [{'type': 'text', 'text': f'{LABEL}:{text}'}],",
-        "                'structuredContent': {",
-        "                    'server': LABEL,",
-        "                    'echoed': text,",
-        "                    'initializeCount': initialize_count",
-        "                },",
-        "                'isError': False",
-        "            }",
-        "        })",
-        "    else:",
-        "        send_message({",
-        "            'jsonrpc': '2.0',",
-        "            'id': request['id'],",
-        "            'error': {'code': -32601, 'message': f'unknown method: {method}'},",
-        "        })",
-        "",
-    ]
-    .join("\n");
-    fs::write(&script_path, script).expect("write script");
+    fs::write(&script_path, MANAGER_MCP_SERVER_PY).expect("write script");
     let mut permissions = fs::metadata(&script_path).expect("metadata").permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&script_path, permissions).expect("chmod");
