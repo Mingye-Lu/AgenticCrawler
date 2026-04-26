@@ -2075,7 +2075,10 @@ mod tests {
     #[test]
     fn render_tool_call_error_status() {
         let (items, text) = render_tool_call_lines("bash", "bad command", &ToolCallStatus::Error("timeout after 30s".to_string()), 80, '⠋', false);
-        assert_eq!(items.len(), 1);
+        assert!(items.len() >= 2);
+        let plain = text.join(" ");
+        assert!(plain.contains("bash"));
+        assert!(plain.contains("timeout after 30s"));
         assert_matching_lengths(&items, &text);
     }
 

@@ -82,11 +82,11 @@ pub(crate) fn format_tool_result(name: &str, output: &str, is_error: bool) -> St
         "\x1b[1;32m✓\x1b[0m"
     };
     if is_error {
-        let summary = truncate_for_summary(output.trim(), 160);
-        return if summary.is_empty() {
+        let trimmed = output.trim();
+        return if trimmed.is_empty() {
             format!("{icon} \x1b[38;5;245m{name}\x1b[0m")
         } else {
-            format!("{icon} \x1b[38;5;245m{name}\x1b[0m\n\x1b[38;5;203m{summary}\x1b[0m")
+            format!("{icon} \x1b[38;5;245m{name}\x1b[0m\n\x1b[38;5;203m{trimmed}\x1b[0m")
         };
     }
 

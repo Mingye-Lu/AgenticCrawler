@@ -603,14 +603,16 @@ pub(super) fn render_tool_call_lines(
             let icon_style = Style::default().fg(Color::Red);
             let name_style = Style::default().add_modifier(Modifier::BOLD);
             let err_style = Style::default().fg(Color::Red);
-            let display = if debug_mode { msg.clone() } else { truncate_with_ellipsis(msg, 120) };
-            let line = Line::from(vec![
+            let header = Line::from(vec![
                 Span::styled("✗", icon_style),
                 Span::styled(format!(" {name} "), name_style),
-                Span::styled(display, err_style),
             ]);
-            text_lines.push(line_to_plain_text(&line));
-            items.push(ListItem::new(line));
+            text_lines.push(line_to_plain_text(&header));
+            items.push(ListItem::new(header));
+            for row in wrap_plain_text(msg, width) {
+                text_lines.push(row.clone());
+                items.push(ListItem::new(Line::from(Span::styled(row, err_style))));
+            }
         }
     }
     debug_assert_eq!(items.len(), text_lines.len());
