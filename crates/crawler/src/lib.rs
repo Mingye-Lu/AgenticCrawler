@@ -88,7 +88,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "extract_data",
-            description: "Extract structured data from the page",
+            description: "Read the current page text and record structured data extracted from it",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -99,7 +99,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Describe what to extract in `instruction`. Pass a JSON template in `data` showing the desired output shape. Return structured JSON."),
+            instructions: Some("Reads the current page text and returns it in `page_text`. Put your extraction instruction in `instruction`. Fill `data` with the actual structured values you extracted from previous tool results — do NOT pass empty templates."),
         },
         ToolSpec {
             name: "screenshot",
