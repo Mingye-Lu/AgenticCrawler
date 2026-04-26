@@ -359,125 +359,129 @@ mod tests {
         script_path
     }
 
+    /// Fake MCP server script that handles initialize, tools/list, tools/call,
+    /// resources/list, and resources/read. Notifications (no JSON-RPC `id`) are
+    /// silently skipped.
+    const FAKE_MCP_SERVER_PY: &str = "\
+#!/usr/bin/env python3
+import json, sys
+
+def read_message():
+    header = b''
+    while not header.endswith(b'\\r\\n\\r\\n'):
+        chunk = sys.stdin.buffer.read(1)
+        if not chunk:
+            return None
+        header += chunk
+    length = 0
+    for line in header.decode().split('\\r\\n'):
+        if line.lower().startswith('content-length:'):
+            length = int(line.split(':', 1)[1].strip())
+    payload = sys.stdin.buffer.read(length)
+    return json.loads(payload.decode())
+
+def send_message(message):
+    payload = json.dumps(message).encode()
+    sys.stdout.buffer.write(f'Content-Length: {len(payload)}\\r\\n\\r\\n'.encode() + payload)
+    sys.stdout.buffer.flush()
+
+while True:
+    request = read_message()
+    if request is None:
+        break
+    method = request['method']
+    if 'id' not in request:
+        continue
+    if method == 'initialize':
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'result': {
+                'protocolVersion': request['params']['protocolVersion'],
+                'capabilities': {'tools': {}, 'resources': {}},
+                'serverInfo': {'name': 'fake-mcp', 'version': '0.2.0'}
+            }
+        })
+    elif method == 'tools/list':
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'result': {
+                'tools': [
+                    {
+                        'name': 'echo',
+                        'description': 'Echoes text',
+                        'inputSchema': {
+                            'type': 'object',
+                            'properties': {'text': {'type': 'string'}},
+                            'required': ['text']
+                        }
+                    }
+                ]
+            }
+        })
+    elif method == 'tools/call':
+        args = request['params'].get('arguments') or {}
+        if request['params']['name'] == 'fail':
+            send_message({
+                'jsonrpc': '2.0',
+                'id': request['id'],
+                'error': {'code': -32001, 'message': 'tool failed'},
+            })
+        else:
+            text = args.get('text', '')
+            send_message({
+                'jsonrpc': '2.0',
+                'id': request['id'],
+                'result': {
+                    'content': [{'type': 'text', 'text': f'echo:{text}'}],
+                    'structuredContent': {'echoed': text},
+                    'isError': False
+                }
+            })
+    elif method == 'resources/list':
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'result': {
+                'resources': [
+                    {
+                        'uri': 'file://guide.txt',
+                        'name': 'guide',
+                        'description': 'Guide text',
+                        'mimeType': 'text/plain'
+                    }
+                ]
+            }
+        })
+    elif method == 'resources/read':
+        uri = request['params']['uri']
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'result': {
+                'contents': [
+                    {
+                        'uri': uri,
+                        'mimeType': 'text/plain',
+                        'text': f'contents for {uri}'
+                    }
+                ]
+            }
+        })
+    else:
+        send_message({
+            'jsonrpc': '2.0',
+            'id': request['id'],
+            'error': {'code': -32601, 'message': f'unknown method: {method}'},
+        })
+";
+
     fn write_mcp_server_script() -> PathBuf {
         let root = temp_dir();
         fs::create_dir_all(&root).expect("temp dir");
         let script_path = root.join("fake-mcp-server.py");
-        let script = [
-            "#!/usr/bin/env python3",
-            "import json, sys",
-            "",
-            "def read_message():",
-            "    header = b''",
-            r"    while not header.endswith(b'\r\n\r\n'):",
-            "        chunk = sys.stdin.buffer.read(1)",
-            "        if not chunk:",
-            "            return None",
-            "        header += chunk",
-            "    length = 0",
-            r"    for line in header.decode().split('\r\n'):",
-            r"        if line.lower().startswith('content-length:'):",
-            r"            length = int(line.split(':', 1)[1].strip())",
-            "    payload = sys.stdin.buffer.read(length)",
-            "    return json.loads(payload.decode())",
-            "",
-            "def send_message(message):",
-            "    payload = json.dumps(message).encode()",
-            r"    sys.stdout.buffer.write(f'Content-Length: {len(payload)}\r\n\r\n'.encode() + payload)",
-            "    sys.stdout.buffer.flush()",
-            "",
-            "while True:",
-            "    request = read_message()",
-            "    if request is None:",
-            "        break",
-            "    method = request['method']",
-            "    if method == 'initialize':",
-            "        send_message({",
-            "            'jsonrpc': '2.0',",
-            "            'id': request['id'],",
-            "            'result': {",
-            "                'protocolVersion': request['params']['protocolVersion'],",
-            "                'capabilities': {'tools': {}, 'resources': {}},",
-            "                'serverInfo': {'name': 'fake-mcp', 'version': '0.2.0'}",
-            "            }",
-            "        })",
-            "    elif method == 'tools/list':",
-            "        send_message({",
-            "            'jsonrpc': '2.0',",
-            "            'id': request['id'],",
-            "            'result': {",
-            "                'tools': [",
-            "                    {",
-            "                        'name': 'echo',",
-            "                        'description': 'Echoes text',",
-            "                        'inputSchema': {",
-            "                            'type': 'object',",
-            "                            'properties': {'text': {'type': 'string'}},",
-            "                            'required': ['text']",
-            "                        }",
-            "                    }",
-            "                ]",
-            "            }",
-            "        })",
-            "    elif method == 'tools/call':",
-            "        args = request['params'].get('arguments') or {}",
-            "        if request['params']['name'] == 'fail':",
-            "            send_message({",
-            "                'jsonrpc': '2.0',",
-            "                'id': request['id'],",
-            "                'error': {'code': -32001, 'message': 'tool failed'},",
-            "            })",
-            "        else:",
-            "            text = args.get('text', '')",
-            "            send_message({",
-            "                'jsonrpc': '2.0',",
-            "                'id': request['id'],",
-            "                'result': {",
-            "                    'content': [{'type': 'text', 'text': f'echo:{text}'}],",
-            "                    'structuredContent': {'echoed': text},",
-            "                    'isError': False",
-            "                }",
-            "            })",
-            "    elif method == 'resources/list':",
-            "        send_message({",
-            "            'jsonrpc': '2.0',",
-            "            'id': request['id'],",
-            "            'result': {",
-            "                'resources': [",
-            "                    {",
-            "                        'uri': 'file://guide.txt',",
-            "                        'name': 'guide',",
-            "                        'description': 'Guide text',",
-            "                        'mimeType': 'text/plain'",
-            "                    }",
-            "                ]",
-            "            }",
-            "        })",
-            "    elif method == 'resources/read':",
-            "        uri = request['params']['uri']",
-            "        send_message({",
-            "            'jsonrpc': '2.0',",
-            "            'id': request['id'],",
-            "            'result': {",
-            "                'contents': [",
-            "                    {",
-            "                        'uri': uri,",
-            "                        'mimeType': 'text/plain',",
-            "                        'text': f'contents for {uri}'",
-            "                    }",
-            "                ]",
-            "            }",
-            "        })",
-            "    else:",
-            "        send_message({",
-            "            'jsonrpc': '2.0',",
-            "            'id': request['id'],",
-            "            'error': {'code': -32601, 'message': f'unknown method: {method}'},",
-            "        })",
-            "",
-        ]
-        .join("\n");
-        fs::write(&script_path, script).expect("write script");
+        fs::write(&script_path, FAKE_MCP_SERVER_PY).expect("write script");
         let mut permissions = fs::metadata(&script_path).expect("metadata").permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&script_path, permissions).expect("chmod");
