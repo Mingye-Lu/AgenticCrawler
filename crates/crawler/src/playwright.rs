@@ -181,8 +181,21 @@ async function bootstrap() {
       try {
         await page.click(command.selector, { timeout: 5000 });
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { clicked: true } }) + '\n');
-      } catch (error) {
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'click_failed', message: String(error) } }) + '\n');
+      } catch (mainError) {
+        let clickedInFrame = false;
+        for (const frame of page.frames()) {
+          if (frame === page.mainFrame()) continue;
+          try {
+            await frame.click(command.selector, { timeout: 2000 });
+            clickedInFrame = true;
+            break;
+          } catch (_) {}
+        }
+        if (clickedInFrame) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { clicked: true, frame: true } }) + '\n');
+        } else {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'click_failed', message: String(mainError) } }) + '\n');
+        }
       }
       continue;
     }
@@ -192,8 +205,21 @@ async function bootstrap() {
         const sel = await resolveFillSelector(page, command.selector);
         await page.fill(sel, command.value, { timeout: 5000 });
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
-      } catch (error) {
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'fill_failed', message: String(error) } }) + '\n');
+      } catch (mainError) {
+        let filledInFrame = false;
+        for (const frame of page.frames()) {
+          if (frame === page.mainFrame()) continue;
+          try {
+            await frame.fill(command.selector, command.value, { timeout: 2000 });
+            filledInFrame = true;
+            break;
+          } catch (_) {}
+        }
+        if (filledInFrame) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, frame: true } }) + '\n');
+        } else {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'fill_failed', message: String(mainError) } }) + '\n');
+        }
       }
       continue;
     }
