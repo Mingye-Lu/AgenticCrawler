@@ -1068,7 +1068,14 @@ fn handle_slash_command_tui(
         SlashCommand::Debug => {
             state.debug_mode = !state.debug_mode;
             let label = if state.debug_mode { "ON" } else { "OFF" };
-            state.push_system(&format!("Debug mode {label} — tool calls show {}", if state.debug_mode { "expanded output" } else { "compact summary" }));
+            state.push_system(&format!(
+                "Debug mode {label} — tool calls show {}",
+                if state.debug_mode {
+                    "expanded output"
+                } else {
+                    "compact summary"
+                }
+            ));
         }
         SlashCommand::Headed => {
             std::env::set_var("HEADLESS", "false");
@@ -2048,33 +2055,60 @@ mod tests {
 
     #[test]
     fn render_tool_call_running_status() {
-        let (items, text) =
-            render_tool_call_lines("bash", "echo hello", &ToolCallStatus::Running, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "bash",
+            "echo hello",
+            &ToolCallStatus::Running,
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(items.len(), 1);
         assert_matching_lengths(&items, &text);
     }
 
     #[test]
     fn render_tool_call_success_empty_output() {
-        let (items, text) = render_tool_call_lines("navigate", "https://example.com", &ToolCallStatus::Success {
-            output: String::new(),
-        }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "navigate",
+            "https://example.com",
+            &ToolCallStatus::Success {
+                output: String::new(),
+            },
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(items.len(), 1);
         assert_matching_lengths(&items, &text);
     }
 
     #[test]
     fn render_tool_call_success_with_output() {
-        let (items, text) = render_tool_call_lines("bash", "ls -la", &ToolCallStatus::Success {
-            output: "some result".to_string(),
-        }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "bash",
+            "ls -la",
+            &ToolCallStatus::Success {
+                output: "some result".to_string(),
+            },
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(items.len(), 1);
         assert_matching_lengths(&items, &text);
     }
 
     #[test]
     fn render_tool_call_error_status() {
-        let (items, text) = render_tool_call_lines("bash", "bad command", &ToolCallStatus::Error("timeout after 30s".to_string()), 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "bash",
+            "bad command",
+            &ToolCallStatus::Error("timeout after 30s".to_string()),
+            80,
+            '⠋',
+            false,
+        );
         assert!(items.len() >= 2);
         let plain = text.join(" ");
         assert!(plain.contains("bash"));
@@ -2085,8 +2119,14 @@ mod tests {
     #[test]
     fn render_tool_call_input_truncation() {
         let long_input = "a".repeat(80);
-        let (items, text) =
-            render_tool_call_lines("bash", &long_input, &ToolCallStatus::Running, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "bash",
+            &long_input,
+            &ToolCallStatus::Running,
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(items.len(), 1);
         assert_matching_lengths(&items, &text);
     }
@@ -2098,7 +2138,14 @@ mod tests {
             "stderr": ""
         })
         .to_string();
-        let (items, text) = render_tool_call_lines("bash", r#"{"command":"ls -la"}"#, &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "bash",
+            r#"{"command":"ls -la"}"#,
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert!(
             items.len() >= 2,
             "Expected header + stdout lines, got {}",
@@ -2114,8 +2161,14 @@ mod tests {
             "stderr": "error line"
         })
         .to_string();
-        let (items, text) =
-            render_tool_call_lines("bash", "cmd", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "bash",
+            "cmd",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert!(
             items.len() >= 2,
             "Expected header + stderr line, got {}",
@@ -2136,7 +2189,14 @@ mod tests {
             }
         })
         .to_string();
-        let (items, text) = render_tool_call_lines("read_file", "src/main.rs", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "read_file",
+            "src/main.rs",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert!(
             items.len() >= 2,
             "Expected header + content lines, got {}",
@@ -2153,7 +2213,14 @@ mod tests {
             "content": "line1\nline2\nline3"
         })
         .to_string();
-        let (items, text) = render_tool_call_lines("write_file", "out.txt", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "write_file",
+            "out.txt",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(items.len(), 1, "write_file should produce exactly 1 line");
         assert_matching_lengths(&items, &text);
     }
@@ -2167,7 +2234,14 @@ mod tests {
             }]
         })
         .to_string();
-        let (items, text) = render_tool_call_lines("edit_file", "src/lib.rs", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "edit_file",
+            "src/lib.rs",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert!(
             items.len() >= 2,
             "Expected header + diff lines, got {}",
@@ -2183,7 +2257,14 @@ mod tests {
             "filenames": ["a.rs", "b.rs", "c.rs"]
         })
         .to_string();
-        let (items, text) = render_tool_call_lines("glob_search", "*.rs", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "glob_search",
+            "*.rs",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(
             items.len(),
             4,
@@ -2201,7 +2282,14 @@ mod tests {
             "filenames": ["a.rs", "b.rs"]
         })
         .to_string();
-        let (items, text) = render_tool_call_lines("grep_search", "pattern", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "grep_search",
+            "pattern",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert!(
             items.len() >= 2,
             "Expected header + filenames, got {}",
@@ -2213,7 +2301,14 @@ mod tests {
     #[test]
     fn render_tool_call_unknown_tool_single_line() {
         let output = "navigation complete".to_string();
-        let (items, text) = render_tool_call_lines("navigate", "https://example.com", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "navigate",
+            "https://example.com",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(
             items.len(),
             1,
@@ -2230,8 +2325,14 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let output = serde_json::json!({ "stdout": stdout, "stderr": "" }).to_string();
-        let (items, text) =
-            render_tool_call_lines("bash", "cmd", &ToolCallStatus::Success { output }, 80, '⠋', false);
+        let (items, text) = render_tool_call_lines(
+            "bash",
+            "cmd",
+            &ToolCallStatus::Success { output },
+            80,
+            '⠋',
+            false,
+        );
         assert_eq!(
             items.len(),
             17,

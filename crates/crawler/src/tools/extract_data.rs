@@ -51,10 +51,7 @@ async fn read_page_text(browser: &mut BrowserContext) -> String {
         .to_string()
 }
 
-pub async fn execute(
-    input: &Value,
-    browser: &mut BrowserContext,
-) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let params = parse_input(input)?;
     let page_text = read_page_text(browser).await;
     let page_text = truncate_text(&page_text, MAX_PAGE_TEXT_CHARS);

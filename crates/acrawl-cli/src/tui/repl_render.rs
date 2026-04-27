@@ -557,11 +557,17 @@ pub(super) fn render_tool_call_lines(
             if debug_mode {
                 render_debug_success(&mut items, &mut text_lines, name, output, width);
             } else {
-                let parsed: serde_json::Value =
-                    serde_json::from_str(output).unwrap_or(serde_json::Value::String(output.clone()));
+                let parsed: serde_json::Value = serde_json::from_str(output)
+                    .unwrap_or(serde_json::Value::String(output.clone()));
                 match name {
                     "bash" | "Bash" => {
-                        render_bash_success(&mut items, &mut text_lines, name, input_summary, &parsed);
+                        render_bash_success(
+                            &mut items,
+                            &mut text_lines,
+                            name,
+                            input_summary,
+                            &parsed,
+                        );
                     }
                     "read_file" | "Read" => {
                         render_read_success(&mut items, &mut text_lines, name, &parsed);
@@ -632,7 +638,12 @@ fn render_debug_success(
             format!(" {name} "),
             Style::default().add_modifier(Modifier::BOLD),
         ),
-        Span::styled("[debug]", Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM)),
+        Span::styled(
+            "[debug]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::DIM),
+        ),
     ]);
     text_lines.push(line_to_plain_text(&header));
     items.push(ListItem::new(header));
@@ -667,7 +678,9 @@ fn filter_base64_fields(output: &str) -> String {
 }
 
 fn looks_like_base64(s: &str) -> bool {
-    s.len() > 256 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'\n')
+    s.len() > 256
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'\n')
 }
 
 /// Truncate `s` to at most `max_bytes` bytes, snapping to a char boundary,
@@ -845,8 +858,14 @@ pub(super) fn build_wrapped_list(
                 input_summary,
                 status,
             } => {
-                let (call_items, call_text) =
-                    render_tool_call_lines(name, input_summary, status, width, spinner_char, debug_mode);
+                let (call_items, call_text) = render_tool_call_lines(
+                    name,
+                    input_summary,
+                    status,
+                    width,
+                    spinner_char,
+                    debug_mode,
+                );
                 out.extend(call_items);
                 text_out.extend(call_text);
             }

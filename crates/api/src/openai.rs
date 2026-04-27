@@ -702,9 +702,7 @@ fn convert_user_message(
                     .map(|b| match b {
                         ToolResultContentBlock::Text { text } => text.clone(),
                         ToolResultContentBlock::Json { value } => value.to_string(),
-                        ToolResultContentBlock::Image { .. } => {
-                            "[image omitted]".to_string()
-                        }
+                        ToolResultContentBlock::Image { .. } => "[image omitted]".to_string(),
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
