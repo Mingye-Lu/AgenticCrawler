@@ -20,10 +20,7 @@ fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, 
         ));
     }
     #[allow(clippy::cast_possible_truncation)]
-    let offset = input
-        .get("offset")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
+    let offset = input.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
     #[allow(clippy::cast_possible_truncation)]
     let max_chars = input
         .get("max_chars")
