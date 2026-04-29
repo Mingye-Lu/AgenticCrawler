@@ -326,19 +326,10 @@ fn normalize_allowed_tools(values: &[String]) -> Result<Option<AllowedToolSet>, 
         .into_iter()
         .map(|spec| spec.name.to_string())
         .collect::<Vec<_>>();
-    let mut name_map = canonical_names
+    let name_map = canonical_names
         .iter()
         .map(|name| (normalize_tool_name(name), name.clone()))
         .collect::<BTreeMap<_, _>>();
-    for (alias, canonical) in [
-        ("read", "read_file"),
-        ("write", "write_file"),
-        ("edit", "edit_file"),
-        ("glob", "glob_search"),
-        ("grep", "grep_search"),
-    ] {
-        name_map.insert(alias.to_string(), canonical.to_string());
-    }
 
     let mut allowed = AllowedToolSet::new();
     for value in values {
