@@ -286,7 +286,8 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "summary": { "type": "string" }
+                    "summary": { "type": "string" },
+                    "data": {}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
