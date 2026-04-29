@@ -5,6 +5,8 @@ pub mod fill_form;
 pub mod fork;
 pub mod go_back;
 pub mod navigate;
+pub mod page_map;
+pub mod read_content;
 pub mod screenshot;
 
 pub mod execute_js;
