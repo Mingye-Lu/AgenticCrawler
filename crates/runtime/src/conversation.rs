@@ -642,7 +642,6 @@ mod tests {
                 cwd: PathBuf::from("/tmp/project"),
                 current_date: "2026-03-31".to_string(),
                 git_status: None,
-                git_diff: None,
             })
             .with_os("linux", "6.8")
             .build();
