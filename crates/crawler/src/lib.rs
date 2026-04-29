@@ -87,21 +87,6 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             instructions: Some("Keys in `fields` can be CSS selectors (`#email`, `input[name=\"q\"]`) or plain field names/IDs that are resolved automatically. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms."),
         },
         ToolSpec {
-            name: "extract_data",
-            description: "Read the current page text and record structured data extracted from it",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "instruction": { "type": "string" },
-                    "data": {}
-                },
-                "required": ["instruction", "data"],
-                "additionalProperties": false
-            }),
-
-            instructions: Some("Reads the current page text and returns it in `page_text`. Put your extraction instruction in `instruction`. Fill `data` with the actual structured values you extracted from previous tool results — do NOT pass empty templates."),
-        },
-        ToolSpec {
             name: "screenshot",
             description: "Capture a screenshot of the current page",
             input_schema: json!({
@@ -255,6 +240,45 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             instructions: Some("Downloads the resource at `url` into the workspace directory. Optionally specify `filename` and `subdir`."),
         },
         ToolSpec {
+            name: "page_map",
+            description: "Get the page structure as a heading outline with section sizes and previews",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }),
+            instructions: Some("Returns the heading hierarchy of the current page as a list of sections, each with: level (1-6), text, id (if present), css_selector, char_count (characters in section), and preview (first ~100 chars). Use this to discover page structure before calling read_content. If sections is empty, the page has no semantic headings — fall back to read_content with a CSS selector."),
+        },
+        ToolSpec {
+            name: "read_content",
+            description: "Extract text content from a specific page section by heading name or CSS selector",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "heading": {
+                        "type": "string",
+                        "description": "Exact heading text to find (case-insensitive)"
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector to extract content from"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Character offset to start reading from (default: 0)"
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Maximum characters to return (default: 10000)"
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            }),
+            instructions: Some("Extracts plain text content from a page section. Provide 'heading' for heading-based extraction (exact case-insensitive match) or 'selector' for CSS selector-based extraction. At least one of heading or selector is required. Returns: content, found, total_chars, offset, has_more, truncated, matches_count. If heading not found, found=false and hint lists available headings. Use offset+max_chars to paginate large sections."),
+        },
+        ToolSpec {
             name: "fork",
             description: "Spawn a parallel subagent on a new browser tab to explore a URL or complete a sub-goal independently. Results are merged when the subagent completes.",
             input_schema: json!({
@@ -286,7 +310,8 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "summary": { "type": "string" }
+                    "summary": { "type": "string" },
+                    "data": {}
                 },
                 "required": ["summary"],
                 "additionalProperties": false
@@ -315,12 +340,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_18_tools() {
+    fn mvp_tool_specs_contains_expected_19_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 18);
+        assert_eq!(specs.len(), 19);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 18, "tool names should be unique");
+        assert_eq!(names.len(), 19, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("save_file"));
         assert!(names.contains("fork"));

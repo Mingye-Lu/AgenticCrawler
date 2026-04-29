@@ -56,13 +56,17 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
          \x20\x20 c. Execute one tool call.\n\
          \x20\x20 d. Evaluate the result before continuing.\n\
          4. Prefer the simplest reliable action:\n\
-         \x20\x20 - Direct navigate over clicking links when the URL is known.\n\
-         \x20\x20 - click, fill_form, and scroll before execute_js.\n\
-         \x20\x20 - extract_data over free-form summarization when data is requested.\n\
-         5. Use extract_data whenever the task requires collecting information. \
-         Output valid JSON following the requested schema.\n\
-         6. When you have accomplished the goal, provide a clear summary of what \
-         was found and any structured data extracted."
+          \x20\x20 - Direct navigate over clicking links when the URL is known.\n\
+          \x20\x20 - click, fill_form, and scroll before execute_js.\n\
+          \x20\x20 - page_map to discover page structure, then read_content to extract specific sections.\n\
+          5. When extracting information from a page:\n\
+          \x20\x20 a. Call page_map to see the heading structure and section sizes.\n\
+          \x20\x20 b. Call read_content with the heading name or CSS selector for the section you need.\n\
+          \x20\x20 c. For large sections, use offset and max_chars to paginate through content.\n\
+          \x20\x20 d. If page_map returns no sections (empty list), use read_content with a CSS selector.\n\
+          \x20\x20 e. When all needed data is collected, call done with a data field containing the structured results.\n\
+          6. When you have accomplished the goal, call done with a summary and a data field \
+          containing the structured results in JSON format."
             .to_string(),
         // Section 3 — data integrity (anti-hallucination + grounding)
         "Data integrity:\n\
@@ -100,10 +104,12 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
          - Anti-bot detection or CAPTCHA: Wait briefly and retry once. If it \
          persists, stop and report the blocker.\n\
          - Empty results on a page expected to have data: Scroll down for \
-         lazy-loaded content, wait for dynamic rendering, or check whether the \
-         page uses iframes.\n\
-         - JavaScript interaction failing: Use execute_js as a fallback when \
-         click or fill_form fail, but not as a first choice.\n\
+          lazy-loaded content, wait for dynamic rendering, or check whether the \
+          page uses iframes.\n\
+          - Empty results on page_map (sections list is empty): the page does not use \
+          semantic headings — fall back to read_content with a CSS selector.\n\
+          - JavaScript interaction failing: Use execute_js as a fallback when \
+          click or fill_form fail, but not as a first choice.\n\
          - Popup or overlay blocking interaction: Try pressing Escape or clicking \
          a dismiss button before retrying the intended action."
             .to_string(),

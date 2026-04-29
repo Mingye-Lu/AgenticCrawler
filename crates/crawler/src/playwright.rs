@@ -258,6 +258,99 @@ async function bootstrap() {
       continue;
     }
 
+    if (command.action === 'page_map') {
+      try {
+        const sections = await page.evaluate(() => {
+          function cssPath(el) {
+            if (el.id) return '#' + CSS.escape(el.id);
+            const parts = [];
+            let cur = el;
+            while (cur && cur !== document.body && cur !== document.documentElement) {
+              let seg = cur.tagName.toLowerCase();
+              const parent = cur.parentElement;
+              if (parent) {
+                const sibs = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+                if (sibs.length > 1) seg += ':nth-of-type(' + (sibs.indexOf(cur) + 1) + ')';
+              }
+              parts.unshift(seg);
+              cur = cur.parentElement;
+            }
+            return parts.join(' > ');
+          }
+          const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+          return headings.map((el) => {
+            const level = parseInt(el.tagName[1]);
+            const text = el.innerText.trim();
+            const id = el.id || null;
+            const selector = cssPath(el);
+            let content = '';
+            let sibling = el.nextElementSibling;
+            while (sibling) {
+              const sibTag = sibling.tagName.toLowerCase();
+              if (/^h[1-6]$/.test(sibTag) && parseInt(sibTag[1]) <= level) break;
+              content += sibling.innerText || '';
+              sibling = sibling.nextElementSibling;
+            }
+            const char_count = content.length;
+            const preview = char_count > 100 ? content.slice(0, 100).trim() + '...' : content.trim();
+            return { level, text, id, selector, char_count, preview };
+          });
+        });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { sections } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'page_map_error', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'read_content') {
+      try {
+        const heading = command.heading || null;
+        const selector = command.selector || null;
+        const offset = command.offset || 0;
+        const max_chars = command.max_chars || 10000;
+        const result = await page.evaluate(({ heading, selector, offset, max_chars }) => {
+          let rawContent = '';
+          let matches_count = 0;
+          let found = false;
+          if (heading) {
+            const allHeadings = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'));
+            const matches = allHeadings.filter(el => el.innerText.trim().toLowerCase() === heading.toLowerCase());
+            matches_count = matches.length;
+            if (matches.length > 0) {
+              found = true;
+              const el = matches[0];
+              const level = parseInt(el.tagName[1]);
+              let sibling = el.nextElementSibling;
+              while (sibling) {
+                const sibTag = sibling.tagName.toLowerCase();
+                if (/^h[1-6]$/.test(sibTag) && parseInt(sibTag[1]) <= level) break;
+                rawContent += (sibling.innerText || '') + '\n';
+                sibling = sibling.nextElementSibling;
+              }
+            } else {
+              const hint = allHeadings.slice(0, 20).map(el => el.innerText.trim());
+              return { content: '', found: false, total_chars: 0, offset: 0, has_more: false, truncated: false, matches_count: 0, hint };
+            }
+          } else if (selector) {
+            const els = Array.from(document.querySelectorAll(selector));
+            matches_count = els.length;
+            found = els.length > 0;
+            rawContent = els.map(el => el.innerText || '').join('\n');
+          }
+          const total_chars = rawContent.length;
+          const sliced = rawContent.slice(offset, offset + max_chars);
+          const has_more = offset + max_chars < total_chars;
+          const truncated = sliced.length < (total_chars - offset);
+          return { content: sliced, found, total_chars, offset, has_more, truncated, matches_count };
+        }, { heading, selector, offset, max_chars });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'read_content_error', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
     if (command.action === 'wait_for_selector') {
       try {
         const timeout = command.timeout_ms || 5000;
@@ -647,6 +740,28 @@ impl PlaywrightBridge {
         });
         self.send_raw_command(&cmd).await?;
         Ok(())
+    }
+
+    pub async fn page_map(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({ "action": "page_map" });
+        self.send_raw_command(&cmd).await
+    }
+
+    pub async fn read_content(
+        &mut self,
+        heading: Option<&str>,
+        selector: Option<&str>,
+        offset: usize,
+        max_chars: usize,
+    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "read_content",
+            "heading": heading,
+            "selector": selector,
+            "offset": offset,
+            "max_chars": max_chars,
+        });
+        self.send_raw_command(&cmd).await
     }
 
     pub async fn wait_for_selector(

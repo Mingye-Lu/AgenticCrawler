@@ -11,7 +11,8 @@ const ASYNC_TOOLS: &[&str] = &[
     "navigate",
     "click",
     "fill_form",
-    "extract_data",
+    "page_map",
+    "read_content",
     "screenshot",
     "go_back",
     "scroll",
@@ -64,6 +65,11 @@ impl ToolRegistry {
     }
 
     #[must_use]
+    pub fn is_async_tool(name: &str) -> bool {
+        ASYNC_TOOLS.contains(&name)
+    }
+
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&ToolHandler> {
         self.handlers.get(name)
     }
@@ -93,7 +99,8 @@ impl ToolRegistry {
             "navigate" => crate::tools::navigate::execute(input, browser).await,
             "click" => crate::tools::click::execute(input, browser).await,
             "fill_form" => crate::tools::fill_form::execute(input, browser).await,
-            "extract_data" => crate::tools::extract_data::execute(input, browser).await,
+            "page_map" => crate::tools::page_map::execute(input, browser).await,
+            "read_content" => crate::tools::read_content::execute(input, browser).await,
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser).await,
             "scroll" => crate::tools::scroll::execute(input, browser).await,
@@ -121,10 +128,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_fifteen() {
+    fn new_with_core_tools_registers_all_nineteen() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = ["fork", "wait_for_subagents", "done"];
-        assert_eq!(registry.len(), 18);
+        assert_eq!(registry.len(), 19);
         for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
             assert!(registry.contains(name), "missing core tool: {name}");
         }

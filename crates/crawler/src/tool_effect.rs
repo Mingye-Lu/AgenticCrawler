@@ -37,6 +37,7 @@ pub struct WaitSpec {
 #[derive(Debug, Clone)]
 pub struct FinishSpec {
     pub summary: String,
+    pub data: Option<Value>,
 }
 
 /// Error type for tool execution failures.

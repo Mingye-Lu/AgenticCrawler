@@ -62,7 +62,8 @@ pub(crate) fn format_tool_call_start(name: &str, input: &str) -> String {
         "wait" => "\x1b[38;5;220m⠧ Wait\x1b[0m".to_string(),
         "select_option" => "\x1b[38;5;220m⠧ Select option\x1b[0m".to_string(),
         "go_back" => "\x1b[38;5;220m⠧ Go back\x1b[0m".to_string(),
-        "extract_data" => "\x1b[38;5;220m⠧ Extracting data...\x1b[0m".to_string(),
+        "page_map" => "\x1b[38;5;220m⠧ Mapping page structure...\x1b[0m".to_string(),
+        "read_content" => "\x1b[38;5;220m⠧ Reading content...\x1b[0m".to_string(),
         "list_resources" => "\x1b[38;5;220m⠧ Listing resources...\x1b[0m".to_string(),
         "execute_js" => "\x1b[38;5;201m⚙ Executing script...\x1b[0m".to_string(),
         "screenshot" => "\x1b[38;5;220m⠧ Taking screenshot...\x1b[0m".to_string(),
@@ -103,7 +104,7 @@ pub(crate) fn format_tool_result(name: &str, output: &str, is_error: bool) -> St
         | "wait" | "select_option" | "go_back" | "execute_js" => {
             format!("{icon} \x1b[38;5;245m{name} done\x1b[0m")
         }
-        "extract_data" | "list_resources" => {
+        "page_map" | "read_content" | "list_resources" => {
             let summary = truncate_for_summary(output.trim(), 100);
             format!("{icon} \x1b[38;5;245m{name}\x1b[0m: {summary}")
         }
