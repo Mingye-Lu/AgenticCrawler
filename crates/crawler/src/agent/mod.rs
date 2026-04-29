@@ -570,6 +570,7 @@ mod tests {
         let result = agent
             .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
                 summary: "Task complete".to_string(),
+                data: None,
             }))
             .await
             .expect("finish effect should mark agent done");
