@@ -340,7 +340,7 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_18_tools() {
+    fn mvp_tool_specs_contains_expected_19_tools() {
         let specs = mvp_tool_specs();
         assert_eq!(specs.len(), 19);
 
