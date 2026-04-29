@@ -1,4 +1,4 @@
-use crawler::{CrawlerAgent, ToolEffect, ToolRegistry};
+use crawler::{CrawlerAgent, FinishSpec, ToolEffect, ToolRegistry};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolExecutor};
 use serde_json::{json, Value};
 
@@ -11,17 +11,13 @@ impl ApiClient for MockApiClient {
         self.call_count += 1;
         match self.call_count {
             1 => Ok(vec![
+                AssistantEvent::TextDelta("Pipeline completed".to_string()),
                 AssistantEvent::ToolUse {
                     id: "call-1".to_string(),
-                    name: "extract_data".to_string(),
-                    input:
-                        r#"{"instruction":"extract title","data":{"url":"https://example.com"}}"#
-                            .to_string(),
+                    name: "done".to_string(),
+                    input: r#"{"summary":"Pipeline completed","data":{"title":"Example Domain","url":"https://example.com"}}"#
+                        .to_string(),
                 },
-                AssistantEvent::MessageStop,
-            ]),
-            2 => Ok(vec![
-                AssistantEvent::TextDelta("Pipeline completed".to_string()),
                 AssistantEvent::MessageStop,
             ]),
             _ => Err(RuntimeError::new("unexpected extra API call")),
@@ -49,6 +45,19 @@ fn mock_registry() -> ToolRegistry {
                 "url": source_url,
                 "title": "Example Domain"
             })))
+        }),
+    );
+    registry.register(
+        "done",
+        Box::new(|input| {
+            Ok(ToolEffect::Finish(FinishSpec {
+                summary: input
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                data: input.get("data").cloned(),
+            }))
         }),
     );
     registry
@@ -81,7 +90,7 @@ async fn crawler_agent_run_completes_full_pipeline_with_mock_llm() {
         .await
         .expect("agent run should succeed");
 
-    assert_eq!(result.steps_executed, 2);
+    assert_eq!(result.steps_executed, 1);
     assert_eq!(result.summary, "Pipeline completed");
     assert_eq!(result.extracted_data.len(), 1);
     assert_eq!(result.extracted_data[0]["title"], "Example Domain");

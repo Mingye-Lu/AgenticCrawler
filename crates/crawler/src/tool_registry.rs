@@ -64,6 +64,11 @@ impl ToolRegistry {
     }
 
     #[must_use]
+    pub fn is_async_tool(name: &str) -> bool {
+        ASYNC_TOOLS.contains(&name)
+    }
+
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<&ToolHandler> {
         self.handlers.get(name)
     }
