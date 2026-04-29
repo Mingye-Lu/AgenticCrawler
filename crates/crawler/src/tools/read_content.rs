@@ -6,7 +6,9 @@ use crate::{CrawlError, ToolEffect, ToolError};
 const DEFAULT_MAX_CHARS: usize = 10_000;
 const MAX_CHARS_CEILING: usize = 100_000;
 
-fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, usize), CrawlError> {
+fn parse_input(
+    input: &Value,
+) -> Result<(Option<String>, Option<String>, usize, usize), CrawlError> {
     let heading = input
         .get("heading")
         .and_then(Value::as_str)
