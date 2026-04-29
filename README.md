@@ -35,13 +35,13 @@ Plan  →  Navigate  →  Observe  →  Act  →  Extract
                                        (JSON / CSV)
 ```
 
-It chooses from 15 browser tools each turn, automatically escalates from fast HTTP fetches to a headless browser when JavaScript or interaction is needed, and stops when the goal is met or the step limit is reached.
+It chooses from 16 browser tools each turn, automatically escalates from fast HTTP fetches to a headless browser when JavaScript or interaction is needed, and stops when the goal is met or the step limit is reached.
 
 ## Features
 
 - **Single binary** — `cargo build --release` produces one executable, no interpreter needed
 - **Dual fetching** — static pages served via HTTP (reqwest), JS-rendered pages escalated to Playwright
-- **15 browser tools** — `navigate`, `click`, `fill_form`, `scroll`, `extract_data`, `screenshot`, `wait`, `select_option`, `go_back`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`
+- **16 browser tools** — `navigate`, `click`, `fill_form`, `scroll`, `screenshot`, `wait`, `select_option`, `go_back`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `page_map`, `read_content`
 - **3 LLM providers** — Anthropic Claude, OpenAI, Codex (with OAuth PKCE login)
 - **Structured output** — JSON, CSV, or plain text
 - **Interactive REPL** — markdown rendering, syntax highlighting, spinners, slash commands
@@ -115,7 +115,7 @@ crates/
 ├── acrawl-cli/   REPL, arg parsing, session management, TUI rendering
 ├── api/          Anthropic + OpenAI + Codex clients, SSE streaming
 ├── commands/     Slash command registry
-├── crawler/      15 tools, agent loop, Playwright bridge, HTTP fetcher
+├── crawler/      19 tools, agent loop, Playwright bridge, HTTP fetcher
 └── runtime/      ConversationRuntime, config, permissions, sessions
 ```
 
