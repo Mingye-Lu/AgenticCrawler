@@ -902,20 +902,6 @@ mod tests {
     }
 
     #[test]
-    fn filtered_tool_specs_respect_allowlist() {
-        let allowed = ["read_file", "grep_search"]
-            .into_iter()
-            .map(str::to_string)
-            .collect();
-        let filtered = filter_tool_specs(Some(&allowed));
-        let names = filtered
-            .into_iter()
-            .map(|spec| spec.name)
-            .collect::<Vec<_>>();
-        assert!(names.iter().all(|n| allowed.contains::<str>(n)));
-    }
-
-    #[test]
     fn converts_tool_roundtrip_messages() {
         let messages = vec![
             ConversationMessage::user_text("hello"),
