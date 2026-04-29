@@ -715,8 +715,8 @@ pub(super) fn tool_input_summary(name: &str, input: &str) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or(input),
         "click" | "scroll" | "hover" | "press_key" | "fill_form" | "select_option"
-        | "switch_tab" | "wait" | "go_back" | "execute_js" | "screenshot" | "extract_data"
-        | "list_resources" | "save_file" => "",
+        | "switch_tab" | "wait" | "go_back" | "execute_js" | "screenshot" | "list_resources"
+        | "save_file" => "",
         _ => input,
     };
     truncate_with_ellipsis(key_param, 60)

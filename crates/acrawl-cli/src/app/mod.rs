@@ -1210,7 +1210,7 @@ mod tests {
 
     #[test]
     fn filter_tool_specs_with_specific_names_returns_only_matching_specs() {
-        let allowed = ["navigate", "extract_data"]
+        let allowed = ["navigate", "read_content"]
             .into_iter()
             .map(str::to_string)
             .collect();
@@ -1219,7 +1219,7 @@ mod tests {
 
         assert_eq!(
             filtered.iter().map(|spec| spec.name).collect::<Vec<_>>(),
-            vec!["navigate", "extract_data"]
+            vec!["navigate", "read_content"]
         );
     }
 

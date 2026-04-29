@@ -218,30 +218,16 @@ impl CrawlerAgent {
                 .await;
         }
 
+        if let Some(data) = spec.data {
+            self.crawl_state.extracted_data.push(data);
+        }
         self.crawl_state.done = true;
         self.crawl_state.done_reason.clone_from(&spec.summary);
         Ok(spec.summary)
     }
 
     fn supports_async(tool_name: &str) -> bool {
-        matches!(
-            tool_name,
-            "navigate"
-                | "click"
-                | "fill_form"
-                | "extract_data"
-                | "screenshot"
-                | "go_back"
-                | "scroll"
-                | "wait"
-                | "select_option"
-                | "execute_js"
-                | "hover"
-                | "press_key"
-                | "switch_tab"
-                | "list_resources"
-                | "save_file"
-        )
+        ToolRegistry::is_async_tool(tool_name)
     }
 }
 
@@ -342,25 +328,7 @@ fn build_crawl_result(summary: &TurnSummary, crawl_state: &CrawlState) -> CrawlR
         })
         .unwrap_or_default();
 
-    let mut extracted_data = summary
-        .tool_results
-        .iter()
-        .flat_map(|message| message.blocks.iter())
-        .filter_map(|block| match block {
-            ContentBlock::ToolResult {
-                tool_name,
-                output,
-                is_error: false,
-                ..
-            } if tool_name == "extract_data" => {
-                let parsed: serde_json::Value = serde_json::from_str(output).ok()?;
-                Some(parsed.get("data").cloned().unwrap_or(parsed))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    extracted_data.extend(crawl_state.all_data());
+    let extracted_data = crawl_state.all_data();
 
     CrawlResult {
         summary: text_summary,
@@ -442,19 +410,20 @@ mod tests {
         }
     }
 
-    struct ExtractDataApiClient {
+    struct DoneWithDataApiClient {
         call_count: usize,
     }
 
-    impl ApiClient for ExtractDataApiClient {
+    impl ApiClient for DoneWithDataApiClient {
         fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
             self.call_count += 1;
             match self.call_count {
                 1 => Ok(vec![
                     AssistantEvent::ToolUse {
                         id: "call-1".to_string(),
-                        name: "extract_data".to_string(),
-                        input: r#"{"instruction":"get titles","data":{}}"#.to_string(),
+                        name: "done".to_string(),
+                        input: r#"{"summary":"Extracted data.","data":{"title":"Example"}}"#
+                            .to_string(),
                     },
                     AssistantEvent::MessageStop,
                 ]),
@@ -570,6 +539,7 @@ mod tests {
         let result = agent
             .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
                 summary: "Task complete".to_string(),
+                data: None,
             }))
             .await
             .expect("finish effect should mark agent done");
@@ -577,6 +547,40 @@ mod tests {
         assert_eq!(result, "Task complete");
         assert!(agent.crawl_state.done);
         assert_eq!(agent.crawl_state.done_reason, "Task complete");
+    }
+
+    #[tokio::test]
+    async fn test_handle_finish_pushes_data_to_crawl_state() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        let payload = serde_json::json!({"items": [1, 2, 3]});
+
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
+                summary: "Task complete".to_string(),
+                data: Some(payload.clone()),
+            }))
+            .await
+            .expect("finish effect should store extracted data");
+
+        assert_eq!(result, "Task complete");
+        assert!(agent.crawl_state.done);
+        assert_eq!(agent.crawl_state.extracted_data, vec![payload]);
+    }
+
+    #[tokio::test]
+    async fn test_handle_finish_no_data_leaves_extracted_data_empty() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
+                summary: "Task complete".to_string(),
+                data: None,
+            }))
+            .await
+            .expect("finish effect should succeed without data");
+
+        assert_eq!(result, "Task complete");
+        assert!(agent.crawl_state.extracted_data.is_empty());
     }
 
     #[tokio::test]
@@ -631,12 +635,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_collects_extracted_data_from_tool_results() {
+    async fn run_collects_extracted_data_from_done() {
         let agent = CrawlerAgent::new_for_testing(mock_registry());
         let result = agent
             .run(
                 "extract titles from example.com",
-                ExtractDataApiClient { call_count: 0 },
+                DoneWithDataApiClient { call_count: 0 },
             )
             .await
             .expect("should succeed");
@@ -1023,12 +1027,7 @@ mod tests {
                     text: "final answer".to_string(),
                 },
             ])],
-            tool_results: vec![runtime::ConversationMessage::tool_result(
-                "call-1".to_string(),
-                "extract_data".to_string(),
-                r#"{"parent":1}"#.to_string(),
-                false,
-            )],
+            tool_results: vec![],
             iterations: 1,
             usage: TokenUsage {
                 input_tokens: 0,
@@ -1038,7 +1037,8 @@ mod tests {
             },
             auto_compaction: None,
         };
-        let crawl_state = CrawlState {
+        let mut crawl_state = CrawlState {
+            extracted_data: vec![serde_json::json!({"parent": 1})],
             child_blocks: vec![crate::state::ChildBlock {
                 child_id: "child-1".to_string(),
                 sub_goal: "goal".to_string(),
@@ -1051,5 +1051,47 @@ mod tests {
         assert_eq!(result.extracted_data.len(), 2);
         assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
         assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
+
+        crawl_state
+            .extracted_data
+            .push(serde_json::json!({"parent": 2}));
+        let result = build_crawl_result(&summary, &crawl_state);
+        assert_eq!(result.extracted_data.len(), 3);
+        assert_eq!(result.extracted_data[2], serde_json::json!({"child": 1}));
+    }
+
+    #[test]
+    fn build_crawl_result_ignores_non_extract_tool_results() {
+        let summary = TurnSummary {
+            assistant_messages: vec![runtime::ConversationMessage::assistant(vec![
+                ContentBlock::Text {
+                    text: "final answer".to_string(),
+                },
+            ])],
+            tool_results: vec![runtime::ConversationMessage::tool_result(
+                "call-1".to_string(),
+                "navigate".to_string(),
+                r#"{"data":{"ignored":true}}"#.to_string(),
+                false,
+            )],
+            iterations: 1,
+            usage: TokenUsage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            auto_compaction: None,
+        };
+        let crawl_state = CrawlState {
+            extracted_data: vec![serde_json::json!({"from_state": true})],
+            ..CrawlState::default()
+        };
+
+        let result = build_crawl_result(&summary, &crawl_state);
+        assert_eq!(
+            result.extracted_data,
+            vec![serde_json::json!({"from_state": true})]
+        );
     }
 }

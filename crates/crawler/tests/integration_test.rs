@@ -1,4 +1,4 @@
-use crawler::{CrawlerAgent, ToolEffect, ToolRegistry};
+use crawler::{CrawlerAgent, FinishSpec, ToolEffect, ToolRegistry};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolExecutor};
 use serde_json::{json, Value};
 
@@ -11,17 +11,13 @@ impl ApiClient for MockApiClient {
         self.call_count += 1;
         match self.call_count {
             1 => Ok(vec![
+                AssistantEvent::TextDelta("Pipeline completed".to_string()),
                 AssistantEvent::ToolUse {
                     id: "call-1".to_string(),
-                    name: "extract_data".to_string(),
-                    input:
-                        r#"{"instruction":"extract title","data":{"url":"https://example.com"}}"#
-                            .to_string(),
+                    name: "done".to_string(),
+                    input: r#"{"summary":"Pipeline completed","data":{"title":"Example Domain","url":"https://example.com"}}"#
+                        .to_string(),
                 },
-                AssistantEvent::MessageStop,
-            ]),
-            2 => Ok(vec![
-                AssistantEvent::TextDelta("Pipeline completed".to_string()),
                 AssistantEvent::MessageStop,
             ]),
             _ => Err(RuntimeError::new("unexpected extra API call")),
@@ -32,23 +28,47 @@ impl ApiClient for MockApiClient {
 fn mock_registry() -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     registry.register(
-        "extract_data",
-        Box::new(|input| {
-            let instruction = input
-                .get("instruction")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let source_url = input
-                .get("data")
-                .and_then(|value| value.get("url"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-
+        "page_map",
+        Box::new(|_input| {
             Ok(ToolEffect::reply_json(&json!({
-                "instruction": instruction,
-                "url": source_url,
-                "title": "Example Domain"
+                "sections": [
+                    {
+                        "level": 1,
+                        "text": "Example Domain",
+                        "id": null,
+                        "selector": "h1:nth-of-type(1)",
+                        "char_count": 200,
+                        "preview": "This domain is for use in..."
+                    }
+                ]
             })))
+        }),
+    );
+    registry.register(
+        "read_content",
+        Box::new(|_input| {
+            Ok(ToolEffect::reply_json(&json!({
+                "content": "This domain is for use in illustrative examples.",
+                "found": true,
+                "total_chars": 200,
+                "offset": 0,
+                "has_more": false,
+                "truncated": false,
+                "matches_count": 1
+            })))
+        }),
+    );
+    registry.register(
+        "done",
+        Box::new(|input| {
+            Ok(ToolEffect::Finish(FinishSpec {
+                summary: input
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                data: input.get("data").cloned(),
+            }))
         }),
     );
     registry
@@ -59,16 +79,16 @@ async fn crawler_agent_execute_dispatches_registered_tool() {
     let mut agent = CrawlerAgent::new_lazy(mock_registry());
 
     let output = agent
-        .execute(
-            "extract_data",
-            r#"{"instruction":"extract title","data":{"url":"https://example.com"}}"#,
-        )
+        .execute("page_map", r"{}")
         .await
-        .expect("extract_data should execute successfully");
+        .expect("page_map should execute successfully");
 
     let parsed: Value = serde_json::from_str(&output).expect("tool output should be valid JSON");
-    assert_eq!(parsed["title"], "Example Domain");
-    assert_eq!(parsed["url"], "https://example.com");
+    assert!(
+        parsed["sections"].is_array(),
+        "page_map should return sections array"
+    );
+    assert_eq!(parsed["sections"][0]["text"], "Example Domain");
 }
 
 #[tokio::test]
@@ -81,7 +101,7 @@ async fn crawler_agent_run_completes_full_pipeline_with_mock_llm() {
         .await
         .expect("agent run should succeed");
 
-    assert_eq!(result.steps_executed, 2);
+    assert_eq!(result.steps_executed, 1);
     assert_eq!(result.summary, "Pipeline completed");
     assert_eq!(result.extracted_data.len(), 1);
     assert_eq!(result.extracted_data[0]["title"], "Example Domain");
