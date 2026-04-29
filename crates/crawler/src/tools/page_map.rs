@@ -3,8 +3,6 @@ use serde_json::Value;
 use crate::browser::BrowserContext;
 use crate::{ToolEffect, ToolError};
 
-// Will be wired into ToolRegistry in a follow-up task.
-#[allow(dead_code)]
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let _ = input;
 

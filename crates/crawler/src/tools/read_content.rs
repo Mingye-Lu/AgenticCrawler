@@ -3,10 +3,8 @@ use serde_json::Value;
 use crate::browser::BrowserContext;
 use crate::{ToolEffect, ToolError};
 
-#[allow(dead_code)]
 const DEFAULT_MAX_CHARS: usize = 10_000;
 
-#[allow(dead_code)]
 fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, usize), ToolError> {
     let heading = input
         .get("heading")
@@ -34,8 +32,6 @@ fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, 
     Ok((heading, selector, offset, max_chars))
 }
 
-// Will be wired into ToolRegistry in a follow-up task.
-#[allow(dead_code)]
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let (heading, selector, offset, max_chars) = parse_input(input)?;
     let mut bridge = browser
