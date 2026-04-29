@@ -261,15 +261,28 @@ async function bootstrap() {
     if (command.action === 'page_map') {
       try {
         const sections = await page.evaluate(() => {
+          function cssPath(el) {
+            if (el.id) return '#' + CSS.escape(el.id);
+            const parts = [];
+            let cur = el;
+            while (cur && cur !== document.body && cur !== document.documentElement) {
+              let seg = cur.tagName.toLowerCase();
+              const parent = cur.parentElement;
+              if (parent) {
+                const sibs = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+                if (sibs.length > 1) seg += ':nth-of-type(' + (sibs.indexOf(cur) + 1) + ')';
+              }
+              parts.unshift(seg);
+              cur = cur.parentElement;
+            }
+            return parts.join(' > ');
+          }
           const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
           return headings.map((el) => {
             const level = parseInt(el.tagName[1]);
             const text = el.innerText.trim();
             const id = el.id || null;
-            const tag = el.tagName.toLowerCase();
-            const sameTag = Array.from(document.querySelectorAll(tag));
-            const nth = sameTag.indexOf(el) + 1;
-            const selector = `${tag}:nth-of-type(${nth})`;
+            const selector = cssPath(el);
             let content = '';
             let sibling = el.nextElementSibling;
             while (sibling) {
