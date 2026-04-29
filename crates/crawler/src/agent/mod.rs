@@ -638,7 +638,10 @@ mod tests {
     async fn run_collects_extracted_data_from_done() {
         let agent = CrawlerAgent::new_for_testing(mock_registry());
         let result = agent
-            .run("extract titles from example.com", DoneWithDataApiClient { call_count: 0 })
+            .run(
+                "extract titles from example.com",
+                DoneWithDataApiClient { call_count: 0 },
+            )
             .await
             .expect("should succeed");
         assert_eq!(result.extracted_data.len(), 1);
@@ -1049,7 +1052,9 @@ mod tests {
         assert_eq!(result.extracted_data[0], serde_json::json!({"parent": 1}));
         assert_eq!(result.extracted_data[1], serde_json::json!({"child": 1}));
 
-        crawl_state.extracted_data.push(serde_json::json!({"parent": 2}));
+        crawl_state
+            .extracted_data
+            .push(serde_json::json!({"parent": 2}));
         let result = build_crawl_result(&summary, &crawl_state);
         assert_eq!(result.extracted_data.len(), 3);
         assert_eq!(result.extracted_data[2], serde_json::json!({"child": 1}));
@@ -1084,6 +1089,9 @@ mod tests {
         };
 
         let result = build_crawl_result(&summary, &crawl_state);
-        assert_eq!(result.extracted_data, vec![serde_json::json!({"from_state": true})]);
+        assert_eq!(
+            result.extracted_data,
+            vec![serde_json::json!({"from_state": true})]
+        );
     }
 }
