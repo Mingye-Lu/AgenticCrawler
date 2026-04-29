@@ -260,26 +260,28 @@ async function bootstrap() {
 
     if (command.action === 'page_map') {
       try {
-        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
-        const sections = headings.map((el, idx) => {
-          const level = parseInt(el.tagName[1]);
-          const text = el.innerText.trim();
-          const id = el.id || null;
-          const tag = el.tagName.toLowerCase();
-          const sameTag = Array.from(document.querySelectorAll(tag));
-          const nth = sameTag.indexOf(el) + 1;
-          const selector = `${tag}:nth-of-type(${nth})`;
-          let content = '';
-          let sibling = el.nextElementSibling;
-          while (sibling) {
-            const sibTag = sibling.tagName.toLowerCase();
-            if (/^h[1-6]$/.test(sibTag) && parseInt(sibTag[1]) <= level) break;
-            content += sibling.innerText || '';
-            sibling = sibling.nextElementSibling;
-          }
-          const char_count = content.length;
-          const preview = char_count > 100 ? content.slice(0, 100).trim() + '...' : content.trim();
-          return { level, text, id, selector, char_count, preview };
+        const sections = await page.evaluate(() => {
+          const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+          return headings.map((el) => {
+            const level = parseInt(el.tagName[1]);
+            const text = el.innerText.trim();
+            const id = el.id || null;
+            const tag = el.tagName.toLowerCase();
+            const sameTag = Array.from(document.querySelectorAll(tag));
+            const nth = sameTag.indexOf(el) + 1;
+            const selector = `${tag}:nth-of-type(${nth})`;
+            let content = '';
+            let sibling = el.nextElementSibling;
+            while (sibling) {
+              const sibTag = sibling.tagName.toLowerCase();
+              if (/^h[1-6]$/.test(sibTag) && parseInt(sibTag[1]) <= level) break;
+              content += sibling.innerText || '';
+              sibling = sibling.nextElementSibling;
+            }
+            const char_count = content.length;
+            const preview = char_count > 100 ? content.slice(0, 100).trim() + '...' : content.trim();
+            return { level, text, id, selector, char_count, preview };
+          });
         });
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { sections } }) + '\n');
       } catch (error) {
@@ -294,41 +296,42 @@ async function bootstrap() {
         const selector = command.selector || null;
         const offset = command.offset || 0;
         const max_chars = command.max_chars || 10000;
-        let rawContent = '';
-        let matches_count = 0;
-        let found = false;
-        if (heading) {
-          const allHeadings = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'));
-          const matches = allHeadings.filter(el => el.innerText.trim().toLowerCase() === heading.toLowerCase());
-          matches_count = matches.length;
-          if (matches.length > 0) {
-            found = true;
-            const el = matches[0];
-            const level = parseInt(el.tagName[1]);
-            let sibling = el.nextElementSibling;
-            while (sibling) {
-              const sibTag = sibling.tagName.toLowerCase();
-              if (/^h[1-6]$/.test(sibTag) && parseInt(sibTag[1]) <= level) break;
-              rawContent += (sibling.innerText || '') + '\n';
-              sibling = sibling.nextElementSibling;
+        const result = await page.evaluate(({ heading, selector, offset, max_chars }) => {
+          let rawContent = '';
+          let matches_count = 0;
+          let found = false;
+          if (heading) {
+            const allHeadings = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'));
+            const matches = allHeadings.filter(el => el.innerText.trim().toLowerCase() === heading.toLowerCase());
+            matches_count = matches.length;
+            if (matches.length > 0) {
+              found = true;
+              const el = matches[0];
+              const level = parseInt(el.tagName[1]);
+              let sibling = el.nextElementSibling;
+              while (sibling) {
+                const sibTag = sibling.tagName.toLowerCase();
+                if (/^h[1-6]$/.test(sibTag) && parseInt(sibTag[1]) <= level) break;
+                rawContent += (sibling.innerText || '') + '\n';
+                sibling = sibling.nextElementSibling;
+              }
+            } else {
+              const hint = allHeadings.slice(0, 20).map(el => el.innerText.trim());
+              return { content: '', found: false, total_chars: 0, offset: 0, has_more: false, truncated: false, matches_count: 0, hint };
             }
-          } else {
-            const hint = allHeadings.slice(0, 20).map(el => el.innerText.trim());
-            const total_chars = 0;
-            process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { content: '', found: false, total_chars: 0, offset: 0, has_more: false, truncated: false, matches_count: 0, hint } }) + '\n');
-            continue;
+          } else if (selector) {
+            const els = Array.from(document.querySelectorAll(selector));
+            matches_count = els.length;
+            found = els.length > 0;
+            rawContent = els.map(el => el.innerText || '').join('\n');
           }
-        } else if (selector) {
-          const els = Array.from(document.querySelectorAll(selector));
-          matches_count = els.length;
-          found = els.length > 0;
-          rawContent = els.map(el => el.innerText || '').join('\n');
-        }
-        const total_chars = rawContent.length;
-        const sliced = rawContent.slice(offset, offset + max_chars);
-        const has_more = offset + max_chars < total_chars;
-        const truncated = sliced.length < (total_chars - offset);
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { content: sliced, found, total_chars, offset, has_more, truncated, matches_count } }) + '\n');
+          const total_chars = rawContent.length;
+          const sliced = rawContent.slice(offset, offset + max_chars);
+          const has_more = offset + max_chars < total_chars;
+          const truncated = sliced.length < (total_chars - offset);
+          return { content: sliced, found, total_chars, offset, has_more, truncated, matches_count };
+        }, { heading, selector, offset, max_chars });
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'read_content_error', message: String(error) } }) + '\n');
       }

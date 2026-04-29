@@ -128,7 +128,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_fifteen() {
+    fn new_with_core_tools_registers_all_nineteen() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = ["fork", "wait_for_subagents", "done"];
         assert_eq!(registry.len(), 19);
