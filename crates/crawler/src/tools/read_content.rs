@@ -1,11 +1,12 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::{ToolEffect, ToolError};
+use crate::{CrawlError, ToolEffect, ToolError};
 
 const DEFAULT_MAX_CHARS: usize = 10_000;
+const MAX_CHARS_CEILING: usize = 100_000;
 
-fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, usize), ToolError> {
+fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, usize), CrawlError> {
     let heading = input
         .get("heading")
         .and_then(Value::as_str)
@@ -15,8 +16,8 @@ fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, 
         .and_then(Value::as_str)
         .map(str::to_owned);
     if heading.is_none() && selector.is_none() {
-        return Err(ToolError(
-            "provide at least one of 'heading' or 'selector'".to_string(),
+        return Err(CrawlError::new(
+            "provide at least one of 'heading' or 'selector'",
         ));
     }
     #[allow(clippy::cast_possible_truncation)]
@@ -25,7 +26,8 @@ fn parse_input(input: &Value) -> Result<(Option<String>, Option<String>, usize, 
     let max_chars = input
         .get("max_chars")
         .and_then(Value::as_u64)
-        .map_or(DEFAULT_MAX_CHARS, |v| v as usize);
+        .map_or(DEFAULT_MAX_CHARS, |v| v as usize)
+        .min(MAX_CHARS_CEILING);
     Ok((heading, selector, offset, max_chars))
 }
 
@@ -51,7 +53,8 @@ mod tests {
     #[test]
     fn parse_input_requires_heading_or_selector() {
         let err = parse_input(&json!({})).unwrap_err();
-        assert!(err.0.contains("heading") || err.0.contains("selector"));
+        let msg = err.to_string();
+        assert!(msg.contains("heading") || msg.contains("selector"));
     }
 
     #[test]
@@ -87,5 +90,12 @@ mod tests {
             parse_input(&json!({"heading": "x", "offset": 500, "max_chars": 2000})).unwrap();
         assert_eq!(offset, 500);
         assert_eq!(max_chars, 2000);
+    }
+
+    #[test]
+    fn parse_input_max_chars_clamped_to_ceiling() {
+        let (_h, _s, _offset, max_chars) =
+            parse_input(&json!({"heading": "x", "max_chars": 999_999_999})).unwrap();
+        assert_eq!(max_chars, MAX_CHARS_CEILING);
     }
 }
