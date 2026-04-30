@@ -24,7 +24,7 @@ use crawler::mvp_tool_specs;
 use runtime::{load_system_prompt, Session};
 
 use app::{
-    initial_model_from_credentials, run_auth_cli, run_login, run_logout, run_repl,
+    initial_model_from_credentials, run_auth_cli, run_repl,
     run_resume_command, AllowedToolSet, LiveCli,
 };
 use format::{render_version_report, DEFAULT_DATE, VERSION};
@@ -93,18 +93,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .run_turn_with_output(&prompt, output_format)?;
         }
         CliAction::Auth { provider } => run_auth_cli(provider.as_deref())?,
-        CliAction::Login => {
-            eprintln!(
-                "\x1b[33m⚠️  `acrawl login` is deprecated. Please use `acrawl auth` instead.\x1b[0m"
-            );
-            run_login()?;
-        }
-        CliAction::Logout => {
-            eprintln!(
-                "\x1b[33m⚠️  `acrawl logout` is deprecated. Please use `acrawl auth` instead.\x1b[0m"
-            );
-            run_logout()?;
-        }
         CliAction::Init => {
             let cwd = env::current_dir()?;
             println!("{}", crate::init::initialize_repo(&cwd)?.render());
@@ -143,8 +131,6 @@ enum CliAction {
     Auth {
         provider: Option<String>,
     },
-    Login,
-    Logout,
     Init,
     Repl {
         model: Option<String>,
@@ -288,8 +274,12 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             let provider = rest.get(1).cloned();
             Ok(CliAction::Auth { provider })
         }
-        "login" => Ok(CliAction::Login),
-        "logout" => Ok(CliAction::Logout),
+        "login" | "logout" => {
+            Err(
+                "`acrawl login` and `acrawl logout` have been removed. Use `acrawl auth` instead."
+                    .to_string(),
+            )
+        }
         "init" => Ok(CliAction::Init),
         "prompt" => {
             let prompt = rest[1..].join(" ");
@@ -496,10 +486,6 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Configure credentials for a provider interactively"
     )?;
-    writeln!(out, "  acrawl login")?;
-    writeln!(out, "      (deprecated — use `acrawl auth`)")?;
-    writeln!(out, "  acrawl logout")?;
-    writeln!(out, "      (deprecated — use `acrawl auth`)")?;
     writeln!(out, "  acrawl init")?;
     writeln!(out)?;
     writeln!(out, "Flags:")?;
@@ -554,7 +540,6 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "  acrawl --resume session.json /status /compact /export notes.txt"
     )?;
-    writeln!(out, "  acrawl login")?;
     writeln!(out, "  acrawl init")?;
     Ok(())
 }
@@ -755,19 +740,19 @@ mod tests {
     }
 
     #[test]
-    fn parses_login_and_logout_subcommands() {
-        assert_eq!(
-            parse_args(&["login".to_string()]).expect("login"),
-            CliAction::Login
-        );
-        assert_eq!(
-            parse_args(&["logout".to_string()]).expect("logout"),
-            CliAction::Logout
-        );
+    fn parses_init_subcommand() {
         assert_eq!(
             parse_args(&["init".to_string()]).expect("init"),
             CliAction::Init
         );
+    }
+
+    #[test]
+    fn login_and_logout_subcommands_return_error() {
+        let login_err = parse_args(&["login".to_string()]).unwrap_err();
+        assert!(login_err.contains("removed"), "{login_err}");
+        let logout_err = parse_args(&["logout".to_string()]).unwrap_err();
+        assert!(logout_err.contains("removed"), "{logout_err}");
     }
 
     #[test]

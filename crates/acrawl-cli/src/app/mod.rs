@@ -42,7 +42,7 @@ use self::tool_executor::CliToolExecutor;
 
 pub(crate) use crate::auth::{
     bind_oauth_listener, default_oauth_config, open_browser, parse_provider_arg, run_auth_cli,
-    run_login, run_logout, wait_for_oauth_callback_cancellable,
+    wait_for_oauth_callback_cancellable,
 };
 use crate::auth::{
     interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,

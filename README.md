@@ -295,8 +295,6 @@ acrawl [OPTIONS] [COMMAND]
 Commands:
   prompt <text>      Run a single goal non-interactively
   auth [provider]    Configure provider credentials
-  login              Authenticate via OAuth (Codex)
-  logout             Clear stored credentials
   init               Initialize project config
   system-prompt      Print the system prompt (for debugging)
 
