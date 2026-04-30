@@ -143,12 +143,14 @@ fn format_bash_success_line(
     }
 }
 
+#[allow(dead_code)]
 #[deprecated(note = "Use format_tool_start_line instead")]
 pub(crate) fn format_tool_call_start(name: &str, input: &str) -> String {
     let line = format_tool_start_line(name, input);
     format!("{} {} {}", line.icon, line.name, line.summary)
 }
 
+#[allow(dead_code)]
 #[deprecated(note = "Use format_tool_success_line / format_tool_error_line instead")]
 pub(crate) fn format_tool_result(name: &str, output: &str, is_error: bool) -> String {
     let line = if is_error {
