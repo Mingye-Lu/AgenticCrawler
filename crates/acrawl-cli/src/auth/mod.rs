@@ -7,11 +7,11 @@ use std::net::TcpListener;
 use std::process::Command;
 use std::sync::mpsc;
 
-use runtime::{clear_oauth_credentials, parse_oauth_callback_request_target};
+use runtime::parse_oauth_callback_request_target;
 
 use super::Provider;
 
-pub(crate) use anthropic::{default_oauth_config, run_login};
+pub(crate) use anthropic::default_oauth_config;
 
 /// Bind a TCP listener for the OAuth callback on `preferred_port`.
 /// Retries briefly in case the port is stuck in `TIME_WAIT` from a prior
@@ -267,12 +267,6 @@ fn run_copilot_device_code_auth() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         tokio::runtime::Handle::current().block_on(run)
     }
-}
-
-pub(crate) fn run_logout() -> Result<(), Box<dyn std::error::Error>> {
-    clear_oauth_credentials()?;
-    println!("OAuth credentials cleared.");
-    Ok(())
 }
 
 /// Resolve a provider argument to either a legacy `Provider` or a preset.
