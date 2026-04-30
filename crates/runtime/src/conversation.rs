@@ -251,12 +251,7 @@ where
                                 Err(error) => (error.to_string(), true),
                             };
 
-                        ConversationMessage::tool_result(
-                            tool_use_id,
-                            tool_name,
-                            output,
-                            is_error,
-                        )
+                        ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
                     };
                     notify_observer_tool_result(&mut self.observer, &result_message);
                     if is_done_tool {
