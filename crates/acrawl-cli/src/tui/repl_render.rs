@@ -383,8 +383,6 @@ fn looks_like_base64(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'\n')
 }
 
-
-
 #[allow(clippy::too_many_lines)]
 pub(super) fn build_wrapped_list(
     entries: &[TranscriptEntry],

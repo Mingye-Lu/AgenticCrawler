@@ -24,20 +24,16 @@ pub(crate) fn truncate_with_ellipsis(s: &str, max_bytes: usize) -> String {
 }
 
 pub(crate) fn tool_input_summary(name: &str, input: &str) -> String {
-    let parsed: serde_json::Value =
-        serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
+    let parsed: serde_json::Value = serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
     let key_param = match name {
         "bash" | "Bash" => parsed
             .get("command")
             .and_then(|v| v.as_str())
             .unwrap_or(input),
-        "navigate" => parsed
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or(input),
+        "navigate" => parsed.get("url").and_then(|v| v.as_str()).unwrap_or(input),
         "click" | "scroll" | "hover" | "press_key" | "fill_form" | "select_option"
-        | "switch_tab" | "wait" | "go_back" | "execute_js" | "screenshot"
-        | "list_resources" | "save_file" => "",
+        | "switch_tab" | "wait" | "go_back" | "execute_js" | "screenshot" | "list_resources"
+        | "save_file" => "",
         _ => input,
     };
     truncate_with_ellipsis(key_param, 60)
@@ -52,13 +48,9 @@ pub(crate) fn format_tool_start_line(name: &str, input: &str) -> ToolLine {
     }
 }
 
-pub(crate) fn format_tool_success_line(
-    name: &str,
-    input_summary: &str,
-    output: &str,
-) -> ToolLine {
-    let parsed: serde_json::Value = serde_json::from_str(output)
-        .unwrap_or(serde_json::Value::String(output.to_string()));
+pub(crate) fn format_tool_success_line(name: &str, input_summary: &str, output: &str) -> ToolLine {
+    let parsed: serde_json::Value =
+        serde_json::from_str(output).unwrap_or(serde_json::Value::String(output.to_string()));
     match name {
         "bash" | "Bash" => format_bash_success_line(name, input_summary, &parsed),
         _ => {
@@ -103,10 +95,7 @@ fn format_bash_success_line(
 
     let mut summary = truncate_with_ellipsis(&cmd, 60);
 
-    if let Some(task_id) = parsed
-        .get("backgroundTaskId")
-        .and_then(|v| v.as_str())
-    {
+    if let Some(task_id) = parsed.get("backgroundTaskId").and_then(|v| v.as_str()) {
         write!(summary, " backgrounded ({task_id})").ok();
     } else if let Some(interp) = parsed
         .get("returnCodeInterpretation")
@@ -279,7 +268,8 @@ mod tests {
     #[test]
     fn no_box_drawing_in_new_api() {
         let start = format_tool_start_line("bash", r#"{"command":"pwd"}"#);
-        let success = format_tool_success_line("bash", r#"{"command":"pwd"}"#, r#"{"stdout":"ok"}"#);
+        let success =
+            format_tool_success_line("bash", r#"{"command":"pwd"}"#, r#"{"stdout":"ok"}"#);
         let error = format_tool_error_line("bash", "fail");
 
         for line in [&start, &success, &error] {
