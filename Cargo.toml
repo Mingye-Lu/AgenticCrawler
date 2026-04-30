@@ -13,6 +13,9 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
+description = "LLM-powered web crawler — describe a goal in plain English, get structured data back"
+repository = "https://github.com/Mingye-Lu/AgenticCrawler"
+homepage = "https://github.com/Mingye-Lu/AgenticCrawler"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
