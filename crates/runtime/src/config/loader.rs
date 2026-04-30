@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use crate::json::JsonValue;
 
 use super::{
-    deep_merge_objects, expect_object, parse_mcp_server_config, parse_optional_hooks_config,
+    deep_merge_objects, expect_object, parse_mcp_server_config,
     parse_optional_oauth_config, parse_optional_sandbox_config, read_optional_json_object,
     ConfigEntry, ConfigError, ConfigSource, McpConfigCollection, OAuthConfig, RuntimeFeatureConfig,
-    RuntimeHookConfig, ScopedMcpServerConfig,
+    ScopedMcpServerConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,7 +93,6 @@ impl ConfigLoader {
         let merged_value = JsonValue::Object(merged.clone());
 
         let feature_config = RuntimeFeatureConfig {
-            hooks: parse_optional_hooks_config(&merged_value)?,
             mcp: McpConfigCollection {
                 servers: mcp_servers,
             },
@@ -148,11 +147,6 @@ impl RuntimeConfig {
     #[must_use]
     pub fn mcp(&self) -> &McpConfigCollection {
         self.feature_config.mcp()
-    }
-
-    #[must_use]
-    pub fn hooks(&self) -> &RuntimeHookConfig {
-        self.feature_config.hooks()
     }
 
     #[must_use]
@@ -257,7 +251,7 @@ mod tests {
         .expect("write user compat config");
         fs::write(
             home.join("settings.json"),
-            r#"{"model":"sonnet","env":{"A2":"1"},"hooks":{"PreToolUse":["base"]},"permissions":{"defaultMode":"plan"}}"#,
+            r#"{"model":"sonnet","env":{"A2":"1"},"permissions":{"defaultMode":"plan"}}"#,
         )
         .expect("write user settings");
         fs::write(
@@ -267,7 +261,7 @@ mod tests {
         .expect("write project compat config");
         fs::write(
             cwd.join(".acrawl").join("settings.json"),
-            r#"{"env":{"C":"3"},"hooks":{"PostToolUse":["project"]},"mcpServers":{"project":{"command":"uvx","args":["project"]}}}"#,
+            r#"{"env":{"C":"3"},"mcpServers":{"project":{"command":"uvx","args":["project"]}}}"#,
         )
         .expect("write project settings");
         fs::write(
@@ -296,18 +290,6 @@ mod tests {
                 .len(),
             4
         );
-        assert!(loaded
-            .get("hooks")
-            .and_then(JsonValue::as_object)
-            .expect("hooks object")
-            .contains_key("PreToolUse"));
-        assert!(loaded
-            .get("hooks")
-            .and_then(JsonValue::as_object)
-            .expect("hooks object")
-            .contains_key("PostToolUse"));
-        assert_eq!(loaded.hooks().pre_tool_use(), &["base".to_string()]);
-        assert_eq!(loaded.hooks().post_tool_use(), &["project".to_string()]);
         assert!(loaded.mcp().get("home").is_some());
         assert!(loaded.mcp().get("project").is_some());
 
@@ -466,7 +448,7 @@ mod tests {
         fs::create_dir_all(&home).expect("home dir");
         fs::write(
             home.join("settings.json"),
-            r#"{"model":"anthropic/claude-opus-4-6","hooks":{"PreToolUse":["echo pre"]}}"#,
+            r#"{"model":"anthropic/claude-opus-4-6"}"#,
         )
         .expect("write settings");
 
@@ -477,7 +459,6 @@ mod tests {
         assert_eq!(loaded.loaded_entries().len(), 1);
         assert_eq!(loaded.loaded_entries()[0].source, ConfigSource::User);
         assert_eq!(loaded.model(), Some("anthropic/claude-opus-4-6"));
-        assert_eq!(loaded.hooks().pre_tool_use(), &["echo pre".to_string()]);
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }

@@ -9,7 +9,7 @@ mod features;
 mod loader;
 mod mcp_config;
 
-pub use features::{OAuthConfig, RuntimeFeatureConfig, RuntimeHookConfig};
+pub use features::{OAuthConfig, RuntimeFeatureConfig};
 pub use loader::{ConfigLoader, RuntimeConfig};
 pub use mcp_config::{
     McpClaudeAiProxyServerConfig, McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig,
@@ -18,7 +18,7 @@ pub use mcp_config::{
 };
 
 use features::{
-    parse_optional_hooks_config, parse_optional_oauth_config, parse_optional_sandbox_config,
+    parse_optional_oauth_config, parse_optional_sandbox_config,
 };
 use mcp_config::parse_mcp_server_config;
 

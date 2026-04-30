@@ -2,8 +2,6 @@ mod bootstrap;
 mod compact;
 mod config;
 mod conversation;
-
-mod hooks;
 mod json;
 mod mcp;
 mod oauth;
@@ -24,7 +22,7 @@ pub use config::{
     ConfigEntry, ConfigError, ConfigLoader, ConfigSource, McpClaudeAiProxyServerConfig,
     McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig,
     McpServerConfig, McpStdioServerConfig, McpTransport, McpWebSocketServerConfig, OAuthConfig,
-    RuntimeConfig, RuntimeFeatureConfig, RuntimeHookConfig, ScopedMcpServerConfig,
+    RuntimeConfig, RuntimeFeatureConfig, ScopedMcpServerConfig,
     ACRAWL_SETTINGS_SCHEMA_NAME,
 };
 pub use conversation::{
@@ -32,7 +30,6 @@ pub use conversation::{
     ConversationRuntime, RuntimeError, StaticToolExecutor, ToolError, ToolExecutor, TurnSummary,
 };
 
-pub use hooks::{HookEvent, HookRunResult, HookRunner};
 pub use mcp::{
     mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
     scoped_mcp_config_hash, unwrap_ccr_proxy_url,
