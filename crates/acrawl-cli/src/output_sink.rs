@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use runtime::{RuntimeObserver, TokenUsage};
 
 use crate::markdown::{MarkdownStreamState, TerminalRenderer};
+#[allow(deprecated)]
 use crate::tool_format::{format_tool_call_start, format_tool_result};
 use crate::tui::events::ReplTuiEvent;
 
@@ -39,10 +40,12 @@ impl OutputSink for StdoutSink {
         }
     }
 
+    #[allow(deprecated)]
     fn on_tool_call(&mut self, name: &str, input: &str) {
         println!("{}", format_tool_call_start(name, input));
     }
 
+    #[allow(deprecated)]
     fn on_tool_result(&mut self, name: &str, output: &str, is_error: bool) {
         println!("{}", format_tool_result(name, output, is_error));
     }
