@@ -1,0 +1,34 @@
+Task 2 — REPL visual output unchanged verification
+===================================================
+
+cargo test --workspace: 699 tests, ALL PASSING
+- acrawl-cli: 213 passed
+- api: 180 passed  
+- commands: 6 passed
+- crawler: 201 passed (6 ignored - require network/playwright)
+- runtime: 95 passed
+- integration: 2 passed
+- client integration: 4 passed (1 ignored)
+
+cargo clippy --workspace --all-targets -- -D warnings: CLEAN
+(verified with Task 3 changes stashed to isolate Task 2 only)
+
+Key REPL rendering tests that pass:
+- render_tool_call_bash_rich_stdout
+- render_tool_call_bash_overflow_truncated
+- render_tool_call_bash_with_stderr
+- render_tool_call_error_status
+- render_tool_call_input_truncation
+- render_tool_call_running_status
+- render_tool_call_success_empty_output
+- render_tool_call_success_with_output
+- render_tool_call_unknown_tool_single_line
+- tool_input_summary_extracts_key_fields
+
+Visual output is IDENTICAL because:
+1. render_bash_success header: same truncated command + status from shared format_bash_success_line
+2. render_bash_success detail: same strip_ansi + cap_content_lines(15) for stdout, .take(5) for stderr
+3. Non-bash success: same strip_ansi + truncate_with_ellipsis(60) logic via format_tool_success_line
+4. Error rendering: unchanged (was already simple, no shared function needed)
+5. Running status: unchanged
+6. Colors, Ratatui widget structure: unchanged

@@ -1,0 +1,20 @@
+Task 2 — Line count reduction
+==============================
+
+Before: 1166 lines (repl_render.rs)
+After:  1018 lines (repl_render.rs)
+Net reduction: 148 lines (12.7%)
+
+Target was ≥30 lines removed. Achieved 148 lines removed.
+
+Lines removed:
+- strip_ansi definition (24 lines): lines 163-186
+- truncate_with_ellipsis definition (10 lines): lines 430-439
+- tool_input_summary definition (16 lines): lines 441-455
+- render_bash_success header simplification (~17 lines): cmd extraction + conditional status appending
+- render_tool_call_lines non-bash success simplification (~5 lines): summary computation
+- Blank lines between removed functions
+
+Lines added:
+- 2 import lines (crate::markdown::strip_ansi, crate::tool_format::format_tool_success_line)
+- 3 lines for shared function calls in render_bash_success + render_tool_call_lines

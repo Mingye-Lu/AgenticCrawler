@@ -1,0 +1,16 @@
+Task 2 — No duplicate function definitions
+============================================
+
+fn truncate_with_ellipsis — exactly 1 definition:
+  crates/acrawl-cli/src/tool_format.rs:15  (pub(crate))
+
+fn tool_input_summary — exactly 1 definition:
+  crates/acrawl-cli/src/tool_format.rs:26  (pub(crate))
+
+fn strip_ansi — exactly 1 definition in repl_render.rs: REMOVED
+  Local definition (pub(super)) was at lines 163-186, now deleted.
+  Now imported from crate::markdown::strip_ansi in repl_render.rs.
+
+Verification commands:
+  Get-ChildItem -Path "crates/" -Filter "*.rs" -Recurse | Select-String -Pattern "fn truncate_with_ellipsis"
+  Get-ChildItem -Path "crates/" -Filter "*.rs" -Recurse | Select-String -Pattern "fn tool_input_summary"
