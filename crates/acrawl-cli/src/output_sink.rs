@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io::{self, IsTerminal, Write};
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -136,7 +136,12 @@ impl StdoutSink {
         if self.is_tty {
             let mut stdout = io::stdout();
             if let Some(color) = color {
-                let _ = execute!(stdout, SetForegroundColor(color), Print(line.icon), ResetColor);
+                let _ = execute!(
+                    stdout,
+                    SetForegroundColor(color),
+                    Print(line.icon),
+                    ResetColor
+                );
             } else {
                 let _ = execute!(stdout, Print(line.icon));
             }
@@ -164,7 +169,9 @@ impl StdoutSink {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let total = pending.len();
-        let idx = pending.iter().position(|(pending_name, _)| pending_name == name)?;
+        let idx = pending
+            .iter()
+            .position(|(pending_name, _)| pending_name == name)?;
         let (_, summary) = pending.remove(idx);
         Some((idx, total, summary))
     }
@@ -251,13 +258,19 @@ impl OutputSink for StdoutSink {
                 let _ = execute!(stdout, Print("\n"));
                 let _ = stdout.flush();
             } else {
-                self.print_tool_line(&tool_line, Some(if is_error { Color::Red } else { Color::Green }));
+                self.print_tool_line(
+                    &tool_line,
+                    Some(if is_error { Color::Red } else { Color::Green }),
+                );
                 for detail in &tool_line.detail_lines {
                     println!("  {detail}");
                 }
             }
         } else {
-            println!("{} {} {}", tool_line.icon, tool_line.name, tool_line.summary);
+            println!(
+                "{} {} {}",
+                tool_line.icon, tool_line.name, tool_line.summary
+            );
             for detail in &tool_line.detail_lines {
                 println!("  {detail}");
             }
@@ -410,7 +423,10 @@ mod tests {
         assert_eq!(second.2, "second");
 
         let remaining = sink.pending_tools.lock().expect("pending lock");
-        assert_eq!(remaining.as_slice(), &[("navigate".to_string(), "url".to_string())]);
+        assert_eq!(
+            remaining.as_slice(),
+            &[("navigate".to_string(), "url".to_string())]
+        );
     }
 
     #[test]
