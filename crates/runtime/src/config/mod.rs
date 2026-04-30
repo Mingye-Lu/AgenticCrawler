@@ -17,9 +17,7 @@ pub use mcp_config::{
     McpWebSocketServerConfig, ScopedMcpServerConfig,
 };
 
-use features::{
-    parse_optional_oauth_config, parse_optional_sandbox_config,
-};
+use features::{parse_optional_oauth_config, parse_optional_sandbox_config};
 use mcp_config::parse_mcp_server_config;
 
 pub const ACRAWL_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
