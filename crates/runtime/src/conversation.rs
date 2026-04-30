@@ -7,7 +7,6 @@ use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
 use crate::config::RuntimeFeatureConfig;
-use crate::hooks::{HookRunResult, HookRunner};
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
@@ -110,7 +109,6 @@ pub struct ConversationRuntime<C, T> {
     system_prompt: Vec<String>,
     max_iterations: usize,
     usage_tracker: UsageTracker,
-    hook_runner: HookRunner,
     auto_compaction_input_tokens_threshold: u32,
     cancel_flag: Arc<AtomicBool>,
 }
@@ -142,7 +140,7 @@ where
         api_client: C,
         tool_executor: T,
         system_prompt: Vec<String>,
-        feature_config: &RuntimeFeatureConfig,
+        _feature_config: &RuntimeFeatureConfig,
     ) -> Self {
         let usage_tracker = UsageTracker::from_session(&session);
         Self {
@@ -153,7 +151,6 @@ where
             system_prompt,
             max_iterations: usize::MAX,
             usage_tracker,
-            hook_runner: HookRunner::from_feature_config(feature_config),
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
         }
@@ -248,51 +245,18 @@ where
                 for (tool_use_id, tool_name, input) in pending_tool_uses {
                     let is_done_tool = tool_name == "done";
                     let result_message = {
-                        let pre_hook_result = self.hook_runner.run_pre_tool_use(&tool_name, &input);
-                        if pre_hook_result.is_denied() {
-                            let deny_message = format!("PreToolUse hook denied tool `{tool_name}`");
-                            let message = format_hook_message(&pre_hook_result, &deny_message);
-                            notify_observer_system_message(&mut self.observer, &message);
-                            ConversationMessage::tool_result(tool_use_id, tool_name, message, true)
-                        } else {
-                            let (mut output, mut is_error) =
-                                match self.tool_executor.execute(&tool_name, &input).await {
-                                    Ok(output) => (output, false),
-                                    Err(error) => (error.to_string(), true),
-                                };
-                            output = merge_hook_feedback(pre_hook_result.messages(), output, false);
-                            if !pre_hook_result.messages().is_empty() {
-                                notify_observer_system_message(
-                                    &mut self.observer,
-                                    &pre_hook_result.messages().join("\n"),
-                                );
-                            }
+                        let (output, is_error) =
+                            match self.tool_executor.execute(&tool_name, &input).await {
+                                Ok(output) => (output, false),
+                                Err(error) => (error.to_string(), true),
+                            };
 
-                            let post_hook_result = self
-                                .hook_runner
-                                .run_post_tool_use(&tool_name, &input, &output, is_error);
-                            if post_hook_result.is_denied() {
-                                is_error = true;
-                            }
-                            if !post_hook_result.messages().is_empty() {
-                                notify_observer_system_message(
-                                    &mut self.observer,
-                                    &post_hook_result.messages().join("\n"),
-                                );
-                            }
-                            output = merge_hook_feedback(
-                                post_hook_result.messages(),
-                                output,
-                                post_hook_result.is_denied(),
-                            );
-
-                            ConversationMessage::tool_result(
-                                tool_use_id,
-                                tool_name,
-                                output,
-                                is_error,
-                            )
-                        }
+                        ConversationMessage::tool_result(
+                            tool_use_id,
+                            tool_name,
+                            output,
+                            is_error,
+                        )
                     };
                     notify_observer_tool_result(&mut self.observer, &result_message);
                     if is_done_tool {
@@ -477,15 +441,6 @@ fn notify_observer_tool_result(
     }
 }
 
-fn notify_observer_system_message(
-    observer: &mut Option<Box<dyn RuntimeObserver + Send>>,
-    message: &str,
-) {
-    if let Some(observer) = observer.as_mut() {
-        observer.on_system_message(message);
-    }
-}
-
 fn notify_observer_turn_finished(
     observer: &mut Option<Box<dyn RuntimeObserver + Send>>,
     result: &Result<TurnSummary, RuntimeError>,
@@ -502,32 +457,6 @@ fn flush_text_block(text: &mut String, blocks: &mut Vec<ContentBlock>) {
             text: std::mem::take(text),
         });
     }
-}
-
-fn format_hook_message(result: &HookRunResult, fallback: &str) -> String {
-    if result.messages().is_empty() {
-        fallback.to_string()
-    } else {
-        result.messages().join("\n")
-    }
-}
-
-fn merge_hook_feedback(messages: &[String], output: String, denied: bool) -> String {
-    if messages.is_empty() {
-        return output;
-    }
-
-    let mut sections = Vec::new();
-    if !output.trim().is_empty() {
-        sections.push(output);
-    }
-    let label = if denied {
-        "Hook feedback (denied)"
-    } else {
-        "Hook feedback"
-    };
-    sections.push(format!("{label}:\n{}", messages.join("\n")));
-    sections.join("\n\n")
 }
 
 type ToolHandler = Box<dyn FnMut(&str) -> Result<String, ToolError>>;
@@ -570,7 +499,6 @@ mod tests {
         DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
     };
     use crate::compact::CompactionConfig;
-    use crate::config::{RuntimeFeatureConfig, RuntimeHookConfig};
     use crate::prompt::{ProjectContext, SystemPromptBuilder};
     use crate::session::{ContentBlock, MessageRole, Session};
     use crate::usage::TokenUsage;
@@ -672,142 +600,6 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    #[cfg(unix)]
-    async fn denies_tool_use_when_pre_tool_hook_blocks() {
-        struct SingleCallApiClient;
-        impl ApiClient for SingleCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-                if request
-                    .messages
-                    .iter()
-                    .any(|message| message.role == MessageRole::Tool)
-                {
-                    return Ok(vec![
-                        AssistantEvent::TextDelta("blocked".to_string()),
-                        AssistantEvent::MessageStop,
-                    ]);
-                }
-                Ok(vec![
-                    AssistantEvent::ToolUse {
-                        id: "tool-1".to_string(),
-                        name: "blocked".to_string(),
-                        input: r#"{"path":"secret.txt"}"#.to_string(),
-                    },
-                    AssistantEvent::MessageStop,
-                ])
-            }
-        }
-
-        let mut runtime = ConversationRuntime::new_with_features(
-            Session::new(),
-            SingleCallApiClient,
-            StaticToolExecutor::new().register("blocked", |_input| {
-                panic!("tool should not execute when hook denies")
-            }),
-            vec!["system".to_string()],
-            &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
-                vec![shell_snippet("printf 'blocked by hook'; exit 2")],
-                Vec::new(),
-            )),
-        );
-
-        let summary = runtime
-            .run_turn("use the tool")
-            .await
-            .expect("conversation should continue after hook denial");
-
-        assert_eq!(summary.tool_results.len(), 1);
-        let ContentBlock::ToolResult {
-            is_error, output, ..
-        } = &summary.tool_results[0].blocks[0]
-        else {
-            panic!("expected tool result block");
-        };
-        assert!(
-            *is_error,
-            "hook denial should produce an error result: {output}"
-        );
-        assert!(
-            output.contains("denied tool") || output.contains("blocked by hook"),
-            "unexpected hook denial output: {output:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn appends_post_tool_hook_feedback_to_tool_result() {
-        struct TwoCallApiClient {
-            calls: usize,
-        }
-
-        impl ApiClient for TwoCallApiClient {
-            fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-                self.calls += 1;
-                match self.calls {
-                    1 => Ok(vec![
-                        AssistantEvent::ToolUse {
-                            id: "tool-1".to_string(),
-                            name: "add".to_string(),
-                            input: r#"{"lhs":2,"rhs":2}"#.to_string(),
-                        },
-                        AssistantEvent::MessageStop,
-                    ]),
-                    2 => {
-                        assert!(request
-                            .messages
-                            .iter()
-                            .any(|message| message.role == MessageRole::Tool));
-                        Ok(vec![
-                            AssistantEvent::TextDelta("done".to_string()),
-                            AssistantEvent::MessageStop,
-                        ])
-                    }
-                    _ => Err(RuntimeError::new("unexpected extra API call")),
-                }
-            }
-        }
-
-        let mut runtime = ConversationRuntime::new_with_features(
-            Session::new(),
-            TwoCallApiClient { calls: 0 },
-            StaticToolExecutor::new().register("add", |_input| Ok("4".to_string())),
-            vec!["system".to_string()],
-            &RuntimeFeatureConfig::default().with_hooks(RuntimeHookConfig::new(
-                vec![shell_snippet("printf 'pre hook ran'")],
-                vec![shell_snippet("printf 'post hook ran'")],
-            )),
-        );
-
-        let summary = runtime
-            .run_turn("use add")
-            .await
-            .expect("tool loop succeeds");
-
-        assert_eq!(summary.tool_results.len(), 1);
-        let ContentBlock::ToolResult {
-            is_error, output, ..
-        } = &summary.tool_results[0].blocks[0]
-        else {
-            panic!("expected tool result block");
-        };
-        assert!(
-            !*is_error,
-            "post hook should preserve non-error result: {output:?}"
-        );
-        assert!(
-            output.contains('4'),
-            "tool output missing value: {output:?}"
-        );
-        assert!(
-            output.contains("pre hook ran"),
-            "tool output missing pre hook feedback: {output:?}"
-        );
-        assert!(
-            output.contains("post hook ran"),
-            "tool output missing post hook feedback: {output:?}"
-        );
-    }
-
     #[test]
     fn reconstructs_usage_tracker_from_restored_session() {
         struct SimpleApi;
@@ -883,16 +675,6 @@ mod tests {
             result.compacted_session.messages[0].role,
             MessageRole::System
         );
-    }
-
-    #[cfg(windows)]
-    fn shell_snippet(script: &str) -> String {
-        script.replace('\'', "\"")
-    }
-
-    #[cfg(not(windows))]
-    fn shell_snippet(script: &str) -> String {
-        script.to_string()
     }
 
     #[tokio::test]

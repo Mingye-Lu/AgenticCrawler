@@ -8,17 +8,10 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuntimeFeatureConfig {
-    pub(super) hooks: RuntimeHookConfig,
     pub(super) mcp: McpConfigCollection,
     pub(super) oauth: Option<OAuthConfig>,
     pub(super) model: Option<String>,
     pub(super) sandbox: SandboxConfig,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RuntimeHookConfig {
-    pre_tool_use: Vec<String>,
-    post_tool_use: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,17 +25,6 @@ pub struct OAuthConfig {
 }
 
 impl RuntimeFeatureConfig {
-    #[must_use]
-    pub fn with_hooks(mut self, hooks: RuntimeHookConfig) -> Self {
-        self.hooks = hooks;
-        self
-    }
-
-    #[must_use]
-    pub fn hooks(&self) -> &RuntimeHookConfig {
-        &self.hooks
-    }
-
     #[must_use]
     pub fn mcp(&self) -> &McpConfigCollection {
         &self.mcp
@@ -62,44 +44,6 @@ impl RuntimeFeatureConfig {
     pub fn sandbox(&self) -> &SandboxConfig {
         &self.sandbox
     }
-}
-
-impl RuntimeHookConfig {
-    #[must_use]
-    pub fn new(pre_tool_use: Vec<String>, post_tool_use: Vec<String>) -> Self {
-        Self {
-            pre_tool_use,
-            post_tool_use,
-        }
-    }
-
-    #[must_use]
-    pub fn pre_tool_use(&self) -> &[String] {
-        &self.pre_tool_use
-    }
-
-    #[must_use]
-    pub fn post_tool_use(&self) -> &[String] {
-        &self.post_tool_use
-    }
-}
-
-pub(super) fn parse_optional_hooks_config(
-    root: &JsonValue,
-) -> Result<RuntimeHookConfig, ConfigError> {
-    let Some(object) = root.as_object() else {
-        return Ok(RuntimeHookConfig::default());
-    };
-    let Some(hooks_value) = object.get("hooks") else {
-        return Ok(RuntimeHookConfig::default());
-    };
-    let hooks = expect_object(hooks_value, "merged settings.hooks")?;
-    Ok(RuntimeHookConfig {
-        pre_tool_use: optional_hook_command_array(hooks, "PreToolUse", "merged settings.hooks")?
-            .unwrap_or_default(),
-        post_tool_use: optional_hook_command_array(hooks, "PostToolUse", "merged settings.hooks")?
-            .unwrap_or_default(),
-    })
 }
 
 pub(super) fn parse_optional_sandbox_config(
@@ -165,53 +109,6 @@ pub(super) fn parse_optional_oauth_config(
     }))
 }
 
-/// Hook lists may be plain command strings or nested objects (`command`, nested `hooks`).
-fn optional_hook_command_array(
-    object: &std::collections::BTreeMap<String, JsonValue>,
-    key: &str,
-    context: &str,
-) -> Result<Option<Vec<String>>, ConfigError> {
-    match object.get(key) {
-        Some(value) => {
-            let Some(array) = value.as_array() else {
-                return Err(ConfigError::Parse(format!(
-                    "{context}: field {key} must be an array"
-                )));
-            };
-            let mut out = Vec::new();
-            for item in array {
-                collect_hook_commands(item, &mut out);
-            }
-            Ok(Some(out))
-        }
-        None => Ok(None),
-    }
-}
-
-fn collect_hook_commands(value: &JsonValue, out: &mut Vec<String>) {
-    if let Some(text) = value.as_str() {
-        out.push(text.to_string());
-        return;
-    }
-    let Some(obj) = value.as_object() else {
-        return;
-    };
-    let is_command_hook = obj
-        .get("type")
-        .and_then(JsonValue::as_str)
-        .is_none_or(|hook_type| hook_type == "command");
-    if let Some(cmd) = obj.get("command").and_then(JsonValue::as_str) {
-        if is_command_hook {
-            out.push(cmd.to_string());
-        }
-    }
-    if let Some(hooks) = obj.get("hooks").and_then(JsonValue::as_array) {
-        for hook in hooks {
-            collect_hook_commands(hook, out);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -219,7 +116,7 @@ mod tests {
     use crate::json::JsonValue;
     use crate::sandbox::FilesystemIsolationMode;
 
-    use super::{OAuthConfig, RuntimeFeatureConfig, RuntimeHookConfig};
+    use super::{OAuthConfig, RuntimeFeatureConfig};
     use crate::config::{ConfigLoader, ConfigSource, RuntimeConfig};
 
     fn temp_dir() -> std::path::PathBuf {
@@ -228,30 +125,6 @@ mod tests {
             .expect("time should be after epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("runtime-config-{nanos}"))
-    }
-
-    #[test]
-    fn loads_hook_commands_from_nested_objects() {
-        let root = temp_dir();
-        let cwd = root.join("project");
-        let home = root.join("home").join(".acrawl");
-        std::fs::create_dir_all(cwd.join(".acrawl")).expect("project config dir");
-        std::fs::create_dir_all(&home).expect("home config dir");
-
-        std::fs::write(
-            cwd.join(".acrawl").join("settings.json"),
-            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/bin/pre"}]}],"PostToolUse":["shell-p"]}}"#,
-        )
-        .expect("write project settings");
-
-        let loaded = ConfigLoader::new(&cwd, &home)
-            .load()
-            .expect("config should load");
-
-        assert_eq!(loaded.hooks().pre_tool_use(), &["/bin/pre".to_string()]);
-        assert_eq!(loaded.hooks().post_tool_use(), &["shell-p".to_string()]);
-
-        std::fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
     #[test]
@@ -293,15 +166,9 @@ mod tests {
     }
 
     #[test]
-    fn runtime_feature_config_defaults_and_with_hooks_work() {
-        let hooks = RuntimeHookConfig::new(vec!["before".to_string()], vec!["after".to_string()]);
-        let feature_config = RuntimeFeatureConfig::default().with_hooks(hooks.clone());
+    fn runtime_feature_config_defaults() {
+        let feature_config = RuntimeFeatureConfig::default();
 
-        assert_eq!(
-            RuntimeFeatureConfig::default().hooks(),
-            &RuntimeHookConfig::default()
-        );
-        assert_eq!(feature_config.hooks(), &hooks);
         assert!(feature_config.mcp().servers().is_empty());
         assert!(feature_config.oauth().is_none());
         assert!(feature_config.model().is_none());
@@ -316,8 +183,6 @@ mod tests {
         assert!(config.loaded_entries().is_empty());
         assert_eq!(config.as_json(), JsonValue::Object(BTreeMap::default()));
         assert_eq!(config.feature_config(), &RuntimeFeatureConfig::default());
-        assert_eq!(config.hooks().pre_tool_use(), &[] as &[String]);
-        assert_eq!(config.hooks().post_tool_use(), &[] as &[String]);
         assert!(config.oauth().is_none());
         assert!(config.model().is_none());
         assert_eq!(config.sandbox().allowed_mounts, Vec::<String>::new());
@@ -336,16 +201,6 @@ mod tests {
         assert_eq!(variants[2], ConfigSource::Local);
         assert!(variants[0] < variants[1]);
         assert!(variants[1] < variants[2]);
-    }
-
-    #[test]
-    fn hook_config_new_stores_and_retrieves_command_lists() {
-        let hooks = RuntimeHookConfig::new(
-            vec!["pre-1".to_string(), "pre-2".to_string()],
-            vec!["post-1".to_string()],
-        );
-        assert_eq!(hooks.pre_tool_use(), &["pre-1", "pre-2"]);
-        assert_eq!(hooks.post_tool_use(), &["post-1"]);
     }
 
     #[test]
