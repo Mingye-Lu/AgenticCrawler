@@ -34,6 +34,7 @@ pub struct StdoutSink {
     markdown_stream: MarkdownStreamState,
     is_tty: bool,
     pending_tools: Arc<Mutex<Vec<(String, String)>>>,
+    deferred_detail_lines: Vec<String>,
     spinner_stop: Arc<AtomicBool>,
     spinner_handle: Option<JoinHandle<()>>,
 }
@@ -58,6 +59,7 @@ impl StdoutSink {
             markdown_stream: MarkdownStreamState::default(),
             is_tty,
             pending_tools: Arc::new(Mutex::new(Vec::new())),
+            deferred_detail_lines: Vec::new(),
             spinner_stop: Arc::new(AtomicBool::new(false)),
             spinner_handle: None,
         }
@@ -132,6 +134,96 @@ impl StdoutSink {
         }
     }
 
+    fn pending_tools_snapshot(&self) -> Vec<(String, String)> {
+        self.pending_tools
+            .lock()
+            .map(|pending| pending.clone())
+            .unwrap_or_default()
+    }
+
+    fn clear_pending_block(&self) {
+        if !self.is_tty {
+            return;
+        }
+
+        let pending_count = self.pending_tools_snapshot().len();
+        if pending_count == 0 {
+            return;
+        }
+
+        let mut stdout = io::stdout();
+        let lines_up = u16::try_from(pending_count).unwrap_or(u16::MAX);
+        let _ = execute!(stdout, MoveUp(lines_up), MoveToColumn(0));
+        for _ in 0..pending_count {
+            let _ = execute!(stdout, Clear(ClearType::CurrentLine), Print("\n"));
+        }
+        let _ = execute!(stdout, MoveToColumn(0));
+        let _ = stdout.flush();
+    }
+
+    fn render_pending_block(&self) {
+        if !self.is_tty {
+            return;
+        }
+
+        let tools = self.pending_tools_snapshot();
+        if tools.is_empty() {
+            return;
+        }
+
+        let mut stdout = io::stdout();
+        for (tool_name, summary) in &tools {
+            let _ = execute!(
+                stdout,
+                SetForegroundColor(Color::Cyan),
+                Print(SPINNER_FRAMES[0]),
+                ResetColor,
+                Print(" "),
+                SetAttribute(Attribute::Bold),
+                Print(tool_name),
+                SetAttribute(Attribute::Reset),
+                Print(" "),
+                SetAttribute(Attribute::Dim),
+                Print(summary),
+                SetAttribute(Attribute::Reset),
+                Print("\n")
+            );
+        }
+        let _ = stdout.flush();
+    }
+
+    fn flush_deferred_detail_lines(&mut self) {
+        if self.deferred_detail_lines.is_empty() {
+            return;
+        }
+
+        for detail in self.deferred_detail_lines.drain(..) {
+            println!("  {detail}");
+        }
+    }
+
+    fn suspend_spinner_block(&mut self) -> bool {
+        let has_pending = !self.pending_tools_snapshot().is_empty();
+        if self.spinner_handle.is_some() {
+            self.stop_spinner();
+        }
+        if self.is_tty && has_pending {
+            self.clear_pending_block();
+        }
+        has_pending
+    }
+
+    fn resume_spinner_block(&mut self, had_pending: bool) {
+        if !self.is_tty || !had_pending {
+            return;
+        }
+
+        self.render_pending_block();
+        if self.spinner_handle.is_none() {
+            self.start_spinner();
+        }
+    }
+
     fn print_tool_line(&self, line: &crate::tool_format::ToolLine, color: Option<Color>) {
         if self.is_tty {
             let mut stdout = io::stdout();
@@ -179,16 +271,19 @@ impl StdoutSink {
 
 impl OutputSink for StdoutSink {
     fn on_text_delta(&mut self, raw_text: &str) {
-        if self.spinner_handle.is_some() {
-            self.stop_spinner();
-        }
+        let had_pending = self.suspend_spinner_block();
+        self.flush_deferred_detail_lines();
         if let Some(rendered) = self.markdown_stream.push(&self.renderer, raw_text) {
             print!("{rendered}");
             let _ = io::stdout().flush();
         }
+        self.resume_spinner_block(had_pending);
     }
 
     fn on_tool_call(&mut self, name: &str, input: &str) {
+        if self.spinner_handle.is_some() {
+            self.stop_spinner();
+        }
         let line = format_tool_start_line(name, input);
         self.print_tool_line(&line, Some(Color::Cyan));
 
@@ -220,6 +315,7 @@ impl OutputSink for StdoutSink {
             if let Some((idx, total, _)) = pending_match.as_ref() {
                 let lines_up = total - idx;
                 let lines_down_after = total - idx - 1;
+                let has_pending = lines_down_after > 0;
                 let mut stdout = io::stdout();
                 let _ = execute!(
                     stdout,
@@ -252,11 +348,17 @@ impl OutputSink for StdoutSink {
                     );
                 }
 
-                for detail in &tool_line.detail_lines {
-                    let _ = execute!(stdout, Print(format!("\n  {detail}")));
-                }
                 let _ = execute!(stdout, Print("\n"));
                 let _ = stdout.flush();
+
+                if has_pending {
+                    self.deferred_detail_lines
+                        .extend(tool_line.detail_lines.iter().cloned());
+                } else {
+                    for detail in &tool_line.detail_lines {
+                        println!("  {detail}");
+                    }
+                }
             } else {
                 self.print_tool_line(
                     &tool_line,
@@ -287,15 +389,19 @@ impl OutputSink for StdoutSink {
     }
 
     fn on_system(&mut self, msg: &str) {
-        if self.spinner_handle.is_some() {
-            self.stop_spinner();
-        }
+        let had_pending = self.suspend_spinner_block();
+        self.flush_deferred_detail_lines();
         println!("{msg}");
+        self.resume_spinner_block(had_pending);
     }
 
     fn on_turn_finished(&mut self, result: &Result<(), String>) {
-        self.stop_spinner();
+        let had_pending = self.suspend_spinner_block();
+        if !had_pending {
+            self.stop_spinner();
+        }
         self.clear_pending_tools();
+        self.flush_deferred_detail_lines();
         if let Some(rendered) = self.markdown_stream.flush(&self.renderer) {
             print!("{rendered}");
             let _ = io::stdout().flush();
@@ -427,6 +533,45 @@ mod tests {
             remaining.as_slice(),
             &[("navigate".to_string(), "url".to_string())]
         );
+    }
+
+    #[test]
+    fn test_tool_call_starts_and_result_stops_tty_spinner() {
+        let mut sink = StdoutSink::with_is_tty(true);
+
+        sink.on_tool_call("navigate", r#"{"url":"https://example.com"}"#);
+        assert!(sink.spinner_handle.is_some());
+
+        sink.on_tool_result("navigate", r#"{"ok":true}"#, false);
+        assert!(sink.spinner_handle.is_none());
+        assert!(sink.pending_tools.lock().expect("pending lock").is_empty());
+    }
+
+    #[test]
+    fn test_defer_detail_lines_while_pending_tools_remain() {
+        let mut sink = StdoutSink::with_is_tty(true);
+        {
+            let mut pending = sink.pending_tools.lock().expect("pending lock");
+            pending.push(("bash".to_string(), "first".to_string()));
+            pending.push(("navigate".to_string(), "url".to_string()));
+        }
+
+        sink.on_tool_result(
+            "bash",
+            r#"{"stdout":"line1\nline2","stderr":""}"#,
+            false,
+        );
+
+        assert_eq!(
+            sink.deferred_detail_lines,
+            vec!["line1".to_string(), "line2".to_string()]
+        );
+        assert_eq!(
+            sink.pending_tools.lock().expect("pending lock").as_slice(),
+            &[("navigate".to_string(), "url".to_string())]
+        );
+
+        sink.stop_spinner();
     }
 
     #[test]
