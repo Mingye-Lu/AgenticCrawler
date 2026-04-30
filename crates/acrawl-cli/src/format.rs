@@ -344,6 +344,8 @@ pub(crate) fn resolve_export_path(
     Ok(cwd.join(final_name))
 }
 
+#[deprecated(note = "Use tool_format::truncate_with_ellipsis instead")]
+#[allow(dead_code)]
 pub(crate) fn truncate_for_summary(value: &str, limit: usize) -> String {
     let mut chars = value.chars();
     let truncated = chars.by_ref().take(limit).collect::<String>();
