@@ -24,8 +24,8 @@ use crawler::mvp_tool_specs;
 use runtime::{load_system_prompt, Session};
 
 use app::{
-    initial_model_from_credentials, run_auth_cli, run_repl,
-    run_resume_command, AllowedToolSet, LiveCli,
+    initial_model_from_credentials, run_auth_cli, run_repl, run_resume_command, AllowedToolSet,
+    LiveCli,
 };
 use format::{render_version_report, DEFAULT_DATE, VERSION};
 
