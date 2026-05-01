@@ -381,8 +381,7 @@ impl OutputSink for StdoutSink {
         let has_pending = self
             .pending_tools
             .lock()
-            .map(|pending| !pending.is_empty())
-            .unwrap_or(false);
+            .is_ok_and(|pending| !pending.is_empty());
         if self.is_tty && has_pending {
             self.start_spinner();
         }
