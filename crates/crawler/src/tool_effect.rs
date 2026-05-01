@@ -9,8 +9,6 @@ pub enum ToolEffect {
     Spawn(ForkSpec),
     /// Tool requests waiting for sub-agents to finish.
     Wait(WaitSpec),
-    /// Tool signals the agent loop should terminate.
-    Finish(FinishSpec),
 }
 
 impl ToolEffect {
@@ -31,13 +29,6 @@ pub struct ForkSpec {
 #[derive(Debug, Clone)]
 pub struct WaitSpec {
     pub child_ids: Option<Vec<String>>,
-}
-
-/// Parameters for finishing the agent.
-#[derive(Debug, Clone)]
-pub struct FinishSpec {
-    pub summary: String,
-    pub data: Option<Value>,
 }
 
 /// Error type for tool execution failures.

@@ -56,7 +56,6 @@ impl ToolRegistry {
             "wait_for_subagents",
             Box::new(crate::tools::wait_for_subagents::execute),
         );
-        registry.register("done", Box::new(crate::tools::done::execute));
         registry
     }
 
@@ -128,10 +127,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_nineteen() {
+    fn new_with_core_tools_registers_all_eighteen() {
         let registry = ToolRegistry::new_with_core_tools();
-        let effect_tools = ["fork", "wait_for_subagents", "done"];
-        assert_eq!(registry.len(), 19);
+        let effect_tools = ["fork", "wait_for_subagents"];
+        assert_eq!(registry.len(), 18);
         for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
             assert!(registry.contains(name), "missing core tool: {name}");
         }

@@ -22,7 +22,7 @@ pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBr
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
-pub use tool_effect::{FinishSpec, ForkSpec, ToolEffect, ToolError, WaitSpec};
+pub use tool_effect::{ForkSpec, ToolEffect, ToolError, WaitSpec};
 pub use tool_registry::{ToolHandler, ToolRegistry};
 
 /// Specification for a single tool that the agent can invoke.
@@ -302,22 +302,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Only call this when you need subagent results before deciding your next action. The done tool automatically waits for subagents, so you do not need to call wait_for_subagents before done."),
-        },
-        ToolSpec {
-            name: "done",
-            description: "Signal that the current task is complete. Automatically waits for any active subagents and merges their extracted data.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "summary": { "type": "string" },
-                    "data": {}
-                },
-                "required": ["summary"],
-                "additionalProperties": false
-            }),
-
-            instructions: Some("Call when the goal is fully met. Provide a clear summary of what was accomplished and any data extracted. Do not call done until you have completed all necessary work."),
+            instructions: Some("Only call this when you need subagent results before deciding your next action."),
         },
     ]
 }
@@ -340,17 +325,16 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_19_tools() {
+    fn mvp_tool_specs_contains_expected_18_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 19);
+        assert_eq!(specs.len(), 18);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 19, "tool names should be unique");
+        assert_eq!(names.len(), 18, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("save_file"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));
-        assert!(names.contains("done"));
     }
 
     #[test]
