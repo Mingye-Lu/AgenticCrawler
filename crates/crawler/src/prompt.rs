@@ -64,9 +64,8 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
           \x20\x20 b. Call read_content with the heading name or CSS selector for the section you need.\n\
           \x20\x20 c. For large sections, use offset and max_chars to paginate through content.\n\
           \x20\x20 d. If page_map returns no sections (empty list), use read_content with a CSS selector.\n\
-          \x20\x20 e. When all needed data is collected, call done with a data field containing the structured results.\n\
-          6. When you have accomplished the goal, call done with a summary and a data field \
-          containing the structured results in JSON format."
+           6. When you have accomplished the goal, provide a summary and the structured results \
+           in JSON format in your final message."
             .to_string(),
         // Section 3 — data integrity (anti-hallucination + grounding)
         "Data integrity:\n\
@@ -126,15 +125,14 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
              .to_string(),
          // Section 7 — parallel exploration
          "Parallel exploration:\n\
-          - Use the `fork` tool to spawn a subagent on a separate browser tab when you need \
-          to explore multiple pages simultaneously.\n\
-          - Each subagent gets a copy of your history and works independently.\n\
-          - You can fork multiple subagents at once (up to the configured limit).\n\
-          - After forking, continue your own work — subagents run in parallel.\n\
-          - Use `wait_for_subagents` to pause and collect results when you need them.\n\
-          - When you call `done`, the system automatically waits for all subagents and merges their data.\n\
-          - Prefer forking over sequential navigation when visiting multiple independent pages.\n\
-          - Example: Scraping 5 product pages? Fork 5 subagents, each visiting one page, then call done."
+           - Use the `fork` tool to spawn a subagent on a separate browser tab when you need \
+           to explore multiple pages simultaneously.\n\
+           - Each subagent gets a copy of your history and works independently.\n\
+           - You can fork multiple subagents at once (up to the configured limit).\n\
+           - After forking, continue your own work — subagents run in parallel.\n\
+           - Use `wait_for_subagents` to pause and collect results when you need them.\n\
+           - Prefer forking over sequential navigation when visiting multiple independent pages.\n\
+           - Example: Scraping 5 product pages? Fork 5 subagents, each visiting one page, then wait for their results."
              .to_string(),
      ]
 }
@@ -239,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn build_system_prompt_lists_all_18_tools() {
+    fn build_system_prompt_lists_all_19_tools() {
         let specs = crate::mvp_tool_specs();
         let prompt = build_system_prompt(&specs);
         let first = &prompt[0];
