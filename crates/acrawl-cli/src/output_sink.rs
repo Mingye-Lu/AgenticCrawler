@@ -556,11 +556,7 @@ mod tests {
             pending.push(("navigate".to_string(), "url".to_string()));
         }
 
-        sink.on_tool_result(
-            "bash",
-            r#"{"stdout":"line1\nline2","stderr":""}"#,
-            false,
-        );
+        sink.on_tool_result("bash", r#"{"stdout":"line1\nline2","stderr":""}"#, false);
 
         assert_eq!(
             sink.deferred_detail_lines,
