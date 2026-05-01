@@ -16,6 +16,8 @@ use runtime::{format_usd, pricing_for_model};
 use crate::app::LiveCli;
 use crate::display_width::{split_at_display_width, text_display_width};
 use crate::format::VERSION;
+use crate::markdown::strip_ansi;
+use crate::tool_format::format_tool_success_line;
 
 use super::repl_app::{
     HeaderSnapshot, ReplTuiState, ToolCallStatus, TranscriptEntry, SLASH_OVERLAY_HINT_TEXT,
@@ -160,31 +162,6 @@ pub(super) fn wrap_ansi_line(line: Line<'static>, width: u16) -> Vec<Line<'stati
     result
 }
 
-pub(super) fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_escape = false;
-    let mut in_csi = false;
-    for c in s.chars() {
-        if in_csi {
-            if c.is_ascii_alphabetic() {
-                in_csi = false;
-                in_escape = false;
-            }
-        } else if in_escape {
-            if c == '[' {
-                in_csi = true;
-            } else {
-                in_escape = false;
-            }
-        } else if c == '\x1b' {
-            in_escape = true;
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
 pub(super) fn line_to_plain_text(line: &Line<'_>) -> String {
     line.spans
         .iter()
@@ -236,32 +213,15 @@ pub(super) fn render_bash_success(
     let dim = Style::default().add_modifier(Modifier::DIM);
     let red = Style::default().fg(Color::Red);
 
-    let cmd = serde_json::from_str::<serde_json::Value>(input_summary)
-        .ok()
-        .and_then(|v| {
-            v.get("command")
-                .and_then(|c| c.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| input_summary.to_string());
+    let output_str = serde_json::to_string(parsed).unwrap_or_default();
+    let tool_line = format_tool_success_line(name, input_summary, &output_str);
 
-    let cmd_display = truncate_with_ellipsis(&cmd, 60);
-
-    let mut header_spans = vec![
+    let header_spans = vec![
         Span::styled("✓", green),
         Span::styled(format!(" {name} "), bold),
         Span::styled("$ ", dim),
-        Span::styled(cmd_display, dim),
+        Span::styled(tool_line.summary, dim),
     ];
-    if let Some(task_id) = parsed.get("backgroundTaskId").and_then(|v| v.as_str()) {
-        header_spans.push(Span::styled(format!(" backgrounded ({task_id})"), dim));
-    } else if let Some(interp) = parsed
-        .get("returnCodeInterpretation")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-    {
-        header_spans.push(Span::styled(format!(" {interp}"), dim));
-    }
     let header_line = Line::from(header_spans);
     text_lines.push(line_to_plain_text(&header_line));
     items.push(ListItem::new(header_line));
@@ -327,19 +287,17 @@ pub(super) fn render_tool_call_lines(
                         );
                     }
                     _ => {
-                        let summary = if output.trim().is_empty() {
-                            "done".to_string()
-                        } else {
-                            let trimmed = strip_ansi(output.trim()).replace('\n', " ");
-                            truncate_with_ellipsis(&trimmed, 60)
-                        };
+                        let tool_line = format_tool_success_line(name, input_summary, output);
                         let line = Line::from(vec![
                             Span::styled("✓", Style::default().fg(Color::Green)),
                             Span::styled(
                                 format!(" {name} "),
                                 Style::default().add_modifier(Modifier::BOLD),
                             ),
-                            Span::styled(summary, Style::default().add_modifier(Modifier::DIM)),
+                            Span::styled(
+                                tool_line.summary,
+                                Style::default().add_modifier(Modifier::DIM),
+                            ),
                         ]);
                         text_lines.push(line_to_plain_text(&line));
                         items.push(ListItem::new(line));
@@ -423,35 +381,6 @@ fn looks_like_base64(s: &str) -> bool {
     s.len() > 256
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'\n')
-}
-
-/// Truncate `s` to at most `max_bytes` bytes, snapping to a char boundary,
-/// and appending '…' when truncation occurs.
-pub(super) fn truncate_with_ellipsis(s: &str, max_bytes: usize) -> String {
-    if s.len() <= max_bytes {
-        return s.to_string();
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &s[..end])
-}
-
-pub(super) fn tool_input_summary(name: &str, input: &str) -> String {
-    let parsed: serde_json::Value = serde_json::from_str(input).unwrap_or(serde_json::Value::Null);
-    let key_param = match name {
-        "bash" | "Bash" => parsed
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or(input),
-        "navigate" => parsed.get("url").and_then(|v| v.as_str()).unwrap_or(input),
-        "click" | "scroll" | "hover" | "press_key" | "fill_form" | "select_option"
-        | "switch_tab" | "wait" | "go_back" | "execute_js" | "screenshot" | "list_resources"
-        | "save_file" => "",
-        _ => input,
-    };
-    truncate_with_ellipsis(key_param, 60)
 }
 
 #[allow(clippy::too_many_lines)]

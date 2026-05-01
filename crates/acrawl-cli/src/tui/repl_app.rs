@@ -13,12 +13,13 @@ use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
 use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
 use crate::format::render_repl_help;
 use crate::markdown::PredictiveMarkdownBuffer;
+use crate::tool_format::tool_input_summary;
 use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
 use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::repl_render::{
     ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
-    rect_contains_mouse, suspend_for_stdout, tool_input_summary,
+    rect_contains_mouse, suspend_for_stdout,
 };
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
@@ -2012,10 +2013,9 @@ mod tests {
 
     use crate::app::Provider;
     use crate::display_width::text_display_width;
+    use crate::tool_format::tool_input_summary;
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
-    use crate::tui::repl_render::{
-        line_to_plain_text, render_tool_call_lines, tool_input_summary, wrap_ansi_line,
-    };
+    use crate::tui::repl_render::{line_to_plain_text, render_tool_call_lines, wrap_ansi_line};
     use crate::tui::ReplTuiEvent;
     use ratatui::text::Line;
 
