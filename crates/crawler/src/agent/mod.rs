@@ -12,7 +12,7 @@ use tokio::sync::Mutex;
 use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
 use crate::state::CrawlState;
-use crate::tool_effect::{FinishSpec, ToolEffect};
+use crate::tool_effect::ToolEffect;
 use crate::tool_registry::ToolRegistry;
 use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
 
@@ -211,21 +211,6 @@ impl CrawlerAgent {
         Ok(build_crawl_result(&summary, &crawl_state))
     }
 
-    async fn handle_finish(&mut self, spec: FinishSpec) -> Result<String, ToolError> {
-        if !self.child_tasks.is_empty() {
-            let _ = self
-                .handle_wait_effect(crate::WaitSpec { child_ids: None })
-                .await;
-        }
-
-        if let Some(data) = spec.data {
-            self.crawl_state.extracted_data.push(data);
-        }
-        self.crawl_state.done = true;
-        self.crawl_state.done_reason.clone_from(&spec.summary);
-        Ok(spec.summary)
-    }
-
     fn supports_async(tool_name: &str) -> bool {
         ToolRegistry::is_async_tool(tool_name)
     }
@@ -296,7 +281,6 @@ impl CrawlerAgent {
             ToolEffect::Reply(output) => Ok(output),
             ToolEffect::Spawn(spec) => self.handle_spawn(spec).await,
             ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
-            ToolEffect::Finish(spec) => self.handle_finish(spec).await,
         }
     }
 }
@@ -410,32 +394,6 @@ mod tests {
         }
     }
 
-    struct DoneWithDataApiClient {
-        call_count: usize,
-    }
-
-    impl ApiClient for DoneWithDataApiClient {
-        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
-            self.call_count += 1;
-            match self.call_count {
-                1 => Ok(vec![
-                    AssistantEvent::ToolUse {
-                        id: "call-1".to_string(),
-                        name: "done".to_string(),
-                        input: r#"{"summary":"Extracted data.","data":{"title":"Example"}}"#
-                            .to_string(),
-                    },
-                    AssistantEvent::MessageStop,
-                ]),
-                2 => Ok(vec![
-                    AssistantEvent::TextDelta("Extracted data.".to_string()),
-                    AssistantEvent::MessageStop,
-                ]),
-                _ => Err(RuntimeError::new("unexpected extra API call")),
-            }
-        }
-    }
-
     fn mock_registry() -> ToolRegistry {
         let mut registry = ToolRegistry::new();
         registry.register(
@@ -461,7 +419,6 @@ mod tests {
             "wait_for_subagents",
             Box::new(crate::tools::wait_for_subagents::execute),
         );
-        registry.register("done", Box::new(crate::tools::done::execute));
         registry
     }
 
@@ -533,57 +490,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_finish_effect_ends_loop() {
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
-        let result = agent
-            .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
-                summary: "Task complete".to_string(),
-                data: None,
-            }))
-            .await
-            .expect("finish effect should mark agent done");
-
-        assert_eq!(result, "Task complete");
-        assert!(agent.crawl_state.done);
-        assert_eq!(agent.crawl_state.done_reason, "Task complete");
-    }
-
-    #[tokio::test]
-    async fn test_handle_finish_pushes_data_to_crawl_state() {
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-        let payload = serde_json::json!({"items": [1, 2, 3]});
-
-        let result = agent
-            .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
-                summary: "Task complete".to_string(),
-                data: Some(payload.clone()),
-            }))
-            .await
-            .expect("finish effect should store extracted data");
-
-        assert_eq!(result, "Task complete");
-        assert!(agent.crawl_state.done);
-        assert_eq!(agent.crawl_state.extracted_data, vec![payload]);
-    }
-
-    #[tokio::test]
-    async fn test_handle_finish_no_data_leaves_extracted_data_empty() {
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
-        let result = agent
-            .dispatch_tool_effect(ToolEffect::Finish(crate::FinishSpec {
-                summary: "Task complete".to_string(),
-                data: None,
-            }))
-            .await
-            .expect("finish effect should succeed without data");
-
-        assert_eq!(result, "Task complete");
-        assert!(agent.crawl_state.extracted_data.is_empty());
-    }
-
-    #[tokio::test]
     async fn crawler_agent_dispatches_tool_through_registry() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
         let result = agent
@@ -632,20 +538,6 @@ mod tests {
             .expect("agent run should succeed");
         assert_eq!(result.steps_executed, 2);
         assert_eq!(result.summary, "Found the page content.");
-    }
-
-    #[tokio::test]
-    async fn run_collects_extracted_data_from_done() {
-        let agent = CrawlerAgent::new_for_testing(mock_registry());
-        let result = agent
-            .run(
-                "extract titles from example.com",
-                DoneWithDataApiClient { call_count: 0 },
-            )
-            .await
-            .expect("should succeed");
-        assert_eq!(result.extracted_data.len(), 1);
-        assert_eq!(result.extracted_data[0]["title"], "Example");
     }
 
     #[tokio::test]
@@ -828,52 +720,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_done_sets_state_done() {
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
-        let result = agent
-            .execute("done", r#"{"summary":"Task complete"}"#)
-            .await;
-
-        assert_eq!(result.unwrap(), "Task complete");
-        assert!(agent.crawl_state.done);
-        assert_eq!(agent.crawl_state.done_reason, "Task complete");
-    }
-
-    #[tokio::test]
-    async fn test_done_auto_waits_for_children() {
-        let manager = default_agent_manager();
-        manager.lock().await.register_root("test-agent");
-        manager
-            .lock()
-            .await
-            .register_child("child-1", "test-agent", None)
-            .expect("child registration should succeed");
-
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
-        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
-        agent
-            .child_tasks
-            .insert("child-1".to_string(), ("goal".to_string(), handle));
-
-        let result = agent
-            .execute("done", r#"{"summary":"Finished"}"#)
-            .await
-            .unwrap();
-
-        assert_eq!(result, "Finished");
-        assert!(agent.crawl_state.done);
-        assert_eq!(agent.crawl_state.done_reason, "Finished");
-        assert!(agent.child_tasks.is_empty());
-        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
-        assert_eq!(agent.crawl_state.action_history.len(), 1);
-        assert_eq!(
-            agent.crawl_state.action_history[0],
-            "Waited for 1 subagent(s). Collected 1 item(s)."
-        );
-    }
-
-    #[tokio::test]
     async fn test_merge_child_data_to_parent() {
         let manager = default_agent_manager();
         manager.lock().await.register_root("test-agent");
@@ -924,7 +770,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_message_stop_still_works_without_done() {
+    async fn test_message_stop_terminates_naturally() {
         let result = CrawlerAgent::new_for_testing(mock_registry())
             .run("test", TextOnlyApiClient)
             .await
@@ -955,28 +801,6 @@ mod tests {
         assert_eq!(all.len(), 3);
         assert_eq!(parent.crawl_state.child_blocks.len(), 1);
         assert_eq!(parent.crawl_state.child_blocks[0].sub_goal, "search page 2");
-    }
-
-    #[tokio::test]
-    async fn test_fork_immediate_done_auto_waits() {
-        let mut parent = CrawlerAgent::new_for_testing(mock_registry());
-
-        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
-            tokio::spawn(async { Some(vec![serde_json::json!({"found": "data"})]) });
-        parent
-            .child_tasks
-            .insert("child-1".to_string(), ("find data".to_string(), handle));
-
-        let done_result = parent
-            .execute("done", r#"{"summary": "all done"}"#)
-            .await
-            .unwrap();
-
-        assert_eq!(done_result, "all done");
-        assert!(parent.crawl_state.done);
-        assert_eq!(parent.crawl_state.done_reason, "all done");
-        assert_eq!(parent.crawl_state.child_blocks.len(), 1);
-        assert_eq!(parent.crawl_state.child_blocks[0].items.len(), 1);
     }
 
     #[test]

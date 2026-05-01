@@ -15,20 +15,9 @@ pub struct CrawlState {
     pub step_count: usize,
     pub child_blocks: Vec<ChildBlock>,
     pub max_steps: usize,
-    pub done: bool,
-    pub done_reason: String,
 }
 
 impl CrawlState {
-    /// Create a child state for a sub-goal with deep-copied history and reset transient fields.
-    ///
-    /// # Arguments
-    /// * `sub_goal` - The goal for the child state
-    /// * `url` - Optional URL for the child state; inherits parent's `current_url` if not provided
-    /// * `child_max_steps` - Maximum steps for the child state
-    ///
-    /// # Returns
-    /// A new `CrawlState` with copied history and reset transient fields
     #[must_use]
     pub fn fork(&self, _sub_goal: &str, url: Option<&str>, child_max_steps: usize) -> CrawlState {
         CrawlState {
@@ -38,12 +27,9 @@ impl CrawlState {
             step_count: 0,
             child_blocks: Vec::new(),
             max_steps: child_max_steps,
-            done: false,
-            done_reason: String::new(),
         }
     }
 
-    /// Return all extracted data (own + children) as a flat list.
     #[must_use]
     pub fn all_data(&self) -> Vec<Value> {
         let mut result = self.extracted_data.clone();
@@ -67,10 +53,8 @@ mod tests {
 
         let child = parent.fork("child_goal", None, 10);
 
-        // Verify history is copied
         assert_eq!(child.action_history, parent.action_history);
 
-        // Verify it's a deep copy by mutating parent and checking child is unchanged
         let mut parent_mut = parent.clone();
         parent_mut.action_history.push("action3".to_string());
         assert_eq!(child.action_history.len(), 2);
@@ -82,8 +66,6 @@ mod tests {
         let parent = CrawlState {
             extracted_data: vec![serde_json::json!({"key": "value"})],
             step_count: 5,
-            done: true,
-            done_reason: "parent done".to_string(),
             child_blocks: vec![ChildBlock {
                 child_id: "child1".to_string(),
                 sub_goal: "goal1".to_string(),
@@ -94,11 +76,8 @@ mod tests {
 
         let child = parent.fork("child_goal", None, 10);
 
-        // Verify transient fields are reset
         assert_eq!(child.extracted_data.len(), 0);
         assert_eq!(child.step_count, 0);
-        assert!(!child.done);
-        assert_eq!(child.done_reason, "");
         assert_eq!(child.child_blocks.len(), 0);
     }
 
@@ -164,10 +143,8 @@ mod tests {
 
         let mut child = parent.fork("child_goal", None, 10);
 
-        // Mutate child's history
         child.action_history.push("child_action".to_string());
 
-        // Verify parent is unchanged
         assert_eq!(parent.action_history.len(), 1);
         assert_eq!(child.action_history.len(), 2);
     }
