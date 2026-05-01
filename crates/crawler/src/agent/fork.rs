@@ -256,7 +256,6 @@ mod tests {
             "wait_for_subagents",
             Box::new(crate::tools::wait_for_subagents::execute),
         );
-        registry.register("done", Box::new(crate::tools::done::execute));
         registry
     }
 
@@ -382,31 +381,6 @@ mod tests {
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
         assert_eq!(result, "Waited for 1 subagent(s). Collected 0 item(s).");
         assert_eq!(agent.crawl_state.action_history[0], result);
-    }
-
-    #[tokio::test]
-    async fn test_done_auto_waits_for_children() {
-        let manager = super::super::default_agent_manager();
-        manager.lock().await.register_root("test-agent");
-        manager
-            .lock()
-            .await
-            .register_child("child-1", "test-agent", None)
-            .expect("child registration should succeed");
-
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
-        let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
-        agent
-            .child_tasks
-            .insert("child-1".to_string(), ("goal".to_string(), handle));
-
-        let result = agent
-            .execute("done", r#"{"summary":"Finished"}"#)
-            .await
-            .unwrap();
-        assert_eq!(result, "Finished");
-        assert!(agent.crawl_state.done);
-        assert_eq!(agent.crawl_state.child_blocks.len(), 1);
     }
 
     #[tokio::test]

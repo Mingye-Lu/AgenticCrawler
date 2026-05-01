@@ -201,7 +201,7 @@ where
             let mut tool_results = Vec::new();
             let mut iterations = 0;
 
-            'outer: loop {
+            loop {
                 if self.cancel_flag.load(Ordering::Acquire) {
                     self.cancel_flag.store(false, Ordering::Release);
                     return Err(RuntimeError::new("interrupted by user"));
@@ -243,7 +243,6 @@ where
                 }
 
                 for (tool_use_id, tool_name, input) in pending_tool_uses {
-                    let is_done_tool = tool_name == "done";
                     let result_message = {
                         let (output, is_error) =
                             match self.tool_executor.execute(&tool_name, &input).await {
@@ -254,11 +253,6 @@ where
                         ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
                     };
                     notify_observer_tool_result(&mut self.observer, &result_message);
-                    if is_done_tool {
-                        self.session.messages.push(result_message.clone());
-                        tool_results.push(result_message);
-                        break 'outer;
-                    }
                     self.session.messages.push(result_message.clone());
                     tool_results.push(result_message);
                 }
