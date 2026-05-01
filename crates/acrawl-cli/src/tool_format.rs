@@ -132,33 +132,6 @@ fn format_bash_success_line(
     }
 }
 
-#[allow(dead_code)]
-#[deprecated(note = "Use format_tool_start_line instead")]
-pub(crate) fn format_tool_call_start(name: &str, input: &str) -> String {
-    let line = format_tool_start_line(name, input);
-    format!("{} {} {}", line.icon, line.name, line.summary)
-}
-
-#[allow(dead_code)]
-#[deprecated(note = "Use format_tool_success_line / format_tool_error_line instead")]
-pub(crate) fn format_tool_result(name: &str, output: &str, is_error: bool) -> String {
-    let line = if is_error {
-        format_tool_error_line(name, output)
-    } else {
-        format_tool_success_line(name, &tool_input_summary(name, "{}"), output)
-    };
-    if line.detail_lines.is_empty() {
-        format!("{} {} {}", line.icon, line.name, line.summary)
-    } else {
-        let mut s = format!("{} {} {}", line.icon, line.name, line.summary);
-        for l in &line.detail_lines {
-            s.push('\n');
-            s.push_str(l);
-        }
-        s
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,20 +260,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[allow(deprecated)]
-    #[test]
-    fn deprecated_wrappers_still_work() {
-        let start = format_tool_call_start("navigate", r#"{"url":"https://example.com"}"#);
-        assert!(start.contains("navigate"));
-        assert!(start.contains("https://example.com"));
-
-        let done = format_tool_result("navigate", r#"{"ok":true}"#, false);
-        assert!(done.contains("navigate"));
-
-        let err = format_tool_result("bash", "command failed", true);
-        assert!(err.contains("\u{2717}"));
-        assert!(err.contains("command failed"));
     }
 }
