@@ -98,10 +98,12 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
          content, or check for overlays or popups blocking the element.\n\
          - Page not loading or navigation error: Verify the URL is correct and \
          complete. Try an alternative URL or search for the page.\n\
-         - Login wall or paywall: Stop immediately. Report the blocker and provide \
-         any partial results collected so far.\n\
-         - Anti-bot detection or CAPTCHA: Wait briefly and retry once. If it \
-         persists, stop and report the blocker.\n\
+         - Login wall, paywall, or CAPTCHA: Call `wait_for_human` with a clear \
+         description of the obstacle. A human will solve it in the browser and \
+         execution will resume automatically. If `wait_for_human` is not available \
+         (non-interactive mode), stop and report the blocker in your final response.\n\
+         - Anti-bot detection: Wait briefly (use the `wait` tool) and retry once. \
+         If the obstacle persists, call `wait_for_human` to request human intervention.\n\
          - Empty results on a page expected to have data: Scroll down for \
           lazy-loaded content, wait for dynamic rendering, or check whether the \
           page uses iframes.\n\
@@ -111,7 +113,7 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
           click or fill_form fail, but not as a first choice.\n\
          - Popup or overlay blocking interaction: Try pressing Escape or clicking \
          a dismiss button before retrying the intended action."
-            .to_string(),
+             .to_string(),
         // Section 6 — completion protocol
          "Completion:\n\
           - Before reporting success, re-read the original task and confirm each \
