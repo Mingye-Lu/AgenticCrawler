@@ -89,7 +89,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             output_format,
             allowed_tools,
         } => {
-            LiveCli::new(model, true, allowed_tools)?
+            LiveCli::new_non_interactive(model, true, allowed_tools)?
                 .run_turn_with_output(&prompt, output_format)?;
         }
         CliAction::Auth { provider } => run_auth_cli(provider.as_deref())?,

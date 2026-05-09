@@ -2,7 +2,7 @@ use runtime::ToolError;
 use tokio::sync::Mutex;
 
 use super::CrawlerAgent;
-use crate::{BrowserContext, SharedBridge};
+use crate::{BrowserContext, BrowserState, SharedBridge};
 
 #[derive(Clone)]
 pub(crate) struct BrowserSession {
@@ -46,6 +46,97 @@ impl CrawlerAgent {
         self.browser = Some(session.browser);
         self.shared_bridge = Some(session.shared_bridge);
         Ok(())
+    }
+
+    pub async fn pause_browser_switch(&mut self) -> Result<(), ToolError> {
+        let active_children = {
+            let manager = self.agent_manager.lock().await;
+            if manager.contains(&self.agent_id) {
+                manager.get_active_children(&self.agent_id).len()
+            } else {
+                0
+            }
+        };
+
+        if active_children > 0 {
+            return Err(ToolError::new(
+                "Cannot pause while sub-agents are running because they share the browser bridge.",
+            ));
+        }
+
+        let is_headless = std::env::var("HEADLESS")
+            .map(|value| value != "false")
+            .unwrap_or(true);
+        if !is_headless {
+            return Ok(());
+        }
+
+        let page_index = self.browser.as_ref().map_or(0, BrowserContext::page_index);
+        let browser_state = self.export_browser_state().await;
+        eprintln!(
+            "Switching to headed mode. Note: JS runtime state (timers, WebSocket connections) will be lost."
+        );
+
+        std::env::set_var("HEADLESS", "false");
+        self.reset_browser();
+        self.ensure_browser().await?;
+        if let Some(browser) = self.browser.as_mut() {
+            browser.set_page_index(page_index);
+        }
+
+        if let Some(state) = browser_state {
+            self.restore_browser_state(&state).await;
+        }
+
+        Ok(())
+    }
+
+    async fn export_browser_state(&self) -> Option<BrowserState> {
+        let state_result = if let Some(browser) = self.browser.as_ref() {
+            let mut browser = browser.clone();
+            let mut bridge = browser.acquire_bridge().await.ok()?;
+            bridge.export_cookies().await
+        } else {
+            let shared_bridge = self.shared_bridge.as_ref()?.clone();
+            let mut bridge = shared_bridge.lock().await;
+            bridge.export_cookies().await
+        };
+
+        match state_result {
+            Ok(state) => Some(state),
+            Err(error) => {
+                eprintln!("Warning: failed to export browser state: {error}");
+                None
+            }
+        }
+    }
+
+    async fn restore_browser_state(&mut self, state: &BrowserState) {
+        let Some(browser) = self.browser.as_mut() else {
+            return;
+        };
+
+        let mut bridge = match browser.acquire_bridge().await {
+            Ok(bridge) => bridge,
+            Err(error) => {
+                eprintln!("Warning: failed to acquire browser after headed switch: {error}");
+                return;
+            }
+        };
+        if let Err(error) = bridge.import_cookies(state).await {
+            eprintln!("Warning: failed to import cookies after headed switch: {error}");
+        }
+        if !state.url.is_empty() && state.url != "about:blank" {
+            let navigate_result = bridge.navigate(&state.url).await;
+            drop(bridge);
+            if let Err(error) = navigate_result {
+                eprintln!("Warning: failed to navigate to saved URL after headed switch: {error}");
+            } else {
+                browser.set_navigated_url(&state.url, true);
+            }
+        } else {
+            drop(bridge);
+        }
     }
 }
 

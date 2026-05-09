@@ -22,10 +22,15 @@ fn parse_input(input: &Value) -> Result<WaitForHumanInput, crate::CrawlError> {
     })
 }
 
-pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
+pub fn execute(input: &Value, is_interactive: bool) -> Result<ToolEffect, ToolError> {
+    if !is_interactive {
+        return Err(ToolError(
+            "wait_for_human is not available in non-interactive mode (one-shot prompt). \
+             Use the TUI or classic REPL for interactive sessions."
+                .to_string(),
+        ));
+    }
     let params = parse_input(input)?;
-    // Actual blocking pause/resume logic will be wired in Task 9.
-    // Return Pause effect — dispatch_tool_effect handles it.
     Ok(ToolEffect::Pause {
         reason: params.reason,
     })
@@ -55,5 +60,26 @@ mod tests {
         let input = json!({"reason": ""});
         let err = parse_input(&input).unwrap_err();
         assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn wait_for_human_non_interactive_errors() {
+        let input = json!({"reason": "captcha detected"});
+        let result = super::execute(&input, false);
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("non-interactive"),
+            "expected non-interactive error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn wait_for_human_returns_pause() {
+        let input = json!({"reason": "captcha"});
+        let result = super::execute(&input, true);
+        match result.unwrap() {
+            ToolEffect::Pause { reason } => assert_eq!(reason, "captcha"),
+            other => panic!("expected Pause, got {other:?}"),
+        }
     }
 }
