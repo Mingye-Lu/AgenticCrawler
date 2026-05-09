@@ -94,7 +94,9 @@ mod tests {
 
     #[test]
     fn pause_variant_has_reason() {
-        let effect = ToolEffect::Pause { reason: "test reason".to_string() };
+        let effect = ToolEffect::Pause {
+            reason: "test reason".to_string(),
+        };
         match effect {
             ToolEffect::Pause { reason } => assert_eq!(reason, "test reason"),
             _ => panic!("expected Pause variant"),
