@@ -4,8 +4,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
 use runtime::config_home_dir;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -1200,18 +1200,18 @@ mod tests {
     fn bridge_command_sets_node_path_to_config_home_node_modules() {
         let args = vec!["-e".to_string(), "console.log('ok')".to_string()];
         let command = PlaywrightBridge::bridge_command("node", &args);
-        let node_path = command
-            .as_std()
-            .get_envs()
-            .find_map(|(key, value)| {
-                if key == "NODE_PATH" {
-                    value.map(std::ffi::OsStr::to_os_string)
-                } else {
-                    None
-                }
-            });
+        let node_path = command.as_std().get_envs().find_map(|(key, value)| {
+            if key == "NODE_PATH" {
+                value.map(std::ffi::OsStr::to_os_string)
+            } else {
+                None
+            }
+        });
 
-        assert_eq!(node_path, Some(config_home_dir().join("node_modules").into_os_string()));
+        assert_eq!(
+            node_path,
+            Some(config_home_dir().join("node_modules").into_os_string())
+        );
     }
 
     #[tokio::test]

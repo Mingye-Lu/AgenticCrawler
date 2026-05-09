@@ -10,8 +10,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use crate::config_home_dir;
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const RELEASES_URL: &str =
-    "https://api.github.com/repos/Mingye-Lu/AgenticCrawler/releases/latest";
+const RELEASES_URL: &str = "https://api.github.com/repos/Mingye-Lu/AgenticCrawler/releases/latest";
 const UPDATE_CHECK_CACHE_FILE: &str = ".update-check.json";
 const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
 const UPDATE_CHECK_TTL_SECS: i64 = 24 * 60 * 60;
@@ -145,7 +144,10 @@ fn compare_versions(current_version: &str, latest_version: &str) -> Option<Order
 }
 
 fn parse_version(version: &str) -> Option<Vec<u32>> {
-    version.split('.').map(|part| part.parse::<u32>().ok()).collect()
+    version
+        .split('.')
+        .map(|part| part.parse::<u32>().ok())
+        .collect()
 }
 
 fn current_timestamp() -> OffsetDateTime {
