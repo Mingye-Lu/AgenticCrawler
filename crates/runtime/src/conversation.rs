@@ -180,6 +180,12 @@ where
     }
 
     #[must_use]
+    pub fn with_control_state(mut self, state: Arc<ControlState>) -> Self {
+        self.control_state = state;
+        self
+    }
+
+    #[must_use]
     pub fn control_state(&self) -> Arc<ControlState> {
         Arc::clone(&self.control_state)
     }

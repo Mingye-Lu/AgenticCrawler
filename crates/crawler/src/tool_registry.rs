@@ -39,6 +39,13 @@ impl ToolRegistry {
 
     #[must_use]
     pub fn new_with_core_tools() -> Self {
+        Self::new_with_options(true)
+    }
+
+    /// Create a registry with all 19 core tools.
+    /// `is_interactive` controls whether `wait_for_human` is allowed to pause.
+    #[must_use]
+    pub fn new_with_options(is_interactive: bool) -> Self {
         let mut registry = Self::new();
         for &name in ASYNC_TOOLS {
             let tool_name = name.to_string();
@@ -58,7 +65,7 @@ impl ToolRegistry {
         );
         registry.register(
             "wait_for_human",
-            Box::new(crate::tools::wait_for_human::execute),
+            Box::new(move |input| crate::tools::wait_for_human::execute(input, is_interactive)),
         );
         registry
     }

@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use runtime::{
-    ApiClient, ContentBlock, ConversationRuntime, Session, ToolError, ToolExecutor, TurnSummary,
+    ApiClient, ContentBlock, ControlState, ConversationRuntime, Session, ToolError, ToolExecutor,
+    TurnSummary,
 };
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -86,6 +87,7 @@ pub struct CrawlerAgent {
     pub(super) crawl_state: CrawlState,
     pub(crate) child_tasks: ChildTaskMap,
     pub(super) api_client_arc: Option<SharedApiClient>,
+    control_state: Option<Arc<ControlState>>,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
@@ -106,6 +108,7 @@ impl CrawlerAgent {
             },
             child_tasks: HashMap::new(),
             api_client_arc: None,
+            control_state: None,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -126,6 +129,7 @@ impl CrawlerAgent {
             },
             child_tasks: HashMap::new(),
             api_client_arc: None,
+            control_state: None,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -146,6 +150,7 @@ impl CrawlerAgent {
             },
             child_tasks: HashMap::new(),
             api_client_arc: None,
+            control_state: None,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -176,6 +181,16 @@ impl CrawlerAgent {
         self
     }
 
+    #[must_use]
+    pub fn with_control_state(mut self, state: Arc<ControlState>) -> Self {
+        self.control_state = Some(state);
+        self
+    }
+
+    pub fn set_control_state(&mut self, state: Arc<ControlState>) {
+        self.control_state = Some(state);
+    }
+
     pub async fn run(
         mut self,
         goal: &str,
@@ -201,6 +216,8 @@ impl CrawlerAgent {
         let mut runtime =
             ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
                 .with_max_iterations(max_steps);
+        let control_state = runtime.control_state();
+        runtime.tool_executor_mut().set_control_state(control_state);
         let result = runtime.run_turn(goal).await;
         let agent_id = runtime.tool_executor_mut().agent_id.clone();
         let agent_manager = runtime.tool_executor_mut().agent_manager.clone();
@@ -281,12 +298,23 @@ impl CrawlerAgent {
             ToolEffect::Reply(output) => Ok(output),
             ToolEffect::Spawn(spec) => self.handle_spawn(spec).await,
             ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
-            ToolEffect::Pause { reason } => {
-                // Actual blocking logic will be wired in Task 9.
-                // For now, return a placeholder indicating pause was requested.
-                Ok(format!("Pause requested: {reason}"))
-            }
+            ToolEffect::Pause { reason } => self.handle_pause(reason).await,
         }
+    }
+
+    async fn handle_pause(&mut self, reason: String) -> Result<String, ToolError> {
+        self.pause_browser_switch().await?;
+
+        let control = self
+            .control_state
+            .as_ref()
+            .ok_or_else(|| ToolError::new("no control state available for pause"))?
+            .clone();
+        control.request_pause();
+
+        Ok(format!(
+            "Human intervention requested: {reason}. Browser is now in headed mode. Make your changes, then press Enter/p to resume."
+        ))
     }
 }
 
@@ -328,7 +356,10 @@ fn build_crawl_result(summary: &TurnSummary, crawl_state: &CrawlState) -> CrawlR
 
 #[cfg(test)]
 mod tests {
+    use std::sync::OnceLock;
+
     use runtime::{ApiRequest, AssistantEvent, RuntimeError, TokenUsage};
+    use tokio::sync::Mutex as AsyncMutex;
 
     use super::*;
     use crate::tool_registry::ToolRegistry;
@@ -427,6 +458,11 @@ mod tests {
         registry
     }
 
+    fn env_lock() -> &'static AsyncMutex<()> {
+        static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| AsyncMutex::new(()))
+    }
+
     #[tokio::test]
     async fn test_reply_effect_adds_to_conversation() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
@@ -492,6 +528,64 @@ mod tests {
 
         assert_eq!(result, "Waited for 1 subagent(s). Collected 1 item(s).");
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pause_with_children_errors() {
+        let manager = default_agent_manager();
+        {
+            let mut locked = manager.lock().await;
+            locked.register_root("test-agent");
+            locked
+                .register_child("test-agent-child-1", "test-agent", None)
+                .expect("child registration should succeed");
+        }
+
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "true");
+
+        let control_state = Arc::new(ControlState::default());
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry())
+            .with_agent_manager(manager)
+            .with_control_state(control_state.clone());
+        let err = agent
+            .dispatch_tool_effect(ToolEffect::Pause {
+                reason: "need human".to_string(),
+            })
+            .await
+            .expect_err("pause should fail while child agents are active");
+
+        assert!(
+            err.to_string()
+                .contains("Cannot pause while sub-agents are running"),
+            "unexpected error: {err}"
+        );
+        assert!(!control_state.is_paused());
+    }
+
+    #[tokio::test]
+    async fn pause_when_already_headed_requests_runtime_pause() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "false");
+
+        let control_state = Arc::new(ControlState::default());
+        let control_clone = Arc::clone(&control_state);
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry())
+            .with_control_state(control_state.clone());
+
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            control_clone.resume();
+        });
+
+        let result = agent
+            .dispatch_tool_effect(ToolEffect::Pause {
+                reason: "manual review".to_string(),
+            })
+            .await
+            .expect("pause should succeed when already headed");
+
+        assert!(result.contains("manual review"));
     }
 
     #[tokio::test]
