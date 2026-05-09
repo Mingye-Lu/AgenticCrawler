@@ -11,6 +11,7 @@ fn parse_input(input: &Value) -> Result<WaitForHumanInput, crate::CrawlError> {
     let reason = input
         .get("reason")
         .and_then(Value::as_str)
+        .map(str::trim)
         .ok_or_else(|| crate::CrawlError::new("missing required field: reason"))?;
 
     if reason.is_empty() {
@@ -81,5 +82,12 @@ mod tests {
             ToolEffect::Pause { reason } => assert_eq!(reason, "captcha"),
             other => panic!("expected Pause, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_whitespace_only_reason_returns_error() {
+        let input = json!({"reason": "   "});
+        let err = parse_input(&input).unwrap_err();
+        assert!(err.to_string().contains("empty"));
     }
 }
