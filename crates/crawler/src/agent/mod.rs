@@ -302,7 +302,7 @@ impl CrawlerAgent {
         }
     }
 
-    async fn handle_pause(&mut self, _reason: String) -> Result<String, ToolError> {
+    async fn handle_pause(&mut self, reason: String) -> Result<String, ToolError> {
         self.pause_browser_switch().await?;
 
         let control = self
@@ -310,7 +310,7 @@ impl CrawlerAgent {
             .as_ref()
             .ok_or_else(|| ToolError::new("no control state available for pause"))?
             .clone();
-        control.request_pause();
+        control.request_pause_with_reason(&reason);
 
         loop {
             tokio::select! {
