@@ -1227,4 +1227,132 @@ mod tests {
         assert_eq!(summary.iterations, 3);
         assert_eq!(cycle_count.load(Ordering::SeqCst), 2);
     }
+
+    #[tokio::test]
+    async fn cancel_during_tool_triggered_pause() {
+        use crate::control::ControlState;
+
+        struct PauseToolApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for PauseToolApiClient {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-pause".to_string(),
+                            name: "wait_for_human".to_string(),
+                            input: r#"{"reason":"captcha"}"#.to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("should not reach second API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        let control_for_tool = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("wait_for_human", move |_| {
+            control_for_tool.request_pause();
+            Ok("paused".to_string())
+        });
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            PauseToolApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_cancel = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                if control_for_cancel.is_paused() {
+                    control_for_cancel.request_cancel();
+                    break;
+                }
+            }
+        });
+
+        let error = timeout(Duration::from_secs(2), runtime.run_turn("solve captcha"))
+            .await
+            .expect("should not deadlock")
+            .expect_err("turn should be interrupted");
+
+        assert_eq!(error.to_string(), "interrupted by user");
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn fast_resume_no_lost_wakeup() {
+        use crate::control::ControlState;
+
+        let shared_control = Arc::new(ControlState::default());
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        let control_for_tool = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
+            control_for_tool.request_pause();
+            control_for_tool.resume();
+            Ok("instant-resumed".to_string())
+        });
+
+        struct TwoStepApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for TwoStepApiClient {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-1".to_string(),
+                            name: "pause_tool".to_string(),
+                            input: "{}".to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    1 => Ok(vec![
+                        AssistantEvent::TextDelta("done".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            TwoStepApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let summary = timeout(Duration::from_secs(2), runtime.run_turn("fast resume"))
+            .await
+            .expect("must not hang due to lost wakeup")
+            .expect("turn should succeed");
+
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
 }
