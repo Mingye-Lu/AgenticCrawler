@@ -177,6 +177,7 @@ pub(super) struct ReplTuiState {
     pub(super) cached_header: HeaderSnapshot,
     pub(super) paused: bool,
     pub(super) pause_reason: String,
+    last_wait_for_human_reason: Option<String>,
     spinner_tick: u8,
     spinner_deadline: Instant,
     pub(super) typewriter: TypewriterState,
@@ -218,6 +219,7 @@ impl ReplTuiState {
             cached_header: HeaderSnapshot::default(),
             paused: false,
             pause_reason: String::new(),
+            last_wait_for_human_reason: None,
             spinner_tick: 0,
             spinner_deadline: Instant::now() + Duration::from_millis(120),
             typewriter: TypewriterState {
@@ -476,6 +478,11 @@ impl ReplTuiState {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
             self.typewriter.live.clear();
+        }
+        if name == "wait_for_human" {
+            self.last_wait_for_human_reason = serde_json::from_str::<serde_json::Value>(input)
+                .ok()
+                .and_then(|v| v.get("reason").and_then(|r| r.as_str()).map(String::from));
         }
         let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
@@ -1496,6 +1503,21 @@ fn run_loop(
 
     loop {
         state.drain_events(ui_rx);
+
+        // Detect pause state directly from ControlState — the observer event may not
+        // fire for LLM-triggered pauses (handle_pause blocks inline before the runtime
+        // can notify the observer).
+        if !state.paused && state.busy && cancel_flag.is_paused() {
+            state.paused = true;
+            state.pause_reason = state
+                .last_wait_for_human_reason
+                .clone()
+                .unwrap_or_else(|| "Human intervention requested".to_string());
+            state.status_line = format!(
+                "\u{23f8} PAUSED: {} \u{2014} Solve in browser, press Enter to resume",
+                state.pause_reason
+            );
+        }
 
         if state.exit {
             if state.persist_on_exit {
