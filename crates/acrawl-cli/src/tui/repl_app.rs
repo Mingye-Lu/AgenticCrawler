@@ -184,6 +184,9 @@ pub(super) struct ReplTuiState {
     pub(super) selection: SelectionState,
     last_esc_at: Option<Instant>,
     pub(super) debug_mode: bool,
+    pub(super) update_info: Option<runtime::update_check::UpdateInfo>,
+    pub(super) update_rx:
+        Option<tokio::sync::oneshot::Receiver<Option<runtime::update_check::UpdateInfo>>>,
 }
 
 impl ReplTuiState {
@@ -231,6 +234,8 @@ impl ReplTuiState {
             selection: SelectionState::default(),
             last_esc_at: None,
             debug_mode: false,
+            update_info: None,
+            update_rx: None,
         }
     }
 
@@ -1492,6 +1497,14 @@ fn run_loop(
 
     let mut state = ReplTuiState::new();
 
+    let (update_tx, update_rx) =
+        tokio::sync::oneshot::channel::<Option<runtime::update_check::UpdateInfo>>();
+    state.update_rx = Some(update_rx);
+    crate::TOKIO_RUNTIME.get().unwrap().spawn(async move {
+        let info = runtime::update_check::check_for_update().await;
+        let _ = update_tx.send(info);
+    });
+
     {
         let ui_tx_catalog = ui_tx.clone();
         thread::spawn(move || {
@@ -1503,6 +1516,13 @@ fn run_loop(
 
     loop {
         state.drain_events(ui_rx);
+
+        if let Some(rx) = state.update_rx.as_mut() {
+            if let Ok(info) = rx.try_recv() {
+                state.update_info = info;
+                state.update_rx = None;
+            }
+        }
 
         // Detect pause state directly from ControlState — the observer event may not
         // fire for LLM-triggered pauses (handle_pause blocks inline before the runtime
@@ -2455,5 +2475,61 @@ mod tests {
                 "title should contain effort level '{effort}': {title}"
             );
         }
+    }
+
+    #[test]
+    fn test_welcome_card_renders_when_outdated() {
+        let mut state = super::ReplTuiState::new();
+        state.update_info = Some(runtime::update_check::UpdateInfo {
+            latest_version: "9.9.9".to_string(),
+            current_version: "1.0.0".to_string(),
+            is_outdated: true,
+        });
+
+        let backend = ratatui::backend::TestBackend::new(100, 40);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::tui::repl_render::draw_welcome(frame, frame.area(), &mut state, false);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let content = (0..40)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(content.contains("Update available: v9.9.9 (you have v1.0.0)"));
+    }
+
+    #[test]
+    fn test_no_card_when_current() {
+        let mut state = super::ReplTuiState::new();
+        state.update_info = None;
+
+        let backend = ratatui::backend::TestBackend::new(100, 40);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::tui::repl_render::draw_welcome(frame, frame.area(), &mut state, false);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let content = (0..40)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!content.contains("Update available"));
     }
 }
