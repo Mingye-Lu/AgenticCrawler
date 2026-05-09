@@ -1,15 +1,16 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
 use crate::config::RuntimeFeatureConfig;
+use crate::control::ControlState;
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
+use tokio::time::{sleep, Duration};
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
 
@@ -110,7 +111,7 @@ pub struct ConversationRuntime<C, T> {
     max_iterations: usize,
     usage_tracker: UsageTracker,
     auto_compaction_input_tokens_threshold: u32,
-    cancel_flag: Arc<AtomicBool>,
+    control_state: Arc<ControlState>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -152,7 +153,7 @@ where
             max_iterations: usize::MAX,
             usage_tracker,
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
+            control_state: Arc::new(ControlState::default()),
         }
     }
 
@@ -168,6 +169,10 @@ where
         self
     }
 
+    pub fn set_observer(&mut self, observer: Box<dyn RuntimeObserver + Send>) {
+        self.observer = Some(observer);
+    }
+
     #[must_use]
     pub fn with_auto_compaction_input_tokens_threshold(mut self, threshold: u32) -> Self {
         self.auto_compaction_input_tokens_threshold = threshold;
@@ -175,8 +180,19 @@ where
     }
 
     #[must_use]
-    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.cancel_flag)
+    pub fn with_control_state(mut self, state: Arc<ControlState>) -> Self {
+        self.control_state = state;
+        self
+    }
+
+    #[must_use]
+    pub fn control_state(&self) -> Arc<ControlState> {
+        Arc::clone(&self.control_state)
+    }
+
+    #[must_use]
+    pub fn cancel_flag(&self) -> Arc<ControlState> {
+        self.control_state()
     }
 
     pub fn api_client_mut(&mut self) -> &mut C {
@@ -184,7 +200,42 @@ where
     }
 
     pub fn request_cancel(&self) {
-        self.cancel_flag.store(true, Ordering::Release);
+        self.control_state.request_cancel();
+    }
+
+    async fn check_pause(&mut self) -> Result<(), RuntimeError> {
+        if !self.control_state.is_paused() {
+            return Ok(());
+        }
+
+        if let Some(ref mut observer) = self.observer {
+            observer.on_pause_started("Paused by user");
+        }
+
+        loop {
+            tokio::select! {
+                () = self.control_state.wait_for_resume() => {
+                    break;
+                }
+                () = sleep(Duration::from_millis(100)) => {
+                    if !self.control_state.is_paused() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(ref mut observer) = self.observer {
+            observer.on_pause_ended();
+        }
+
+        if self.control_state.is_cancelled() {
+            self.control_state.reset();
+            return Err(RuntimeError::new("interrupted by user"));
+        }
+
+        self.control_state.reset();
+        Ok(())
     }
 
     #[allow(clippy::too_many_lines)]
@@ -202,10 +253,12 @@ where
             let mut iterations = 0;
 
             loop {
-                if self.cancel_flag.load(Ordering::Acquire) {
-                    self.cancel_flag.store(false, Ordering::Release);
+                if self.control_state.is_cancelled() {
+                    self.control_state.reset();
                     return Err(RuntimeError::new("interrupted by user"));
                 }
+
+                self.check_pause().await?;
 
                 iterations += 1;
                 if iterations > self.max_iterations {
@@ -256,6 +309,8 @@ where
                     self.session.messages.push(result_message.clone());
                     tool_results.push(result_message);
                 }
+
+                self.check_pause().await?;
             }
 
             let auto_compaction = self.maybe_auto_compact();
@@ -488,10 +543,14 @@ mod tests {
         DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
     };
     use crate::compact::CompactionConfig;
+    use crate::observer::RuntimeObserver;
     use crate::prompt::{ProjectContext, SystemPromptBuilder};
     use crate::session::{ContentBlock, MessageRole, Session};
     use crate::usage::TokenUsage;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::time::{timeout, Duration};
 
     struct ScriptedApiClient {
         call_count: usize,
@@ -793,5 +852,507 @@ mod tests {
             ContentBlock::Reasoning { data } if data == r#"{"id":"rs_123","content":[]}"#
         ));
         assert!(matches!(&message.blocks[1], ContentBlock::Text { text } if text == "answer"));
+    }
+
+    struct SingleReplyApiClient {
+        call_count: Arc<AtomicUsize>,
+    }
+
+    impl ApiClient for SingleReplyApiClient {
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![
+                AssistantEvent::TextDelta("done".to_string()),
+                AssistantEvent::MessageStop,
+            ])
+        }
+    }
+
+    #[derive(Debug, Default, PartialEq, Eq)]
+    struct PauseObserverState {
+        events: Vec<String>,
+    }
+
+    struct PauseRecordingObserver {
+        state: Arc<Mutex<PauseObserverState>>,
+    }
+
+    impl PauseRecordingObserver {
+        fn new(state: Arc<Mutex<PauseObserverState>>) -> Self {
+            Self { state }
+        }
+    }
+
+    impl RuntimeObserver for PauseRecordingObserver {
+        fn on_pause_started(&mut self, reason: &str) {
+            self.state
+                .lock()
+                .expect("pause observer state lock")
+                .events
+                .push(format!("started:{reason}"));
+        }
+
+        fn on_pause_ended(&mut self) {
+            self.state
+                .lock()
+                .expect("pause observer state lock")
+                .events
+                .push("ended".to_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn pause_and_resume() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            SingleReplyApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            StaticToolExecutor::new(),
+            vec!["system".to_string()],
+        );
+        let control = runtime.control_state();
+        control.request_pause();
+
+        let run_turn = runtime.run_turn("hello");
+        tokio::pin!(run_turn);
+
+        assert!(timeout(Duration::from_millis(50), &mut run_turn)
+            .await
+            .is_err());
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+
+        control.resume();
+
+        let summary = timeout(Duration::from_secs(1), &mut run_turn)
+            .await
+            .expect("run_turn should complete after resume")
+            .expect("turn should succeed");
+        assert_eq!(summary.iterations, 1);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_during_pause() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            SingleReplyApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            StaticToolExecutor::new(),
+            vec!["system".to_string()],
+        );
+        let control = runtime.control_state();
+        control.request_pause();
+
+        let run_turn = runtime.run_turn("hello");
+        tokio::pin!(run_turn);
+
+        assert!(timeout(Duration::from_millis(50), &mut run_turn)
+            .await
+            .is_err());
+        control.request_cancel();
+
+        let error = timeout(Duration::from_secs(1), &mut run_turn)
+            .await
+            .expect("run_turn should exit after cancel")
+            .expect_err("turn should be interrupted");
+        assert_eq!(error.to_string(), "interrupted by user");
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+        assert!(!control.is_paused());
+        assert!(!control.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn pause_observer_events() {
+        let state = Arc::new(Mutex::new(PauseObserverState::default()));
+        let observer = PauseRecordingObserver::new(Arc::clone(&state));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            SingleReplyApiClient {
+                call_count: Arc::new(AtomicUsize::new(0)),
+            },
+            StaticToolExecutor::new(),
+            vec!["system".to_string()],
+        )
+        .with_observer(Box::new(observer));
+        let control = runtime.control_state();
+        control.request_pause();
+
+        let run_turn = runtime.run_turn("hello");
+        tokio::pin!(run_turn);
+
+        assert!(timeout(Duration::from_millis(50), &mut run_turn)
+            .await
+            .is_err());
+        assert_eq!(
+            state.lock().expect("pause observer state lock").events,
+            vec!["started:Paused by user".to_string()]
+        );
+
+        control.resume();
+
+        timeout(Duration::from_secs(1), &mut run_turn)
+            .await
+            .expect("run_turn should complete after resume")
+            .expect("turn should succeed");
+
+        assert_eq!(
+            state.lock().expect("pause observer state lock").events,
+            vec!["started:Paused by user".to_string(), "ended".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn llm_triggered_pause_via_tool_executor() {
+        use crate::control::ControlState;
+
+        struct PauseToolApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for PauseToolApiClient {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-pause".to_string(),
+                            name: "wait_for_human".to_string(),
+                            input: r#"{"reason":"captcha"}"#.to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    1 => Ok(vec![
+                        AssistantEvent::TextDelta("Resumed.".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let control_for_executor = Arc::clone(&shared_control);
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = Arc::clone(&call_count);
+
+        let tool_executor = {
+            let control = Arc::clone(&control_for_executor);
+            StaticToolExecutor::new().register("wait_for_human", move |_input| {
+                control.request_pause();
+                Ok("Human intervention requested: captcha".to_string())
+            })
+        };
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            PauseToolApiClient {
+                call_count: call_count_clone,
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_resume = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            control_for_resume.resume();
+        });
+
+        let summary = timeout(Duration::from_secs(2), runtime.run_turn("solve captcha"))
+            .await
+            .expect("should not deadlock")
+            .expect("turn should succeed after resume");
+
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn hotkey_pause_mid_turn_between_iterations() {
+        use crate::control::ControlState;
+
+        struct MultiStepApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for MultiStepApiClient {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-1".to_string(),
+                            name: "noop".to_string(),
+                            input: "{}".to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    1 => Ok(vec![
+                        AssistantEvent::TextDelta("done".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        let control_for_pause = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("noop", move |_| {
+            control_for_pause.request_pause();
+            Ok("ok".to_string())
+        });
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            MultiStepApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_resume = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            control_for_resume.resume();
+        });
+
+        let run_turn = runtime.run_turn("do it");
+        tokio::pin!(run_turn);
+
+        assert!(
+            timeout(Duration::from_millis(100), &mut run_turn)
+                .await
+                .is_err(),
+            "should be blocked during pause"
+        );
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+        let summary = timeout(Duration::from_secs(2), &mut run_turn)
+            .await
+            .expect("should complete after resume")
+            .expect("turn should succeed");
+
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn multiple_pause_resume_cycles_complete() {
+        use crate::control::ControlState;
+
+        struct ThreeStepApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for ThreeStepApiClient {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 | 1 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: format!("tool-{n}"),
+                            name: "pause_tool".to_string(),
+                            input: "{}".to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    2 => Ok(vec![
+                        AssistantEvent::TextDelta("all done".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let cycle_count = Arc::new(AtomicUsize::new(0));
+
+        let cycle_count_clone = Arc::clone(&cycle_count);
+        let control_for_tool = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
+            cycle_count_clone.fetch_add(1, Ordering::SeqCst);
+            control_for_tool.request_pause();
+            Ok("paused".to_string())
+        });
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            ThreeStepApiClient {
+                call_count: Arc::new(AtomicUsize::new(0)),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_resume = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    if control_for_resume.is_paused() {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        control_for_resume.resume();
+                        break;
+                    }
+                }
+            }
+        });
+
+        let summary = timeout(Duration::from_secs(3), runtime.run_turn("multi-pause"))
+            .await
+            .expect("should not deadlock after multiple cycles")
+            .expect("turn should succeed");
+
+        assert_eq!(summary.iterations, 3);
+        assert_eq!(cycle_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn cancel_during_tool_triggered_pause() {
+        use crate::control::ControlState;
+
+        struct PauseToolApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for PauseToolApiClient {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-pause".to_string(),
+                            name: "wait_for_human".to_string(),
+                            input: r#"{"reason":"captcha"}"#.to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("should not reach second API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        let control_for_tool = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("wait_for_human", move |_| {
+            control_for_tool.request_pause();
+            Ok("paused".to_string())
+        });
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            PauseToolApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_cancel = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                if control_for_cancel.is_paused() {
+                    control_for_cancel.request_cancel();
+                    break;
+                }
+            }
+        });
+
+        let error = timeout(Duration::from_secs(2), runtime.run_turn("solve captcha"))
+            .await
+            .expect("should not deadlock")
+            .expect_err("turn should be interrupted");
+
+        assert_eq!(error.to_string(), "interrupted by user");
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn fast_resume_no_lost_wakeup() {
+        use crate::control::ControlState;
+
+        struct TwoStepApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for TwoStepApiClient {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-1".to_string(),
+                            name: "pause_tool".to_string(),
+                            input: "{}".to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    1 => Ok(vec![
+                        AssistantEvent::TextDelta("done".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        let control_for_tool = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
+            control_for_tool.request_pause();
+            control_for_tool.resume();
+            Ok("instant-resumed".to_string())
+        });
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            TwoStepApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let summary = timeout(Duration::from_secs(2), runtime.run_turn("fast resume"))
+            .await
+            .expect("must not hang due to lost wakeup")
+            .expect("turn should succeed");
+
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
     }
 }

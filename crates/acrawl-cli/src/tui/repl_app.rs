@@ -3,7 +3,6 @@
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -33,6 +32,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListState;
 use ratatui::DefaultTerminal;
+use runtime::ControlState;
 
 const MAX_INPUT_LINES: usize = 5;
 pub(super) const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
@@ -175,6 +175,9 @@ pub(super) struct ReplTuiState {
     pub(super) slash_overlay: Option<SlashOverlay>,
     pub(super) last_slash_overlay_rect: Option<Rect>,
     pub(super) cached_header: HeaderSnapshot,
+    pub(super) paused: bool,
+    pub(super) pause_reason: String,
+    last_wait_for_human_reason: Option<String>,
     spinner_tick: u8,
     spinner_deadline: Instant,
     pub(super) typewriter: TypewriterState,
@@ -214,6 +217,9 @@ impl ReplTuiState {
             slash_overlay: None,
             last_slash_overlay_rect: None,
             cached_header: HeaderSnapshot::default(),
+            paused: false,
+            pause_reason: String::new(),
+            last_wait_for_human_reason: None,
             spinner_tick: 0,
             spinner_deadline: Instant::now() + Duration::from_millis(120),
             typewriter: TypewriterState {
@@ -472,6 +478,11 @@ impl ReplTuiState {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
             self.typewriter.live.clear();
+        }
+        if name == "wait_for_human" {
+            self.last_wait_for_human_reason = serde_json::from_str::<serde_json::Value>(input)
+                .ok()
+                .and_then(|v| v.get("reason").and_then(|r| r.as_str()).map(String::from));
         }
         let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
@@ -956,6 +967,19 @@ impl ReplTuiState {
                     } else {
                         ModelCatalogState::Ready(models)
                     };
+                }
+                ReplTuiEvent::PauseStarted(reason) => {
+                    self.paused = true;
+                    self.pause_reason = reason;
+                    self.status_line = format!(
+                        "PAUSED: {} -- Solve in browser, press Enter to resume",
+                        self.pause_reason
+                    );
+                }
+                ReplTuiEvent::PauseEnded => {
+                    self.paused = false;
+                    self.pause_reason = String::new();
+                    self.status_line = "Thinking...".to_string();
                 }
             }
         }
@@ -1460,7 +1484,7 @@ fn run_loop(
     ui_tx: &Sender<ReplTuiEvent>,
     work_tx: &Sender<WorkerMsg>,
     cli: &Arc<Mutex<LiveCli>>,
-    cancel_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<ControlState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute!(io::stdout(), event::EnableMouseCapture);
     let _ = execute!(io::stdout(), SetCursorStyle::SteadyBar);
@@ -1479,6 +1503,21 @@ fn run_loop(
 
     loop {
         state.drain_events(ui_rx);
+
+        // Detect pause state directly from ControlState — the observer event may not
+        // fire for LLM-triggered pauses (handle_pause blocks inline before the runtime
+        // can notify the observer).
+        if !state.paused && state.busy && cancel_flag.is_paused() {
+            state.paused = true;
+            state.pause_reason = state
+                .last_wait_for_human_reason
+                .clone()
+                .unwrap_or_else(|| "Human intervention requested".to_string());
+            state.status_line = format!(
+                "PAUSED: {} -- Solve in browser, press Enter to resume",
+                state.pause_reason
+            );
+        }
 
         if state.exit {
             if state.persist_on_exit {
@@ -1801,12 +1840,22 @@ fn run_loop(
 
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if state.busy {
-                        cancel_flag.store(true, Ordering::Release);
+                        cancel_flag.request_cancel();
                         state.push_system("Interrupting…");
                         continue;
                     }
                     state.exit = true;
                     state.persist_on_exit = true;
+                    continue;
+                }
+
+                if key.code == KeyCode::Char('p')
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && state.busy
+                    && !state.paused
+                {
+                    cancel_flag.request_pause();
+                    state.push_system("Pausing after current operation...");
                     continue;
                 }
 
@@ -1845,6 +1894,13 @@ fn run_loop(
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
+                        if state.paused {
+                            cancel_flag.resume();
+                            state.paused = false;
+                            state.pause_reason = String::new();
+                            state.push_system("Resuming...");
+                            continue;
+                        }
                         if state.busy {
                             state.push_system(
                                 "Please wait for the current task to finish before submitting.",
@@ -1974,7 +2030,7 @@ fn run_loop(
                                 .last_esc_at
                                 .is_some_and(|t| now.duration_since(t) < Duration::from_millis(500))
                             {
-                                cancel_flag.store(true, Ordering::Release);
+                                cancel_flag.request_cancel();
                                 state.push_system("Interrupting…");
                                 state.last_esc_at = None;
                             } else {
