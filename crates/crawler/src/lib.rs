@@ -320,7 +320,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "required": ["reason"],
                 "additionalProperties": false
             }),
-            instructions: Some("Use only when you encounter an obstacle that genuinely requires a human to solve (captcha, login, paywall). Be specific about what the human needs to do in the browser."),
+            instructions: Some("Use only when you encounter an obstacle that genuinely requires a human to solve (captcha, login, paywall). Be specific in the reason about what the human needs to do. The browser becomes visible for the human. After they finish and press resume, you receive the updated page content (URL, title, text) — continue your task from there."),
         },
     ]
 }
