@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use runtime::config_home_dir;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -646,13 +647,7 @@ impl PlaywrightBridge {
         args: Vec<String>,
         launch_timeout: Duration,
     ) -> Result<Self, PlaywrightBridgeError> {
-        let mut command = Command::new(program);
-        command
-            .args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true);
+        let mut command = Self::bridge_command(program, &args);
 
         let mut child = command
             .spawn()
@@ -683,6 +678,18 @@ impl PlaywrightBridge {
         }
 
         Ok(bridge)
+    }
+
+    fn bridge_command(program: &str, args: &[String]) -> Command {
+        let mut command = Command::new(program);
+        command
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .env("NODE_PATH", config_home_dir().join("node_modules"));
+        command
     }
 
     pub async fn navigate(&mut self, url: &str) -> Result<PageInfo, PlaywrightBridgeError> {
@@ -1154,6 +1161,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    use runtime::config_home_dir;
+
     use super::{PageInfo, PlaywrightBridge, PlaywrightBridgeError};
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -1185,6 +1194,24 @@ mod tests {
         let path = root.join(format!("{name}.py"));
         fs::write(&path, source).expect("write temp script");
         path
+    }
+
+    #[test]
+    fn bridge_command_sets_node_path_to_config_home_node_modules() {
+        let args = vec!["-e".to_string(), "console.log('ok')".to_string()];
+        let command = PlaywrightBridge::bridge_command("node", &args);
+        let node_path = command
+            .as_std()
+            .get_envs()
+            .find_map(|(key, value)| {
+                if key == "NODE_PATH" {
+                    value.map(std::ffi::OsStr::to_os_string)
+                } else {
+                    None
+                }
+            });
+
+        assert_eq!(node_path, Some(config_home_dir().join("node_modules").into_os_string()));
     }
 
     #[tokio::test]
