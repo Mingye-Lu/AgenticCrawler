@@ -175,6 +175,8 @@ pub(super) struct ReplTuiState {
     pub(super) slash_overlay: Option<SlashOverlay>,
     pub(super) last_slash_overlay_rect: Option<Rect>,
     pub(super) cached_header: HeaderSnapshot,
+    pub(super) paused: bool,
+    pub(super) pause_reason: String,
     spinner_tick: u8,
     spinner_deadline: Instant,
     pub(super) typewriter: TypewriterState,
@@ -214,6 +216,8 @@ impl ReplTuiState {
             slash_overlay: None,
             last_slash_overlay_rect: None,
             cached_header: HeaderSnapshot::default(),
+            paused: false,
+            pause_reason: String::new(),
             spinner_tick: 0,
             spinner_deadline: Instant::now() + Duration::from_millis(120),
             typewriter: TypewriterState {
@@ -956,6 +960,17 @@ impl ReplTuiState {
                     } else {
                         ModelCatalogState::Ready(models)
                     };
+                }
+                ReplTuiEvent::PauseStarted(reason) => {
+                    self.paused = true;
+                    self.pause_reason = reason;
+                    self.status_line =
+                        format!("⏸ PAUSED: {} — Solve in browser, press Enter to resume", self.pause_reason);
+                }
+                ReplTuiEvent::PauseEnded => {
+                    self.paused = false;
+                    self.pause_reason = String::new();
+                    self.status_line = "Thinking...".to_string();
                 }
             }
         }
@@ -1810,6 +1825,16 @@ fn run_loop(
                     continue;
                 }
 
+                if key.code == KeyCode::Char('p')
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && state.busy
+                    && !state.paused
+                {
+                    cancel_flag.request_pause();
+                    state.push_system("Pausing after current operation...");
+                    continue;
+                }
+
                 if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if state.busy {
                         continue;
@@ -1845,6 +1870,13 @@ fn run_loop(
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
+                        if state.paused {
+                            cancel_flag.resume();
+                            state.paused = false;
+                            state.pause_reason = String::new();
+                            state.push_system("Resuming...");
+                            continue;
+                        }
                         if state.busy {
                             state.push_system(
                                 "Please wait for the current task to finish before submitting.",
