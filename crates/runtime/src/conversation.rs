@@ -10,6 +10,7 @@ use crate::control::ControlState;
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
+use tokio::time::{sleep, Duration};
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
 
@@ -168,6 +169,10 @@ where
         self
     }
 
+    pub fn set_observer(&mut self, observer: Box<dyn RuntimeObserver + Send>) {
+        self.observer = Some(observer);
+    }
+
     #[must_use]
     pub fn with_auto_compaction_input_tokens_threshold(mut self, threshold: u32) -> Self {
         self.auto_compaction_input_tokens_threshold = threshold;
@@ -192,6 +197,41 @@ where
         self.control_state.request_cancel();
     }
 
+    async fn check_pause(&mut self) -> Result<(), RuntimeError> {
+        if !self.control_state.is_paused() {
+            return Ok(());
+        }
+
+        if let Some(ref mut observer) = self.observer {
+            observer.on_pause_started("Paused by user");
+        }
+
+        loop {
+            tokio::select! {
+                _ = self.control_state.wait_for_resume() => {
+                    break;
+                }
+                _ = sleep(Duration::from_millis(100)) => {
+                    if self.control_state.is_cancelled() {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(ref mut observer) = self.observer {
+            observer.on_pause_ended();
+        }
+
+        if self.control_state.is_cancelled() {
+            self.control_state.reset();
+            return Err(RuntimeError::new("interrupted by user"));
+        }
+
+        self.control_state.reset();
+        Ok(())
+    }
+
     #[allow(clippy::too_many_lines)]
     pub async fn run_turn(
         &mut self,
@@ -211,6 +251,8 @@ where
                     self.control_state.reset();
                     return Err(RuntimeError::new("interrupted by user"));
                 }
+
+                self.check_pause().await?;
 
                 iterations += 1;
                 if iterations > self.max_iterations {
@@ -261,6 +303,8 @@ where
                     self.session.messages.push(result_message.clone());
                     tool_results.push(result_message);
                 }
+
+                self.check_pause().await?;
             }
 
             let auto_compaction = self.maybe_auto_compact();
@@ -492,11 +536,15 @@ mod tests {
         AutoCompactionEvent, ConversationRuntime, RuntimeError, StaticToolExecutor,
         DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
     };
+    use crate::observer::RuntimeObserver;
     use crate::compact::CompactionConfig;
     use crate::prompt::{ProjectContext, SystemPromptBuilder};
     use crate::session::{ContentBlock, MessageRole, Session};
     use crate::usage::TokenUsage;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::path::PathBuf;
+    use tokio::time::{timeout, Duration};
 
     struct ScriptedApiClient {
         call_count: usize,
@@ -798,5 +846,150 @@ mod tests {
             ContentBlock::Reasoning { data } if data == r#"{"id":"rs_123","content":[]}"#
         ));
         assert!(matches!(&message.blocks[1], ContentBlock::Text { text } if text == "answer"));
+    }
+
+    struct SingleReplyApiClient {
+        call_count: Arc<AtomicUsize>,
+    }
+
+    impl ApiClient for SingleReplyApiClient {
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![
+                AssistantEvent::TextDelta("done".to_string()),
+                AssistantEvent::MessageStop,
+            ])
+        }
+    }
+
+    #[derive(Debug, Default, PartialEq, Eq)]
+    struct PauseObserverState {
+        events: Vec<String>,
+    }
+
+    struct PauseRecordingObserver {
+        state: Arc<Mutex<PauseObserverState>>,
+    }
+
+    impl PauseRecordingObserver {
+        fn new(state: Arc<Mutex<PauseObserverState>>) -> Self {
+            Self { state }
+        }
+    }
+
+    impl RuntimeObserver for PauseRecordingObserver {
+        fn on_pause_started(&mut self, reason: &str) {
+            self.state
+                .lock()
+                .expect("pause observer state lock")
+                .events
+                .push(format!("started:{reason}"));
+        }
+
+        fn on_pause_ended(&mut self) {
+            self.state
+                .lock()
+                .expect("pause observer state lock")
+                .events
+                .push("ended".to_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn pause_and_resume() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            SingleReplyApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            StaticToolExecutor::new(),
+            vec!["system".to_string()],
+        );
+        let control = runtime.control_state();
+        control.request_pause();
+
+        let run_turn = runtime.run_turn("hello");
+        tokio::pin!(run_turn);
+
+        assert!(timeout(Duration::from_millis(50), &mut run_turn).await.is_err());
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+
+        control.resume();
+
+        let summary = timeout(Duration::from_secs(1), &mut run_turn)
+            .await
+            .expect("run_turn should complete after resume")
+            .expect("turn should succeed");
+        assert_eq!(summary.iterations, 1);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_during_pause() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            SingleReplyApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            StaticToolExecutor::new(),
+            vec!["system".to_string()],
+        );
+        let control = runtime.control_state();
+        control.request_pause();
+
+        let run_turn = runtime.run_turn("hello");
+        tokio::pin!(run_turn);
+
+        assert!(timeout(Duration::from_millis(50), &mut run_turn).await.is_err());
+        control.request_cancel();
+
+        let error = timeout(Duration::from_secs(1), &mut run_turn)
+            .await
+            .expect("run_turn should exit after cancel")
+            .expect_err("turn should be interrupted");
+        assert_eq!(error.to_string(), "interrupted by user");
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+        assert!(!control.is_paused());
+        assert!(!control.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn pause_observer_events() {
+        let state = Arc::new(Mutex::new(PauseObserverState::default()));
+        let observer = PauseRecordingObserver::new(Arc::clone(&state));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            SingleReplyApiClient {
+                call_count: Arc::new(AtomicUsize::new(0)),
+            },
+            StaticToolExecutor::new(),
+            vec!["system".to_string()],
+        )
+        .with_observer(Box::new(observer));
+        let control = runtime.control_state();
+        control.request_pause();
+
+        let run_turn = runtime.run_turn("hello");
+        tokio::pin!(run_turn);
+
+        assert!(timeout(Duration::from_millis(50), &mut run_turn).await.is_err());
+        assert_eq!(
+            state.lock().expect("pause observer state lock").events,
+            vec!["started:Paused by user".to_string()]
+        );
+
+        control.resume();
+
+        timeout(Duration::from_secs(1), &mut run_turn)
+            .await
+            .expect("run_turn should complete after resume")
+            .expect("turn should succeed");
+
+        assert_eq!(
+            state.lock().expect("pause observer state lock").events,
+            vec!["started:Paused by user".to_string(), "ended".to_string()]
+        );
     }
 }

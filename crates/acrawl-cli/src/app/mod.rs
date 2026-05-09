@@ -282,6 +282,14 @@ impl LiveCli {
         self.runtime.cancel_flag()
     }
 
+    pub(crate) fn control_state(&self) -> std::sync::Arc<ControlState> {
+        self.runtime.cancel_flag()
+    }
+
+    pub(crate) fn set_observer(&mut self, observer: Box<dyn runtime::RuntimeObserver + Send>) {
+        self.runtime.set_observer(observer);
+    }
+
     pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), CliError> {
         if let Some(tx) = self.event_sender() {
             let _ = tx.send(ReplTuiEvent::TurnStarting);

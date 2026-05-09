@@ -27,6 +27,8 @@ pub trait OutputSink: Send {
     fn on_tool_result(&mut self, name: &str, output: &str, is_error: bool);
     fn on_system(&mut self, msg: &str);
     fn on_turn_finished(&mut self, result: &Result<(), String>);
+    fn on_pause_started(&mut self, _reason: &str) {}
+    fn on_pause_ended(&mut self) {}
 }
 
 pub struct StdoutSink {
@@ -457,6 +459,14 @@ impl OutputSink for ChannelSink {
     fn on_turn_finished(&mut self, result: &Result<(), String>) {
         let _ = self.tx.send(ReplTuiEvent::TurnFinished(result.clone()));
     }
+
+    fn on_pause_started(&mut self, reason: &str) {
+        let _ = self.tx.send(ReplTuiEvent::PauseStarted(reason.to_string()));
+    }
+
+    fn on_pause_ended(&mut self) {
+        let _ = self.tx.send(ReplTuiEvent::PauseEnded);
+    }
 }
 
 impl RuntimeObserver for Box<dyn OutputSink + Send + '_> {
@@ -481,6 +491,14 @@ impl RuntimeObserver for Box<dyn OutputSink + Send + '_> {
     }
 
     fn on_usage(&mut self, _usage: &TokenUsage) {}
+
+    fn on_pause_started(&mut self, reason: &str) {
+        (**self).on_pause_started(reason);
+    }
+
+    fn on_pause_ended(&mut self) {
+        (**self).on_pause_ended();
+    }
 }
 
 #[cfg(test)]

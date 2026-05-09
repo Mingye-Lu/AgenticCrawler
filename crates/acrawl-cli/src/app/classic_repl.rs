@@ -1,14 +1,48 @@
 use crate::error::CliError;
 use crate::input;
 use commands::SlashCommand;
+use runtime::RuntimeObserver;
+use std::io::Write;
+use std::sync::Arc;
 
 use super::{AllowedToolSet, LiveCli};
+
+/// Observer for classic REPL that handles pause/resume via stdin.
+struct ClassicReplObserver {
+    control_state: Arc<runtime::ControlState>,
+}
+
+impl ClassicReplObserver {
+    fn new(control_state: Arc<runtime::ControlState>) -> Self {
+        Self { control_state }
+    }
+}
+
+impl RuntimeObserver for ClassicReplObserver {
+    fn on_pause_started(&mut self, reason: &str) {
+        eprintln!("\n⏸ PAUSED: {reason}");
+        eprintln!("Solve the problem in the browser, then press Enter to resume...");
+        let _ = std::io::stderr().flush();
+
+        let mut input = String::new();
+        let _ = std::io::stdin().read_line(&mut input);
+
+        self.control_state.resume();
+    }
+
+    fn on_pause_ended(&mut self) {
+        eprintln!("✓ Resumed");
+    }
+}
 
 pub(crate) fn run_repl_classic(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
 ) -> Result<(), CliError> {
     let mut cli = LiveCli::new(model, true, allowed_tools)?;
+    let control_state = cli.cancel_flag();
+    cli.set_observer(Box::new(ClassicReplObserver::new(control_state)));
+
     let mut editor = input::LineEditor::new("> ", super::slash_command_completion_candidates());
     println!("{}", cli.startup_banner());
 
