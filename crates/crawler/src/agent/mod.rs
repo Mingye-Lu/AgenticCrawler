@@ -1017,4 +1017,59 @@ mod tests {
             vec![serde_json::json!({"from_state": true})]
         );
     }
+
+    #[tokio::test]
+    async fn wait_for_human_tool_triggers_agent_pause() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "false");
+
+        let control_state = Arc::new(ControlState::default());
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "wait_for_human",
+            Box::new(|input| {
+                crate::tools::wait_for_human::execute(input, true)
+            }),
+        );
+
+        let mut agent = CrawlerAgent::new_for_testing(registry)
+            .with_control_state(control_state.clone());
+
+        assert!(!control_state.is_paused());
+
+        let result = agent
+            .execute("wait_for_human", r#"{"reason":"captcha detected"}"#)
+            .await
+            .expect("wait_for_human should succeed in interactive mode");
+
+        assert!(
+            result.contains("captcha detected"),
+            "result should contain the reason: {result}"
+        );
+        assert!(
+            control_state.is_paused(),
+            "control state should be paused after handle_pause sets it"
+        );
+    }
+
+    #[tokio::test]
+    async fn pause_no_control_state_returns_error() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "false");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        let err = agent
+            .dispatch_tool_effect(ToolEffect::Pause {
+                reason: "test".to_string(),
+            })
+            .await
+            .expect_err("pause should fail without control state");
+
+        assert!(
+            err.to_string().contains("no control state"),
+            "unexpected error: {err}"
+        );
+    }
 }

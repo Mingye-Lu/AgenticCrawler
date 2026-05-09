@@ -998,4 +998,216 @@ mod tests {
             vec!["started:Paused by user".to_string(), "ended".to_string()]
         );
     }
+
+    #[tokio::test]
+    async fn llm_triggered_pause_via_tool_executor() {
+        use crate::control::ControlState;
+
+        struct PauseToolApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for PauseToolApiClient {
+            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-pause".to_string(),
+                            name: "wait_for_human".to_string(),
+                            input: r#"{"reason":"captcha"}"#.to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    1 => Ok(vec![
+                        AssistantEvent::TextDelta("Resumed.".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let control_for_executor = Arc::clone(&shared_control);
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = Arc::clone(&call_count);
+
+        let tool_executor = {
+            let control = Arc::clone(&control_for_executor);
+            StaticToolExecutor::new().register("wait_for_human", move |_input| {
+                control.request_pause();
+                Ok("Human intervention requested: captcha".to_string())
+            })
+        };
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            PauseToolApiClient {
+                call_count: call_count_clone,
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_resume = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            control_for_resume.resume();
+        });
+
+        let summary = timeout(Duration::from_secs(2), runtime.run_turn("solve captcha"))
+            .await
+            .expect("should not deadlock")
+            .expect("turn should succeed after resume");
+
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn hotkey_pause_mid_turn_between_iterations() {
+        use crate::control::ControlState;
+
+        struct MultiStepApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for MultiStepApiClient {
+            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: "tool-1".to_string(),
+                            name: "noop".to_string(),
+                            input: "{}".to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    1 => Ok(vec![
+                        AssistantEvent::TextDelta("done".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        let control_for_pause = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("noop", move |_| {
+            control_for_pause.request_pause();
+            Ok("ok".to_string())
+        });
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            MultiStepApiClient {
+                call_count: Arc::clone(&call_count),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_resume = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            control_for_resume.resume();
+        });
+
+        let run_turn = runtime.run_turn("do it");
+        tokio::pin!(run_turn);
+
+        assert!(
+            timeout(Duration::from_millis(100), &mut run_turn).await.is_err(),
+            "should be blocked during pause"
+        );
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+        let summary = timeout(Duration::from_secs(2), &mut run_turn)
+            .await
+            .expect("should complete after resume")
+            .expect("turn should succeed");
+
+        assert_eq!(summary.iterations, 2);
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn multiple_pause_resume_cycles_complete() {
+        use crate::control::ControlState;
+
+        struct ThreeStepApiClient {
+            call_count: Arc<AtomicUsize>,
+        }
+
+        impl ApiClient for ThreeStepApiClient {
+            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+                let n = self.call_count.fetch_add(1, Ordering::SeqCst);
+                match n {
+                    0 | 1 => Ok(vec![
+                        AssistantEvent::ToolUse {
+                            id: format!("tool-{n}"),
+                            name: "pause_tool".to_string(),
+                            input: "{}".to_string(),
+                        },
+                        AssistantEvent::MessageStop,
+                    ]),
+                    2 => Ok(vec![
+                        AssistantEvent::TextDelta("all done".to_string()),
+                        AssistantEvent::MessageStop,
+                    ]),
+                    _ => Err(RuntimeError::new("unexpected extra API call")),
+                }
+            }
+        }
+
+        let shared_control = Arc::new(ControlState::default());
+        let cycle_count = Arc::new(AtomicUsize::new(0));
+
+        let cycle_count_clone = Arc::clone(&cycle_count);
+        let control_for_tool = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
+            cycle_count_clone.fetch_add(1, Ordering::SeqCst);
+            control_for_tool.request_pause();
+            Ok("paused".to_string())
+        });
+
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            ThreeStepApiClient {
+                call_count: Arc::new(AtomicUsize::new(0)),
+            },
+            tool_executor,
+            vec!["system".to_string()],
+        )
+        .with_control_state(Arc::clone(&shared_control));
+
+        let control_for_resume = Arc::clone(&shared_control);
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    if control_for_resume.is_paused() {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        control_for_resume.resume();
+                        break;
+                    }
+                }
+            }
+        });
+
+        let summary = timeout(Duration::from_secs(3), runtime.run_turn("multi-pause"))
+            .await
+            .expect("should not deadlock after multiple cycles")
+            .expect("turn should succeed");
+
+        assert_eq!(summary.iterations, 3);
+        assert_eq!(cycle_count.load(Ordering::SeqCst), 2);
+    }
 }
