@@ -27,7 +27,7 @@ use crate::session_mgr::{
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crawler::mvp_tool_specs;
-use runtime::{CompactionConfig, ConversationRuntime, RuntimeError, Session, TokenUsage};
+use runtime::{CompactionConfig, ControlState, ConversationRuntime, RuntimeError, Session, TokenUsage};
 use serde_json::json;
 
 #[cfg(test)]
@@ -278,7 +278,7 @@ impl LiveCli {
         self.output_mode.sender()
     }
 
-    pub(crate) fn cancel_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    pub(crate) fn cancel_flag(&self) -> std::sync::Arc<ControlState> {
         self.runtime.cancel_flag()
     }
 

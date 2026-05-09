@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::fmt::{Display, Formatter};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
 use crate::config::RuntimeFeatureConfig;
+use crate::control::ControlState;
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
@@ -110,7 +110,7 @@ pub struct ConversationRuntime<C, T> {
     max_iterations: usize,
     usage_tracker: UsageTracker,
     auto_compaction_input_tokens_threshold: u32,
-    cancel_flag: Arc<AtomicBool>,
+    control_state: Arc<ControlState>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -152,7 +152,7 @@ where
             max_iterations: usize::MAX,
             usage_tracker,
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
-            cancel_flag: Arc::new(AtomicBool::new(false)),
+            control_state: Arc::new(ControlState::default()),
         }
     }
 
@@ -175,8 +175,13 @@ where
     }
 
     #[must_use]
-    pub fn cancel_flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.cancel_flag)
+    pub fn control_state(&self) -> Arc<ControlState> {
+        Arc::clone(&self.control_state)
+    }
+
+    #[must_use]
+    pub fn cancel_flag(&self) -> Arc<ControlState> {
+        self.control_state()
     }
 
     pub fn api_client_mut(&mut self) -> &mut C {
@@ -184,7 +189,7 @@ where
     }
 
     pub fn request_cancel(&self) {
-        self.cancel_flag.store(true, Ordering::Release);
+        self.control_state.request_cancel();
     }
 
     #[allow(clippy::too_many_lines)]
@@ -202,8 +207,8 @@ where
             let mut iterations = 0;
 
             loop {
-                if self.cancel_flag.load(Ordering::Acquire) {
-                    self.cancel_flag.store(false, Ordering::Release);
+                if self.control_state.is_cancelled() {
+                    self.control_state.reset();
                     return Err(RuntimeError::new("interrupted by user"));
                 }
 
