@@ -156,12 +156,17 @@ impl CrawlerAgent {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::tool_registry::ToolRegistry;
+
+    fn env_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     async fn test_bridge() -> SharedBridge {
         Arc::new(Mutex::new(
@@ -206,6 +211,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_lifecycle_state_transitions() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "true");
         let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new());
 
         agent

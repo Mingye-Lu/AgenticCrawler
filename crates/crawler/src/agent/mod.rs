@@ -551,6 +551,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_effect_triggers_fork() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "true");
         let manager = default_agent_manager();
         manager.lock().await.register_root("root");
 
@@ -661,6 +663,7 @@ mod tests {
             .expect("pause should succeed when already headed");
 
         assert!(result.contains("\"resumed\":true") || result.contains("\"resumed\": true"));
+        std::env::set_var("HEADLESS", "true");
     }
 
     #[tokio::test]
@@ -754,6 +757,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fork_dispatch_spawns_child() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "true");
         let manager = default_agent_manager();
         manager.lock().await.register_root("root");
 
@@ -797,6 +802,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fork_returns_observation() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("HEADLESS", "true");
         let manager = default_agent_manager();
         manager.lock().await.register_root("root");
 
@@ -1126,6 +1133,7 @@ mod tests {
             result.contains("resumed"),
             "result should contain resumed status: {result}"
         );
+        std::env::set_var("HEADLESS", "true");
     }
 
     #[tokio::test]
@@ -1146,5 +1154,6 @@ mod tests {
             err.to_string().contains("no control state"),
             "unexpected error: {err}"
         );
+        std::env::set_var("HEADLESS", "true");
     }
 }
