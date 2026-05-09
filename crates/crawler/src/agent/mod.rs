@@ -281,6 +281,11 @@ impl CrawlerAgent {
             ToolEffect::Reply(output) => Ok(output),
             ToolEffect::Spawn(spec) => self.handle_spawn(spec).await,
             ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
+            ToolEffect::Pause { reason } => {
+                // Actual blocking logic will be wired in Task 9.
+                // For now, return a placeholder indicating pause was requested.
+                Ok(format!("Pause requested: {reason}"))
+            }
         }
     }
 }
