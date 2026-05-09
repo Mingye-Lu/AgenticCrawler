@@ -542,14 +542,14 @@ mod tests {
         AutoCompactionEvent, ConversationRuntime, RuntimeError, StaticToolExecutor,
         DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
     };
-    use crate::observer::RuntimeObserver;
     use crate::compact::CompactionConfig;
+    use crate::observer::RuntimeObserver;
     use crate::prompt::{ProjectContext, SystemPromptBuilder};
     use crate::session::{ContentBlock, MessageRole, Session};
     use crate::usage::TokenUsage;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::path::PathBuf;
     use tokio::time::{timeout, Duration};
 
     struct ScriptedApiClient {
@@ -918,7 +918,9 @@ mod tests {
         let run_turn = runtime.run_turn("hello");
         tokio::pin!(run_turn);
 
-        assert!(timeout(Duration::from_millis(50), &mut run_turn).await.is_err());
+        assert!(timeout(Duration::from_millis(50), &mut run_turn)
+            .await
+            .is_err());
         assert_eq!(call_count.load(Ordering::SeqCst), 0);
 
         control.resume();
@@ -948,7 +950,9 @@ mod tests {
         let run_turn = runtime.run_turn("hello");
         tokio::pin!(run_turn);
 
-        assert!(timeout(Duration::from_millis(50), &mut run_turn).await.is_err());
+        assert!(timeout(Duration::from_millis(50), &mut run_turn)
+            .await
+            .is_err());
         control.request_cancel();
 
         let error = timeout(Duration::from_secs(1), &mut run_turn)
@@ -980,7 +984,9 @@ mod tests {
         let run_turn = runtime.run_turn("hello");
         tokio::pin!(run_turn);
 
-        assert!(timeout(Duration::from_millis(50), &mut run_turn).await.is_err());
+        assert!(timeout(Duration::from_millis(50), &mut run_turn)
+            .await
+            .is_err());
         assert_eq!(
             state.lock().expect("pause observer state lock").events,
             vec!["started:Paused by user".to_string()]
@@ -1008,7 +1014,10 @@ mod tests {
         }
 
         impl ApiClient for PauseToolApiClient {
-            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 let n = self.call_count.fetch_add(1, Ordering::SeqCst);
                 match n {
                     0 => Ok(vec![
@@ -1075,7 +1084,10 @@ mod tests {
         }
 
         impl ApiClient for MultiStepApiClient {
-            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 let n = self.call_count.fetch_add(1, Ordering::SeqCst);
                 match n {
                     0 => Ok(vec![
@@ -1124,7 +1136,9 @@ mod tests {
         tokio::pin!(run_turn);
 
         assert!(
-            timeout(Duration::from_millis(100), &mut run_turn).await.is_err(),
+            timeout(Duration::from_millis(100), &mut run_turn)
+                .await
+                .is_err(),
             "should be blocked during pause"
         );
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
@@ -1147,7 +1161,10 @@ mod tests {
         }
 
         impl ApiClient for ThreeStepApiClient {
-            fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            fn stream(
+                &mut self,
+                _request: ApiRequest,
+            ) -> Result<Vec<AssistantEvent>, RuntimeError> {
                 let n = self.call_count.fetch_add(1, Ordering::SeqCst);
                 match n {
                     0 | 1 => Ok(vec![

@@ -302,7 +302,7 @@ impl CrawlerAgent {
         }
     }
 
-    async fn handle_pause(&mut self, reason: String) -> Result<String, ToolError> {
+    async fn handle_pause(&mut self, _reason: String) -> Result<String, ToolError> {
         self.pause_browser_switch().await?;
 
         let control = self
@@ -312,9 +312,83 @@ impl CrawlerAgent {
             .clone();
         control.request_pause();
 
-        Ok(format!(
-            "Human intervention requested: {reason}. Browser is now in headed mode. Make your changes, then press Enter/p to resume."
-        ))
+        loop {
+            tokio::select! {
+                () = control.wait_for_resume() => { break; }
+                () = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                    if control.is_cancelled() { break; }
+                }
+            }
+        }
+
+        control.reset();
+
+        if control.is_cancelled() {
+            return Err(ToolError::new("interrupted by user"));
+        }
+
+        Ok(self.auto_read_page_after_resume().await)
+    }
+
+    async fn auto_read_page_after_resume(&mut self) -> String {
+        let Some(browser) = self.browser.as_mut() else {
+            return serde_json::json!({
+                "resumed": true,
+                "page_url": "",
+                "page_title": "",
+                "page_content": "Browser not available after resume"
+            })
+            .to_string();
+        };
+
+        let bridge_result = browser.acquire_bridge().await;
+        match bridge_result {
+            Ok(mut bridge) => {
+                let url = bridge
+                    .evaluate("window.location.href")
+                    .await
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default();
+                let title = bridge
+                    .evaluate("document.title")
+                    .await
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default();
+                match bridge.read_content(None, None, 0, 4000).await {
+                    Ok(content) => {
+                        let text = content
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        serde_json::json!({
+                            "resumed": true,
+                            "page_url": url,
+                            "page_title": title,
+                            "page_content": text
+                        })
+                        .to_string()
+                    }
+                    Err(e) => serde_json::json!({
+                        "resumed": true,
+                        "page_url": url,
+                        "page_title": title,
+                        "page_content": "",
+                        "read_error": e.to_string()
+                    })
+                    .to_string(),
+                }
+            }
+            Err(_) => serde_json::json!({
+                "resumed": true,
+                "page_url": "",
+                "page_title": "",
+                "page_content": "Browser not available after resume"
+            })
+            .to_string(),
+        }
     }
 }
 
@@ -585,7 +659,7 @@ mod tests {
             .await
             .expect("pause should succeed when already headed");
 
-        assert!(result.contains("manual review"));
+        assert!(result.contains("\"resumed\":true") || result.contains("\"resumed\": true"));
     }
 
     #[tokio::test]
@@ -1024,19 +1098,23 @@ mod tests {
         std::env::set_var("HEADLESS", "false");
 
         let control_state = Arc::new(ControlState::default());
+        let control_clone = Arc::clone(&control_state);
 
         let mut registry = ToolRegistry::new();
         registry.register(
             "wait_for_human",
-            Box::new(|input| {
-                crate::tools::wait_for_human::execute(input, true)
-            }),
+            Box::new(|input| crate::tools::wait_for_human::execute(input, true)),
         );
 
-        let mut agent = CrawlerAgent::new_for_testing(registry)
-            .with_control_state(control_state.clone());
+        let mut agent =
+            CrawlerAgent::new_for_testing(registry).with_control_state(control_state.clone());
 
         assert!(!control_state.is_paused());
+
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            control_clone.resume();
+        });
 
         let result = agent
             .execute("wait_for_human", r#"{"reason":"captcha detected"}"#)
@@ -1044,12 +1122,8 @@ mod tests {
             .expect("wait_for_human should succeed in interactive mode");
 
         assert!(
-            result.contains("captcha detected"),
-            "result should contain the reason: {result}"
-        );
-        assert!(
-            control_state.is_paused(),
-            "control state should be paused after handle_pause sets it"
+            result.contains("resumed"),
+            "result should contain resumed status: {result}"
         );
     }
 

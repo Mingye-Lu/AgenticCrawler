@@ -910,12 +910,16 @@ impl PlaywrightBridge {
     pub async fn export_cookies(&mut self) -> Result<BrowserState, PlaywrightBridgeError> {
         let cmd = serde_json::json!({ "action": "export_cookies" });
         let result = self.send_raw_command(&cmd).await?;
-        let state = serde_json::from_value::<BrowserState>(result)
-            .map_err(|e| PlaywrightBridgeError::Protocol(format!("failed to parse BrowserState: {e}")))?;
+        let state = serde_json::from_value::<BrowserState>(result).map_err(|e| {
+            PlaywrightBridgeError::Protocol(format!("failed to parse BrowserState: {e}"))
+        })?;
         Ok(state)
     }
 
-    pub async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), PlaywrightBridgeError> {
+    pub async fn import_cookies(
+        &mut self,
+        state: &BrowserState,
+    ) -> Result<(), PlaywrightBridgeError> {
         let cmd = serde_json::json!({
             "action": "import_cookies",
             "cookies": state.cookies,

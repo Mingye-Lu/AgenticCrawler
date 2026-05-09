@@ -964,8 +964,10 @@ impl ReplTuiState {
                 ReplTuiEvent::PauseStarted(reason) => {
                     self.paused = true;
                     self.pause_reason = reason;
-                    self.status_line =
-                        format!("⏸ PAUSED: {} — Solve in browser, press Enter to resume", self.pause_reason);
+                    self.status_line = format!(
+                        "⏸ PAUSED: {} — Solve in browser, press Enter to resume",
+                        self.pause_reason
+                    );
                 }
                 ReplTuiEvent::PauseEnded => {
                     self.paused = false;

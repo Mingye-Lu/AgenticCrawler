@@ -142,13 +142,10 @@ mod tests {
         state.resume();
 
         // The wait task should complete without timeout
-        tokio::time::timeout(
-            tokio::time::Duration::from_secs(1),
-            wait_task,
-        )
-        .await
-        .expect("wait_for_resume should return after resume()")
-        .expect("wait task should not panic");
+        tokio::time::timeout(tokio::time::Duration::from_secs(1), wait_task)
+            .await
+            .expect("wait_for_resume should return after resume()")
+            .expect("wait task should not panic");
     }
 
     #[tokio::test]

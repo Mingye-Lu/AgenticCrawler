@@ -18,7 +18,9 @@ pub use browser::BrowserContext;
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
-pub use playwright::{BrowserState, PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
+pub use playwright::{
+    BrowserState, PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge,
+};
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
