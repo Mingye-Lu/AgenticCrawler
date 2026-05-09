@@ -23,7 +23,13 @@ fn spawn_pause_monitor(
             std::thread::sleep(Duration::from_millis(100));
 
             if control_state.is_paused() {
-                eprintln!("\n-- PAUSED: Human intervention requested --");
+                let reason = control_state.pause_reason();
+                let display_reason = if reason.is_empty() {
+                    "Human intervention requested".to_string()
+                } else {
+                    reason
+                };
+                eprintln!("\n-- PAUSED: {display_reason} --");
                 eprintln!("Solve the problem in the browser, then press Enter to resume...");
                 let _ = std::io::stderr().flush();
 

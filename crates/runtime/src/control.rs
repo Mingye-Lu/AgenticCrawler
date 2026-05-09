@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
 /// Control signal states for the runtime.
@@ -14,6 +14,7 @@ pub const CANCEL: u8 = 2;
 pub struct ControlState {
     signal: AtomicU8,
     resume_notify: Notify,
+    reason: Mutex<String>,
 }
 
 impl ControlState {
@@ -23,11 +24,19 @@ impl ControlState {
         Arc::new(Self {
             signal: AtomicU8::new(CONTINUE),
             resume_notify: Notify::new(),
+            reason: Mutex::new(String::new()),
         })
     }
 
     /// Request a pause. The runtime will pause at the next loop iteration.
     pub fn request_pause(&self) {
+        self.signal.store(PAUSE, Ordering::Release);
+    }
+
+    /// Request a pause with a reason describing why human intervention is needed.
+    pub fn request_pause_with_reason(&self, reason: &str) {
+        *self.reason.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+            reason.to_string();
         self.signal.store(PAUSE, Ordering::Release);
     }
 
@@ -45,6 +54,10 @@ impl ControlState {
     /// Reset the control state to `CONTINUE`.
     pub fn reset(&self) {
         self.signal.store(CONTINUE, Ordering::Release);
+        self.reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     /// Check if the runtime is paused.
@@ -59,6 +72,15 @@ impl ControlState {
         self.signal.load(Ordering::Acquire) == CANCEL
     }
 
+    /// Get the current pause reason, if any.
+    #[must_use]
+    pub fn pause_reason(&self) -> String {
+        self.reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// Wait for a resume signal. Returns when `resume()` is called.
     pub async fn wait_for_resume(&self) {
         self.resume_notify.notified().await;
@@ -70,6 +92,7 @@ impl Default for ControlState {
         Self {
             signal: AtomicU8::new(CONTINUE),
             resume_notify: Notify::new(),
+            reason: Mutex::new(String::new()),
         }
     }
 }
