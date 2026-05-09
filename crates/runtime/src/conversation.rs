@@ -1299,16 +1299,6 @@ mod tests {
     async fn fast_resume_no_lost_wakeup() {
         use crate::control::ControlState;
 
-        let shared_control = Arc::new(ControlState::default());
-        let call_count = Arc::new(AtomicUsize::new(0));
-
-        let control_for_tool = Arc::clone(&shared_control);
-        let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
-            control_for_tool.request_pause();
-            control_for_tool.resume();
-            Ok("instant-resumed".to_string())
-        });
-
         struct TwoStepApiClient {
             call_count: Arc<AtomicUsize>,
         }
@@ -1336,6 +1326,16 @@ mod tests {
                 }
             }
         }
+
+        let shared_control = Arc::new(ControlState::default());
+        let call_count = Arc::new(AtomicUsize::new(0));
+
+        let control_for_tool = Arc::clone(&shared_control);
+        let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
+            control_for_tool.request_pause();
+            control_for_tool.resume();
+            Ok("instant-resumed".to_string())
+        });
 
         let mut runtime = ConversationRuntime::new(
             Session::new(),
