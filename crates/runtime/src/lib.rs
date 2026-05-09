@@ -1,6 +1,7 @@
 mod bootstrap;
 mod compact;
 mod config;
+mod control;
 mod conversation;
 mod json;
 mod mcp;
@@ -24,6 +25,7 @@ pub use config::{
     McpServerConfig, McpStdioServerConfig, McpTransport, McpWebSocketServerConfig, OAuthConfig,
     RuntimeConfig, RuntimeFeatureConfig, ScopedMcpServerConfig, ACRAWL_SETTINGS_SCHEMA_NAME,
 };
+pub use control::ControlState;
 pub use conversation::{
     auto_compaction_threshold_from_env, ApiClient, ApiRequest, AssistantEvent, AutoCompactionEvent,
     ConversationRuntime, RuntimeError, StaticToolExecutor, ToolError, ToolExecutor, TurnSummary,

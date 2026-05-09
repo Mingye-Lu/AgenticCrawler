@@ -3,7 +3,6 @@
 use std::cmp::min;
 use std::collections::VecDeque;
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -33,6 +32,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListState;
 use ratatui::DefaultTerminal;
+use runtime::ControlState;
 
 const MAX_INPUT_LINES: usize = 5;
 pub(super) const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
@@ -1460,7 +1460,7 @@ fn run_loop(
     ui_tx: &Sender<ReplTuiEvent>,
     work_tx: &Sender<WorkerMsg>,
     cli: &Arc<Mutex<LiveCli>>,
-    cancel_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<ControlState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute!(io::stdout(), event::EnableMouseCapture);
     let _ = execute!(io::stdout(), SetCursorStyle::SteadyBar);
@@ -1801,7 +1801,7 @@ fn run_loop(
 
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if state.busy {
-                        cancel_flag.store(true, Ordering::Release);
+                        cancel_flag.request_cancel();
                         state.push_system("Interrupting…");
                         continue;
                     }
@@ -1974,7 +1974,7 @@ fn run_loop(
                                 .last_esc_at
                                 .is_some_and(|t| now.duration_since(t) < Duration::from_millis(500))
                             {
-                                cancel_flag.store(true, Ordering::Release);
+                                cancel_flag.request_cancel();
                                 state.push_system("Interrupting…");
                                 state.last_esc_at = None;
                             } else {
