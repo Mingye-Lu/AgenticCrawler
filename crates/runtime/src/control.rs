@@ -150,4 +150,60 @@ mod tests {
         .expect("wait_for_resume should return after resume()")
         .expect("wait task should not panic");
     }
+
+    #[tokio::test]
+    async fn check_pause_blocks_with_measurable_delay() {
+        use tokio::time::{sleep, Duration};
+
+        let state = Arc::new(ControlState::default());
+        let state_clone = Arc::clone(&state);
+
+        state.request_pause();
+
+        // Resume after 150ms
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(150)).await;
+            state_clone.resume();
+        });
+
+        let start = std::time::Instant::now();
+        state.wait_for_resume().await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "should have blocked for at least 100ms, got {elapsed:?}"
+        );
+        assert!(!state.is_paused());
+    }
+
+    #[tokio::test]
+    async fn cancel_during_pause_no_deadlock() {
+        use tokio::time::{sleep, timeout, Duration};
+
+        let state = Arc::new(ControlState::default());
+        let state_clone = Arc::clone(&state);
+
+        state.request_pause();
+
+        tokio::spawn(async move {
+            sleep(Duration::from_millis(100)).await;
+            state_clone.request_cancel();
+        });
+
+        let result = timeout(Duration::from_secs(2), async {
+            loop {
+                tokio::select! {
+                    () = state.wait_for_resume() => { break; }
+                    () = sleep(Duration::from_millis(50)) => {
+                        if state.is_cancelled() { break; }
+                    }
+                }
+            }
+        })
+        .await;
+
+        assert!(result.is_ok(), "should not timeout — no deadlock");
+        assert!(state.is_cancelled());
+    }
 }
