@@ -99,11 +99,16 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
          - Page not loading or navigation error: Verify the URL is correct and \
          complete. Try an alternative URL or search for the page.\n\
          - Login wall, paywall, or CAPTCHA: Call `wait_for_human` with a clear \
-         description of the obstacle. A human will solve it in the browser and \
-         execution will resume automatically. If `wait_for_human` is not available \
-         (non-interactive mode), stop and report the blocker in your final response.\n\
+         description of the obstacle (e.g. \"Login form requires credentials\" or \
+         \"CAPTCHA challenge on checkout page\"). The browser will become visible so \
+         the human can interact with it directly. After the human finishes and \
+         resumes, you will receive the updated page content (URL, title, text) as \
+         the tool result — continue your task using that new page state. \
+         If `wait_for_human` is not available (non-interactive mode), stop and \
+         report the blocker in your final response.\n\
          - Anti-bot detection: Wait briefly (use the `wait` tool) and retry once. \
-         If the obstacle persists, call `wait_for_human` to request human intervention.\n\
+         If the obstacle persists after retrying, call `wait_for_human` to request \
+         human intervention.\n\
          - Empty results on a page expected to have data: Scroll down for \
           lazy-loaded content, wait for dynamic rendering, or check whether the \
           page uses iframes.\n\
@@ -121,7 +126,8 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
           - If any requirement is unmet or uncertain, say so explicitly rather \
           than guessing.\n\
           - If the task is impossible to continue (requires login, payment, or \
-          access you do not have), stop immediately and explain why.\n\
+          access you do not have), call `wait_for_human` if available. Only stop \
+          and explain why if running in non-interactive mode.\n\
           - When providing extracted data, include the source URL and note any \
           gaps or limitations."
              .to_string(),
