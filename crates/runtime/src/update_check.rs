@@ -216,6 +216,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // lock guards env var mutation for test isolation, not shared data
     async fn test_cache_freshness() {
         let _lock = test_env_lock();
         let temp_dir = setup_temp_dir();
@@ -243,6 +244,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // lock guards env var mutation for test isolation, not shared data
     async fn test_graceful_failure() {
         let _lock = test_env_lock();
         let temp_dir = setup_temp_dir();
