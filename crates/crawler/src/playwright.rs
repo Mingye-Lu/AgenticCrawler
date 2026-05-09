@@ -458,6 +458,63 @@ async function bootstrap() {
       continue;
     }
 
+    if (command.action === 'export_cookies') {
+      try {
+        const cookies = await context.cookies();
+        let localStorage = {};
+        try {
+          localStorage = await page.evaluate(() => {
+            const result = {};
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const key = window.localStorage.key(i);
+              if (key !== null) result[key] = window.localStorage.getItem(key) || '';
+            }
+            return result;
+          });
+        } catch (_) { /* localStorage may be unavailable on some pages */ }
+        const url = page.url();
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { cookies, local_storage: localStorage, url }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'export_cookies_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'import_cookies') {
+      try {
+        if (command.cookies && command.cookies.length > 0) {
+          await context.addCookies(command.cookies);
+        }
+        if (command.local_storage && typeof command.local_storage === 'object') {
+          await page.evaluate((ls) => {
+            for (const [k, v] of Object.entries(ls)) {
+              try { window.localStorage.setItem(k, v); } catch (_) {}
+            }
+          }, command.local_storage);
+        }
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { imported: true }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'import_cookies_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
     process.stdout.write(JSON.stringify({
       event: 'bridge_response',
       ok: false,
@@ -480,6 +537,14 @@ bootstrap().catch((error) => {
 pub struct PageInfo {
     pub title: String,
     pub html: String,
+}
+
+/// Captured browser state for preservation across bridge restarts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserState {
+    pub cookies: serde_json::Value,
+    pub local_storage: serde_json::Value,
+    pub url: String,
 }
 
 #[derive(Debug)]
@@ -840,6 +905,24 @@ impl PlaywrightBridge {
             "index": index,
         });
         self.send_raw_command(&cmd).await
+    }
+
+    pub async fn export_cookies(&mut self) -> Result<BrowserState, PlaywrightBridgeError> {
+        let cmd = serde_json::json!({ "action": "export_cookies" });
+        let result = self.send_raw_command(&cmd).await?;
+        let state = serde_json::from_value::<BrowserState>(result)
+            .map_err(|e| PlaywrightBridgeError::Protocol(format!("failed to parse BrowserState: {e}")))?;
+        Ok(state)
+    }
+
+    pub async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "import_cookies",
+            "cookies": state.cookies,
+            "local_storage": state.local_storage,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
     }
 
     pub async fn list_resources(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
@@ -1274,5 +1357,34 @@ for line in sys.stdin:
             .close()
             .await
             .expect("bridge should close without zombie process");
+    }
+
+    #[test]
+    fn browser_state_serializes_and_deserializes() {
+        use super::BrowserState;
+
+        let state = BrowserState {
+            cookies: serde_json::json!([{"name": "session", "value": "abc123", "domain": "example.com"}]),
+            local_storage: serde_json::json!({"theme": "dark", "lang": "en"}),
+            url: "https://example.com/page".to_string(),
+        };
+        let json = serde_json::to_string(&state).expect("should serialize");
+        let parsed: BrowserState = serde_json::from_str(&json).expect("should deserialize");
+        assert_eq!(parsed.url, state.url);
+        assert_eq!(parsed.local_storage["theme"], "dark");
+    }
+
+    #[test]
+    fn browser_state_empty_cookies_round_trips() {
+        use super::BrowserState;
+
+        let state = BrowserState {
+            cookies: serde_json::json!([]),
+            local_storage: serde_json::json!({}),
+            url: String::new(),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: BrowserState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.url, "");
     }
 }
