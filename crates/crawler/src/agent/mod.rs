@@ -321,9 +321,10 @@ impl CrawlerAgent {
             }
         }
 
+        let was_cancelled = control.is_cancelled();
         control.reset();
 
-        if control.is_cancelled() {
+        if was_cancelled {
             return Err(ToolError::new("interrupted by user"));
         }
 
