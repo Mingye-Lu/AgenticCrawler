@@ -56,8 +56,24 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 
 ### Install
 
+**Linux (x64 / ARM64):**
 ```bash
-# Build from source
+curl -fsSL https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.sh | sh
+```
+
+**Windows (x64, PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.ps1 | iex
+```
+
+This downloads the latest binary, verifies its SHA256 checksum, and sets up Playwright for browser automation. Requires Node.js 16+ for browser features.
+
+acrawl checks for updates on startup and shows a notification when a new version is available.
+
+<details>
+<summary>Build from source</summary>
+
+```bash
 git clone https://github.com/Mingye-Lu/AgenticCrawler.git
 cd AgenticCrawler
 cargo build --release
@@ -66,6 +82,8 @@ cargo build --release
 npm install
 npx playwright install chromium
 ```
+
+</details>
 
 ### Configure
 
