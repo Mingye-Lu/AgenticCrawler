@@ -16,4 +16,5 @@ pub mod scroll;
 pub mod select_option;
 pub mod switch_tab;
 pub mod wait;
+pub mod wait_for_human;
 pub mod wait_for_subagents;
