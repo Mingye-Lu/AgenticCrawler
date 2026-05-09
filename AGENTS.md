@@ -2,7 +2,7 @@
 
 ## Project
 
-`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 19-tool toolbox (16 browser + 3 agent-control). It ships as a single binary with an interactive Ratatui REPL and non-interactive modes.
+`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 19-tool toolbox (16 browser + 2 agent-control + 1 human intervention). It ships as a single binary with an interactive Ratatui REPL and non-interactive modes.
 
 ## Commands
 
@@ -29,7 +29,7 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 - **api** — HTTP + SSE clients for Anthropic (`client.rs`), OpenAI-compatible (`openai.rs`), and Codex OAuth (`codex.rs`). `sse.rs` is the shared streaming frame parser; `types.rs` holds the Anthropic message schema. `provider/registry.rs` and `provider/factory.rs` handle provider discovery and client construction.
 - **runtime** — `ConversationRuntime` (the core turn loop), `RuntimeObserver` trait for event callbacks, `Session` persistence, system-prompt builder, permission model (`PermissionMode` = ReadOnly / WorkspaceWrite / DangerFullAccess), compaction, usage/pricing, OAuth PKCE, `observer.rs` for the observer trait, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/memory`, `/init`, `/diff`, `/version`). Knows which commands are safe to replay in `--resume`.
-- **crawler** — the browser tools (16 navigation/extraction + 3 agent-control = 19 total), agent loop (`agent.rs`), `FetchRouter` that escalates HTTP→browser, and `PlaywrightBridge` — a child `node` process running an inline JS script (`PLAYWRIGHT_BRIDGE_NODE_SCRIPT` in `playwright.rs`) that speaks newline-delimited JSON over stdio. 3 agent-control tools (`fork`, `wait_for_subagents`, `done`) live alongside the browser tools, bringing the total to 19. `agent/` subdirectory contains fork/lifecycle logic; `tool_effect.rs` defines the `ToolEffect` enum (Reply/Spawn/Wait/Finish) that tools return.
+- **crawler** — the browser tools (16 navigation/extraction + 2 agent-control + 1 human intervention = 19 total), agent loop (`agent.rs`), `FetchRouter` that escalates HTTP→browser, and `PlaywrightBridge` — a child `node` process running an inline JS script (`PLAYWRIGHT_BRIDGE_NODE_SCRIPT` in `playwright.rs`) that speaks newline-delimited JSON over stdio. 2 agent-control tools (`fork`, `wait_for_subagents`) and 1 human intervention tool (`wait_for_human`) live alongside the browser tools, bringing the total to 19. `agent/` subdirectory contains fork/lifecycle logic; `tool_effect.rs` defines the `ToolEffect` enum (Reply/Spawn/Wait/Finish) that tools return.
 
 ## Architecture: how a turn actually flows
 
