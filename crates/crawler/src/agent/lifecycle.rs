@@ -123,19 +123,35 @@ impl CrawlerAgent {
                 return;
             }
         };
-        if let Err(error) = bridge.import_cookies(state).await {
+
+        if let Err(error) = bridge.import_cookies_only(state).await {
             eprintln!("Warning: failed to import cookies after headed switch: {error}");
         }
-        if !state.url.is_empty() && state.url != "about:blank" {
-            let navigate_result = bridge.navigate(&state.url).await;
-            drop(bridge);
-            if let Err(error) = navigate_result {
-                eprintln!("Warning: failed to navigate to saved URL after headed switch: {error}");
-            } else {
-                browser.set_navigated_url(&state.url, true);
+
+        let navigated = if !state.url.is_empty() && state.url != "about:blank" {
+            match bridge.navigate(&state.url).await {
+                Ok(_) => {
+                    if let Err(error) = bridge.import_local_storage(state).await {
+                        eprintln!(
+                            "Warning: failed to import localStorage after headed switch: {error}"
+                        );
+                    }
+                    true
+                }
+                Err(error) => {
+                    eprintln!(
+                        "Warning: failed to navigate to saved URL after headed switch: {error}"
+                    );
+                    false
+                }
             }
         } else {
-            drop(bridge);
+            false
+        };
+
+        drop(bridge);
+        if navigated {
+            browser.set_navigated_url(&state.url, true);
         }
     }
 }
