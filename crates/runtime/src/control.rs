@@ -35,8 +35,10 @@ impl ControlState {
 
     /// Request a pause with a reason describing why human intervention is needed.
     pub fn request_pause_with_reason(&self, reason: &str) {
-        *self.reason.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
-            reason.to_string();
+        *self
+            .reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = reason.to_string();
         self.signal.store(PAUSE, Ordering::Release);
     }
 
