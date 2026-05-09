@@ -316,7 +316,7 @@ impl CrawlerAgent {
             tokio::select! {
                 () = control.wait_for_resume() => { break; }
                 () = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                    if control.is_cancelled() { break; }
+                    if !control.is_paused() { break; }
                 }
             }
         }
