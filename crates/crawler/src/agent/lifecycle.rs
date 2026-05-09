@@ -64,9 +64,7 @@ impl CrawlerAgent {
             ));
         }
 
-        let is_headless = std::env::var("HEADLESS")
-            .map(|value| value != "false")
-            .unwrap_or(true);
+        let is_headless = std::env::var("HEADLESS").map_or(true, |value| value != "false");
         if !is_headless {
             return Ok(());
         }
