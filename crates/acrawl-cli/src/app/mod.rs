@@ -282,6 +282,7 @@ impl LiveCli {
         self.runtime.cancel_flag()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn control_state(&self) -> std::sync::Arc<ControlState> {
         self.runtime.cancel_flag()
     }

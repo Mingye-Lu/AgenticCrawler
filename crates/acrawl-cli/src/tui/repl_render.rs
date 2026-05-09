@@ -903,7 +903,9 @@ pub(super) fn draw_chat(
     draw_header(frame, header_area, header);
 
     // --- Transcript block (rounded, matches welcome palette) ---
-    let transcript_border_color = if state.busy {
+    let transcript_border_color = if state.paused {
+        Color::Rgb(180, 140, 30)
+    } else if state.busy {
         Color::Rgb(40, 80, 110)
     } else {
         Color::Rgb(50, 65, 90)
@@ -1027,7 +1029,9 @@ pub(super) fn draw_chat(
     }
 
     // --- Footer / input block (rounded) ---
-    let footer_title = if let Some(ref tool) = state.current_tool {
+    let footer_title = if state.paused {
+        format!(" ⏸ PAUSED: {} — press Enter to resume ", state.pause_reason)
+    } else if let Some(ref tool) = state.current_tool {
         let s = state.spinner_char();
         format!(" {s} Executing {tool} ")
     } else if state.busy {
@@ -1039,13 +1043,19 @@ pub(super) fn draw_chat(
         format!(" Input · {} ", header.model)
     };
 
-    let footer_title_style = if state.busy {
+    let footer_title_style = if state.paused {
+        Style::default()
+            .fg(Color::Rgb(255, 200, 50))
+            .add_modifier(Modifier::BOLD)
+    } else if state.busy {
         Style::default().fg(Color::LightCyan)
     } else {
         Style::default().fg(Color::Rgb(100, 140, 180))
     };
 
-    let footer_border_color = if state.busy {
+    let footer_border_color = if state.paused {
+        Color::Rgb(180, 140, 30)
+    } else if state.busy {
         Color::Rgb(30, 70, 100)
     } else {
         Color::Rgb(50, 70, 100)

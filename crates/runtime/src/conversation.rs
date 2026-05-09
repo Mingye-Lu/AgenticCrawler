@@ -208,10 +208,10 @@ where
 
         loop {
             tokio::select! {
-                _ = self.control_state.wait_for_resume() => {
+                () = self.control_state.wait_for_resume() => {
                     break;
                 }
-                _ = sleep(Duration::from_millis(100)) => {
+                () = sleep(Duration::from_millis(100)) => {
                     if self.control_state.is_cancelled() {
                         break;
                     }
