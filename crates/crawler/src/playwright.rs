@@ -929,6 +929,30 @@ impl PlaywrightBridge {
         Ok(())
     }
 
+    pub async fn import_cookies_only(
+        &mut self,
+        state: &BrowserState,
+    ) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "import_cookies",
+            "cookies": state.cookies,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn import_local_storage(
+        &mut self,
+        state: &BrowserState,
+    ) -> Result<(), PlaywrightBridgeError> {
+        let cmd = serde_json::json!({
+            "action": "import_cookies",
+            "local_storage": state.local_storage,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
     pub async fn list_resources(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
         let cmd = serde_json::json!({ "action": "list_resources" });
         self.send_raw_command(&cmd).await
