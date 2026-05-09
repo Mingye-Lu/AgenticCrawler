@@ -1030,7 +1030,7 @@ pub(super) fn draw_chat(
 
     // --- Footer / input block (rounded) ---
     let footer_title = if state.paused {
-        format!(" ⏸ PAUSED: {} — press Enter to resume ", state.pause_reason)
+        format!(" PAUSED: {} -- press Enter to resume ", state.pause_reason)
     } else if let Some(ref tool) = state.current_tool {
         let s = state.spinner_char();
         format!(" {s} Executing {tool} ")

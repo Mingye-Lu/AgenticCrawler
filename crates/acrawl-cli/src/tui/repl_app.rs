@@ -972,7 +972,7 @@ impl ReplTuiState {
                     self.paused = true;
                     self.pause_reason = reason;
                     self.status_line = format!(
-                        "⏸ PAUSED: {} — Solve in browser, press Enter to resume",
+                        "PAUSED: {} -- Solve in browser, press Enter to resume",
                         self.pause_reason
                     );
                 }
@@ -1514,7 +1514,7 @@ fn run_loop(
                 .clone()
                 .unwrap_or_else(|| "Human intervention requested".to_string());
             state.status_line = format!(
-                "\u{23f8} PAUSED: {} \u{2014} Solve in browser, press Enter to resume",
+                "PAUSED: {} -- Solve in browser, press Enter to resume",
                 state.pause_reason
             );
         }

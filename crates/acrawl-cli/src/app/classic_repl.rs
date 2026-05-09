@@ -20,7 +20,7 @@ impl ClassicReplObserver {
 
 impl RuntimeObserver for ClassicReplObserver {
     fn on_pause_started(&mut self, reason: &str) {
-        eprintln!("\n⏸ PAUSED: {reason}");
+        eprintln!("\nPAUSED: {reason}");
         eprintln!("Solve the problem in the browser, then press Enter to resume...");
         let _ = std::io::stderr().flush();
 
@@ -31,7 +31,7 @@ impl RuntimeObserver for ClassicReplObserver {
     }
 
     fn on_pause_ended(&mut self) {
-        eprintln!("✓ Resumed");
+        eprintln!("Resumed");
     }
 }
 
