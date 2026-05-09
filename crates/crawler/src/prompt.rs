@@ -52,9 +52,13 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
          including https://.\n\
          3. At each step:\n\
          \x20\x20 a. Observe the current page state from the last tool result.\n\
-         \x20\x20 b. Decide the single best next action.\n\
-         \x20\x20 c. Execute one tool call.\n\
-         \x20\x20 d. Evaluate the result before continuing.\n\
+         \x20\x20 b. Check for blockers: if the page content mentions CAPTCHAs, \
+         \"verify you are human\", \"unusual traffic\", login forms you cannot fill, \
+         paywalls, or access denied messages — immediately call `wait_for_human` \
+         with a description of what you see. Do not retry or work around it.\n\
+         \x20\x20 c. Decide the single best next action.\n\
+         \x20\x20 d. Execute one tool call.\n\
+         \x20\x20 e. Evaluate the result before continuing.\n\
          4. Prefer the simplest reliable action:\n\
           \x20\x20 - Direct navigate over clicking links when the URL is known.\n\
           \x20\x20 - click, fill_form, and scroll before execute_js.\n\
@@ -98,17 +102,21 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
          content, or check for overlays or popups blocking the element.\n\
          - Page not loading or navigation error: Verify the URL is correct and \
          complete. Try an alternative URL or search for the page.\n\
-         - Login wall, paywall, or CAPTCHA: Call `wait_for_human` with a clear \
-         description of the obstacle (e.g. \"Login form requires credentials\" or \
-         \"CAPTCHA challenge on checkout page\"). The browser will become visible so \
+         - CAPTCHA or human verification (e.g. \"verify you are human\", \
+         \"unusual traffic\", reCAPTCHA, hCaptcha, checkbox challenges): \
+         Call `wait_for_human` IMMEDIATELY. Do NOT retry, do NOT try to solve it, \
+         do NOT navigate away. The human will solve it in the visible browser.\n\
+         - Login wall or paywall: Call `wait_for_human` with a clear \
+         description (e.g. \"Login form requires credentials\" or \
+         \"Paywall blocking article content\"). The browser will become visible so \
          the human can interact with it directly. After the human finishes and \
          resumes, you will receive the updated page content (URL, title, text) as \
          the tool result — continue your task using that new page state. \
          If `wait_for_human` is not available (non-interactive mode), stop and \
          report the blocker in your final response.\n\
-         - Anti-bot detection: Wait briefly (use the `wait` tool) and retry once. \
-         If the obstacle persists after retrying, call `wait_for_human` to request \
-         human intervention.\n\
+         - Anti-bot detection (403/429 errors, empty page, \"access denied\"): \
+         Wait briefly (use the `wait` tool) and retry once. \
+         If the obstacle persists after retrying, call `wait_for_human`.\n\
          - Empty results on a page expected to have data: Scroll down for \
           lazy-loaded content, wait for dynamic rendering, or check whether the \
           page uses iframes.\n\
