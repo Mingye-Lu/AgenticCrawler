@@ -27,7 +27,9 @@ use crate::session_mgr::{
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crawler::mvp_tool_specs;
-use runtime::{CompactionConfig, ConversationRuntime, RuntimeError, Session, TokenUsage};
+use runtime::{
+    CompactionConfig, ControlState, ConversationRuntime, RuntimeError, Session, TokenUsage,
+};
 use serde_json::json;
 
 #[cfg(test)]
@@ -37,7 +39,7 @@ use self::api_client::LlmRuntimeClient;
 #[cfg(test)]
 use self::api_client::{convert_messages, push_output_block, response_to_events};
 use self::model_support::{model_reasoning_efforts, model_supports_reasoning};
-use self::runtime_builder::{build_runtime, build_system_prompt};
+use self::runtime_builder::{build_runtime, build_runtime_with_options, build_system_prompt};
 use self::tool_executor::CliToolExecutor;
 
 pub(crate) use crate::auth::{
@@ -148,17 +150,36 @@ impl LiveCli {
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
     ) -> Result<Self, CliError> {
+        Self::new_with_interactivity(model, enable_tools, allowed_tools, true)
+    }
+
+    pub(crate) fn new_non_interactive(
+        model: String,
+        enable_tools: bool,
+        allowed_tools: Option<AllowedToolSet>,
+    ) -> Result<Self, CliError> {
+        Self::new_with_interactivity(model, enable_tools, allowed_tools, false)
+    }
+
+    fn new_with_interactivity(
+        model: String,
+        enable_tools: bool,
+        allowed_tools: Option<AllowedToolSet>,
+        is_interactive: bool,
+    ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
         let output_mode = OutputMode::Stdout;
-        let runtime = build_runtime(
+        let runtime = build_runtime_with_options(
             Session::new(),
             model.clone(),
             system_prompt.clone(),
             enable_tools,
             allowed_tools.clone(),
             output_mode.observer(),
+            is_interactive,
+            None,
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
             let saved = settings
@@ -198,13 +219,15 @@ impl LiveCli {
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle()?;
         let output_mode = OutputMode::Channel(event_tx);
-        let runtime = build_runtime(
+        let runtime = build_runtime_with_options(
             Session::new(),
             model.clone(),
             system_prompt.clone(),
             enable_tools,
             allowed_tools.clone(),
             output_mode.observer(),
+            true,
+            None,
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
             let saved = settings
@@ -278,7 +301,7 @@ impl LiveCli {
         self.output_mode.sender()
     }
 
-    pub(crate) fn cancel_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    pub(crate) fn cancel_flag(&self) -> std::sync::Arc<ControlState> {
         self.runtime.cancel_flag()
     }
 

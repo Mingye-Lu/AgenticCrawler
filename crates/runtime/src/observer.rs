@@ -7,6 +7,12 @@ pub trait RuntimeObserver: Send {
         let _ = text;
     }
 
+    fn on_pause_started(&mut self, reason: &str) {
+        let _ = reason;
+    }
+
+    fn on_pause_ended(&mut self) {}
+
     fn on_tool_call_start(&mut self, id: &str, name: &str, input: &str) {
         let _ = (id, name, input);
     }
@@ -98,6 +104,14 @@ mod tests {
                 .usages
                 .push(*usage);
         }
+
+        fn on_pause_started(&mut self, _reason: &str) {
+            // No-op for test observer
+        }
+
+        fn on_pause_ended(&mut self) {
+            // No-op for test observer
+        }
     }
 
     struct NoOpObserver;
@@ -108,6 +122,8 @@ mod tests {
     fn test_no_op_observer_compiles() {
         let mut observer = NoOpObserver;
         observer.on_text_delta("hello");
+        observer.on_pause_started("Paused by user");
+        observer.on_pause_ended();
         observer.on_tool_call_start("tool-1", "add", "2,2");
         observer.on_tool_result("add", "4", false);
         observer.on_system_message("system");

@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use crawler::{CrawlerAgent, SharedApiClient, ToolRegistry};
-use runtime::{ToolError, ToolExecutor};
+use runtime::{ControlState, ToolError, ToolExecutor};
 
 use super::AllowedToolSet;
 
@@ -9,11 +11,20 @@ pub(crate) struct CliToolExecutor {
 }
 
 impl CliToolExecutor {
-    pub(crate) fn new(allowed_tools: Option<AllowedToolSet>, fork_client: SharedApiClient) -> Self {
+    pub(crate) fn new(
+        allowed_tools: Option<AllowedToolSet>,
+        fork_client: SharedApiClient,
+        is_interactive: bool,
+        control_state: Option<Arc<ControlState>>,
+    ) -> Self {
+        let registry = ToolRegistry::new_with_options(is_interactive);
+        let mut agent = CrawlerAgent::new_lazy(registry).with_api_client(fork_client);
+        if let Some(state) = control_state {
+            agent = agent.with_control_state(state);
+        }
         Self {
             allowed_tools,
-            agent: CrawlerAgent::new_lazy(ToolRegistry::new_with_core_tools())
-                .with_api_client(fork_client),
+            agent,
         }
     }
 

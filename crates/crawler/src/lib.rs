@@ -18,7 +18,9 @@ pub use browser::BrowserContext;
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
-pub use playwright::{PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
+pub use playwright::{
+    BrowserState, PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge,
+};
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
@@ -304,6 +306,22 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
 
             instructions: Some("Only call this when you need subagent results before deciding your next action."),
         },
+        ToolSpec {
+            name: "wait_for_human",
+            description: "Pause execution and request human intervention. Use when encountering captchas, login walls, paywalls, or other obstacles that require human action in the browser.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why human intervention is needed (e.g., 'Login wall detected', 'CAPTCHA challenge appeared')"
+                    }
+                },
+                "required": ["reason"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Use only when you encounter an obstacle that genuinely requires a human to solve (captcha, login, paywall). Be specific in the reason about what the human needs to do. The browser becomes visible for the human. After they finish and press resume, you receive the updated page content (URL, title, text) — continue your task from there."),
+        },
     ]
 }
 
@@ -325,12 +343,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_18_tools() {
+    fn mvp_tool_specs_contains_expected_19_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 18);
+        assert_eq!(specs.len(), 19);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 18, "tool names should be unique");
+        assert_eq!(names.len(), 19, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("save_file"));
         assert!(names.contains("fork"));

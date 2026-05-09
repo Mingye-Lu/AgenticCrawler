@@ -94,7 +94,12 @@ impl CrawlerAgent {
         )
         .with_max_steps(child_max_steps)
         .with_agent_id(child_id.clone())
-        .with_agent_manager(self.agent_manager.clone());
+        .with_agent_manager(self.agent_manager.clone())
+        .with_control_state(
+            self.control_state
+                .clone()
+                .unwrap_or_else(|| std::sync::Arc::new(runtime::ControlState::default())),
+        );
         child_agent.shared_bridge = Some(shared_bridge);
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
