@@ -143,11 +143,11 @@ fn section_error_recovery() -> String {
       click or fill_form fail, but not as a first choice.\n\
      - Popup or overlay blocking interaction: Try pressing Escape or clicking \
      a dismiss button before retrying the intended action."
-         .to_string()
+        .to_string()
 }
 
 fn section_completion() -> String {
-     "Completion:\n\
+    "Completion:\n\
       - Before reporting success, re-read the original task and confirm each \
       requirement is met by data you actually extracted.\n\
       - If any requirement is unmet or uncertain, say so explicitly rather \
@@ -157,11 +157,11 @@ fn section_completion() -> String {
       and explain why if running in non-interactive mode.\n\
       - When providing extracted data, include the source URL and note any \
       gaps or limitations."
-         .to_string()
+        .to_string()
 }
 
 fn section_parallel_exploration() -> String {
-     "Parallel exploration:\n\
+    "Parallel exploration:\n\
        - Use the `fork` tool to spawn a subagent on a separate browser tab when you need \
        to explore multiple pages simultaneously.\n\
        - Each subagent gets a copy of your history and works independently.\n\
