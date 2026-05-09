@@ -9,6 +9,8 @@ pub enum ToolEffect {
     Spawn(ForkSpec),
     /// Tool requests waiting for sub-agents to finish.
     Wait(WaitSpec),
+    /// Tool requests pausing execution for human intervention.
+    Pause { reason: String },
 }
 
 impl ToolEffect {
@@ -88,5 +90,14 @@ mod tests {
         let crawl_err = crate::CrawlError::new("crawl failure");
         let tool_err: ToolError = crawl_err.into();
         assert_eq!(tool_err.to_string(), "crawl failure");
+    }
+
+    #[test]
+    fn pause_variant_has_reason() {
+        let effect = ToolEffect::Pause { reason: "test reason".to_string() };
+        match effect {
+            ToolEffect::Pause { reason } => assert_eq!(reason, "test reason"),
+            _ => panic!("expected Pause variant"),
+        }
     }
 }
