@@ -218,7 +218,7 @@ where
                     break;
                 }
                 () = sleep(Duration::from_millis(100)) => {
-                    if self.control_state.is_cancelled() {
+                    if !self.control_state.is_paused() {
                         break;
                     }
                 }
