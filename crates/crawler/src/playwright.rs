@@ -682,13 +682,25 @@ impl PlaywrightBridge {
 
     fn bridge_command(program: &str, args: &[String]) -> Command {
         let mut command = Command::new(program);
+        let acrawl_node_modules = config_home_dir().join("node_modules");
+        let node_path = match std::env::var_os("NODE_PATH") {
+            Some(existing) => {
+                let mut paths = std::env::split_paths(&existing).collect::<Vec<_>>();
+                if !paths.contains(&acrawl_node_modules) {
+                    paths.insert(0, acrawl_node_modules.clone());
+                }
+                std::env::join_paths(paths)
+                    .unwrap_or_else(|_| acrawl_node_modules.into())
+            }
+            None => acrawl_node_modules.into(),
+        };
         command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true)
-            .env("NODE_PATH", config_home_dir().join("node_modules"));
+            .env("NODE_PATH", node_path);
         command
     }
 
@@ -1208,9 +1220,12 @@ mod tests {
             }
         });
 
-        assert_eq!(
-            node_path,
-            Some(config_home_dir().join("node_modules").into_os_string())
+        let node_path = node_path.expect("NODE_PATH should be set");
+        let paths: Vec<_> = std::env::split_paths(&node_path).collect();
+        let expected = config_home_dir().join("node_modules");
+        assert!(
+            paths.contains(&expected),
+            "NODE_PATH should contain {expected:?}, got {paths:?}"
         );
     }
 
