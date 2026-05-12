@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acrawl-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ansi-to-tui",
  "api",
@@ -75,7 +75,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aws-credential-types",
  "aws-sigv4",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "commands"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "runtime",
 ]
@@ -547,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "crawler"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "csv",
  "reqwest 0.12.28",
@@ -2510,7 +2510,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "getrandom 0.2.17",
  "reqwest 0.12.28",
