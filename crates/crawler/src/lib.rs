@@ -97,7 +97,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Use to verify page state when uncertain about what is visible, or to debug unexpected tool results."),
+            instructions: Some("Use ONLY when direct text access (page_map, read_content) is insufficient — e.g. verifying visual layout, checking images, or debugging rendering. Never use screenshot to read text content; use read_content instead."),
         },
         ToolSpec {
             name: "go_back",

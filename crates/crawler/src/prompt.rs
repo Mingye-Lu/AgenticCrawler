@@ -73,12 +73,18 @@ fn section_operating_procedure() -> String {
      4. Prefer the simplest reliable action:\n\
       \x20\x20 - Direct navigate over clicking links when the URL is known.\n\
       \x20\x20 - click, fill_form, and scroll before execute_js.\n\
-      \x20\x20 - page_map to discover page structure, then read_content to extract specific sections.\n\
+      \x20\x20 - page_map + read_content over screenshot. Always prefer direct text \
+      access (page_map, read_content, list_resources) over visual inspection \
+      (screenshot). Use screenshot only when text-based tools cannot provide the \
+      information you need (e.g. verifying visual layout, debugging rendering issues).\n\
       5. When extracting information from a page:\n\
       \x20\x20 a. Call page_map to see the heading structure and section sizes.\n\
       \x20\x20 b. Call read_content with the heading name or CSS selector for the section you need.\n\
       \x20\x20 c. For large sections, use offset and max_chars to paginate through content.\n\
-      \x20\x20 d. If page_map returns no sections (empty list), use read_content with a CSS selector.\n\
+      \x20\x20 d. If page_map returns no sections (empty list), use read_content with a CSS \
+      selector (try \"main\", \"article\", \"body\", or \"[role=main]\" as general-purpose selectors).\n\
+      \x20\x20 e. Do NOT scroll+screenshot to read page content. The text is accessible \
+      through read_content regardless of scroll position.\n\
        6. When you have accomplished the goal, provide a summary and the structured results \
        in JSON format in your final message."
         .to_string()
