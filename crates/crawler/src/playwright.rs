@@ -689,8 +689,7 @@ impl PlaywrightBridge {
                 if !paths.contains(&acrawl_node_modules) {
                     paths.insert(0, acrawl_node_modules.clone());
                 }
-                std::env::join_paths(paths)
-                    .unwrap_or_else(|_| acrawl_node_modules.into())
+                std::env::join_paths(paths).unwrap_or_else(|_| acrawl_node_modules.into())
             }
             None => acrawl_node_modules.into(),
         };
