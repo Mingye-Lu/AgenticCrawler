@@ -56,9 +56,9 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 
 ### Install
 
-**Linux (x64 / ARM64):**
+**Linux / macOS (x64 / ARM64):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.sh | bash
 ```
 
 **Windows (x64, PowerShell):**
