@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-20.04
+            artifact: acrawl-linux-x64
+            use_cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-20.04
+            artifact: acrawl-linux-arm64
+            use_cross: true
+          - target: x86_64-apple-darwin
+            os: macos-13
+            artifact: acrawl-macos-x64
+            use_cross: false
+          - target: aarch64-apple-darwin
+            os: macos-14
+            artifact: acrawl-macos-arm64
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: acrawl-windows-x64.exe
+            use_cross: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        env:
+          TARGET: ${{ matrix.target }}
+          GIT_SHA: ${{ github.sha }}
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (cargo)
+        if: "!matrix.use_cross"
+        env:
+          TARGET: ${{ matrix.target }}
+          GIT_SHA: ${{ github.sha }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux)
+        if: matrix.os == 'ubuntu-20.04' && !matrix.use_cross
+        run: strip target/${{ matrix.target }}/release/acrawl
+
+      - name: Strip binary (Linux ARM64)
+        if: matrix.use_cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-strip target/${{ matrix.target }}/release/acrawl
+
+      - name: Strip binary (macOS)
+        if: runner.os == 'macOS'
+        run: strip target/${{ matrix.target }}/release/acrawl
+
+      - name: Rename binary (Linux/macOS)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
+        run: cp target/${{ matrix.target }}/release/acrawl ${{ matrix.artifact }}
+
+      - name: Rename binary (Windows)
+        if: runner.os == 'Windows'
+        run: Copy-Item "target/${{ matrix.target }}/release/acrawl.exe" "${{ matrix.artifact }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-20.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect binaries
+        run: |
+          mkdir release
+          cp artifacts/acrawl-linux-x64/acrawl-linux-x64 release/
+          cp artifacts/acrawl-linux-arm64/acrawl-linux-arm64 release/
+          cp artifacts/acrawl-macos-x64/acrawl-macos-x64 release/
+          cp artifacts/acrawl-macos-arm64/acrawl-macos-arm64 release/
+          cp artifacts/acrawl-windows-x64.exe/acrawl-windows-x64.exe release/
+
+      - name: Generate checksums
+        working-directory: release
+        run: sha256sum acrawl-linux-x64 acrawl-linux-arm64 acrawl-macos-x64 acrawl-macos-arm64 acrawl-windows-x64.exe > checksums.sha256
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/acrawl-linux-x64
+            release/acrawl-linux-arm64
+            release/acrawl-macos-x64
+            release/acrawl-macos-arm64
+            release/acrawl-windows-x64.exe
+            release/checksums.sha256

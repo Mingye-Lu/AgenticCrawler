@@ -12,6 +12,7 @@ mod remote;
 pub mod sandbox;
 mod session;
 pub mod settings;
+pub mod update_check;
 mod usage;
 
 pub use bootstrap::{BootstrapPhase, BootstrapPlan};
@@ -73,6 +74,7 @@ pub use settings::{
     settings_get_max_concurrent_per_parent, settings_get_max_fork_depth, settings_get_max_steps,
     settings_get_max_total_agents, settings_get_workspace_dir, update_settings, Settings,
 };
+pub use update_check::{check_for_update, UpdateInfo};
 pub use usage::{
     format_usd, pricing_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
 };
