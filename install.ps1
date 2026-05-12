@@ -13,6 +13,7 @@
 #>
 
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repo = "Mingye-Lu/AgenticCrawler"
 if ($env:ACRAWL_CONFIG_HOME) {
@@ -37,8 +38,6 @@ Write-Host ""
 # --- 2. Get latest version from GitHub API ---
 Write-Host "Fetching latest release..." -ForegroundColor Gray
 try {
-    # PowerShell 5.1 needs TLS 1.2 for GitHub
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
     $version = $release.tag_name.TrimStart('v')
 } catch {
