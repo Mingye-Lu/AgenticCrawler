@@ -7,6 +7,7 @@ mod init;
 mod input;
 mod markdown;
 mod output_sink;
+mod self_update;
 mod session_mgr;
 mod tool_format;
 mod tui;
@@ -97,6 +98,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let cwd = env::current_dir()?;
             println!("{}", crate::init::initialize_repo(&cwd)?.render());
         }
+        CliAction::Update => {
+            let rt = TOKIO_RUNTIME.get().expect("tokio runtime not initialized");
+            rt.block_on(self_update::run_self_update())?;
+        }
         CliAction::Repl {
             model,
             allowed_tools,
@@ -132,6 +137,7 @@ enum CliAction {
         provider: Option<String>,
     },
     Init,
+    Update,
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
@@ -281,6 +287,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             )
         }
         "init" => Ok(CliAction::Init),
+        "update" => Ok(CliAction::Update),
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {
