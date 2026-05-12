@@ -69,3 +69,15 @@ Default model comes from the `default_model` field in the active provider's `Sto
   - For list selectors, Left jumps to the first item and Right jumps to the last item.
   - When scrolling to keep selection visible, use edge-follow behavior (no forced centering jumps).
 - `claw-code/` at the repo root is a separate nested project (has its own `CLAUDE.md`/`README.md`). It is not part of the `acrawl` cargo workspace — don't pull it into workspace-wide edits unless the task is specifically about it.
+
+## Releasing a new version
+
+1. Bump `version` in the root `Cargo.toml` (workspace-level — all crates inherit via `version.workspace = true`).
+2. Run `cargo check` to regenerate `Cargo.lock` (CI builds with `--locked`).
+3. Commit both files: `git commit -am "chore: bump version to X.Y.Z"`
+4. Tag at the version-bump commit: `git tag vX.Y.Z`
+5. Push both: `git push origin main && git push origin vX.Y.Z`
+
+The tag-triggered workflow (`.github/workflows/release.yml`) builds binaries for 5 targets (linux x64/arm64, macos x64/arm64, windows x64), generates `checksums.sha256`, and creates a GitHub Release with all artifacts attached.
+
+**Important:** The tag must point at the commit that contains the version bump. If you tag before bumping, the compiled binary will report the old version via `env!("CARGO_PKG_VERSION")`. If you need to fix a mis-tagged release, delete the remote tag (`git push origin --delete vX.Y.Z`), delete local (`git tag -d vX.Y.Z`), re-tag at the correct commit, and push again.
