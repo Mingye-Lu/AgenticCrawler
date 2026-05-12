@@ -710,8 +710,51 @@ pub(super) fn draw_welcome(
         state.calculate_input_dimensions(input_w, &model_label);
     let input_h = box_height;
 
+    let mut input_y = art_y.saturating_add(art_h).saturating_add(2);
+
+    if let Some(ref info) = state.update_info {
+        if info.is_outdated {
+            let install_cmd = if cfg!(target_os = "windows") {
+                "  Run: irm https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.ps1 | iex".to_string()
+            } else {
+                "  Run: curl -fsSL https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.sh | sh".to_string()
+            };
+            let card_text = vec![
+                Line::from(Span::styled(
+                    format!(
+                        "  Update available: v{} (you have v{})",
+                        info.latest_version, info.current_version
+                    ),
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(Span::styled(
+                    install_cmd,
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+            let card = Paragraph::new(card_text).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().add_modifier(Modifier::DIM)),
+            );
+
+            let card_h = 4;
+            let card_w = art_w.max(60);
+            let card_x = area.x + area.width.saturating_sub(card_w) / 2;
+            let card_y = art_y.saturating_add(art_h).saturating_add(1);
+            let card_area = Rect::new(
+                card_x,
+                card_y,
+                card_w.min(area.width),
+                card_h.min(area.height),
+            );
+            frame.render_widget(card, card_area);
+
+            input_y = card_y.saturating_add(card_h).saturating_add(1);
+        }
+    }
+
     let input_x = area.x + area.width.saturating_sub(input_w) / 2;
-    let input_y = art_y.saturating_add(art_h).saturating_add(2);
     let input_area = Rect::new(
         input_x,
         input_y.min(area.y.saturating_add(area.height.saturating_sub(input_h))),

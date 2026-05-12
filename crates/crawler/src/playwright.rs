@@ -4,6 +4,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use runtime::config_home_dir;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -646,13 +647,7 @@ impl PlaywrightBridge {
         args: Vec<String>,
         launch_timeout: Duration,
     ) -> Result<Self, PlaywrightBridgeError> {
-        let mut command = Command::new(program);
-        command
-            .args(&args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true);
+        let mut command = Self::bridge_command(program, &args);
 
         let mut child = command
             .spawn()
@@ -683,6 +678,29 @@ impl PlaywrightBridge {
         }
 
         Ok(bridge)
+    }
+
+    fn bridge_command(program: &str, args: &[String]) -> Command {
+        let mut command = Command::new(program);
+        let acrawl_node_modules = config_home_dir().join("node_modules");
+        let node_path = match std::env::var_os("NODE_PATH") {
+            Some(existing) => {
+                let mut paths = std::env::split_paths(&existing).collect::<Vec<_>>();
+                if !paths.contains(&acrawl_node_modules) {
+                    paths.insert(0, acrawl_node_modules.clone());
+                }
+                std::env::join_paths(paths).unwrap_or_else(|_| acrawl_node_modules.into())
+            }
+            None => acrawl_node_modules.into(),
+        };
+        command
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .env("NODE_PATH", node_path);
+        command
     }
 
     pub async fn navigate(&mut self, url: &str) -> Result<PageInfo, PlaywrightBridgeError> {
@@ -1154,6 +1172,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+    use runtime::config_home_dir;
+
     use super::{PageInfo, PlaywrightBridge, PlaywrightBridgeError};
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -1185,6 +1205,27 @@ mod tests {
         let path = root.join(format!("{name}.py"));
         fs::write(&path, source).expect("write temp script");
         path
+    }
+
+    #[test]
+    fn bridge_command_sets_node_path_to_config_home_node_modules() {
+        let args = vec!["-e".to_string(), "console.log('ok')".to_string()];
+        let command = PlaywrightBridge::bridge_command("node", &args);
+        let node_path = command.as_std().get_envs().find_map(|(key, value)| {
+            if key == "NODE_PATH" {
+                value.map(std::ffi::OsStr::to_os_string)
+            } else {
+                None
+            }
+        });
+
+        let node_path = node_path.expect("NODE_PATH should be set");
+        let paths: Vec<_> = std::env::split_paths(&node_path).collect();
+        let expected = config_home_dir().join("node_modules");
+        assert!(
+            paths.contains(&expected),
+            "NODE_PATH should contain {expected:?}, got {paths:?}"
+        );
     }
 
     #[tokio::test]
