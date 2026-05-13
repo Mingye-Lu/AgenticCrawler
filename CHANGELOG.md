@@ -5,12 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-05-12
 
 ### Removed
 
 - Classic line-mode REPL. The bare `acrawl` command now always launches the Ratatui TUI; running it without a TTY on stdout exits with an error pointing at `acrawl prompt` (one-shot) and `acrawl --resume` (session maintenance).
 - `classic_repl` field in `~/.acrawl/settings.json`. Existing files with this field set are ignored silently — no migration needed.
+
+### Fixed
+
+- `/exit` and `/quit` now interrupt any running task and exit immediately, even while busy.
 
 ## [0.2.2] - 2026-05-12
 
