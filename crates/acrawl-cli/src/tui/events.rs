@@ -41,6 +41,7 @@ pub enum ReplTuiEvent {
     /// The runtime has exited the paused state.
     PauseEnded,
     /// Event streamed from a forked child agent.
+    #[allow(dead_code)]
     ChildEvent(ChildEvent),
 }
 

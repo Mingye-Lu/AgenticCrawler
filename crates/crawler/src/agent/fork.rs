@@ -145,6 +145,8 @@ impl CrawlerAgent {
             .await
     }
 
+    // Sequential child wait loop — extracting helpers would obscure the timeout/cancel logic.
+    #[allow(clippy::too_many_lines)]
     async fn handle_wait_effect_with_timeout(
         &mut self,
         wait_spec: WaitSpec,

@@ -43,7 +43,7 @@ pub struct ChildEvent {
 
 // ── ChildControlRegistry ─────────────────────────────────────────────────────
 
-/// Thread-safe map of per-child ControlState instances.
+/// Thread-safe map of per-child `ControlState` instances.
 /// Enables independent pause/resume/cancel per child without affecting the parent.
 #[derive(Clone, Default)]
 pub struct ChildControlRegistry {
@@ -51,7 +51,7 @@ pub struct ChildControlRegistry {
 }
 
 impl ChildControlRegistry {
-    /// Register a new child and return its fresh ControlState.
+    /// Register a new child and return its fresh `ControlState`.
     pub fn register(&self, child_id: &str) -> Arc<ControlState> {
         let state = Arc::new(ControlState::default());
         self.states
@@ -61,7 +61,7 @@ impl ChildControlRegistry {
         state
     }
 
-    /// Look up an existing child's ControlState.
+    /// Look up an existing child's `ControlState`.
     pub fn get(&self, child_id: &str) -> Option<Arc<ControlState>> {
         self.states
             .lock()
@@ -78,7 +78,7 @@ impl ChildControlRegistry {
             .remove(child_id);
     }
 
-    /// Cancel all registered children (calls request_cancel() on each).
+    /// Cancel all registered children (calls `request_cancel()` on each).
     pub fn cancel_all(&self) {
         for state in self
             .states
@@ -90,7 +90,7 @@ impl ChildControlRegistry {
         }
     }
 
-    /// Returns (child_id, reason) for all currently paused children.
+    /// Returns `(child_id, reason)` for all currently paused children.
     pub fn get_paused(&self) -> Vec<(String, String)> {
         self.states
             .lock()
@@ -104,8 +104,8 @@ impl ChildControlRegistry {
 
 // ── ChildEventSender ─────────────────────────────────────────────────────────
 
-/// Implements RuntimeObserver and forwards events through an mpsc channel.
-/// Lives in the crawler crate (same as ChildEvent) to avoid cyclic dependencies.
+/// Implements `RuntimeObserver` and forwards events through an mpsc channel.
+/// Lives in the crawler crate (same as `ChildEvent`) to avoid cyclic dependencies.
 pub struct ChildEventSender {
     child_id: String,
     sub_goal: String,
@@ -115,6 +115,7 @@ pub struct ChildEventSender {
 }
 
 impl ChildEventSender {
+    #[must_use]
     pub fn new(
         child_id: String,
         sub_goal: String,

@@ -159,8 +159,7 @@ impl ChildTabPanel {
     pub fn active_tab_is_paused(&self) -> bool {
         self.tabs
             .get(self.active_tab)
-            .map(|t| matches!(t.status, ChildTabStatus::Paused { .. }))
-            .unwrap_or(false)
+            .is_some_and(|t| matches!(t.status, ChildTabStatus::Paused { .. }))
     }
 
     pub fn active_child_id(&self) -> Option<&str> {
@@ -232,6 +231,194 @@ impl ChildTabPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn child_tab_panel_renders_three_states() {
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut panel = ChildTabPanel::default();
+        // Child 1: running
+        panel.get_or_create_tab("child-1", "scrape books");
+        panel.apply_event(
+            "child-1",
+            "scrape books",
+            &crawler::ChildEventKind::StepStarted {
+                step: 3,
+                max_steps: 10,
+            },
+        );
+        // Child 2: paused
+        panel.get_or_create_tab("child-2", "scrape prices");
+        panel.apply_event(
+            "child-2",
+            "scrape prices",
+            &crawler::ChildEventKind::PauseRequested {
+                reason: "captcha detected".into(),
+            },
+        );
+        // Child 3: done
+        panel.get_or_create_tab("child-3", "scrape reviews");
+        panel.apply_event(
+            "child-3",
+            "scrape reviews",
+            &crawler::ChildEventKind::Finished {
+                success: true,
+                items_extracted: 42,
+                error: None,
+            },
+        );
+
+        // Switch to child-2 (paused) since that's what we want to inspect
+        panel.active_tab = 1;
+
+        terminal
+            .draw(|frame| {
+                panel.render(frame, frame.area());
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let content = buffer_to_string(&buffer);
+
+        // Assert tab bar contains child IDs
+        assert!(
+            content.contains("child-1"),
+            "Buffer should contain child-1 tab"
+        );
+        assert!(
+            content.contains("child-2"),
+            "Buffer should contain child-2 tab"
+        );
+        assert!(
+            content.contains("child-3"),
+            "Buffer should contain child-3 tab"
+        );
+
+        // Assert paused child shows pause message
+        assert!(
+            content.contains("PAUSED") || content.contains("captcha"),
+            "Paused tab should show pause reason or PAUSED label"
+        );
+    }
+
+    #[test]
+    fn child_tab_panel_renders_without_panic() {
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut panel = ChildTabPanel::default();
+        panel.get_or_create_tab("child-1", "scrape books");
+        panel.get_or_create_tab("child-2", "scrape prices");
+        panel.apply_event(
+            "child-2",
+            "scrape prices",
+            &crawler::ChildEventKind::PauseRequested {
+                reason: "captcha".into(),
+            },
+        );
+        terminal
+            .draw(|frame| {
+                panel.render(frame, frame.area());
+            })
+            .unwrap();
+        // If we got here without panic, rendering works
+    }
+
+    #[test]
+    fn child_tab_panel_event_state_transitions() {
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut panel = ChildTabPanel::default();
+        panel.get_or_create_tab("agent-a", "fetch data");
+
+        // Start running
+        panel.apply_event(
+            "agent-a",
+            "fetch data",
+            &crawler::ChildEventKind::StepStarted {
+                step: 1,
+                max_steps: 5,
+            },
+        );
+        assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
+
+        // Pause it
+        panel.apply_event(
+            "agent-a",
+            "fetch data",
+            &crawler::ChildEventKind::PauseRequested {
+                reason: "rate limit".into(),
+            },
+        );
+        assert!(matches!(
+            panel.tabs[0].status,
+            ChildTabStatus::Paused { .. }
+        ));
+        assert!(panel.active_tab_is_paused());
+
+        // Resume it
+        panel.apply_event("agent-a", "fetch data", &crawler::ChildEventKind::Resumed);
+        assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
+        assert!(!panel.active_tab_is_paused());
+
+        // Finish it
+        panel.apply_event(
+            "agent-a",
+            "fetch data",
+            &crawler::ChildEventKind::Finished {
+                success: true,
+                items_extracted: 10,
+                error: None,
+            },
+        );
+        assert_eq!(panel.tabs[0].status, ChildTabStatus::Done);
+        assert_eq!(panel.tabs[0].items_extracted, 10);
+
+        // Render final state to confirm no panic
+        terminal
+            .draw(|frame| {
+                panel.render(frame, frame.area());
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer().clone();
+        let content = buffer_to_string(&buffer);
+        assert!(
+            content.contains("Done") || content.contains("✓"),
+            "Done state should be visible in render"
+        );
+    }
+
+    #[test]
+    fn child_tab_panel_empty_renders_nothing() {
+        let backend = TestBackend::new(80, 15);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let panel = ChildTabPanel::default();
+
+        terminal
+            .draw(|frame| {
+                panel.render(frame, frame.area());
+            })
+            .unwrap();
+        // Empty panel should render without panic and produce blank buffer
+    }
+
+    /// Helper: flatten a ratatui Buffer into a single string for assertion searches
+    fn buffer_to_string(buffer: &ratatui::buffer::Buffer) -> String {
+        let area = buffer.area();
+        let mut result = String::new();
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                let cell = &buffer[(x, y)];
+                result.push_str(cell.symbol());
+            }
+            result.push('\n');
+        }
+        result
+    }
 
     #[test]
     fn bounded_scrollback_does_not_exceed_max() {
