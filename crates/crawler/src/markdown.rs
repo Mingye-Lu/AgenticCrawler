@@ -3,7 +3,9 @@ use std::sync::LazyLock;
 
 static CONVERTER: LazyLock<HtmlToMarkdown> = LazyLock::new(|| {
     HtmlToMarkdown::builder()
-        .skip_tags(vec!["script", "style", "noscript", "iframe", "head", "svg"])
+        .skip_tags(vec![
+            "script", "style", "noscript", "iframe", "head", "svg", "nav", "footer",
+        ])
         .build()
 });
 
@@ -87,6 +89,56 @@ fn strip_tags_fallback(html: &str) -> String {
         }
     }
 
+    result
+}
+
+#[must_use]
+pub fn extract_main_html(html: &str) -> String {
+    if let Some(content) = extract_tag_inner(html, "main") {
+        return content;
+    }
+    if let Some(content) = extract_tag_inner(html, "article") {
+        return content;
+    }
+    let mut result = html.to_string();
+    for tag in ["nav", "footer", "header", "aside"] {
+        result = remove_tag_block(&result, tag);
+    }
+    result
+}
+
+fn extract_tag_inner(html: &str, tag: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+
+    let start_pos = lower.find(&open)?;
+    let tag_end = html[start_pos..].find('>')? + start_pos + 1;
+    let close_pos = lower[tag_end..].find(&close)? + tag_end;
+
+    Some(html[tag_end..close_pos].to_string())
+}
+
+fn remove_tag_block(html: &str, tag: &str) -> String {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let mut result = String::with_capacity(html.len());
+    let lower = html.to_ascii_lowercase();
+    let mut pos = 0;
+    while pos < html.len() {
+        if let Some(start) = lower[pos..].find(&open) {
+            result.push_str(&html[pos..pos + start]);
+            let abs = pos + start;
+            if let Some(end) = lower[abs..].find(&close) {
+                pos = abs + end + close.len();
+            } else {
+                pos = html.len();
+            }
+        } else {
+            result.push_str(&html[pos..]);
+            break;
+        }
+    }
     result
 }
 
