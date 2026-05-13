@@ -107,6 +107,14 @@ impl ChildTabPanel {
         }
     }
 
+    pub fn active_tab_state_mut(&mut self) -> Option<&mut ChildTabState> {
+        self.tabs.get_mut(self.active_tab)
+    }
+
+    pub fn find_tab_mut(&mut self, child_id: &str) -> Option<&mut ChildTabState> {
+        self.tabs.iter_mut().find(|t| t.child_id == child_id)
+    }
+
     pub fn apply_event(&mut self, child_id: &str, sub_goal: &str, event: &crawler::ChildEventKind) {
         let idx = self.get_or_create_tab(child_id, sub_goal);
         let tab = &mut self.tabs[idx];
@@ -170,6 +178,7 @@ impl ChildTabPanel {
         self.tabs.get(self.active_tab).map(|t| t.child_id.as_str())
     }
 
+    #[allow(dead_code)]
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect) {
         if self.tabs.is_empty() {
             return;
