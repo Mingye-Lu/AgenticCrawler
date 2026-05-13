@@ -102,8 +102,12 @@ impl ChildTabPanel {
     }
 
     pub fn prev_tab(&mut self) {
-        if !self.tabs.is_empty() && self.active_tab > 0 {
-            self.active_tab -= 1;
+        if !self.tabs.is_empty() {
+            self.active_tab = if self.active_tab == 0 {
+                self.tabs.len() - 1
+            } else {
+                self.active_tab - 1
+            };
         }
     }
 
