@@ -27,10 +27,6 @@ pub struct Settings {
     #[serde(default)]
     pub workspace_dir: Option<String>,
 
-    /// Use classic REPL instead of TUI (default: false)
-    #[serde(default)]
-    pub classic_repl: Option<bool>,
-
     /// Auto-compact input tokens threshold (default: 200000)
     #[serde(default)]
     pub auto_compact_input_tokens: Option<u64>,
@@ -64,7 +60,6 @@ impl Default for Settings {
             model: None,
             reasoning_effort: None,
             workspace_dir: Some("workspace".to_string()),
-            classic_repl: Some(false),
             auto_compact_input_tokens: Some(200_000),
             max_concurrent_per_parent: Some(5),
             max_fork_depth: Some(3),
@@ -250,7 +245,6 @@ mod tests {
         assert_eq!(settings.headless, Some(true));
         assert_eq!(settings.max_steps, Some(50));
         assert_eq!(settings.workspace_dir, Some("workspace".to_string()));
-        assert_eq!(settings.classic_repl, Some(false));
         assert_eq!(settings.auto_compact_input_tokens, Some(200_000));
 
         cleanup_temp_dir(&temp_dir);
@@ -289,7 +283,6 @@ mod tests {
             model: Some("anthropic/claude-sonnet-4-6".to_string()),
             reasoning_effort: Some("high".to_string()),
             workspace_dir: Some("custom_workspace".to_string()),
-            classic_repl: Some(true),
             auto_compact_input_tokens: Some(500_000),
             max_concurrent_per_parent: Some(8),
             max_fork_depth: Some(5),
@@ -435,7 +428,6 @@ mod tests {
             model: Some("anthropic/claude-sonnet-4-6".to_string()),
             reasoning_effort: Some("medium".to_string()),
             workspace_dir: Some("custom_workspace".to_string()),
-            classic_repl: Some(true),
             auto_compact_input_tokens: Some(123_456),
             max_concurrent_per_parent: Some(7),
             max_fork_depth: Some(4),
@@ -456,7 +448,6 @@ mod tests {
         assert_eq!(loaded.model, Some("openai/o4-mini".to_string()));
         assert_eq!(loaded.reasoning_effort, Some("medium".to_string()));
         assert_eq!(loaded.workspace_dir, Some("custom_workspace".to_string()));
-        assert_eq!(loaded.classic_repl, Some(true));
         assert_eq!(loaded.auto_compact_input_tokens, Some(123_456));
         assert_eq!(loaded.max_concurrent_per_parent, Some(7));
         assert_eq!(loaded.max_fork_depth, Some(4));
@@ -490,7 +481,6 @@ mod tests {
             model: None,
             reasoning_effort: None,
             workspace_dir: Some("workspace".to_string()),
-            classic_repl: Some(false),
             auto_compact_input_tokens: Some(200_000),
             max_concurrent_per_parent: Some(8),
             max_fork_depth: Some(4),
@@ -544,7 +534,6 @@ mod tests {
             model: None,
             reasoning_effort: None,
             workspace_dir: None,
-            classic_repl: None,
             auto_compact_input_tokens: None,
             max_concurrent_per_parent: None,
             max_fork_depth: None,
