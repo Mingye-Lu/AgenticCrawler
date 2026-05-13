@@ -1168,7 +1168,7 @@ fn handle_slash_command_tui(
                 let mut g = cli.lock().expect("cli lock");
                 let _ = g.handle_repl_command(other);
             })?;
-            state.push_system("(slash command executed in classic output mode)");
+            state.push_system("(slash command output printed to stdout)");
         }
     }
     Ok(())
@@ -1462,7 +1462,7 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
     });
 }
 
-/// Interactive REPL using Ratatui when stdout is a TTY (unless `ACRAWL_CLASSIC_REPL` is set).
+/// Interactive REPL using Ratatui. Requires a TTY on stdout — the caller must gate accordingly.
 pub fn run_repl_ratatui(
     model: String,
     allowed_tools: Option<AllowedToolSet>,

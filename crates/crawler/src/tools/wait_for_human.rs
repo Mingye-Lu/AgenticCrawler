@@ -26,8 +26,8 @@ fn parse_input(input: &Value) -> Result<WaitForHumanInput, crate::CrawlError> {
 pub fn execute(input: &Value, is_interactive: bool) -> Result<ToolEffect, ToolError> {
     if !is_interactive {
         return Err(ToolError(
-            "wait_for_human is not available in non-interactive mode (one-shot prompt). \
-             Use the TUI or classic REPL for interactive sessions."
+            "wait_for_human is only available in an interactive TUI session \
+             (not in `prompt` or `--resume`)."
                 .to_string(),
         ));
     }
@@ -69,8 +69,8 @@ mod tests {
         let result = super::execute(&input, false);
         let err = result.unwrap_err();
         assert!(
-            err.to_string().contains("non-interactive"),
-            "expected non-interactive error, got: {err}"
+            err.to_string().contains("interactive TUI"),
+            "expected interactive-TUI error, got: {err}"
         );
     }
 

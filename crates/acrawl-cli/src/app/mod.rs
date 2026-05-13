@@ -1,5 +1,4 @@
 mod api_client;
-mod classic_repl;
 mod model_support;
 mod resume;
 mod runtime_builder;
@@ -50,7 +49,6 @@ use crate::auth::{
     interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
 };
 
-pub(crate) use classic_repl::run_repl_classic;
 pub(crate) use resume::run_resume_command;
 
 fn block_on_runtime_future<F, T>(future: F) -> Result<T, RuntimeError>
@@ -95,13 +93,14 @@ pub(crate) fn run_repl(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
 ) -> Result<(), CliError> {
-    let classic =
-        runtime::load_settings().classic_repl.unwrap_or(false) || !io::stdout().is_terminal();
-    if classic {
-        run_repl_classic(model, allowed_tools)
-    } else {
-        Ok(crate::tui::run_repl_ratatui(model, allowed_tools)?)
+    if !io::stdout().is_terminal() {
+        return Err(CliError::from(
+            "acrawl REPL requires an interactive terminal. \
+             For headless use, run `acrawl prompt \"<goal>\"` (one-shot) \
+             or `acrawl --resume <session.json> <slash-commands>` (session maintenance).",
+        ));
     }
+    Ok(crate::tui::run_repl_ratatui(model, allowed_tools)?)
 }
 
 pub(crate) struct LiveCli {
@@ -145,14 +144,6 @@ pub(crate) struct CommandUiResult {
 }
 
 impl LiveCli {
-    pub(crate) fn new(
-        model: String,
-        enable_tools: bool,
-        allowed_tools: Option<AllowedToolSet>,
-    ) -> Result<Self, CliError> {
-        Self::new_with_interactivity(model, enable_tools, allowed_tools, true)
-    }
-
     pub(crate) fn new_non_interactive(
         model: String,
         enable_tools: bool,
@@ -326,27 +317,6 @@ impl LiveCli {
             Ok(_) => finish.map_err(std::convert::Into::into),
             Err(e) => Err(e.into()),
         }
-    }
-
-    fn startup_banner(&self) -> String {
-        let cwd = env::current_dir().map_or_else(
-            |_| "<unknown>".to_string(),
-            |path| path.display().to_string(),
-        );
-        format!(
-            "\x1b[38;5;35m\
-  █████╗  ██████╗██████╗  █████╗ ██╗    ██╗██╗\n\
- ██╔══██╗██╔════╝██╔══██╗██╔══██╗██║    ██║██║\n\
- ███████║██║     ██████╔╝███████║██║ █╗ ██║██║\n\
- ██╔══██║██║     ██╔══██╗██╔══██║██║███╗██║██║\n\
- ██║  ██║╚██████╗██║  ██║██║  ██║╚███╔███╔╝███████╗\n\
- ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝\x1b[0m 🕷️\n\n\
-  \x1b[2mModel\x1b[0m            {}\n\
-  \x1b[2mDirectory\x1b[0m        {}\n\
-  \x1b[2mSession\x1b[0m          {}\n\n\
-  Type \x1b[1m/help\x1b[0m for commands · \x1b[2mShift+Enter\x1b[0m for newline",
-            self.model, cwd, self.session.id,
-        )
     }
 
     pub(crate) fn run_turn(&mut self, input: &str) -> Result<(), CliError> {
