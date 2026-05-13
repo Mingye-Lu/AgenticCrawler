@@ -1,8 +1,8 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use runtime::Session;
+use runtime::{Session, SessionError};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionHandle {
@@ -100,6 +100,24 @@ pub(crate) fn list_managed_sessions(
     Ok(sessions)
 }
 
+#[allow(dead_code)]
+pub(crate) fn delete_session(path: &Path) -> std::io::Result<()> {
+    let _ = fs::remove_file(path.with_extension("tmp"));
+    fs::remove_file(path)
+}
+
+#[allow(dead_code)]
+pub(crate) fn rename_session(path: &Path, new_title: &str) -> Result<(), SessionError> {
+    let mut session = Session::load_from_path(path)?;
+    let trimmed = new_title.trim();
+    session.title = if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    };
+    session.save_to_path(path)
+}
+
 pub(crate) fn render_session_list(
     active_session_id: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -128,4 +146,80 @@ pub(crate) fn render_session_list(
         ));
     }
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{delete_session, rename_session};
+    use runtime::Session;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_session_path() -> std::path::PathBuf {
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("acrawl-session-mgr-test-{millis}-{n}.json"))
+    }
+
+    #[test]
+    fn delete_session_removes_file_and_tmp_sibling() {
+        let path = temp_session_path();
+        Session::new()
+            .save_to_path(&path)
+            .expect("write session file");
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, b"stale").expect("write stale tmp");
+
+        delete_session(&path).expect("delete");
+
+        assert!(!path.exists(), "session file should be gone");
+        assert!(!tmp.exists(), "stale .tmp sibling should be removed");
+    }
+
+    #[test]
+    fn delete_session_succeeds_without_tmp_sibling() {
+        let path = temp_session_path();
+        Session::new()
+            .save_to_path(&path)
+            .expect("write session file");
+
+        delete_session(&path).expect("delete");
+
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn rename_session_sets_title_round_trip() {
+        let path = temp_session_path();
+        Session::new()
+            .save_to_path(&path)
+            .expect("write session file");
+
+        rename_session(&path, "  Hello World  ").expect("rename");
+
+        let loaded = Session::load_from_path(&path).expect("reload");
+        assert_eq!(loaded.title.as_deref(), Some("Hello World"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rename_session_with_empty_string_clears_title() {
+        let path = temp_session_path();
+        let mut session = Session::new();
+        session.title = Some("Old Title".to_string());
+        session.save_to_path(&path).expect("write");
+
+        rename_session(&path, "   ").expect("rename");
+
+        let loaded = Session::load_from_path(&path).expect("reload");
+        assert!(loaded.title.is_none(), "empty title should clear field");
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
