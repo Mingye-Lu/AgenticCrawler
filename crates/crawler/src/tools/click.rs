@@ -33,9 +33,12 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         .await
         .map_err(|e| ToolError(e.to_string()))?;
 
+    let page_state = super::feedback::post_action_page_state(browser).await;
+
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "success": true,
-        "message": format!("Clicked element: {}", params.selector)
+        "message": format!("Clicked element: {}", params.selector),
+        "page_state": page_state
     })))
 }
 
@@ -76,5 +79,22 @@ mod tests {
         let input = json!({"selector": "div.container > ul > li:nth-child(2) a"});
         let result = parse_input(&input).unwrap();
         assert_eq!(result.selector, "div.container > ul > li:nth-child(2) a");
+    }
+
+    #[test]
+    fn click_response_includes_page_state() {
+        let mock_pm = json!({
+            "headings": [], "landmarks": [], "forms": [], "links": [],
+            "interactive": {}, "meta": {"title": "Test", "url": "https://test.com", "description": ""}
+        });
+        let page_state = crate::tools::feedback::build_page_state_from_map(mock_pm);
+        let response = json!({
+            "success": true,
+            "message": "Clicked element: .btn",
+            "page_state": page_state
+        });
+        assert!(response["page_state"]["url"].is_string());
+        assert!(response["page_state"]["title"].is_string());
+        assert!(!response["page_state"]["page_map"].is_null());
     }
 }

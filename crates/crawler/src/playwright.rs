@@ -261,7 +261,7 @@ async function bootstrap() {
 
     if (command.action === 'page_map') {
       try {
-        const sections = await page.evaluate(() => {
+        const result = await page.evaluate(() => {
           function cssPath(el) {
             if (el.id) return '#' + CSS.escape(el.id);
             const parts = [];
@@ -278,8 +278,8 @@ async function bootstrap() {
             }
             return parts.join(' > ');
           }
-          const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
-          return headings.map((el) => {
+
+          const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((el) => {
             const level = parseInt(el.tagName[1]);
             const text = el.innerText.trim();
             const id = el.id || null;
@@ -296,8 +296,76 @@ async function bootstrap() {
             const preview = char_count > 100 ? content.slice(0, 100).trim() + '...' : content.trim();
             return { level, text, id, selector, char_count, preview };
           });
+
+          const landmarks = Array.from(document.querySelectorAll('nav, main, aside, article, footer, header, section[aria-label], [role="navigation"], [role="main"], [role="complementary"]')).map((el) => ({
+            tag: el.tagName.toLowerCase(),
+            role: el.getAttribute('role'),
+            id: el.id || null,
+            selector: cssPath(el),
+            text_preview: (el.innerText || '').trim().slice(0, 120),
+          }));
+          const total_landmarks = landmarks.length;
+          const cappedLandmarks = landmarks.slice(0, 20);
+
+          const MAX_FORMS = 10;
+          const MAX_FIELDS_PER_FORM = 30;
+          const allForms = Array.from(document.querySelectorAll('form'));
+          const total_forms = allForms.length;
+          const forms = allForms.slice(0, MAX_FORMS).map((f) => {
+            const allFields = Array.from(f.querySelectorAll('input, select, textarea'));
+            const fields = allFields.slice(0, MAX_FIELDS_PER_FORM).map((el) => {
+              const label = el.id
+                ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent?.trim() || el.placeholder || ''
+                : el.placeholder || '';
+              return {
+                name: el.name || '',
+                type: el.type || el.tagName.toLowerCase(),
+                label,
+                required: Boolean(el.required),
+              };
+            });
+            return {
+              action: f.action || '',
+              method: f.method || 'get',
+              id: f.id || null,
+              selector: cssPath(f),
+              fields,
+              total_fields: allFields.length,
+            };
+          });
+
+          const seenHrefs = new Set();
+          const MAX_LINKS = 50;
+          let total_links = 0;
+          const links = [];
+          for (const a of document.querySelectorAll('a[href]')) {
+            const text = (a.textContent || '').trim();
+            const rawHref = a.getAttribute('href') || '';
+            const href = a.href || rawHref;
+            if (!text || rawHref.startsWith('#') || seenHrefs.has(href)) continue;
+            seenHrefs.add(href);
+            total_links++;
+            if (links.length < MAX_LINKS) {
+              links.push({ text, href, selector: cssPath(a) });
+            }
+          }
+
+          const interactive = {
+            buttons: document.querySelectorAll('button').length,
+            inputs: document.querySelectorAll('input').length,
+            selects: document.querySelectorAll('select').length,
+            textareas: document.querySelectorAll('textarea').length,
+          };
+
+          const meta = {
+            title: document.title,
+            description: document.querySelector('meta[name="description"]')?.content || '',
+            url: window.location.href,
+          };
+
+          return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, total_landmarks, total_forms, total_links };
         });
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { sections } }) + '\n');
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'page_map_error', message: String(error) } }) + '\n');
       }
