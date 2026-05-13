@@ -83,7 +83,10 @@ impl ChildTabPanel {
         if let Some(idx) = self.tabs.iter().position(|t| t.child_id == child_id) {
             return idx;
         }
-        self.tabs.push(ChildTabState::new(child_id.to_string(), sub_goal.to_string()));
+        self.tabs.push(ChildTabState::new(
+            child_id.to_string(),
+            sub_goal.to_string(),
+        ));
         self.active_tab = self.tabs.len() - 1;
         self.tabs.len() - 1
     }
@@ -111,23 +114,36 @@ impl ChildTabPanel {
             crawler::ChildEventKind::TextDelta(text) => {
                 tab.append_text(text);
             }
-            crawler::ChildEventKind::ToolCallStart { name, input_summary } => {
+            crawler::ChildEventKind::ToolCallStart {
+                name,
+                input_summary,
+            } => {
                 tab.tool_in_progress = Some(name.clone());
                 tab.append_text(&format!("[tool] {name}: {input_summary}"));
             }
-            crawler::ChildEventKind::ToolCallComplete { name, output_summary, is_error } => {
+            crawler::ChildEventKind::ToolCallComplete {
+                name,
+                output_summary,
+                is_error,
+            } => {
                 tab.tool_in_progress = None;
                 let prefix = if *is_error { "[error]" } else { "[done]" };
                 tab.append_text(&format!("{prefix} {name}: {output_summary}"));
             }
             crawler::ChildEventKind::PauseRequested { reason } => {
-                tab.status = ChildTabStatus::Paused { reason: reason.clone() };
+                tab.status = ChildTabStatus::Paused {
+                    reason: reason.clone(),
+                };
                 self.active_tab = idx;
             }
             crawler::ChildEventKind::Resumed => {
                 tab.status = ChildTabStatus::Running;
             }
-            crawler::ChildEventKind::Finished { success, items_extracted, error } => {
+            crawler::ChildEventKind::Finished {
+                success,
+                items_extracted,
+                error,
+            } => {
                 tab.items_extracted = *items_extracted;
                 tab.status = if *success {
                     ChildTabStatus::Done
@@ -202,8 +218,12 @@ impl ChildTabPanel {
 
             let available = usize::from(inner.height.max(1));
             let start = tab.scrollback.len().saturating_sub(available);
-            let lines: Vec<Line<'_>> =
-                tab.scrollback.iter().skip(start).map(|s| Line::raw(s.clone())).collect();
+            let lines: Vec<Line<'_>> = tab
+                .scrollback
+                .iter()
+                .skip(start)
+                .map(|s| Line::raw(s.clone()))
+                .collect();
             frame.render_widget(Paragraph::new(lines), inner);
         }
     }
@@ -237,9 +257,13 @@ mod tests {
         panel.get_or_create_tab("c1", "g1");
         panel.get_or_create_tab("c2", "g2");
         panel.active_tab = 0;
-        panel.apply_event("c2", "g2", &crawler::ChildEventKind::PauseRequested {
-            reason: "captcha".into(),
-        });
+        panel.apply_event(
+            "c2",
+            "g2",
+            &crawler::ChildEventKind::PauseRequested {
+                reason: "captcha".into(),
+            },
+        );
         assert_eq!(panel.active_tab, 1);
         assert!(panel.active_tab_is_paused());
     }
@@ -249,10 +273,25 @@ mod tests {
         let mut panel = ChildTabPanel::default();
         panel.get_or_create_tab("c1", "g1");
         panel.get_or_create_tab("c2", "g2");
-        panel.apply_event("c1", "g1", &crawler::ChildEventKind::PauseRequested { reason: "r1".into() });
-        panel.apply_event("c2", "g2", &crawler::ChildEventKind::PauseRequested { reason: "r2".into() });
+        panel.apply_event(
+            "c1",
+            "g1",
+            &crawler::ChildEventKind::PauseRequested {
+                reason: "r1".into(),
+            },
+        );
+        panel.apply_event(
+            "c2",
+            "g2",
+            &crawler::ChildEventKind::PauseRequested {
+                reason: "r2".into(),
+            },
+        );
         panel.apply_event("c1", "g1", &crawler::ChildEventKind::Resumed);
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
-        assert!(matches!(panel.tabs[1].status, ChildTabStatus::Paused { .. }));
+        assert!(matches!(
+            panel.tabs[1].status,
+            ChildTabStatus::Paused { .. }
+        ));
     }
 }

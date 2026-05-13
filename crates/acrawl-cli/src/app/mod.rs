@@ -273,7 +273,9 @@ impl LiveCli {
         self.session.id.as_str()
     }
 
-    pub(crate) fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<crawler::ChildEvent>> {
+    pub(crate) fn take_child_event_rx(
+        &mut self,
+    ) -> Option<std::sync::mpsc::Receiver<crawler::ChildEvent>> {
         self.child_event_rx.take()
     }
 
