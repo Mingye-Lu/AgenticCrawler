@@ -13,7 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Spinner switches to a static stop indicator (◼) during interruption with "Interrupting…" label in both the transcript overlay and footer.
 - In-flight tool call entries in the transcript are marked as interrupted instead of spinning forever.
 - Interrupted tool calls now insert proper `tool_result` stubs so the API does not reject the next turn with a missing-result 400 error.
-- `/exit` and `/quit` now interrupt any running task and exit immediately, even while busy.
 
 ## [0.2.1] - 2026-05-11
 
