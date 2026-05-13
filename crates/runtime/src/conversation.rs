@@ -296,9 +296,7 @@ where
                 }
 
                 let mut interrupted_at = None;
-                for (idx, (tool_use_id, tool_name, input)) in
-                    pending_tool_uses.iter().enumerate()
-                {
+                for (idx, (tool_use_id, tool_name, input)) in pending_tool_uses.iter().enumerate() {
                     if interrupted_at.is_some() {
                         let stub = ConversationMessage::tool_result(
                             tool_use_id.clone(),

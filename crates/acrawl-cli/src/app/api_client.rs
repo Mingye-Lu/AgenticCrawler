@@ -113,8 +113,8 @@ impl ApiClient for LlmRuntimeClient {
                         return Err(RuntimeError::new("interrupted by user"));
                     };
 
-                    let Some(event) = result
-                        .map_err(|error| RuntimeError::new(error.to_string()))?
+                    let Some(event) =
+                        result.map_err(|error| RuntimeError::new(error.to_string()))?
                     else {
                         break;
                     };
