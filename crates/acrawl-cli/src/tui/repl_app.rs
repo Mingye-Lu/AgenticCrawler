@@ -162,6 +162,7 @@ pub(super) struct ReplTuiState {
     input: InputEditorState,
     status_line: String,
     pub(super) busy: bool,
+    pub(super) cancelling: bool,
     pending_model_after_auth: Option<String>,
     active_modal: Option<ActiveModal>,
     /// Picker catalog state for the `/model` modal.
@@ -208,6 +209,7 @@ impl ReplTuiState {
             },
             status_line: String::new(),
             busy: false,
+            cancelling: false,
             pending_model_after_auth: None,
             active_modal: None,
             live_model_catalog: ModelCatalogState::Loading,
@@ -266,6 +268,9 @@ impl ReplTuiState {
     /// Returns the spinner frame matching the current tick.
     pub(super) fn spinner_char(&self) -> char {
         const FRAMES: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+        if self.cancelling {
+            return '◼';
+        }
         FRAMES[usize::from(self.spinner_tick) % FRAMES.len()]
     }
 
@@ -871,6 +876,7 @@ impl ReplTuiState {
                 }
                 ReplTuiEvent::TurnFinished(result) => {
                     self.busy = false;
+                    self.cancelling = false;
                     self.current_tool = None;
                     self.status_line = match &result {
                         Ok(()) => "Ready".to_string(),
@@ -1861,6 +1867,7 @@ fn run_loop(
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if state.busy {
                         cancel_flag.request_cancel();
+                        state.cancelling = true;
                         state.push_system("Interrupting…");
                         continue;
                     }
@@ -2051,6 +2058,7 @@ fn run_loop(
                                 .is_some_and(|t| now.duration_since(t) < Duration::from_millis(500))
                             {
                                 cancel_flag.request_cancel();
+                                state.cancelling = true;
                                 state.push_system("Interrupting…");
                                 state.last_esc_at = None;
                             } else {
