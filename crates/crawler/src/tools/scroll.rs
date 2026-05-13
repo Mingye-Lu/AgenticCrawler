@@ -17,8 +17,8 @@ pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
     }
 
     let pixels = input
-        .get("amount")
-        .or_else(|| input.get("pixels"))
+        .get("pixels")
+        .or_else(|| input.get("amount"))
         .and_then(serde_json::Value::as_i64)
         .unwrap_or(500);
 
@@ -53,10 +53,18 @@ mod tests {
 
     #[test]
     fn parses_direction_and_pixels() {
-        let input = json!({"direction": "down", "amount": 300});
+        let input = json!({"direction": "down", "pixels": 300});
         let (dir, px) = parse_input(&input).unwrap();
         assert_eq!(dir, "down");
         assert_eq!(px, 300);
+    }
+
+    #[test]
+    fn accepts_legacy_amount_key() {
+        let input = json!({"direction": "down", "amount": 200});
+        let (dir, px) = parse_input(&input).unwrap();
+        assert_eq!(dir, "down");
+        assert_eq!(px, 200);
     }
 
     #[test]
