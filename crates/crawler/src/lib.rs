@@ -154,7 +154,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option."),
+            instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option. Returns a `page_state` with the updated page structure after selection."),
         },
         ToolSpec {
             name: "execute_js",
@@ -182,7 +182,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Use to reveal tooltips, dropdown menus, or hidden content. Returns a `page_state` with the updated page structure after hover."),
         },
         ToolSpec {
             name: "press_key",
@@ -197,7 +197,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Press Enter to submit, Escape to close modals, Tab to move focus, or arrow keys to navigate. Optional `selector` targets a specific element. Returns a `page_state` with the updated page structure after the keypress."),
         },
         ToolSpec {
             name: "switch_tab",
