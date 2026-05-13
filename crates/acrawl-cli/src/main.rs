@@ -4,7 +4,6 @@ mod display_width;
 mod error;
 mod format;
 mod init;
-mod input;
 mod markdown;
 mod output_sink;
 mod self_update;
