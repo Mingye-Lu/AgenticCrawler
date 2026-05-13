@@ -118,7 +118,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "direction": { "type": "string", "enum": ["up", "down"] },
-                    "amount": { "type": "integer" }
+                    "pixels": { "type": "integer", "description": "Pixels to scroll (default: 500). Use 300–800 for a normal page scroll." }
                 },
                 "additionalProperties": false
             }),
