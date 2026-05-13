@@ -66,9 +66,11 @@ pub(super) fn build_runtime_with_options(
         enable_tools,
         allowed_tools.clone(),
     ));
+    let mut api_client = LlmRuntimeClient::new(model, enable_tools, allowed_tools.clone());
+    api_client.set_control_state(Arc::clone(&shared_control));
     Ok(ConversationRuntime::new_with_features(
         session,
-        LlmRuntimeClient::new(model, enable_tools, allowed_tools.clone()),
+        api_client,
         CliToolExecutor::new(
             allowed_tools,
             fork_client,

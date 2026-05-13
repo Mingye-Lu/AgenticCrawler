@@ -4,9 +4,11 @@ use api::{
     MessageResponse, OutputContentBlock, ToolChoice, ToolDefinition, ToolResultContentBlock,
 };
 use runtime::{
-    ApiClient, AssistantEvent, ConversationMessage, MessageRole, RuntimeError, TokenUsage,
+    ApiClient, AssistantEvent, ControlState, ConversationMessage, MessageRole, RuntimeError,
+    TokenUsage,
 };
 use serde_json::json;
+use std::sync::Arc;
 
 use super::{filter_tool_specs, AllowedToolSet};
 
@@ -17,6 +19,7 @@ pub(crate) struct LlmRuntimeClient {
     enable_tools: bool,
     allowed_tools: Option<AllowedToolSet>,
     reasoning_effort: Option<api::ReasoningEffort>,
+    control_state: Option<Arc<ControlState>>,
 }
 
 impl LlmRuntimeClient {
@@ -45,7 +48,12 @@ impl LlmRuntimeClient {
             enable_tools,
             allowed_tools,
             reasoning_effort: None,
+            control_state: None,
         }
+    }
+
+    pub(crate) fn set_control_state(&mut self, state: Arc<ControlState>) {
+        self.control_state = Some(state);
     }
 
     pub(crate) fn set_reasoning_effort(&mut self, effort: Option<api::ReasoningEffort>) {
@@ -90,11 +98,27 @@ impl ApiClient for LlmRuntimeClient {
                     .await
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
 
-                while let Some(event) = stream
-                    .next_event()
-                    .await
-                    .map_err(|error| RuntimeError::new(error.to_string()))?
-                {
+                loop {
+                    let next_event = if let Some(ref cs) = self.control_state {
+                        tokio::select! {
+                            biased;
+                            () = cs.cancelled() => None,
+                            ev = stream.next_event() => Some(ev),
+                        }
+                    } else {
+                        Some(stream.next_event().await)
+                    };
+
+                    let Some(result) = next_event else {
+                        return Err(RuntimeError::new("interrupted by user"));
+                    };
+
+                    let Some(event) = result
+                        .map_err(|error| RuntimeError::new(error.to_string()))?
+                    else {
+                        break;
+                    };
+
                     match event {
                         api::StreamEvent::MessageStart(start) => {
                             for block in start.message.content {
