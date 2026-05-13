@@ -114,6 +114,7 @@ pub(crate) struct LiveCli {
     reasoning_effort: Option<api::ReasoningEffort>,
     debug_mode: bool,
     child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
+    child_control_registry: Option<crawler::ChildControlRegistry>,
 }
 
 #[derive(Clone)]
@@ -203,6 +204,7 @@ impl LiveCli {
             reasoning_effort: initial_effort,
             debug_mode: false,
             child_event_rx: None,
+            child_control_registry: None,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -235,7 +237,7 @@ impl LiveCli {
             true,
             None,
             Some(child_event_tx),
-            Some(registry),
+            Some(registry.clone()),
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
             let saved = settings
@@ -256,6 +258,7 @@ impl LiveCli {
             reasoning_effort: initial_effort,
             debug_mode: false,
             child_event_rx: Some(child_event_rx),
+            child_control_registry: Some(registry.clone()),
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -272,6 +275,10 @@ impl LiveCli {
 
     pub(crate) fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<crawler::ChildEvent>> {
         self.child_event_rx.take()
+    }
+
+    pub(crate) fn take_child_control_registry(&mut self) -> Option<crawler::ChildControlRegistry> {
+        self.child_control_registry.take()
     }
 
     pub(crate) fn model_name(&self) -> &str {

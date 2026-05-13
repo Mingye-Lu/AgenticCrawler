@@ -15,6 +15,7 @@ use crate::markdown::PredictiveMarkdownBuffer;
 use crate::tool_format::tool_input_summary;
 use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
+use crate::tui::child_tabs;
 use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::repl_render::{
     ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
@@ -187,6 +188,9 @@ pub(super) struct ReplTuiState {
     pub(super) update_info: Option<runtime::update_check::UpdateInfo>,
     pub(super) update_rx:
         Option<tokio::sync::oneshot::Receiver<Option<runtime::update_check::UpdateInfo>>>,
+    pub(super) child_tab_panel: child_tabs::ChildTabPanel,
+    child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
+    pub(super) child_control_registry: Option<crawler::ChildControlRegistry>,
 }
 
 impl ReplTuiState {
@@ -236,6 +240,9 @@ impl ReplTuiState {
             debug_mode: false,
             update_info: None,
             update_rx: None,
+            child_tab_panel: child_tabs::ChildTabPanel::default(),
+            child_event_rx: None,
+            child_control_registry: None,
         }
     }
 
@@ -989,6 +996,17 @@ impl ReplTuiState {
                 ReplTuiEvent::ChildEvent(_) => {}
             }
         }
+
+        // Drain child agent events
+        if let Some(ref child_rx) = self.child_event_rx {
+            while let Ok(child_ev) = child_rx.try_recv() {
+                self.child_tab_panel.apply_event(
+                    &child_ev.child_id,
+                    &child_ev.sub_goal,
+                    &child_ev.event,
+                );
+            }
+        }
     }
 }
 
@@ -1498,6 +1516,13 @@ fn run_loop(
 
     let mut state = ReplTuiState::new();
 
+    // Claim child event receiver and registry from LiveCli
+    {
+        let mut g = cli.lock().expect("cli lock");
+        state.child_event_rx = g.take_child_event_rx();
+        state.child_control_registry = g.take_child_control_registry();
+    }
+
     let (update_tx, update_rx) =
         tokio::sync::oneshot::channel::<Option<runtime::update_check::UpdateInfo>>();
     state.update_rx = Some(update_rx);
@@ -1908,6 +1933,16 @@ fn run_loop(
                     continue;
                 }
 
+                // Tab/Shift+Tab to switch child tabs
+                if key.code == KeyCode::Tab && !state.child_tab_panel.tabs.is_empty() {
+                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        state.child_tab_panel.prev_tab();
+                    } else {
+                        state.child_tab_panel.next_tab();
+                    }
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                         state.insert_input_char('\n');
@@ -1915,6 +1950,18 @@ fn run_loop(
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
+                        // Child tab resume (check before parent pause)
+                        if state.child_tab_panel.active_tab_is_paused() {
+                            if let Some(child_id) = state.child_tab_panel.active_child_id() {
+                                if let Some(registry) = &state.child_control_registry {
+                                    if let Some(child_state) = registry.get(child_id) {
+                                        child_state.resume();
+                                        state.push_system(&format!("Resuming child {child_id}..."));
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         if state.paused {
                             cancel_flag.resume();
                             state.paused = false;

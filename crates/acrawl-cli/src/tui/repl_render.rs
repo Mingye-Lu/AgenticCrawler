@@ -928,20 +928,25 @@ pub(super) fn draw_chat(
     let (footer_h, render_lines, max_scroll, cursor_pos) =
         state.calculate_input_dimensions(area.width, &header.model);
 
-    // Layout: 1-row header | transcript | 1-row spacer | input footer
+    let has_children = !state.child_tab_panel.tabs.is_empty();
+    let child_panel_h: u16 = if has_children { 10 } else { 0 };
+
+    // Layout: 1-row header | transcript | child panel | 1-row spacer | input footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(4),
+            Constraint::Length(child_panel_h),
             Constraint::Length(1),
             Constraint::Length(footer_h),
         ])
         .split(area);
     let header_area = chunks[0];
     let main_area = chunks[1];
-    // chunks[2] is the spacer gap - intentionally left empty for breathing room
-    let input_area = chunks[3];
+    let child_panel_area = chunks[2];
+    // chunks[3] is the spacer gap - intentionally left empty for breathing room
+    let input_area = chunks[4];
 
     draw_header(frame, header_area, header);
 
@@ -984,6 +989,10 @@ pub(super) fn draw_chat(
         .highlight_spacing(HighlightSpacing::Never)
         .scroll_padding(2);
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
+
+    if has_children {
+        state.child_tab_panel.render(frame, child_panel_area);
+    }
 
     if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {
         let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
