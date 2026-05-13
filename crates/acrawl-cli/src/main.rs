@@ -4,7 +4,6 @@ mod display_width;
 mod error;
 mod format;
 mod init;
-mod input;
 mod markdown;
 mod output_sink;
 mod self_update;
@@ -840,12 +839,10 @@ mod tests {
     }
 
     #[test]
-    fn parses_resume_and_config_slash_commands() {
+    fn parses_sessions_and_config_slash_commands() {
         assert_eq!(
-            SlashCommand::parse("/resume saved-session.json"),
-            Some(SlashCommand::Resume {
-                session_path: Some("saved-session.json".to_string())
-            })
+            SlashCommand::parse("/sessions"),
+            Some(SlashCommand::Sessions)
         );
         assert_eq!(
             SlashCommand::parse("/config"),

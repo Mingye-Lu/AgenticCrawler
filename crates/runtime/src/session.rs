@@ -47,6 +47,7 @@ pub struct ConversationMessage {
 pub struct Session {
     pub version: u32,
     pub model: Option<String>,
+    pub title: Option<String>,
     pub messages: Vec<ConversationMessage>,
 }
 
@@ -87,12 +88,18 @@ impl Session {
         Self {
             version: 1,
             model: None,
+            title: None,
             messages: Vec::new(),
         }
     }
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), SessionError> {
         let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
         let temp_path = path.with_extension("tmp");
         {
             let mut file = fs::File::create(&temp_path)?;
@@ -117,6 +124,9 @@ impl Session {
         );
         if let Some(model) = &self.model {
             object.insert("model".to_string(), JsonValue::String(model.clone()));
+        }
+        if let Some(title) = &self.title {
+            object.insert("title".to_string(), JsonValue::String(title.clone()));
         }
         object.insert(
             "messages".to_string(),
@@ -149,6 +159,10 @@ impl Session {
             .get("model")
             .and_then(JsonValue::as_str)
             .map(ToOwned::to_owned);
+        let title = object
+            .get("title")
+            .and_then(JsonValue::as_str)
+            .map(ToOwned::to_owned);
         let messages = object
             .get("messages")
             .and_then(JsonValue::as_array)
@@ -159,6 +173,7 @@ impl Session {
         Ok(Self {
             version,
             model,
+            title,
             messages,
         })
     }

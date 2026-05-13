@@ -1,8 +1,8 @@
 mod api_client;
-mod classic_repl;
 mod model_support;
 mod resume;
 mod runtime_builder;
+mod title_namer;
 mod tool_executor;
 
 use std::collections::BTreeSet;
@@ -10,20 +10,18 @@ use std::env;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::str::FromStr;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 
 use crate::error::CliError;
 use crate::format::{
     format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
-    format_model_switch_report, format_resume_report, format_status_report, render_config_report,
-    render_export_text, render_repl_help, render_version_report, resolve_export_path,
-    status_context, StatusUsage, DEFAULT_DATE,
+    format_model_switch_report, format_status_report, render_config_report, render_export_text,
+    render_repl_help, render_version_report, resolve_export_path, status_context, StatusUsage,
+    DEFAULT_DATE,
 };
 use crate::markdown::{Spinner, TerminalRenderer};
 use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
-use crate::session_mgr::{
-    create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
-};
+use crate::session_mgr::{create_managed_session_handle, SessionHandle};
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crawler::mvp_tool_specs;
@@ -50,7 +48,6 @@ use crate::auth::{
     interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
 };
 
-pub(crate) use classic_repl::run_repl_classic;
 pub(crate) use resume::run_resume_command;
 
 fn block_on_runtime_future<F, T>(future: F) -> Result<T, RuntimeError>
@@ -95,13 +92,14 @@ pub(crate) fn run_repl(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
 ) -> Result<(), CliError> {
-    let classic =
-        runtime::load_settings().classic_repl.unwrap_or(false) || !io::stdout().is_terminal();
-    if classic {
-        run_repl_classic(model, allowed_tools)
-    } else {
-        Ok(crate::tui::run_repl_ratatui(model, allowed_tools)?)
+    if !io::stdout().is_terminal() {
+        return Err(CliError::from(
+            "acrawl REPL requires an interactive terminal. \
+             For headless use, run `acrawl prompt \"<goal>\"` (one-shot) \
+             or `acrawl --resume <session.json> <slash-commands>` (session maintenance).",
+        ));
     }
+    Ok(crate::tui::run_repl_ratatui(model, allowed_tools)?)
 }
 
 pub(crate) struct LiveCli {
@@ -115,6 +113,8 @@ pub(crate) struct LiveCli {
     debug_mode: bool,
     child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
     child_control_registry: Option<crawler::ChildControlRegistry>,
+    pending_title: Arc<Mutex<Option<String>>>,
+    title_dispatched: bool,
 }
 
 #[derive(Clone)]
@@ -147,14 +147,6 @@ pub(crate) struct CommandUiResult {
 }
 
 impl LiveCli {
-    pub(crate) fn new(
-        model: String,
-        enable_tools: bool,
-        allowed_tools: Option<AllowedToolSet>,
-    ) -> Result<Self, CliError> {
-        Self::new_with_interactivity(model, enable_tools, allowed_tools, true)
-    }
-
     pub(crate) fn new_non_interactive(
         model: String,
         enable_tools: bool,
@@ -171,7 +163,7 @@ impl LiveCli {
     ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
-        let session = create_managed_session_handle()?;
+        let session = create_managed_session_handle();
         let output_mode = OutputMode::Stdout;
         let runtime = build_runtime_with_options(
             Session::new(),
@@ -205,13 +197,14 @@ impl LiveCli {
             debug_mode: false,
             child_event_rx: None,
             child_control_registry: None,
+            pending_title: Arc::new(Mutex::new(None)),
+            title_dispatched: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
-        cli.persist_session()?;
         Ok(cli)
     }
 
@@ -223,7 +216,7 @@ impl LiveCli {
     ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
-        let session = create_managed_session_handle()?;
+        let session = create_managed_session_handle();
         let output_mode = OutputMode::Channel(event_tx);
         let (child_event_tx, child_event_rx) = std::sync::mpsc::channel::<crawler::ChildEvent>();
         let registry = crawler::ChildControlRegistry::default();
@@ -259,13 +252,14 @@ impl LiveCli {
             debug_mode: false,
             child_event_rx: Some(child_event_rx),
             child_control_registry: Some(registry.clone()),
+            pending_title: Arc::new(Mutex::new(None)),
+            title_dispatched: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
-        cli.persist_session()?;
         Ok(cli)
     }
 
@@ -328,6 +322,7 @@ impl LiveCli {
     }
 
     pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), CliError> {
+        self.maybe_dispatch_title_generation(input);
         if let Some(tx) = self.event_sender() {
             let _ = tx.send(ReplTuiEvent::TurnStarting);
         }
@@ -350,28 +345,8 @@ impl LiveCli {
         }
     }
 
-    fn startup_banner(&self) -> String {
-        let cwd = env::current_dir().map_or_else(
-            |_| "<unknown>".to_string(),
-            |path| path.display().to_string(),
-        );
-        format!(
-            "\x1b[38;5;35m\
-  █████╗  ██████╗██████╗  █████╗ ██╗    ██╗██╗\n\
- ██╔══██╗██╔════╝██╔══██╗██╔══██╗██║    ██║██║\n\
- ███████║██║     ██████╔╝███████║██║ █╗ ██║██║\n\
- ██╔══██║██║     ██╔══██╗██╔══██║██║███╗██║██║\n\
- ██║  ██║╚██████╗██║  ██║██║  ██║╚███╔███╔╝███████╗\n\
- ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝\x1b[0m 🕷️\n\n\
-  \x1b[2mModel\x1b[0m            {}\n\
-  \x1b[2mDirectory\x1b[0m        {}\n\
-  \x1b[2mSession\x1b[0m          {}\n\n\
-  Type \x1b[1m/help\x1b[0m for commands · \x1b[2mShift+Enter\x1b[0m for newline",
-            self.model, cwd, self.session.id,
-        )
-    }
-
     pub(crate) fn run_turn(&mut self, input: &str) -> Result<(), CliError> {
+        self.maybe_dispatch_title_generation(input);
         let mut spinner = Spinner::new();
         let mut stdout = io::stdout();
         spinner.tick(
@@ -420,6 +395,7 @@ impl LiveCli {
     }
 
     fn run_prompt_json(&mut self, input: &str) -> Result<(), CliError> {
+        self.maybe_dispatch_title_generation(input);
         let session = self.runtime.session().clone();
         let mut runtime = build_runtime(
             session,
@@ -491,11 +467,6 @@ impl LiveCli {
                 println!("{}", self.cost_report());
                 false
             }
-            SlashCommand::Resume { session_path } => {
-                let result = self.resume_session_command(session_path)?;
-                println!("{}", result.message);
-                result.persist_after
-            }
             SlashCommand::Config { section } => {
                 println!("{}", Self::config_report(section.as_deref())?);
                 false
@@ -508,10 +479,9 @@ impl LiveCli {
                 println!("{}", self.export_session_report(path.as_deref())?);
                 false
             }
-            SlashCommand::Session { action, target } => {
-                let result = self.session_command(action.as_deref(), target.as_deref())?;
-                println!("{}", result.message);
-                result.persist_after
+            SlashCommand::Sessions => {
+                println!("Session picker is only available in the interactive TUI.");
+                false
             }
             SlashCommand::Auth { provider } => {
                 self.run_auth(provider.as_deref())?;
@@ -542,9 +512,40 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn persist_session(&self) -> Result<(), CliError> {
+    pub(crate) fn persist_session(&mut self) -> Result<(), CliError> {
+        if self.runtime.session().title.is_none() {
+            if let Ok(mut guard) = self.pending_title.lock() {
+                if let Some(title) = guard.take() {
+                    self.runtime.session_mut().title = Some(title);
+                }
+            }
+        }
         self.runtime.session().save_to_path(&self.session.path)?;
         Ok(())
+    }
+
+    fn maybe_dispatch_title_generation(&mut self, user_input: &str) {
+        if self.title_dispatched {
+            return;
+        }
+        if self.runtime.session().title.is_some() {
+            self.title_dispatched = true;
+            return;
+        }
+        if !self.runtime.session().messages.is_empty() {
+            self.title_dispatched = true;
+            return;
+        }
+        let trimmed = user_input.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.title_dispatched = true;
+        title_namer::spawn_title_generation(
+            self.model.clone(),
+            trimmed.to_string(),
+            Arc::clone(&self.pending_title),
+        );
     }
 
     pub(crate) fn reset_browser(&mut self) {
@@ -634,7 +635,11 @@ impl LiveCli {
                 persist_after: false,
             });
         }
-        self.session = create_managed_session_handle()?;
+        self.session = create_managed_session_handle();
+        self.title_dispatched = false;
+        if let Ok(mut guard) = self.pending_title.lock() {
+            *guard = None;
+        }
         self.runtime = build_runtime(
             Session::new(),
             self.model.clone(),
@@ -657,17 +662,10 @@ impl LiveCli {
         format_cost_report(self.runtime.usage().cumulative_usage())
     }
 
-    pub(crate) fn resume_session_command(
+    pub(crate) fn switch_to_session_handle(
         &mut self,
-        session_path: Option<String>,
-    ) -> Result<CommandUiResult, CliError> {
-        let Some(session_ref) = session_path else {
-            return Ok(CommandUiResult {
-                message: "Usage: /resume <session-path>".to_string(),
-                persist_after: false,
-            });
-        };
-        let handle = resolve_session_reference(&session_ref)?;
+        handle: SessionHandle,
+    ) -> Result<usize, CliError> {
         let session = Session::load_from_path(&handle.path)?;
         let message_count = session.messages.len();
         let model = session.model.clone().unwrap_or_else(|| self.model.clone());
@@ -684,14 +682,11 @@ impl LiveCli {
             s.model = Some(self.model.clone());
         });
         self.session = handle;
-        Ok(CommandUiResult {
-            message: format_resume_report(
-                &self.session.path.display().to_string(),
-                message_count,
-                self.runtime.usage().turns(),
-            ),
-            persist_after: true,
-        })
+        self.title_dispatched = true;
+        if let Ok(mut guard) = self.pending_title.lock() {
+            *guard = None;
+        }
+        Ok(message_count)
     }
 
     pub(crate) fn config_report(section: Option<&str>) -> Result<String, CliError> {
@@ -713,62 +708,6 @@ impl LiveCli {
             export_path.display(),
             self.runtime.session().messages.len()
         ))
-    }
-
-    pub(crate) fn session_command(
-        &mut self,
-        action: Option<&str>,
-        target: Option<&str>,
-    ) -> Result<CommandUiResult, CliError> {
-        match action {
-            None | Some("list") => Ok(CommandUiResult {
-                message: render_session_list(&self.session.id)?,
-                persist_after: false,
-            }),
-            Some("switch") => {
-                let Some(target) = target else {
-                    return Ok(CommandUiResult {
-                        message: "Usage: /session switch <session-id>".to_string(),
-                        persist_after: false,
-                    });
-                };
-                let handle = resolve_session_reference(target)?;
-                let session = Session::load_from_path(&handle.path)?;
-                let message_count = session.messages.len();
-                let model = session
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| self.model.clone());
-                self.runtime = build_runtime(
-                    session,
-                    model.clone(),
-                    self.system_prompt.clone(),
-                    true,
-                    self.allowed_tools.clone(),
-                    self.output_mode.observer(),
-                )?;
-                self.model = model;
-                let _ = runtime::update_settings(|s| {
-                    s.model = Some(self.model.clone());
-                });
-                self.session = handle;
-                Ok(CommandUiResult {
-                    message: format!(
-                        "Session switched\n  Active session   {}\n  File             {}\n  Messages         {}",
-                        self.session.id,
-                        self.session.path.display(),
-                        message_count
-                    ),
-                    persist_after: true,
-                })
-            }
-            Some(other) => Ok(CommandUiResult {
-                message: format!(
-                    "Unknown /session action '{other}'. Use /session list or /session switch <session-id>."
-                ),
-                persist_after: false,
-            }),
-        }
     }
 
     fn run_auth(&mut self, provider: Option<&str>) -> Result<(), CliError> {

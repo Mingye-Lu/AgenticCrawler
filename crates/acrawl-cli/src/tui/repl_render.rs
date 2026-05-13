@@ -270,6 +270,18 @@ pub(super) fn render_tool_call_lines(
             text_lines.push(line_to_plain_text(&line));
             items.push(ListItem::new(line));
         }
+        ToolCallStatus::Interrupted => {
+            let line = Line::from(vec![
+                Span::styled("◼", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" {name} "),
+                    Style::default().add_modifier(Modifier::BOLD | Modifier::DIM),
+                ),
+                Span::styled("interrupted", Style::default().fg(Color::DarkGray)),
+            ]);
+            text_lines.push(line_to_plain_text(&line));
+            items.push(ListItem::new(line));
+        }
         ToolCallStatus::Success { output } => {
             if debug_mode {
                 render_debug_success(&mut items, &mut text_lines, name, output, width);
@@ -1060,7 +1072,11 @@ pub(super) fn draw_chat(
     // Busy indicator overlay at bottom-right of transcript
     if state.busy {
         let spinner = state.spinner_char();
-        let label = format!(" {spinner} Generating… ");
+        let label = if state.cancelling {
+            format!(" {spinner} Interrupting… ")
+        } else {
+            format!(" {spinner} Generating… ")
+        };
         let lw = u16::try_from(text_display_width(&label)).unwrap_or(14);
         if main_inner.width > lw + 2 {
             let ind_area = Rect::new(
@@ -1083,6 +1099,9 @@ pub(super) fn draw_chat(
     // --- Footer / input block (rounded) ---
     let footer_title = if state.paused {
         format!(" PAUSED: {} -- press Enter to resume ", state.pause_reason)
+    } else if state.cancelling {
+        let s = state.spinner_char();
+        format!(" {s} Interrupting… ")
     } else if let Some(ref tool) = state.current_tool {
         let s = state.spinner_char();
         format!(" {s} Executing {tool} ")

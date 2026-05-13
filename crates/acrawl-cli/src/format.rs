@@ -58,12 +58,6 @@ pub(crate) fn format_cost_report(usage: TokenUsage) -> String {
     )
 }
 
-pub(crate) fn format_resume_report(session_path: &str, message_count: usize, turns: u32) -> String {
-    format!(
-        "Session resumed\n  Session file     {session_path}\n  Messages         {message_count}\n  Turns            {turns}"
-    )
-}
-
 pub(crate) fn format_compact_report(
     removed: usize,
     resulting_messages: usize,
@@ -362,15 +356,6 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn resume_report_uses_sectioned_layout() {
-        let report = format_resume_report("session.json", 14, 6);
-        assert!(report.contains("Session resumed"));
-        assert!(report.contains("Session file     session.json"));
-        assert!(report.contains("Messages         14"));
-        assert!(report.contains("Turns            6"));
-    }
-
-    #[test]
     fn compact_report_uses_structured_output() {
         let compacted = format_compact_report(8, 5, false);
         assert!(compacted.contains("Compact"));
@@ -494,12 +479,12 @@ mod tests {
         assert!(help.contains("/model [model]"));
         assert!(help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
-        assert!(help.contains("/resume <session-path>"));
         assert!(help.contains("/config [env|hooks|model]"));
         assert!(help.contains("/debug"));
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));
-        assert!(help.contains("/session [list|switch <session-id>]"));
+        assert!(help.contains("/sessions"));
+        assert!(!help.contains("/resume"));
         assert!(help.contains("/headed"));
         assert!(help.contains("/headless"));
         assert!(help.contains("/exit"));

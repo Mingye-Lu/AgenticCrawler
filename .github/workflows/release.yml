@@ -80,6 +80,11 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -98,10 +103,25 @@ jobs:
         working-directory: release
         run: sha256sum acrawl-linux-x64 acrawl-linux-arm64 acrawl-macos-x64 acrawl-macos-arm64 acrawl-windows-x64.exe > checksums.sha256
 
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the section between ## [VERSION] and the next ## [
+          NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="Release ${GITHUB_REF_NAME}"
+          fi
+          {
+            echo "body<<RELEASE_EOF"
+            echo "$NOTES"
+            echo "RELEASE_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body: ${{ steps.notes.outputs.body }}
           files: |
             release/acrawl-linux-x64
             release/acrawl-linux-arm64

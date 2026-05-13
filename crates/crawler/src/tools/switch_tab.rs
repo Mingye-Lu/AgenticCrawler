@@ -30,26 +30,17 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         browser.set_page_index(page_index);
     }
 
-    let url = result
-        .get("url")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let title = result
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
     let tab_count = result
         .get("tab_count")
         .and_then(serde_json::Value::as_i64)
         .unwrap_or(0);
 
+    let page_state = super::feedback::post_action_page_state(browser).await;
+
     Ok(ToolEffect::reply_json(&json!({
         "success": true,
-        "url": url,
-        "title": title,
-        "tab_count": tab_count
+        "tab_count": tab_count,
+        "page_state": page_state
     })))
 }
 

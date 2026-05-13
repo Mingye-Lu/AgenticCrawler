@@ -12,6 +12,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "time"] }
 csv = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+htmd = "0.5"
 
 [lints]
 workspace = true
