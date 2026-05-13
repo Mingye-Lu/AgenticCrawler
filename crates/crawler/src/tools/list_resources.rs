@@ -3,20 +3,8 @@ use serde_json::{json, Value};
 use crate::browser::BrowserContext;
 use crate::{ToolEffect, ToolError};
 
-pub fn parse_input(input: &Value) -> (Option<String>, Option<String>) {
-    let type_pattern = input
-        .get("type_pattern")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    let name_pattern = input
-        .get("name_pattern")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-    (type_pattern, name_pattern)
-}
-
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
-    let (_type_pattern, _name_pattern) = parse_input(input);
+    let _ = input;
 
     let result = browser
         .acquire_bridge()
@@ -39,29 +27,20 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     #[test]
-    fn parses_empty_input() {
-        let input = json!({});
-        let (tp, np) = parse_input(&input);
-        assert!(tp.is_none());
-        assert!(np.is_none());
-    }
-
-    #[test]
-    fn parses_type_pattern() {
-        let input = json!({"type_pattern": "image"});
-        let (tp, _np) = parse_input(&input);
-        assert_eq!(tp.as_deref(), Some("image"));
-    }
-
-    #[test]
-    fn parses_name_pattern() {
-        let input = json!({"name_pattern": "logo"});
-        let (_tp, np) = parse_input(&input);
-        assert_eq!(np.as_deref(), Some("logo"));
+    fn list_resources_schema_has_no_filter_params() {
+        let specs = crate::mvp_tool_specs();
+        let spec = specs.iter().find(|s| s.name == "list_resources").unwrap();
+        let schema_str = spec.input_schema.to_string();
+        assert!(
+            !schema_str.contains("type_pattern"),
+            "type_pattern should be removed from schema"
+        );
+        assert!(
+            !schema_str.contains("name_pattern"),
+            "name_pattern should be removed from schema"
+        );
     }
 }
