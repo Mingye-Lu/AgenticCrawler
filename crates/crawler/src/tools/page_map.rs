@@ -23,13 +23,16 @@ pub fn apply_page_map_caps(value: &mut Value) {
 }
 
 fn truncate_array_field(value: &mut Value, key: &str, max_len: usize) -> bool {
-    value.get_mut(key).and_then(Value::as_array_mut).is_some_and(|items| {
-        let was_truncated = items.len() > max_len;
-        if was_truncated {
-            items.truncate(max_len);
-        }
-        was_truncated
-    })
+    value
+        .get_mut(key)
+        .and_then(Value::as_array_mut)
+        .is_some_and(|items| {
+            let was_truncated = items.len() > max_len;
+            if was_truncated {
+                items.truncate(max_len);
+            }
+            was_truncated
+        })
 }
 
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
@@ -114,8 +117,17 @@ mod tests {
 
         apply_page_map_caps(&mut value);
 
-        let object = value.as_object().expect("page_map payload should be an object");
-        for key in ["headings", "landmarks", "forms", "links", "interactive", "meta"] {
+        let object = value
+            .as_object()
+            .expect("page_map payload should be an object");
+        for key in [
+            "headings",
+            "landmarks",
+            "forms",
+            "links",
+            "interactive",
+            "meta",
+        ] {
             assert!(object.contains_key(key), "missing key: {key}");
         }
     }
