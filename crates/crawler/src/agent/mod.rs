@@ -196,13 +196,19 @@ impl CrawlerAgent {
     }
 
     #[must_use]
-    pub fn with_child_event_sender(mut self, tx: std::sync::mpsc::Sender<crate::child_events::ChildEvent>) -> Self {
+    pub fn with_child_event_sender(
+        mut self,
+        tx: std::sync::mpsc::Sender<crate::child_events::ChildEvent>,
+    ) -> Self {
         self.child_event_tx = Some(tx);
         self
     }
 
     #[must_use]
-    pub fn with_child_control_registry(mut self, registry: crate::child_events::ChildControlRegistry) -> Self {
+    pub fn with_child_control_registry(
+        mut self,
+        registry: crate::child_events::ChildControlRegistry,
+    ) -> Self {
         self.child_control_registry = Some(registry);
         self
     }
@@ -348,7 +354,9 @@ impl CrawlerAgent {
             let _ = tx.send(crate::child_events::ChildEvent {
                 child_id: self.agent_id.clone(),
                 sub_goal: String::new(),
-                event: crate::child_events::ChildEventKind::PauseRequested { reason: reason.clone() },
+                event: crate::child_events::ChildEventKind::PauseRequested {
+                    reason: reason.clone(),
+                },
             });
         }
 

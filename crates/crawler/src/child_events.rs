@@ -1,20 +1,36 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::Sender;
 use runtime::{ControlState, RuntimeObserver};
+use std::collections::HashMap;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 
 // ── Event types ──────────────────────────────────────────────────────────────
 
 /// All event kinds a child agent can emit.
 #[derive(Debug, Clone)]
 pub enum ChildEventKind {
-    StepStarted { step: usize, max_steps: usize },
+    StepStarted {
+        step: usize,
+        max_steps: usize,
+    },
     TextDelta(String),
-    ToolCallStart { name: String, input_summary: String },
-    ToolCallComplete { name: String, output_summary: String, is_error: bool },
-    PauseRequested { reason: String },
+    ToolCallStart {
+        name: String,
+        input_summary: String,
+    },
+    ToolCallComplete {
+        name: String,
+        output_summary: String,
+        is_error: bool,
+    },
+    PauseRequested {
+        reason: String,
+    },
     Resumed,
-    Finished { success: bool, items_extracted: usize, error: Option<String> },
+    Finished {
+        success: bool,
+        items_extracted: usize,
+        error: Option<String>,
+    },
 }
 
 /// A single event from a child agent, tagged with its identity.
@@ -99,8 +115,19 @@ pub struct ChildEventSender {
 }
 
 impl ChildEventSender {
-    pub fn new(child_id: String, sub_goal: String, tx: Sender<ChildEvent>, max_steps: usize) -> Self {
-        Self { child_id, sub_goal, tx, step: 0, max_steps }
+    pub fn new(
+        child_id: String,
+        sub_goal: String,
+        tx: Sender<ChildEvent>,
+        max_steps: usize,
+    ) -> Self {
+        Self {
+            child_id,
+            sub_goal,
+            tx,
+            step: 0,
+            max_steps,
+        }
     }
 
     fn send(&self, event: ChildEventKind) {
