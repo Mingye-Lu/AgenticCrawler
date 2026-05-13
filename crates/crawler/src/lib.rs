@@ -4,6 +4,7 @@ mod agent;
 mod browser;
 mod fetcher;
 mod manager;
+pub mod markdown;
 mod output;
 mod playwright;
 mod prompt;
@@ -216,10 +217,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             description: "List page resources (links, images, forms)",
             input_schema: json!({
                 "type": "object",
-                "properties": {
-                    "type_pattern": { "type": "string" },
-                    "name_pattern": { "type": "string" }
-                },
+                "properties": {},
                 "additionalProperties": false
             }),
 
