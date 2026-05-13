@@ -35,18 +35,28 @@ struct ReleaseResponse {
 }
 
 pub async fn check_for_update() -> Option<UpdateInfo> {
-    check_for_update_with_version_and_url(CURRENT_VERSION, RELEASES_URL).await
+    check_for_update_with_version_and_url(CURRENT_VERSION, RELEASES_URL, false).await
+}
+
+/// Like `check_for_update`, but bypasses the 24-hour cache and always queries GitHub.
+/// Use this for explicit user-initiated update checks (e.g. `acrawl update`), where
+/// short-circuiting on stale cache data would be wrong.
+pub async fn check_for_update_force() -> Option<UpdateInfo> {
+    check_for_update_with_version_and_url(CURRENT_VERSION, RELEASES_URL, true).await
 }
 
 async fn check_for_update_with_version_and_url(
     current_version: &str,
     release_url: &str,
+    force: bool,
 ) -> Option<UpdateInfo> {
     let cache_path = cache_file_path();
 
-    if let Some(cache) = read_cache(&cache_path) {
-        if is_cache_fresh(&cache) {
-            return build_update_info(current_version, &cache.latest_version);
+    if !force {
+        if let Some(cache) = read_cache(&cache_path) {
+            if is_cache_fresh(&cache) {
+                return build_update_info(current_version, &cache.latest_version);
+            }
         }
     }
 
@@ -233,7 +243,7 @@ mod tests {
         let cache_json = serde_json::to_string(&cache).expect("Expected cache json");
         std::fs::write(cache_file_path(), cache_json).expect("Expected cache write");
 
-        let update = check_for_update_with_version_and_url("0.1.0", "not a url").await;
+        let update = check_for_update_with_version_and_url("0.1.0", "not a url", false).await;
         let update = update.expect("Expected cached update info");
 
         assert_eq!(update.current_version, "0.1.0");
@@ -245,12 +255,38 @@ mod tests {
 
     #[tokio::test]
     #[allow(clippy::await_holding_lock)] // lock guards env var mutation for test isolation, not shared data
+    async fn test_force_bypasses_fresh_cache() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        let cache = UpdateCache {
+            latest_version: "9.9.9".to_string(),
+            checked_at: current_timestamp()
+                .format(&Rfc3339)
+                .expect("Expected RFC3339 timestamp"),
+        };
+        let cache_json = serde_json::to_string(&cache).expect("Expected cache json");
+        std::fs::write(cache_file_path(), cache_json).expect("Expected cache write");
+
+        // Non-force returns cached "9.9.9"; force tries network ("not a url" → None).
+        let cached = check_for_update_with_version_and_url("0.1.0", "not a url", false).await;
+        let forced = check_for_update_with_version_and_url("0.1.0", "not a url", true).await;
+
+        assert_eq!(cached.expect("cached update info").latest_version, "9.9.9");
+        assert!(forced.is_none(), "force should bypass cache and fail open");
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // lock guards env var mutation for test isolation, not shared data
     async fn test_graceful_failure() {
         let _lock = test_env_lock();
         let temp_dir = setup_temp_dir();
         std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
 
-        let update = check_for_update_with_version_and_url("0.1.0", "not a url").await;
+        let update = check_for_update_with_version_and_url("0.1.0", "not a url", false).await;
 
         assert!(update.is_none());
 
