@@ -26,6 +26,8 @@ pub struct ChildTabState {
     pub max_steps: usize,
     pub tool_in_progress: Option<String>,
     pub items_extracted: usize,
+    pub scroll_offset: usize,
+    pub follow_bottom: bool,
 }
 
 impl ChildTabState {
@@ -39,6 +41,8 @@ impl ChildTabState {
             max_steps: 0,
             tool_in_progress: None,
             items_extracted: 0,
+            scroll_offset: 0,
+            follow_bottom: true,
         }
     }
 
