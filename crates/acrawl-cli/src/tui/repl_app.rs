@@ -51,6 +51,12 @@ pub(super) enum AppUiState {
     ChatMode,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ViewMode {
+    Parent,
+    Child(String),
+}
+
 #[derive(Clone, Debug)]
 pub(super) enum ToolCallStatus {
     Running,
@@ -194,6 +200,7 @@ pub(super) struct ReplTuiState {
     pub(super) child_tab_panel: child_tabs::ChildTabPanel,
     child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
     pub(super) child_control_registry: Option<crawler::ChildControlRegistry>,
+    pub(super) view_mode: ViewMode,
 }
 
 impl ReplTuiState {
@@ -247,6 +254,7 @@ impl ReplTuiState {
             child_tab_panel: child_tabs::ChildTabPanel::default(),
             child_event_rx: None,
             child_control_registry: None,
+            view_mode: ViewMode::Parent,
         }
     }
 
