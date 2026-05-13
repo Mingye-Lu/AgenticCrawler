@@ -1843,17 +1843,14 @@ fn run_loop(
                         MouseEventKind::ScrollUp => {
                             if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
                                 tab.follow_bottom = false;
-                                tab.scroll_offset = tab.scroll_offset.saturating_sub(3);
+                                *tab.list_state.offset_mut() = tab.list_state.offset().saturating_sub(3);
                             }
                         }
                         MouseEventKind::ScrollDown => {
                             if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
-                                let max = tab.scrollback.len().saturating_sub(1);
-                                tab.scroll_offset = (tab.scroll_offset + 3).min(max);
-                                let available = state.last_view_height.max(1);
-                                if tab.scroll_offset >= tab.scrollback.len().saturating_sub(available) {
-                                    tab.follow_bottom = true;
-                                }
+                                let max = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
+                                *tab.list_state.offset_mut() = (tab.list_state.offset().saturating_add(3)).min(max);
+                                tab.follow_bottom = tab.list_state.offset() >= max;
                             }
                         }
                         _ => {}
@@ -1970,31 +1967,31 @@ fn run_loop(
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    let max = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
+                                    *tab.list_state.offset_mut() = (tab.list_state.offset().saturating_add(1)).min(max);
                                     tab.follow_bottom = false;
-                                    tab.scroll_offset = (tab.scroll_offset.saturating_add(1))
-                                        .min(tab.scrollback.len().saturating_sub(1));
                                 }
                                 continue;
                             }
                             KeyCode::Char('k') => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
                                     tab.follow_bottom = false;
-                                    tab.scroll_offset = tab.scroll_offset.saturating_sub(1);
+                                    *tab.list_state.offset_mut() = tab.list_state.offset().saturating_sub(1);
                                 }
                                 continue;
                             }
                             KeyCode::PageDown => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    let max = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
+                                    *tab.list_state.offset_mut() = (tab.list_state.offset().saturating_add(10)).min(max);
                                     tab.follow_bottom = false;
-                                    tab.scroll_offset = (tab.scroll_offset.saturating_add(10))
-                                        .min(tab.scrollback.len().saturating_sub(1));
                                 }
                                 continue;
                             }
                             KeyCode::PageUp => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
                                     tab.follow_bottom = false;
-                                    tab.scroll_offset = tab.scroll_offset.saturating_sub(10);
+                                    *tab.list_state.offset_mut() = tab.list_state.offset().saturating_sub(10);
                                 }
                                 continue;
                             }
@@ -2007,7 +2004,7 @@ fn run_loop(
                             KeyCode::Char('g') => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
                                     tab.follow_bottom = false;
-                                    tab.scroll_offset = 0;
+                                    *tab.list_state.offset_mut() = 0;
                                 }
                                 continue;
                             }
