@@ -297,11 +297,20 @@ where
 
                 for (tool_use_id, tool_name, input) in pending_tool_uses {
                     let result_message = {
-                        let (output, is_error) =
-                            match self.tool_executor.execute(&tool_name, &input).await {
-                                Ok(output) => (output, false),
-                                Err(error) => (error.to_string(), true),
-                            };
+                        let execute_fut = self.tool_executor.execute(&tool_name, &input);
+                        let (output, is_error) = tokio::select! {
+                            biased;
+                            () = self.control_state.cancelled() => {
+                                self.control_state.reset();
+                                return Err(RuntimeError::new("interrupted by user"));
+                            }
+                            result = execute_fut => {
+                                match result {
+                                    Ok(output) => (output, false),
+                                    Err(error) => (error.to_string(), true),
+                                }
+                            }
+                        };
 
                         ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
                     };

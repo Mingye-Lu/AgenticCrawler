@@ -14,6 +14,7 @@ pub const CANCEL: u8 = 2;
 pub struct ControlState {
     signal: AtomicU8,
     resume_notify: Notify,
+    cancel_notify: Notify,
     reason: Mutex<String>,
 }
 
@@ -24,6 +25,7 @@ impl ControlState {
         Arc::new(Self {
             signal: AtomicU8::new(CONTINUE),
             resume_notify: Notify::new(),
+            cancel_notify: Notify::new(),
             reason: Mutex::new(String::new()),
         })
     }
@@ -45,6 +47,7 @@ impl ControlState {
     /// Request cancellation. The runtime will cancel at the next loop iteration.
     pub fn request_cancel(&self) {
         self.signal.store(CANCEL, Ordering::Release);
+        self.cancel_notify.notify_waiters();
     }
 
     /// Resume from a paused state and clear the pause signal.
@@ -87,6 +90,15 @@ impl ControlState {
     pub async fn wait_for_resume(&self) {
         self.resume_notify.notified().await;
     }
+
+    /// Returns when cancellation is requested. If already cancelled, returns immediately.
+    /// Use in `tokio::select!` to race against other futures.
+    pub async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        self.cancel_notify.notified().await;
+    }
 }
 
 impl Default for ControlState {
@@ -94,6 +106,7 @@ impl Default for ControlState {
         Self {
             signal: AtomicU8::new(CONTINUE),
             resume_notify: Notify::new(),
+            cancel_notify: Notify::new(),
             reason: Mutex::new(String::new()),
         }
     }
