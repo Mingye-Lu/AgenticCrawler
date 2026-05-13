@@ -444,12 +444,9 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, TranscriptEntry::Stream(_)))
             .count();
-        // Note: In the real implementation, "hello\n" produces at least 1 Stream entry.
-        // In the integration test stub, the markdown buffer is a no-op, so we may get 0.
-        // This test verifies the logic path exists; the actual markdown rendering is tested elsewhere.
         assert!(
-            stream_count >= 0,
-            "Stream entries should be non-negative, got {stream_count}"
+            stream_count >= 1,
+            "Expected at least 1 Stream entry from 'hello\\n' split, got {stream_count}"
         );
     }
 
