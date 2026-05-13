@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
 use crate::fetcher::FetchRouter;
-use crate::markdown::{html_to_markdown_capped, DEFAULT_MAX_MARKDOWN_CHARS};
+use crate::markdown::DEFAULT_MAX_MARKDOWN_CHARS;
 use crate::tools::page_map::apply_page_map_caps;
 use crate::{CrawlError, ToolEffect, ToolError};
 
@@ -95,7 +95,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
 
     let title = page.title.clone().unwrap_or_default();
     let (content, truncated) = match params.format.as_str() {
-        "markdown" => html_to_markdown_capped(&page.html, DEFAULT_MAX_MARKDOWN_CHARS),
+        "markdown" => cap_content(&page.markdown, DEFAULT_MAX_MARKDOWN_CHARS),
         "text" => cap_content(&page.text, 32_000),
         "html" => cap_content(&page.html, 32_000),
         _ => unreachable!("parse_input validates format"),
@@ -127,7 +127,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
             }),
         }
     } else {
-        let mut value = extract_headings_from_markdown(&content);
+        let mut value = extract_headings_from_markdown(&page.markdown);
         if let Some(meta) = value.get_mut("meta").and_then(Value::as_object_mut) {
             meta.insert("url".to_string(), json!(page.url.clone()));
             meta.insert("title".to_string(), json!(title.clone()));
@@ -151,7 +151,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markdown::{html_to_markdown_capped, DEFAULT_MAX_MARKDOWN_CHARS};
+    use crate::markdown::html_to_markdown_capped;
     use serde_json::json;
 
     #[test]
