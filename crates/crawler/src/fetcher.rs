@@ -13,6 +13,7 @@ pub struct FetchedPage {
     pub title: Option<String>,
     pub html: String,
     pub text: String,
+    pub markdown: String,
     pub fetched_via_browser: bool,
 }
 
@@ -350,6 +351,7 @@ impl FetchRouter {
             .map_err(|e| FetchError::Browser(e.to_string()))?;
 
         let text = extract_text(&page_info.html);
+        let markdown = crate::markdown::html_to_markdown(&page_info.html);
         let title = if page_info.title.is_empty() {
             extract_title(&page_info.html)
         } else {
@@ -361,6 +363,7 @@ impl FetchRouter {
             title,
             html: page_info.html,
             text,
+            markdown,
             fetched_via_browser: true,
         })
     }
@@ -369,11 +372,13 @@ impl FetchRouter {
 fn http_response_to_page(resp: HttpResponse) -> FetchedPage {
     let title = extract_title(&resp.body);
     let text = extract_text(&resp.body);
+    let markdown = crate::markdown::html_to_markdown(&resp.body);
     FetchedPage {
         url: resp.url,
         title,
         html: resp.body,
         text,
+        markdown,
         fetched_via_browser: false,
     }
 }
@@ -623,5 +628,56 @@ mod tests {
             .expect("fetch should succeed");
         assert!(page.title.is_some());
         assert!(page.text.contains("Example Domain"));
+    }
+
+    #[test]
+    fn http_response_to_page_has_markdown_field() {
+        let resp = HttpResponse {
+            url: "https://example.com".to_string(),
+            status: StatusCode::OK,
+            body: "<html><body><p>Hello world</p></body></html>".to_string(),
+        };
+        let page = http_response_to_page(resp);
+        assert!(!page.markdown.is_empty());
+    }
+
+    #[test]
+    fn http_response_to_page_markdown_has_structure() {
+        let resp = HttpResponse {
+            url: "https://example.com".to_string(),
+            status: StatusCode::OK,
+            body: "<html><body><h1>Title</h1><a href=\"/link\">Click</a></body></html>".to_string(),
+        };
+        let page = http_response_to_page(resp);
+        assert!(page.markdown.contains("# "), "expected heading marker in markdown");
+        assert!(page.markdown.contains('['), "expected link syntax in markdown");
+    }
+
+    #[test]
+    fn http_response_to_page_non_html_skips_markdown() {
+        let resp = HttpResponse {
+            url: "https://api.example.com/data".to_string(),
+            status: StatusCode::OK,
+            body: r#"{"key": "value"}"#.to_string(),
+        };
+        let page = http_response_to_page(resp);
+        assert!(
+            page.markdown.starts_with("```"),
+            "non-HTML input should be wrapped in a code block"
+        );
+    }
+
+    #[test]
+    fn http_response_to_page_markdown_field_exists_on_struct() {
+        let page = FetchedPage {
+            url: String::new(),
+            title: None,
+            html: String::new(),
+            text: String::new(),
+            markdown: String::new(),
+            fetched_via_browser: false,
+        };
+        // Compile-time check: the markdown field exists and is a String
+        let _: &String = &page.markdown;
     }
 }
