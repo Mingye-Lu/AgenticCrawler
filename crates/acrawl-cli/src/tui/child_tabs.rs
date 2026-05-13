@@ -30,8 +30,6 @@ pub struct ChildTabState {
     pub(super) last_view_height: usize,
     pub(super) md_buffer: PredictiveMarkdownBuffer,
     pub(super) live_ansi: String,
-    pub(super) scroll_offset: usize,
-    pub(super) scrollback: Vec<String>,
 }
 
 impl ChildTabState {
@@ -51,8 +49,6 @@ impl ChildTabState {
             last_view_height: 0,
             md_buffer: PredictiveMarkdownBuffer::new(),
             live_ansi: String::new(),
-            scroll_offset: 0,
-            scrollback: Vec::new(),
         }
     }
 }
