@@ -196,7 +196,6 @@ impl LiveCli {
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
-        cli.persist_session()?;
         Ok(cli)
     }
 
@@ -244,7 +243,6 @@ impl LiveCli {
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
-        cli.persist_session()?;
         Ok(cli)
     }
 
