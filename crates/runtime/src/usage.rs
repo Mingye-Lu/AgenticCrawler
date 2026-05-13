@@ -289,6 +289,7 @@ mod tests {
         let session = Session {
             version: 1,
             model: None,
+            title: None,
             messages: vec![ConversationMessage {
                 role: MessageRole::Assistant,
                 blocks: vec![ContentBlock::Text {

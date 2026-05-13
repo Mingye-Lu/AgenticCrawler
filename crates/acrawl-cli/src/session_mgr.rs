@@ -15,6 +15,7 @@ pub(crate) struct ManagedSessionSummary {
     pub(crate) id: String,
     pub(crate) modified_epoch_secs: u64,
     pub(crate) message_count: usize,
+    pub(crate) title: Option<String>,
 }
 
 pub(crate) fn sessions_dir() -> PathBuf {
@@ -77,9 +78,12 @@ pub(crate) fn list_managed_sessions(
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_secs())
             .unwrap_or_default();
-        let message_count = Session::load_from_path(&path)
-            .map(|session| session.messages.len())
+        let loaded = Session::load_from_path(&path).ok();
+        let message_count = loaded
+            .as_ref()
+            .map(|s| s.messages.len())
             .unwrap_or_default();
+        let title = loaded.and_then(|s| s.title);
         let id = path
             .file_stem()
             .and_then(|value| value.to_str())
@@ -89,6 +93,7 @@ pub(crate) fn list_managed_sessions(
             id,
             modified_epoch_secs,
             message_count,
+            title,
         });
     }
     sessions.sort_by_key(|s| std::cmp::Reverse(s.modified_epoch_secs));
@@ -113,8 +118,10 @@ pub(crate) fn render_session_list(
         } else {
             "○ saved"
         };
+        let title = session.title.as_deref().unwrap_or(&session.id);
         lines.push(format!(
-            "  {id:<20} {marker:<10} msgs={msgs:<4} modified={modified}",
+            "  {title:<28} {marker:<10} id={id:<22} msgs={msgs:<4} modified={modified}",
+            title = title,
             id = session.id,
             msgs = session.message_count,
             modified = session.modified_epoch_secs,
