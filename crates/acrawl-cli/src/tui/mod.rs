@@ -7,6 +7,7 @@ pub mod model_list;
 pub mod model_modal;
 pub mod repl_app;
 pub(super) mod repl_render;
+pub mod session_modal;
 
 pub use events::ReplTuiEvent;
 pub use repl_app::run_repl_ratatui;
