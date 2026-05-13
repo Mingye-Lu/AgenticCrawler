@@ -174,12 +174,10 @@ fn resolve_content(
 
     let max_chars = match depth {
         ContentDepth::Slim => SLIM_MAX_CHARS,
-        _ => {
-            std::env::var("ACRAWL_MAX_MARKDOWN_CHARS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(DEFAULT_MAX_MARKDOWN_CHARS)
-        }
+        _ => std::env::var("ACRAWL_MAX_MARKDOWN_CHARS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_MARKDOWN_CHARS),
     };
 
     match depth {
@@ -343,14 +341,21 @@ mod tests {
 
     #[test]
     fn resolve_content_none_returns_empty() {
-        let (content, truncated) = resolve_content("<p>hello</p>", "hello", "hello", "markdown", &ContentDepth::None);
+        let (content, truncated) = resolve_content(
+            "<p>hello</p>",
+            "hello",
+            "hello",
+            "markdown",
+            &ContentDepth::None,
+        );
         assert!(content.is_empty());
         assert!(!truncated);
     }
 
     #[test]
     fn resolve_content_main_extracts_article() {
-        let html = r"<nav>Menu</nav><main><h1>Title</h1><p>Body text</p></main><footer>Footer</footer>";
+        let html =
+            r"<nav>Menu</nav><main><h1>Title</h1><p>Body text</p></main><footer>Footer</footer>";
         let md = html_to_markdown(html);
         let (content, _) = resolve_content(html, "text", &md, "markdown", &ContentDepth::Main);
         assert!(content.contains("Title"));
@@ -373,7 +378,8 @@ mod tests {
         let body = "a".repeat(5000);
         let html = format!("<main><p>{body}</p></main>");
         let md = html_to_markdown(&html);
-        let (content, truncated) = resolve_content(&html, "text", &md, "markdown", &ContentDepth::Slim);
+        let (content, truncated) =
+            resolve_content(&html, "text", &md, "markdown", &ContentDepth::Slim);
         assert!(truncated);
         assert!(content.chars().count() <= SLIM_MAX_CHARS);
     }
