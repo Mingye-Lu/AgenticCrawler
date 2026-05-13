@@ -270,6 +270,18 @@ pub(super) fn render_tool_call_lines(
             text_lines.push(line_to_plain_text(&line));
             items.push(ListItem::new(line));
         }
+        ToolCallStatus::Interrupted => {
+            let line = Line::from(vec![
+                Span::styled("◼", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!(" {name} "),
+                    Style::default().add_modifier(Modifier::BOLD | Modifier::DIM),
+                ),
+                Span::styled("interrupted", Style::default().fg(Color::DarkGray)),
+            ]);
+            text_lines.push(line_to_plain_text(&line));
+            items.push(ListItem::new(line));
+        }
         ToolCallStatus::Success { output } => {
             if debug_mode {
                 render_debug_success(&mut items, &mut text_lines, name, output, width);

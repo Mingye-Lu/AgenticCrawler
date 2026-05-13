@@ -52,6 +52,7 @@ pub(super) enum AppUiState {
 #[derive(Clone, Debug)]
 pub(super) enum ToolCallStatus {
     Running,
+    Interrupted,
     Success { output: String },
     Error(String),
 }
@@ -878,6 +879,17 @@ impl ReplTuiState {
                     self.busy = false;
                     self.cancelling = false;
                     self.current_tool = None;
+
+                    for entry in &mut self.entries {
+                        if let TranscriptEntry::ToolCall {
+                            status: status @ ToolCallStatus::Running,
+                            ..
+                        } = entry
+                        {
+                            *status = ToolCallStatus::Interrupted;
+                        }
+                    }
+
                     self.status_line = match &result {
                         Ok(()) => "Ready".to_string(),
                         Err(e) => format!("Error: {e}"),
