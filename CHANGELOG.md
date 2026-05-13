@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-05-13
+
+### Added
+
+- **`/sessions` slash command** — opens a scrollable TUI modal listing all saved sessions by title (with id fallback), sorted by last-modified. Up/Down/PgUp/PgDn/wheel to navigate, type to filter, Enter to switch, Esc to close. Inspired by OpenCode's `DialogSessionList`.
+- **In-modal session management** — `Ctrl+X` deletes the highlighted session (two-press confirm with a red-highlighted row; deleting the active session starts a fresh one). `Ctrl+R` renames the session inline (current title prefilled; Enter saves, Esc cancels).
+- **LLM-generated session titles** — after the first user message, a short title is generated in the background and saved to the session JSON. Naming runs in parallel with the main turn so it adds no perceived latency; the title appears in the `/sessions` picker.
+- **Global session storage** — sessions now live under `ACRAWL_CONFIG_HOME` (default `~/.acrawl/sessions/`), matching the convention already used by `credentials.json` and `settings.json`. The same session list is visible from any working directory.
+
+### Changed
+
+- **Sessions are created lazily** — no JSON file is written on startup. The session file appears on disk only after the first user message, so quickly opening and closing `acrawl` no longer pollutes the sessions directory.
+- `acrawl init` no longer adds `.acrawl/sessions/` to project `.gitignore` templates (sessions are no longer cwd-relative).
+
+### Removed
+
+- **`/resume` slash command** — replaced by the modal picker. The `--resume` startup flag is unchanged.
+- **`/session` slash command** (with `list`/`switch` subcommands) — replaced by `/sessions` opening the modal. In non-TUI mode, `/sessions` prints a stub message since interactive picking isn't possible there.
+
 ## [0.3.2] - 2026-05-13
 
 ### Added
