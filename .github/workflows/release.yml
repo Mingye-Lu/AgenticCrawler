@@ -80,6 +80,11 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -97,11 +102,6 @@ jobs:
       - name: Generate checksums
         working-directory: release
         run: sha256sum acrawl-linux-x64 acrawl-linux-arm64 acrawl-macos-x64 acrawl-macos-arm64 acrawl-windows-x64.exe > checksums.sha256
-
-      - uses: actions/checkout@v4
-        with:
-          sparse-checkout: CHANGELOG.md
-          sparse-checkout-cone-mode: false
 
       - name: Extract release notes from CHANGELOG
         id: notes
