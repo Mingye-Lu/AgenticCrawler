@@ -388,6 +388,10 @@ where
         &self.session
     }
 
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
+    }
+
     #[must_use]
     pub fn into_session(self) -> Session {
         self.session
@@ -788,6 +792,7 @@ mod tests {
         let session = Session {
             version: 1,
             model: None,
+            title: None,
             messages: vec![
                 crate::session::ConversationMessage::user_text("one"),
                 crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {

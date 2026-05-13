@@ -1559,7 +1559,7 @@ fn run_loop(
 
         if state.exit {
             if state.persist_on_exit {
-                let g = cli.lock().expect("cli lock");
+                let mut g = cli.lock().expect("cli lock");
                 g.persist_session()?;
             }
             break;

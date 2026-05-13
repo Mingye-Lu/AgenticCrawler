@@ -2,6 +2,7 @@ mod api_client;
 mod model_support;
 mod resume;
 mod runtime_builder;
+mod title_namer;
 mod tool_executor;
 
 use std::collections::BTreeSet;
@@ -9,7 +10,7 @@ use std::env;
 use std::fs;
 use std::io::{self, IsTerminal};
 use std::str::FromStr;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 
 use crate::error::CliError;
 use crate::format::{
@@ -112,6 +113,8 @@ pub(crate) struct LiveCli {
     output_mode: OutputMode,
     reasoning_effort: Option<api::ReasoningEffort>,
     debug_mode: bool,
+    pending_title: Arc<Mutex<Option<String>>>,
+    title_dispatched: bool,
 }
 
 #[derive(Clone)]
@@ -190,6 +193,8 @@ impl LiveCli {
             output_mode,
             reasoning_effort: initial_effort,
             debug_mode: false,
+            pending_title: Arc::new(Mutex::new(None)),
+            title_dispatched: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -237,6 +242,8 @@ impl LiveCli {
             output_mode,
             reasoning_effort: initial_effort,
             debug_mode: false,
+            pending_title: Arc::new(Mutex::new(None)),
+            title_dispatched: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -295,6 +302,7 @@ impl LiveCli {
     }
 
     pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), CliError> {
+        self.maybe_dispatch_title_generation(input);
         if let Some(tx) = self.event_sender() {
             let _ = tx.send(ReplTuiEvent::TurnStarting);
         }
@@ -318,6 +326,7 @@ impl LiveCli {
     }
 
     pub(crate) fn run_turn(&mut self, input: &str) -> Result<(), CliError> {
+        self.maybe_dispatch_title_generation(input);
         let mut spinner = Spinner::new();
         let mut stdout = io::stdout();
         spinner.tick(
@@ -366,6 +375,7 @@ impl LiveCli {
     }
 
     fn run_prompt_json(&mut self, input: &str) -> Result<(), CliError> {
+        self.maybe_dispatch_title_generation(input);
         let session = self.runtime.session().clone();
         let mut runtime = build_runtime(
             session,
@@ -488,9 +498,40 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn persist_session(&self) -> Result<(), CliError> {
+    pub(crate) fn persist_session(&mut self) -> Result<(), CliError> {
+        if self.runtime.session().title.is_none() {
+            if let Ok(mut guard) = self.pending_title.lock() {
+                if let Some(title) = guard.take() {
+                    self.runtime.session_mut().title = Some(title);
+                }
+            }
+        }
         self.runtime.session().save_to_path(&self.session.path)?;
         Ok(())
+    }
+
+    fn maybe_dispatch_title_generation(&mut self, user_input: &str) {
+        if self.title_dispatched {
+            return;
+        }
+        if self.runtime.session().title.is_some() {
+            self.title_dispatched = true;
+            return;
+        }
+        if !self.runtime.session().messages.is_empty() {
+            self.title_dispatched = true;
+            return;
+        }
+        let trimmed = user_input.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.title_dispatched = true;
+        title_namer::spawn_title_generation(
+            self.model.clone(),
+            trimmed.to_string(),
+            Arc::clone(&self.pending_title),
+        );
     }
 
     pub(crate) fn reset_browser(&mut self) {
@@ -581,6 +622,10 @@ impl LiveCli {
             });
         }
         self.session = create_managed_session_handle();
+        self.title_dispatched = false;
+        if let Ok(mut guard) = self.pending_title.lock() {
+            *guard = None;
+        }
         self.runtime = build_runtime(
             Session::new(),
             self.model.clone(),

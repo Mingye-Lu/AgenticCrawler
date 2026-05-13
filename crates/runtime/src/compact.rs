@@ -105,6 +105,7 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         compacted_session: Session {
             version: session.version,
             model: session.model.clone(),
+            title: session.title.clone(),
             messages: compacted_messages,
         },
         removed_message_count: removed.len(),
@@ -398,6 +399,7 @@ mod tests {
         let session = Session {
             version: 1,
             model: None,
+            title: None,
             messages: vec![ConversationMessage::user_text("hello")],
         };
 
@@ -413,6 +415,7 @@ mod tests {
         let session = Session {
             version: 1,
             model: None,
+            title: None,
             messages: vec![
                 ConversationMessage::user_text("one ".repeat(200)),
                 ConversationMessage::assistant(vec![ContentBlock::Text {

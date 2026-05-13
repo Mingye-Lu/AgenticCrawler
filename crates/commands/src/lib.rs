@@ -458,6 +458,7 @@ mod tests {
         let session = Session {
             version: 1,
             model: None,
+            title: None,
             messages: vec![
                 ConversationMessage::user_text("a ".repeat(200)),
                 ConversationMessage::assistant(vec![ContentBlock::Text {
