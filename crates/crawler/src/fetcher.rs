@@ -649,8 +649,14 @@ mod tests {
             body: "<html><body><h1>Title</h1><a href=\"/link\">Click</a></body></html>".to_string(),
         };
         let page = http_response_to_page(resp);
-        assert!(page.markdown.contains("# "), "expected heading marker in markdown");
-        assert!(page.markdown.contains('['), "expected link syntax in markdown");
+        assert!(
+            page.markdown.contains("# "),
+            "expected heading marker in markdown"
+        );
+        assert!(
+            page.markdown.contains('['),
+            "expected link syntax in markdown"
+        );
     }
 
     #[test]
