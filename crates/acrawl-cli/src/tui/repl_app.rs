@@ -1940,6 +1940,17 @@ fn run_loop(
                             state.push_system("Resuming...");
                             continue;
                         }
+                        let trimmed_peek = state.input.text.trim().to_ascii_lowercase();
+                        if trimmed_peek == "/exit" || trimmed_peek == "/quit" {
+                            if state.busy {
+                                cancel_flag.request_cancel();
+                            }
+                            state.exit = true;
+                            state.persist_on_exit = true;
+                            state.input.text.clear();
+                            state.input.cursor = 0;
+                            continue;
+                        }
                         if state.busy {
                             state.push_system(
                                 "Please wait for the current task to finish before submitting.",
@@ -1970,13 +1981,6 @@ fn run_loop(
                         state.refresh_slash_overlay();
                         if trimmed.is_empty() {
                             state.wake_input_caret();
-                            continue;
-                        }
-                        if trimmed.eq_ignore_ascii_case("/exit")
-                            || trimmed.eq_ignore_ascii_case("/quit")
-                        {
-                            state.exit = true;
-                            state.persist_on_exit = true;
                             continue;
                         }
                         if let Some(cmd) = SlashCommand::parse(&trimmed) {
