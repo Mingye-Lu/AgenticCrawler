@@ -1,5 +1,6 @@
 use crate::tui::model_list::ModelInfo as PickerModelInfo;
 use api::provider::ModelInfo;
+use crawler::ChildEvent;
 
 /// UI updates from the LLM stream, tool executor, or worker thread.
 #[derive(Debug)]
@@ -39,6 +40,8 @@ pub enum ReplTuiEvent {
     PauseStarted(String),
     /// The runtime has exited the paused state.
     PauseEnded,
+    /// Event streamed from a forked child agent.
+    ChildEvent(ChildEvent),
 }
 
 #[cfg(test)]
