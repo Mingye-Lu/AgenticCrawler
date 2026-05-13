@@ -57,6 +57,25 @@ impl ChildTabState {
         }
     }
 
+    pub fn append_text_streaming(&mut self, text: &str) {
+        let mut parts = text.split('\n');
+        if let Some(first) = parts.next() {
+            if !first.is_empty() {
+                if let Some(last_line) = self.scrollback.back_mut() {
+                    last_line.push_str(first);
+                } else {
+                    self.scrollback.push_back(first.to_string());
+                }
+            }
+        }
+        for line in parts {
+            if self.scrollback.len() >= MAX_SCROLLBACK {
+                self.scrollback.pop_front();
+            }
+            self.scrollback.push_back(line.to_string());
+        }
+    }
+
     fn status_indicator(&self) -> &'static str {
         match &self.status {
             ChildTabStatus::Running => "●",
@@ -128,7 +147,7 @@ impl ChildTabPanel {
                 tab.max_steps = *max_steps;
             }
             crawler::ChildEventKind::TextDelta(text) => {
-                tab.append_text(text);
+                tab.append_text_streaming(text);
             }
             crawler::ChildEventKind::ToolCallStart {
                 name,
