@@ -141,10 +141,14 @@ impl ChildEventSender {
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
-    if s.len() <= max_chars {
+    if s.chars().count() <= max_chars {
         s.to_string()
     } else {
-        format!("{}…", &s[..max_chars])
+        let end_byte = s
+            .char_indices()
+            .nth(max_chars)
+            .map_or(s.len(), |(idx, _)| idx);
+        format!("{}…", &s[..end_byte])
     }
 }
 
