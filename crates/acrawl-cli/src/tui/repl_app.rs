@@ -1838,6 +1838,29 @@ fn run_loop(
                     rect_contains_mouse(state.last_transcript_rect, me.column, me.row);
                 let in_input = rect_contains_mouse(state.last_input_rect, me.column, me.row);
 
+                if let ViewMode::Child(ref id) = state.view_mode {
+                    match me.kind {
+                        MouseEventKind::ScrollUp => {
+                            if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                tab.follow_bottom = false;
+                                tab.scroll_offset = tab.scroll_offset.saturating_sub(3);
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                let max = tab.scrollback.len().saturating_sub(1);
+                                tab.scroll_offset = (tab.scroll_offset + 3).min(max);
+                                let available = state.last_view_height.max(1);
+                                if tab.scroll_offset >= tab.scrollback.len().saturating_sub(available) {
+                                    tab.follow_bottom = true;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 if state.ui_state == AppUiState::ChatMode && in_transcript {
                     let max_off = state
                         .last_wrapped_len
