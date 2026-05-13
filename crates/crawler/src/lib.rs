@@ -370,15 +370,27 @@ mod tests {
         let specs = mvp_tool_specs();
         let nav = specs.iter().find(|s| s.name == "navigate").unwrap();
         let schema_str = nav.input_schema.to_string();
-        assert!(schema_str.contains("format"), "navigate schema should have format param");
-        assert!(schema_str.contains("markdown"), "format enum should include markdown");
+        assert!(
+            schema_str.contains("format"),
+            "navigate schema should have format param"
+        );
+        assert!(
+            schema_str.contains("markdown"),
+            "format enum should include markdown"
+        );
     }
 
     #[test]
     fn page_map_spec_mentions_landmarks() {
         let specs = mvp_tool_specs();
         let pm = specs.iter().find(|s| s.name == "page_map").unwrap();
-        assert!(pm.description.contains("landmarks"), "page_map description should mention landmarks");
-        assert!(pm.instructions.unwrap_or("").contains("landmark"), "page_map instructions should mention landmark");
+        assert!(
+            pm.description.contains("landmarks"),
+            "page_map description should mention landmarks"
+        );
+        assert!(
+            pm.instructions.unwrap_or("").contains("landmark"),
+            "page_map instructions should mention landmark"
+        );
     }
 }

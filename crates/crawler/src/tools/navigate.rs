@@ -28,7 +28,9 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         .unwrap_or("markdown");
 
     if !matches!(format, "markdown" | "text" | "html") {
-        return Err(CrawlError::new("format must be one of: markdown, text, html"));
+        return Err(CrawlError::new(
+            "format must be one of: markdown, text, html",
+        ));
     }
 
     Ok(NavigateInput {
@@ -41,10 +43,10 @@ fn cap_content(content: &str, max_chars: usize) -> (String, bool) {
     if content.chars().count() <= max_chars {
         (content.to_string(), false)
     } else {
-        let truncated = content
-            .char_indices()
-            .nth(max_chars)
-            .map_or_else(|| content.to_string(), |(idx, _)| content[..idx].to_string());
+        let truncated = content.char_indices().nth(max_chars).map_or_else(
+            || content.to_string(),
+            |(idx, _)| content[..idx].to_string(),
+        );
         (truncated, true)
     }
 }
@@ -59,7 +61,9 @@ fn extract_headings_from_markdown(md: &str) -> Value {
                 return None;
             }
 
-            let text = trimmed.strip_prefix(&"#".repeat(hash_count))?.strip_prefix(' ')?;
+            let text = trimmed
+                .strip_prefix(&"#".repeat(hash_count))?
+                .strip_prefix(' ')?;
 
             Some(json!({
                 "level": hash_count,
