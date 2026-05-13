@@ -5,7 +5,10 @@ use ratatui::widgets::{Block, Borders, Paragraph, ListState};
 use ratatui::Frame;
 
 use crate::markdown::PredictiveMarkdownBuffer;
-use super::repl_app::TranscriptEntry;
+use super::repl_app::{ToolCallStatus, TranscriptEntry};
+use super::repl_render::ansi_to_lines;
+
+const MAX_ENTRIES: usize = 1000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChildTabStatus {
@@ -17,24 +20,25 @@ pub enum ChildTabStatus {
 
 #[derive(Clone)]
 pub struct ChildTabState {
-    pub child_id: String,
-    pub sub_goal: String,
-    pub status: ChildTabStatus,
-    pub step: usize,
-    pub max_steps: usize,
-    pub tool_in_progress: Option<String>,
-    pub items_extracted: usize,
-    pub follow_bottom: bool,
-    pub entries: Vec<TranscriptEntry>,
-    pub list_state: ListState,
-    pub last_wrapped_len: usize,
-    pub last_view_height: usize,
-    pub md_buffer: PredictiveMarkdownBuffer,
-    pub live_ansi: String,
-    #[deprecated(note = "Use list_state instead. Will be removed in Task 4.")]
-    pub scroll_offset: usize,
-    #[deprecated(note = "Use entries instead. Will be removed in Task 4.")]
-    pub scrollback: Vec<String>,
+    pub(super) child_id: String,
+    pub(super) sub_goal: String,
+    pub(super) status: ChildTabStatus,
+    pub(super) step: usize,
+    pub(super) max_steps: usize,
+    pub(super) tool_in_progress: Option<String>,
+    pub(super) items_extracted: usize,
+    pub(super) follow_bottom: bool,
+    pub(super) entries: Vec<TranscriptEntry>,
+    #[allow(dead_code)]
+    pub(super) list_state: ListState,
+    #[allow(dead_code)]
+    pub(super) last_wrapped_len: usize,
+    #[allow(dead_code)]
+    pub(super) last_view_height: usize,
+    pub(super) md_buffer: PredictiveMarkdownBuffer,
+    pub(super) live_ansi: String,
+    pub(super) scroll_offset: usize,
+    pub(super) scrollback: Vec<String>,
 }
 
 impl ChildTabState {
@@ -59,6 +63,7 @@ impl ChildTabState {
         }
     }
 
+    #[allow(dead_code)]
     fn status_indicator(&self) -> &'static str {
         match &self.status {
             ChildTabStatus::Running => "●",
@@ -121,11 +126,140 @@ impl ChildTabPanel {
         self.tabs.iter_mut().find(|t| t.child_id == child_id)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn apply_event(&mut self, child_id: &str, sub_goal: &str, event: &crawler::ChildEventKind) {
         let idx = self.get_or_create_tab(child_id, sub_goal);
-        let _tab = &mut self.tabs[idx];
-        // TODO: Implement in Task 2
-        let _ = event;
+
+        match event {
+            crawler::ChildEventKind::TextDelta(text) => {
+                let tab = &mut self.tabs[idx];
+                for c in text.chars() {
+                    tab.md_buffer.feed_char(c, &mut tab.live_ansi);
+                    if c == '\n' {
+                        let ansi = std::mem::take(&mut tab.live_ansi);
+                        for styled_line in ansi_to_lines(&ansi) {
+                            tab.entries.push(TranscriptEntry::Stream(styled_line));
+                        }
+                    }
+                }
+            }
+            crawler::ChildEventKind::ToolCallStart {
+                name,
+                input_summary,
+            } => {
+                let tab = &mut self.tabs[idx];
+                tab.tool_in_progress = Some(name.clone());
+                tab.entries.push(TranscriptEntry::ToolCall {
+                    name: name.clone(),
+                    input_summary: input_summary.clone(),
+                    status: ToolCallStatus::Running,
+                });
+            }
+            crawler::ChildEventKind::ToolCallComplete {
+                name,
+                output_summary,
+                is_error,
+            } => {
+                let tab = &mut self.tabs[idx];
+                tab.tool_in_progress = None;
+                let completed_status = if *is_error {
+                    ToolCallStatus::Error(output_summary.clone())
+                } else {
+                    ToolCallStatus::Success {
+                        output: output_summary.clone(),
+                    }
+                };
+
+                let updated = tab.entries.iter_mut().rev().find_map(|entry| match entry {
+                    TranscriptEntry::ToolCall {
+                        name: entry_name,
+                        status: status @ ToolCallStatus::Running,
+                        ..
+                    } if entry_name == name => Some(status),
+                    _ => None,
+                });
+
+                if let Some(status) = updated {
+                    *status = completed_status;
+                } else {
+                    tab.entries.push(TranscriptEntry::ToolCall {
+                        name: name.clone(),
+                        input_summary: String::new(),
+                        status: completed_status,
+                    });
+                }
+            }
+            crawler::ChildEventKind::StepStarted { step, max_steps } => {
+                let tab = &mut self.tabs[idx];
+                tab.step = *step;
+                tab.max_steps = *max_steps;
+                tab.entries
+                    .push(TranscriptEntry::Status(format!("Step {step}/{max_steps}")));
+            }
+            crawler::ChildEventKind::PauseRequested { reason } => {
+                self.tabs[idx].status = ChildTabStatus::Paused {
+                    reason: reason.clone(),
+                };
+                self.tabs[idx]
+                    .entries
+                    .push(TranscriptEntry::System(format!("⏸ Paused: {reason}")));
+                self.active_tab = idx;
+            }
+            crawler::ChildEventKind::Resumed => {
+                let tab = &mut self.tabs[idx];
+                tab.status = ChildTabStatus::Running;
+                tab.entries
+                    .push(TranscriptEntry::System("▶ Resumed".to_string()));
+            }
+            crawler::ChildEventKind::Finished {
+                success,
+                items_extracted,
+                error,
+            } => {
+                let tab = &mut self.tabs[idx];
+                tab.items_extracted = *items_extracted;
+                tab.status = if *success {
+                    ChildTabStatus::Done
+                } else {
+                    ChildTabStatus::Error(
+                        error
+                            .clone()
+                            .unwrap_or_else(|| "unknown error".to_string()),
+                    )
+                };
+                tab.tool_in_progress = None;
+
+                tab.md_buffer.flush(&mut tab.live_ansi);
+                if !tab.live_ansi.is_empty() {
+                    let ansi = std::mem::take(&mut tab.live_ansi);
+                    for styled_line in ansi_to_lines(&ansi) {
+                        tab.entries.push(TranscriptEntry::Stream(styled_line));
+                    }
+                }
+
+                for entry in &mut tab.entries {
+                    if let TranscriptEntry::ToolCall {
+                        status: status @ ToolCallStatus::Running,
+                        ..
+                    } = entry
+                    {
+                        *status = ToolCallStatus::Error("interrupted".to_string());
+                    }
+                }
+
+                let message = if *success {
+                    format!("✓ Done — {items_extracted} items extracted")
+                } else {
+                    format!("✗ Error: {}", error.as_deref().unwrap_or("unknown error"))
+                };
+                tab.entries.push(TranscriptEntry::System(message));
+            }
+        }
+
+        if self.tabs[idx].entries.len() > MAX_ENTRIES {
+            let excess = self.tabs[idx].entries.len() - MAX_ENTRIES;
+            self.tabs[idx].entries.drain(0..excess);
+        }
     }
 
     pub fn active_tab_is_paused(&self) -> bool {
@@ -218,7 +352,6 @@ impl ChildTabPanel {
         let main_inner = main_block.inner(main_area);
         frame.render_widget(main_block, main_area);
 
-        let available = usize::from(main_inner.height.max(1));
         // TODO: Task 2 will implement rendering from entries using build_wrapped_list
         // For now, render empty since entries are populated in Task 2
         let lines: Vec<Line<'_>> = Vec::new();
