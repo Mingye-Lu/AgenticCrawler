@@ -1032,6 +1032,27 @@ impl ReplTuiState {
                     &child_ev.sub_goal,
                     &child_ev.event,
                 );
+                if matches!(child_ev.event, crawler::ChildEventKind::PauseRequested { .. })
+                    && matches!(self.view_mode, ViewMode::Parent)
+                {
+                    self.view_mode = ViewMode::Child(child_ev.child_id.clone());
+                }
+            }
+        }
+    }
+
+    fn reconcile_child_view_mode(&mut self) {
+        if self.child_tab_panel.tabs.is_empty() {
+            if matches!(self.view_mode, ViewMode::Child(_)) {
+                self.view_mode = ViewMode::Parent;
+            }
+            return;
+        }
+
+        if let ViewMode::Child(child_id) = &self.view_mode {
+            let child_exists = self.child_tab_panel.tabs.iter().any(|tab| tab.child_id == *child_id);
+            if !child_exists {
+                self.view_mode = ViewMode::Parent;
             }
         }
     }
@@ -1696,6 +1717,7 @@ fn run_loop(
 
     loop {
         state.drain_events(ui_rx);
+        state.reconcile_child_view_mode();
 
         if let Some(rx) = state.update_rx.as_mut() {
             if let Ok(info) = rx.try_recv() {
@@ -1893,6 +1915,101 @@ fn run_loop(
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
                     state.selection.anchor = None;
                     state.selection.end = None;
+                }
+
+                if let ViewMode::Child(child_id) = state.view_mode.clone() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                    } else {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Up => {
+                                state.view_mode = ViewMode::Parent;
+                                continue;
+                            }
+                            KeyCode::Left => {
+                                state.child_tab_panel.prev_tab();
+                                if let Some(tab) = state.child_tab_panel.active_tab_state_mut() {
+                                    state.view_mode = ViewMode::Child(tab.child_id.clone());
+                                } else {
+                                    state.view_mode = ViewMode::Parent;
+                                }
+                                continue;
+                            }
+                            KeyCode::Right => {
+                                state.child_tab_panel.next_tab();
+                                if let Some(tab) = state.child_tab_panel.active_tab_state_mut() {
+                                    state.view_mode = ViewMode::Child(tab.child_id.clone());
+                                } else {
+                                    state.view_mode = ViewMode::Parent;
+                                }
+                                continue;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    tab.scroll_offset = (tab.scroll_offset.saturating_add(1))
+                                        .min(tab.scrollback.len().saturating_sub(1));
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('k') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    tab.scroll_offset = tab.scroll_offset.saturating_sub(1);
+                                }
+                                continue;
+                            }
+                            KeyCode::PageDown => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    tab.scroll_offset = (tab.scroll_offset.saturating_add(10))
+                                        .min(tab.scrollback.len().saturating_sub(1));
+                                }
+                                continue;
+                            }
+                            KeyCode::PageUp => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    tab.scroll_offset = tab.scroll_offset.saturating_sub(10);
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('G') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = true;
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('g') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    tab.scroll_offset = 0;
+                                }
+                                continue;
+                            }
+                            KeyCode::Enter => {
+                                let should_resume = state
+                                    .child_tab_panel
+                                    .find_tab_mut(&child_id)
+                                    .is_some_and(|tab| {
+                                        matches!(tab.status, child_tabs::ChildTabStatus::Paused { .. })
+                                    });
+                                if should_resume {
+                                    if let Some(registry) = &state.child_control_registry {
+                                        if let Some(child_state) = registry.get(&child_id) {
+                                            child_state.resume();
+                                            state.push_system(&format!(
+                                                "Resuming child {child_id}..."
+                                            ));
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            _ => continue,
+                        }
+                    }
                 }
 
                 let mut modal_action = None;
@@ -2107,14 +2224,19 @@ fn run_loop(
                     continue;
                 }
 
-                // Tab/Shift+Tab to switch child tabs
-                if key.code == KeyCode::Tab && !state.child_tab_panel.tabs.is_empty() {
-                    if key.modifiers.contains(KeyModifiers::SHIFT) {
-                        state.child_tab_panel.prev_tab();
-                    } else {
-                        state.child_tab_panel.next_tab();
+                if key.code == KeyCode::Char('x')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(state.view_mode, ViewMode::Parent)
+                {
+                    if let Some(child_id) = state
+                        .child_tab_panel
+                        .tabs
+                        .get(state.child_tab_panel.active_tab)
+                        .map(|tab| tab.child_id.clone())
+                    {
+                        state.view_mode = ViewMode::Child(child_id);
+                        continue;
                     }
-                    continue;
                 }
 
                 match key.code {
