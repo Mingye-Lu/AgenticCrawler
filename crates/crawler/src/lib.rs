@@ -109,7 +109,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Returns the URL navigated to and a `page_state` object with headings, landmarks, and links of the resulting page. Use page_state to understand what you landed on after going back."),
         },
         ToolSpec {
             name: "scroll",
@@ -210,7 +210,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Returns tab count and a `page_state` object reflecting the switched-to tab's content (headings, landmarks, links). Use page_state to orient yourself in the new tab without needing a separate page_map call."),
         },
         ToolSpec {
             name: "list_resources",
