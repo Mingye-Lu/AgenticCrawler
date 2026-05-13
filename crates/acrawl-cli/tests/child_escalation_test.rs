@@ -5,6 +5,57 @@ use crawler::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender
 use runtime::RuntimeObserver;
 
 #[allow(dead_code)]
+mod markdown {
+    #[derive(Clone)]
+    pub struct PredictiveMarkdownBuffer;
+
+    impl PredictiveMarkdownBuffer {
+        pub fn new() -> Self {
+            Self
+        }
+
+        pub fn feed_char(&mut self, _c: char, _out: &mut String) {}
+
+        pub fn flush(&mut self, _out: &mut String) {}
+    }
+}
+
+#[allow(dead_code)]
+mod repl_app {
+    #[derive(Clone, Debug)]
+    pub enum ToolCallStatus {
+        Running,
+        Interrupted,
+        Success { output: String },
+        Error(String),
+    }
+
+    #[derive(Clone)]
+    pub enum TranscriptEntry {
+        System(String),
+        Status(String),
+        User(String),
+        Stream(ratatui::text::Line<'static>),
+        SystemCard {
+            title: String,
+            rows: Vec<(String, String)>,
+        },
+        ToolCall {
+            name: String,
+            input_summary: String,
+            status: ToolCallStatus,
+        },
+    }
+}
+
+#[allow(dead_code)]
+mod repl_render {
+    pub fn ansi_to_lines(_ansi: &str) -> Vec<ratatui::text::Line<'static>> {
+        Vec::new()
+    }
+}
+
+#[allow(dead_code)]
 #[path = "../src/tui/child_tabs.rs"]
 mod child_tabs;
 
