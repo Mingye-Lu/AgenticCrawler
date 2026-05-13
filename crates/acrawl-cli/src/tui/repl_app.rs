@@ -1736,11 +1736,15 @@ fn run_loop(
 
         terminal.draw(|frame| {
             let show_input_cursor = state.active_modal.is_none();
-            match state.ui_state {
-                AppUiState::WelcomeMode => {
-                    draw_welcome(frame, frame.area(), &mut state, show_input_cursor);
+            if state.view_mode == ViewMode::Parent {
+                match state.ui_state {
+                    AppUiState::WelcomeMode => {
+                        draw_welcome(frame, frame.area(), &mut state, show_input_cursor);
+                    }
+                    AppUiState::ChatMode => draw_chat(frame, &mut state, &header, show_input_cursor),
                 }
-                AppUiState::ChatMode => draw_chat(frame, &mut state, &header, show_input_cursor),
+            } else {
+                crate::tui::repl_render::draw_child_view(frame, &mut state);
             }
             if let Some(ref modal) = state.active_modal {
                 modal.draw(frame, frame.area());
