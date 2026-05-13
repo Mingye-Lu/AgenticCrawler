@@ -28,7 +28,6 @@ impl SessionModalEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[allow(dead_code)]
 pub enum SessionModalOutcome {
     #[default]
     None,
@@ -68,7 +67,6 @@ pub struct SessionModal {
 }
 
 impl SessionModal {
-    #[allow(dead_code)]
     pub fn new(mut entries: Vec<SessionModalEntry>) -> Self {
         entries.sort_by_key(|e| std::cmp::Reverse(e.modified_epoch_secs));
         Self {
@@ -83,7 +81,6 @@ impl SessionModal {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_entries(&mut self, mut entries: Vec<SessionModalEntry>) {
         entries.sort_by_key(|e| std::cmp::Reverse(e.modified_epoch_secs));
         self.entries = entries;
@@ -94,7 +91,6 @@ impl SessionModal {
         self.pending_delete = None;
     }
 
-    #[allow(dead_code)]
     pub fn take_outcome(&mut self) -> SessionModalOutcome {
         std::mem::take(&mut self.outcome)
     }

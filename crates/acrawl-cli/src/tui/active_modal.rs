@@ -9,7 +9,6 @@ use ratatui::Frame;
 pub enum ActiveModal {
     Auth(AuthModal),
     Model(ModelModal),
-    #[allow(dead_code)]
     Session(SessionModal),
 }
 
@@ -92,7 +91,6 @@ impl ActiveModal {
         }
     }
 
-    #[allow(dead_code)]
     pub fn as_session_mut(&mut self) -> Option<&mut SessionModal> {
         match self {
             Self::Session(modal) => Some(modal),
