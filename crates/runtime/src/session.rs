@@ -93,6 +93,11 @@ impl Session {
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), SessionError> {
         let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
         let temp_path = path.with_extension("tmp");
         {
             let mut file = fs::File::create(&temp_path)?;
