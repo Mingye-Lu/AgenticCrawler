@@ -50,12 +50,13 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "properties": {
                     "url": { "type": "string" },
                     "format": { "type": "string", "enum": ["markdown", "text", "html"] },
-                    "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main" }
+                    "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main" },
+                    "strip_images": { "type": "boolean", "default": true }
                 },
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Use format='text' for plain text or format='html' for raw HTML. The page_map.links array lets you navigate to linked pages without needing to click."),
+            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context — set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking."),
         },
         ToolSpec {
             name: "click",
