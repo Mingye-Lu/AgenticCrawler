@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 const STARTER_ACRAWL_JSON: &str = "{}\n";
 const GITIGNORE_COMMENT: &str = "# AgenticCrawler local artifacts";
-const GITIGNORE_ENTRIES: [&str; 2] = [".acrawl/settings.local.json", ".acrawl/sessions/"];
+const GITIGNORE_ENTRIES: [&str; 1] = [".acrawl/settings.local.json"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InitStatus {
@@ -362,7 +362,6 @@ mod tests {
         );
         let gitignore = fs::read_to_string(root.join(".gitignore")).expect("read gitignore");
         assert!(gitignore.contains(".acrawl/settings.local.json"));
-        assert!(gitignore.contains(".acrawl/sessions/"));
         let agents_md = fs::read_to_string(root.join("AGENTS.md")).expect("read agents md");
         assert!(agents_md.contains("Languages: Rust."));
         assert!(agents_md.contains("cargo clippy --workspace --all-targets -- -D warnings"));
@@ -394,7 +393,6 @@ mod tests {
         );
         let gitignore = fs::read_to_string(root.join(".gitignore")).expect("read gitignore");
         assert_eq!(gitignore.matches(".acrawl/settings.local.json").count(), 1);
-        assert_eq!(gitignore.matches(".acrawl/sessions/").count(), 1);
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }

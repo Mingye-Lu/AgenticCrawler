@@ -21,6 +21,7 @@ use crate::tui::repl_render::{
     ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
     rect_contains_mouse, suspend_for_stdout,
 };
+use crate::tui::session_modal::SessionModalEntry;
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
@@ -53,6 +54,7 @@ pub(super) enum AppUiState {
 #[derive(Clone, Debug)]
 pub(super) enum ToolCallStatus {
     Running,
+    Interrupted,
     Success { output: String },
     Error(String),
 }
@@ -163,6 +165,7 @@ pub(super) struct ReplTuiState {
     input: InputEditorState,
     status_line: String,
     pub(super) busy: bool,
+    pub(super) cancelling: bool,
     pending_model_after_auth: Option<String>,
     active_modal: Option<ActiveModal>,
     /// Picker catalog state for the `/model` modal.
@@ -212,6 +215,7 @@ impl ReplTuiState {
             },
             status_line: String::new(),
             busy: false,
+            cancelling: false,
             pending_model_after_auth: None,
             active_modal: None,
             live_model_catalog: ModelCatalogState::Loading,
@@ -273,6 +277,9 @@ impl ReplTuiState {
     /// Returns the spinner frame matching the current tick.
     pub(super) fn spinner_char(&self) -> char {
         const FRAMES: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+        if self.cancelling {
+            return '◼';
+        }
         FRAMES[usize::from(self.spinner_tick) % FRAMES.len()]
     }
 
@@ -878,7 +885,19 @@ impl ReplTuiState {
                 }
                 ReplTuiEvent::TurnFinished(result) => {
                     self.busy = false;
+                    self.cancelling = false;
                     self.current_tool = None;
+
+                    for entry in &mut self.entries {
+                        if let TranscriptEntry::ToolCall {
+                            status: status @ ToolCallStatus::Running,
+                            ..
+                        } = entry
+                        {
+                            *status = ToolCallStatus::Interrupted;
+                        }
+                    }
+
                     self.status_line = match &result {
                         Ok(()) => "Ready".to_string(),
                         Err(e) => format!("Error: {e}"),
@@ -1010,6 +1029,138 @@ impl ReplTuiState {
     }
 }
 
+fn build_session_modal_entries(
+    current_id: &str,
+) -> Result<Vec<SessionModalEntry>, Box<dyn std::error::Error>> {
+    let summaries = crate::session_mgr::list_managed_sessions()?;
+    let dir = crate::session_mgr::sessions_dir();
+    Ok(summaries
+        .into_iter()
+        .map(|s| SessionModalEntry {
+            path: dir.join(format!("{}.json", s.id)),
+            is_current: s.id == current_id,
+            id: s.id,
+            title: s.title,
+            modified_epoch_secs: s.modified_epoch_secs,
+            message_count: s.message_count,
+        })
+        .collect())
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_session_modal_outcome(
+    state: &mut ReplTuiState,
+    cli: &Arc<Mutex<LiveCli>>,
+    outcome: crate::tui::session_modal::SessionModalOutcome,
+) {
+    use crate::tui::session_modal::SessionModalOutcome;
+    match outcome {
+        SessionModalOutcome::None => {}
+        SessionModalOutcome::Switch { id, path } => {
+            state.active_modal = None;
+            match cli.lock() {
+                Ok(mut guard) => {
+                    let handle = crate::session_mgr::SessionHandle {
+                        id: id.clone(),
+                        path: path.clone(),
+                    };
+                    match guard.switch_to_session_handle(handle) {
+                        Ok(message_count) => {
+                            let _ = guard.persist_session();
+                            state.push_system_card(
+                                "Session",
+                                &format!(
+                                    "Session switched\n  Active session   {}\n  File             {}\n  Messages         {}",
+                                    id,
+                                    path.display(),
+                                    message_count
+                                ),
+                            );
+                        }
+                        Err(e) => {
+                            state.push_system_card(
+                                "Session Error",
+                                &format!("Failed to switch session: {e}"),
+                            );
+                        }
+                    }
+                }
+                Err(_) => {
+                    state.push_system_card("Session Error", "Failed to acquire CLI lock.");
+                }
+            }
+        }
+        SessionModalOutcome::Delete {
+            id,
+            path,
+            is_current,
+        } => {
+            if let Err(e) = crate::session_mgr::delete_session(&path) {
+                state.push_system_card("Session Error", &format!("Failed to delete session: {e}"));
+            }
+            let new_current_id = if is_current {
+                match cli.lock() {
+                    Ok(mut guard) => {
+                        if let Err(e) = guard.clear_session_command(true) {
+                            state.push_system_card(
+                                "Session Error",
+                                &format!("Deleted current session but failed to reset: {e}"),
+                            );
+                        }
+                        guard.session_id().to_string()
+                    }
+                    Err(_) => id.clone(),
+                }
+            } else {
+                cli.lock().map(|g| g.session_id().to_string()).unwrap_or(id)
+            };
+            match build_session_modal_entries(&new_current_id) {
+                Ok(entries) => {
+                    if let Some(modal) = state
+                        .active_modal
+                        .as_mut()
+                        .and_then(ActiveModal::as_session_mut)
+                    {
+                        modal.set_entries(entries);
+                    }
+                }
+                Err(e) => {
+                    state.push_system_card(
+                        "Session Error",
+                        &format!("Failed to refresh session list: {e}"),
+                    );
+                }
+            }
+        }
+        SessionModalOutcome::Rename { id: _, path, title } => {
+            if let Err(e) = crate::session_mgr::rename_session(&path, &title) {
+                state.push_system_card("Session Error", &format!("Failed to rename session: {e}"));
+            }
+            let current_id = cli
+                .lock()
+                .map(|g| g.session_id().to_string())
+                .unwrap_or_default();
+            match build_session_modal_entries(&current_id) {
+                Ok(entries) => {
+                    if let Some(modal) = state
+                        .active_modal
+                        .as_mut()
+                        .and_then(ActiveModal::as_session_mut)
+                    {
+                        modal.set_entries(entries);
+                    }
+                }
+                Err(e) => {
+                    state.push_system_card(
+                        "Session Error",
+                        &format!("Failed to refresh session list: {e}"),
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn handle_slash_command_tui(
     terminal: &mut DefaultTerminal,
@@ -1083,14 +1234,6 @@ fn handle_slash_command_tui(
             }
             state.push_system_card("Session", &result.message);
         }
-        SlashCommand::Resume { session_path } => {
-            let mut g = cli.lock().expect("cli lock");
-            let result = g.resume_session_command(session_path)?;
-            if result.persist_after {
-                g.persist_session()?;
-            }
-            state.push_system_card("Session", &result.message);
-        }
         SlashCommand::Config { section } => {
             let report = LiveCli::config_report(section.as_deref())?;
             state.push_system_card("Config", &report);
@@ -1106,13 +1249,16 @@ fn handle_slash_command_tui(
                 .export_session_report(path.as_deref())?;
             state.push_system_card("Export", &report);
         }
-        SlashCommand::Session { action, target } => {
-            let mut g = cli.lock().expect("cli lock");
-            let result = g.session_command(action.as_deref(), target.as_deref())?;
-            if result.persist_after {
-                g.persist_session()?;
+        SlashCommand::Sessions => {
+            if state.busy {
+                state.push_system_card("Sessions", "Cannot open the session picker while busy.");
+                return Ok(());
             }
-            state.push_system_card("Session", &result.message);
+            let current_id = cli.lock().expect("cli lock").session_id().to_string();
+            let entries = build_session_modal_entries(&current_id)?;
+            state.active_modal = Some(ActiveModal::Session(
+                crate::tui::session_modal::SessionModal::new(entries),
+            ));
         }
         SlashCommand::Debug => {
             state.debug_mode = !state.debug_mode;
@@ -1169,7 +1315,7 @@ fn handle_slash_command_tui(
                 let mut g = cli.lock().expect("cli lock");
                 let _ = g.handle_repl_command(other);
             })?;
-            state.push_system("(slash command executed in classic output mode)");
+            state.push_system("(slash command output printed to stdout)");
         }
     }
     Ok(())
@@ -1463,7 +1609,7 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
     });
 }
 
-/// Interactive REPL using Ratatui when stdout is a TTY (unless `ACRAWL_CLASSIC_REPL` is set).
+/// Interactive REPL using Ratatui. Requires a TTY on stdout — the caller must gate accordingly.
 pub fn run_repl_ratatui(
     model: String,
     allowed_tools: Option<AllowedToolSet>,
@@ -1567,7 +1713,7 @@ fn run_loop(
 
         if state.exit {
             if state.persist_on_exit {
-                let g = cli.lock().expect("cli lock");
+                let mut g = cli.lock().expect("cli lock");
                 g.persist_session()?;
             }
             break;
@@ -1741,6 +1887,7 @@ fn run_loop(
                 let mut modal_succeeded = false;
                 let mut oauth_provider = None;
                 let mut model_outcome = None;
+                let mut session_outcome = None;
 
                 if let Some(ref mut modal) = state.active_modal {
                     modal_action = Some(modal.handle_key(key));
@@ -1758,6 +1905,17 @@ fn run_loop(
                     if let Some(m) = modal.as_model() {
                         model_outcome = Some(m.outcome().clone());
                     }
+                    if let Some(m) = modal.as_session_mut() {
+                        let taken = m.take_outcome();
+                        if !matches!(taken, crate::tui::session_modal::SessionModalOutcome::None) {
+                            session_outcome = Some(taken);
+                        }
+                    }
+                }
+
+                if let Some(outcome) = session_outcome {
+                    handle_session_modal_outcome(&mut state, cli, outcome);
+                    continue;
                 }
 
                 if let Some(action) = modal_action {
@@ -1890,6 +2048,7 @@ fn run_loop(
                         if let Some(registry) = &state.child_control_registry {
                             registry.cancel_all();
                         }
+                        state.cancelling = true;
                         state.push_system("Interrupting…");
                         continue;
                     }
@@ -1972,6 +2131,17 @@ fn run_loop(
                             state.push_system("Resuming...");
                             continue;
                         }
+                        let trimmed_peek = state.input.text.trim().to_ascii_lowercase();
+                        if trimmed_peek == "/exit" || trimmed_peek == "/quit" {
+                            if state.busy {
+                                cancel_flag.request_cancel();
+                            }
+                            state.exit = true;
+                            state.persist_on_exit = true;
+                            state.input.text.clear();
+                            state.input.cursor = 0;
+                            continue;
+                        }
                         if state.busy {
                             state.push_system(
                                 "Please wait for the current task to finish before submitting.",
@@ -2002,13 +2172,6 @@ fn run_loop(
                         state.refresh_slash_overlay();
                         if trimmed.is_empty() {
                             state.wake_input_caret();
-                            continue;
-                        }
-                        if trimmed.eq_ignore_ascii_case("/exit")
-                            || trimmed.eq_ignore_ascii_case("/quit")
-                        {
-                            state.exit = true;
-                            state.persist_on_exit = true;
                             continue;
                         }
                         if let Some(cmd) = SlashCommand::parse(&trimmed) {
@@ -2105,6 +2268,7 @@ fn run_loop(
                                 if let Some(registry) = &state.child_control_registry {
                                     registry.cancel_all();
                                 }
+                                state.cancelling = true;
                                 state.push_system("Interrupting…");
                                 state.last_esc_at = None;
                             } else {

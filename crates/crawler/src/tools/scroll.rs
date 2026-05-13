@@ -17,8 +17,8 @@ pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
     }
 
     let pixels = input
-        .get("amount")
-        .or_else(|| input.get("pixels"))
+        .get("pixels")
+        .or_else(|| input.get("amount"))
         .and_then(serde_json::Value::as_i64)
         .unwrap_or(500);
 
@@ -36,9 +36,12 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         .await
         .map_err(|e| ToolError(e.to_string()))?;
 
+    let page_state = super::feedback::post_action_page_state(browser).await;
+
     Ok(ToolEffect::reply_json(&json!({
         "success": true,
-        "message": format!("Scrolled {direction} {pixels}px")
+        "message": format!("Scrolled {direction} {pixels}px"),
+        "page_state": page_state
     })))
 }
 
@@ -50,10 +53,18 @@ mod tests {
 
     #[test]
     fn parses_direction_and_pixels() {
-        let input = json!({"direction": "down", "amount": 300});
+        let input = json!({"direction": "down", "pixels": 300});
         let (dir, px) = parse_input(&input).unwrap();
         assert_eq!(dir, "down");
         assert_eq!(px, 300);
+    }
+
+    #[test]
+    fn accepts_legacy_amount_key() {
+        let input = json!({"direction": "down", "amount": 200});
+        let (dir, px) = parse_input(&input).unwrap();
+        assert_eq!(dir, "down");
+        assert_eq!(px, 200);
     }
 
     #[test]
@@ -76,5 +87,22 @@ mod tests {
     fn rejects_invalid_direction() {
         let input = json!({"direction": "left"});
         assert!(parse_input(&input).is_err());
+    }
+
+    #[test]
+    fn scroll_response_includes_page_state() {
+        let mock_pm = json!({
+            "headings": [], "landmarks": [], "forms": [], "links": [],
+            "interactive": {}, "meta": {"title": "Test", "url": "https://test.com", "description": ""}
+        });
+        let page_state = crate::tools::feedback::build_page_state_from_map(mock_pm);
+        let response = json!({
+            "success": true,
+            "message": "Scrolled down 500px",
+            "page_state": page_state
+        });
+        assert!(response["page_state"]["url"].is_string());
+        assert!(response["page_state"]["title"].is_string());
+        assert!(!response["page_state"]["page_map"].is_null());
     }
 }

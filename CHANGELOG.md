@@ -5,6 +5,107 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-05-13
+
+### Added
+
+- **`/sessions` slash command** — opens a scrollable TUI modal listing all saved sessions by title (with id fallback), sorted by last-modified. Up/Down/PgUp/PgDn/wheel to navigate, type to filter, Enter to switch, Esc to close. Inspired by OpenCode's `DialogSessionList`.
+- **In-modal session management** — `Ctrl+X` deletes the highlighted session (two-press confirm with a red-highlighted row; deleting the active session starts a fresh one). `Ctrl+R` renames the session inline (current title prefilled; Enter saves, Esc cancels).
+- **LLM-generated session titles** — after the first user message, a short title is generated in the background and saved to the session JSON. Naming runs in parallel with the main turn so it adds no perceived latency; the title appears in the `/sessions` picker.
+- **Global session storage** — sessions now live under `ACRAWL_CONFIG_HOME` (default `~/.acrawl/sessions/`), matching the convention already used by `credentials.json` and `settings.json`. The same session list is visible from any working directory.
+
+### Changed
+
+- **Sessions are created lazily** — no JSON file is written on startup. The session file appears on disk only after the first user message, so quickly opening and closing `acrawl` no longer pollutes the sessions directory.
+- `acrawl init` no longer adds `.acrawl/sessions/` to project `.gitignore` templates (sessions are no longer cwd-relative).
+
+### Removed
+
+- **`/resume` slash command** — replaced by the modal picker. The `--resume` startup flag is unchanged.
+- **`/session` slash command** (with `list`/`switch` subcommands) — replaced by `/sessions` opening the modal. In non-TUI mode, `/sessions` prints a stub message since interactive picking isn't possible there.
+
+## [0.3.2] - 2026-05-13
+
+### Added
+
+- **`content_depth` parameter on `navigate`** — controls how much page content is returned: `main` (default, extracts article/main content only), `full` (everything), `slim` (first 2000 chars), `none` (page_map only). Dramatically reduces context usage on content-heavy pages.
+- **`strip_images` parameter on `navigate`** — defaults to `true`, removing markdown image syntax that wastes context on long CDN URLs the agent cannot render.
+- **Post-action `page_state`** on all interaction tools — click, fill_form, scroll, hover, press_key, select_option, go_back, and switch_tab now return structural page context (headings, landmarks, links) after each action.
+- Shared `htmd`-based markdown conversion module with safe fallback (strips tags instead of leaking raw HTML on conversion failure) and resilient code-fence wrapping.
+- Expanded `page_map` — now returns headings, landmarks, forms (capped at 10), links (capped at 50), interactive element counts, and page metadata. Caps enforced inside the browser's `page.evaluate` to avoid large stdio transfers.
+
+### Changed
+
+- `navigate` default output format is now `main` content depth (was effectively `full`), reducing typical output by 60%+.
+- `scroll` input parameter renamed from `amount` to `pixels` with unit description.
+- `switch_tab` response no longer has top-level `url`/`title` (moved into `page_state`).
+- `nav` and `footer` HTML tags are now always stripped during markdown conversion.
+
+### Removed
+
+- Dead filter parameters from `list_resources` tool schema.
+
+## [0.3.1] - 2026-05-12
+
+### Fixed
+
+- `acrawl update` no longer short-circuits on the 24-hour startup-check cache. The explicit update command now always queries GitHub for the latest release; the TUI startup banner still uses the cache.
+
+## [0.3.0] - 2026-05-12
+
+### Removed
+
+- Classic line-mode REPL. The bare `acrawl` command now always launches the Ratatui TUI; running it without a TTY on stdout exits with an error pointing at `acrawl prompt` (one-shot) and `acrawl --resume` (session maintenance).
+- `classic_repl` field in `~/.acrawl/settings.json`. Existing files with this field set are ignored silently — no migration needed.
+
+### Fixed
+
+- `/exit` and `/quit` now interrupt any running task and exit immediately, even while busy.
+
+## [0.2.2] - 2026-05-12
+
+### Fixed
+
+- Interrupts (Ctrl+C / double-Esc) are now preemptive — they abort mid-stream and mid-tool-execution immediately rather than waiting for the current operation to finish.
+- Spinner switches to a static stop indicator (◼) during interruption with "Interrupting…" label in both the transcript overlay and footer.
+- In-flight tool call entries in the transcript are marked as interrupted instead of spinning forever.
+- Interrupted tool calls now insert proper `tool_result` stubs so the API does not reject the next turn with a missing-result 400 error.
+
+## [0.2.1] - 2026-05-11
+
+### Fixed
+
+- Deprioritize screenshot tool in favor of direct text extraction.
+
+### Added
+
+- `acrawl update` self-update subcommand.
+
+## [0.2.0] - 2026-05-08
+
+### Added
+
+- Human-in-the-loop: `wait_for_human` tool pauses the agent and auto-switches to headed browser so the user can solve CAPTCHAs or log in manually. Press Enter to resume.
+- Pause hotkey (`P`) during busy state pauses the agent between iterations.
+- Cookie export/import in PlaywrightBridge for session persistence across navigations.
+- Update check on startup with 24-hour cache; shows "update available" card on welcome screen.
+- Cross-platform install scripts (Linux/macOS shell, Windows PowerShell) with SHA256 verification.
+- Tag-triggered CI release workflow building binaries for 5 targets (linux x64/arm64, macOS x64/arm64, Windows x64).
+- NODE_PATH fallback for standalone Playwright resolution.
+- Tri-state `ControlSignal` (continue/pause/cancel) replacing the simple AtomicBool cancel flag.
+
+### Changed
+
+- Removed `done` tool — the agent now finishes by emitting a final text response with no further tool calls.
+- System prompt refactored into separate section functions.
+
+### Fixed
+
+- Lost-wakeup race in pause wait loops.
+- localStorage restored on correct origin after navigation.
+- NODE_PATH appended instead of overwritten for Playwright resolution.
+- Browser tests serialized with env_lock to prevent flakiness.
+
 ## [0.1.1] - 2026-04-30
 
 ### Added
@@ -40,4 +141,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.2.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.2.2
+[0.2.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.2.1
+[0.2.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.2.0
+[0.1.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.1.0

@@ -295,19 +295,58 @@ where
                     break;
                 }
 
-                for (tool_use_id, tool_name, input) in pending_tool_uses {
-                    let result_message = {
-                        let (output, is_error) =
-                            match self.tool_executor.execute(&tool_name, &input).await {
+                let mut interrupted_at = None;
+                for (idx, (tool_use_id, tool_name, input)) in pending_tool_uses.iter().enumerate() {
+                    if interrupted_at.is_some() {
+                        let stub = ConversationMessage::tool_result(
+                            tool_use_id.clone(),
+                            tool_name.clone(),
+                            "Tool execution interrupted by user.".to_string(),
+                            true,
+                        );
+                        notify_observer_tool_result(&mut self.observer, &stub);
+                        self.session.messages.push(stub.clone());
+                        tool_results.push(stub);
+                        continue;
+                    }
+
+                    let execute_fut = self.tool_executor.execute(tool_name, input);
+                    let result_message = tokio::select! {
+                        biased;
+                        () = self.control_state.cancelled() => {
+                            interrupted_at = Some(idx);
+                            let stub = ConversationMessage::tool_result(
+                                tool_use_id.clone(),
+                                tool_name.clone(),
+                                "Tool execution interrupted by user.".to_string(),
+                                true,
+                            );
+                            notify_observer_tool_result(&mut self.observer, &stub);
+                            self.session.messages.push(stub.clone());
+                            tool_results.push(stub);
+                            continue;
+                        }
+                        result = execute_fut => {
+                            let (output, is_error) = match result {
                                 Ok(output) => (output, false),
                                 Err(error) => (error.to_string(), true),
                             };
-
-                        ConversationMessage::tool_result(tool_use_id, tool_name, output, is_error)
+                            ConversationMessage::tool_result(
+                                tool_use_id.clone(),
+                                tool_name.clone(),
+                                output,
+                                is_error,
+                            )
+                        }
                     };
                     notify_observer_tool_result(&mut self.observer, &result_message);
                     self.session.messages.push(result_message.clone());
                     tool_results.push(result_message);
+                }
+
+                if interrupted_at.is_some() {
+                    self.control_state.reset();
+                    return Err(RuntimeError::new("interrupted by user"));
                 }
 
                 self.check_pause().await?;
@@ -347,6 +386,10 @@ where
     #[must_use]
     pub fn session(&self) -> &Session {
         &self.session
+    }
+
+    pub fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
     }
 
     #[must_use]
@@ -749,6 +792,7 @@ mod tests {
         let session = Session {
             version: 1,
             model: None,
+            title: None,
             messages: vec![
                 crate::session::ConversationMessage::user_text("one"),
                 crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {

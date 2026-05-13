@@ -5,6 +5,7 @@ mod browser;
 pub mod child_events;
 mod fetcher;
 mod manager;
+pub mod markdown;
 mod output;
 mod playwright;
 mod prompt;
@@ -45,17 +46,19 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "navigate",
-            description: "Navigate to a URL and get page content",
+            description: "Navigate to a URL and get page content as structured markdown (default), plain text, or raw HTML",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "url": { "type": "string" }
+                    "url": { "type": "string" },
+                    "format": { "type": "string", "enum": ["markdown", "text", "html"] },
+                    "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main" },
+                    "strip_images": { "type": "boolean", "default": true }
                 },
                 "required": ["url"],
                 "additionalProperties": false
             }),
-
-            instructions: Some("Always use full URLs including the protocol (https://). The response includes extracted page text — read it before taking further actions."),
+            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context — set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking."),
         },
         ToolSpec {
             name: "click",
@@ -69,7 +72,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("May trigger navigation or page changes. Read the tool result before issuing another action."),
+            instructions: Some("May trigger navigation or page changes. The response includes post-action page state (URL, title, page structure) so you can see what changed. Use navigate with a direct URL from page_map.links instead of click when possible — it's more reliable."),
         },
         ToolSpec {
             name: "fill_form",
@@ -88,7 +91,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Keys in `fields` can be CSS selectors (`#email`, `input[name=\"q\"]`) or plain field names/IDs that are resolved automatically. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms."),
+            instructions: Some("Keys in `fields` can be CSS selectors (`#email`, `input[name=\"q\"]`) or plain field names/IDs that are resolved automatically. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms. The response includes post-action page state showing the resulting URL and page structure."),
         },
         ToolSpec {
             name: "screenshot",
@@ -110,7 +113,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Returns the URL navigated to and a `page_state` object with headings, landmarks, and links of the resulting page. Use page_state to understand what you landed on after going back."),
         },
         ToolSpec {
             name: "scroll",
@@ -119,12 +122,12 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "direction": { "type": "string", "enum": ["up", "down"] },
-                    "amount": { "type": "integer" }
+                    "pixels": { "type": "integer", "description": "Pixels to scroll (default: 500). Use 300–800 for a normal page scroll." }
                 },
                 "additionalProperties": false
             }),
 
-            instructions: Some("Use to reveal lazy-loaded content or elements below the fold. Scroll down before concluding content is missing."),
+            instructions: Some("Use to reveal lazy-loaded content or elements below the fold. Returns updated page structure after scrolling. Scroll down before concluding content is missing."),
         },
         ToolSpec {
             name: "wait",
@@ -155,7 +158,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option."),
+            instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option. Returns a `page_state` with the updated page structure after selection."),
         },
         ToolSpec {
             name: "execute_js",
@@ -183,7 +186,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Use to reveal tooltips, dropdown menus, or hidden content. Returns a `page_state` with the updated page structure after hover."),
         },
         ToolSpec {
             name: "press_key",
@@ -198,7 +201,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Press Enter to submit, Escape to close modals, Tab to move focus, or arrow keys to navigate. Optional `selector` targets a specific element. Returns a `page_state` with the updated page structure after the keypress."),
         },
         ToolSpec {
             name: "switch_tab",
@@ -211,21 +214,18 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: None,
+            instructions: Some("Returns tab count and a `page_state` object reflecting the switched-to tab's content (headings, landmarks, links). Use page_state to orient yourself in the new tab without needing a separate page_map call."),
         },
         ToolSpec {
             name: "list_resources",
             description: "List page resources (links, images, forms)",
             input_schema: json!({
                 "type": "object",
-                "properties": {
-                    "type_pattern": { "type": "string" },
-                    "name_pattern": { "type": "string" }
-                },
+                "properties": {},
                 "additionalProperties": false
             }),
 
-            instructions: Some("Use to discover available links, forms, or images before interacting with them. Helps plan the next action when the page structure is unclear."),
+            instructions: Some("Use to discover available links, images, or forms. Note: page_map now also includes links and forms — use list_resources when you need ALL links (page_map caps at 50) or image details."),
         },
         ToolSpec {
             name: "save_file",
@@ -245,14 +245,14 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "page_map",
-            description: "Get the page structure as a heading outline with section sizes and previews",
+            description: "Get comprehensive page structure: headings, landmarks, forms, interactive elements, and links",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
                 "required": [],
                 "additionalProperties": false
             }),
-            instructions: Some("Returns the heading hierarchy of the current page as a list of sections, each with: level (1-6), text, id (if present), css_selector, char_count (characters in section), and preview (first ~100 chars). Use this to discover page structure before calling read_content. If sections is empty, the page has no semantic headings — fall back to read_content with a CSS selector."),
+            instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions (nav/main/aside/article/footer), forms (with field details), links (text + href, capped at 50), interactive element counts, and page metadata. Use links[].href with navigate instead of clicking when the URL is visible. If headings is empty, the page has no semantic headings — check landmarks instead."),
         },
         ToolSpec {
             name: "read_content",
@@ -367,5 +367,34 @@ mod tests {
                 spec.name
             );
         }
+    }
+
+    #[test]
+    fn navigate_spec_has_format_param() {
+        let specs = mvp_tool_specs();
+        let nav = specs.iter().find(|s| s.name == "navigate").unwrap();
+        let schema_str = nav.input_schema.to_string();
+        assert!(
+            schema_str.contains("format"),
+            "navigate schema should have format param"
+        );
+        assert!(
+            schema_str.contains("markdown"),
+            "format enum should include markdown"
+        );
+    }
+
+    #[test]
+    fn page_map_spec_mentions_landmarks() {
+        let specs = mvp_tool_specs();
+        let pm = specs.iter().find(|s| s.name == "page_map").unwrap();
+        assert!(
+            pm.description.contains("landmarks"),
+            "page_map description should mention landmarks"
+        );
+        assert!(
+            pm.instructions.unwrap_or("").contains("landmark"),
+            "page_map instructions should mention landmark"
+        );
     }
 }
