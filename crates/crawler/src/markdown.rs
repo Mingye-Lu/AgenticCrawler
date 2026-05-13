@@ -14,7 +14,9 @@ pub fn html_to_markdown(html: &str) -> String {
         return wrap_in_code_block(html);
     }
 
-    let markdown = CONVERTER.convert(html).unwrap_or_else(|_| html.to_string());
+    let markdown = CONVERTER
+        .convert(html)
+        .unwrap_or_else(|_| strip_tags_fallback(html));
 
     normalize_markdown(&markdown)
 }
@@ -45,8 +47,56 @@ fn contains_binary_controls(input: &str) -> bool {
         .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
 }
 
+fn strip_tags_fallback(html: &str) -> String {
+    let mut out = html.to_string();
+
+    for tag in ["script", "style", "noscript"] {
+        let open = format!("<{tag}");
+        let close = format!("</{tag}>");
+        let mut clean = String::with_capacity(out.len());
+        let src_lower = out.to_ascii_lowercase();
+        let mut pos = 0;
+        while pos < out.len() {
+            if let Some(start) = src_lower[pos..].find(&open) {
+                clean.push_str(&out[pos..pos + start]);
+                let abs = pos + start;
+                if let Some(end) = src_lower[abs..].find(&close) {
+                    pos = abs + end + close.len();
+                } else {
+                    pos = out.len();
+                }
+            } else {
+                clean.push_str(&out[pos..]);
+                break;
+            }
+        }
+        out = clean;
+    }
+
+    let mut result = String::with_capacity(out.len());
+    let mut inside_tag = false;
+    for ch in out.chars() {
+        match ch {
+            '<' => {
+                inside_tag = true;
+                result.push(' ');
+            }
+            '>' if inside_tag => inside_tag = false,
+            _ if !inside_tag => result.push(ch),
+            _ => {}
+        }
+    }
+
+    result
+}
+
 fn wrap_in_code_block(content: &str) -> String {
-    format!("```\n{content}\n```")
+    // Find a fence that doesn't clash with content
+    let mut fence = "```".to_string();
+    while content.contains(&fence) {
+        fence.push('`');
+    }
+    format!("{fence}\n{content}\n{fence}")
 }
 
 fn normalize_markdown(markdown: &str) -> String {
