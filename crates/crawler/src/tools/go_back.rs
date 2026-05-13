@@ -14,8 +14,12 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         .await
         .map_err(|e| ToolError(e.to_string()))?;
 
+    let page_state = super::feedback::post_action_page_state(browser).await;
+
     Ok(ToolEffect::reply_json(&serde_json::json!({
-        "url": url
+        "success": true,
+        "url": url,
+        "page_state": page_state
     })))
 }
 
