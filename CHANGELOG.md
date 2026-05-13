@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-05-13
+
+### Added
+
+- **`content_depth` parameter on `navigate`** — controls how much page content is returned: `main` (default, extracts article/main content only), `full` (everything), `slim` (first 2000 chars), `none` (page_map only). Dramatically reduces context usage on content-heavy pages.
+- **`strip_images` parameter on `navigate`** — defaults to `true`, removing markdown image syntax that wastes context on long CDN URLs the agent cannot render.
+- **Post-action `page_state`** on all interaction tools — click, fill_form, scroll, hover, press_key, select_option, go_back, and switch_tab now return structural page context (headings, landmarks, links) after each action.
+- Shared `htmd`-based markdown conversion module with safe fallback (strips tags instead of leaking raw HTML on conversion failure) and resilient code-fence wrapping.
+- Expanded `page_map` — now returns headings, landmarks, forms (capped at 10), links (capped at 50), interactive element counts, and page metadata. Caps enforced inside the browser's `page.evaluate` to avoid large stdio transfers.
+
+### Changed
+
+- `navigate` default output format is now `main` content depth (was effectively `full`), reducing typical output by 60%+.
+- `scroll` input parameter renamed from `amount` to `pixels` with unit description.
+- `switch_tab` response no longer has top-level `url`/`title` (moved into `page_state`).
+- `nav` and `footer` HTML tags are now always stripped during markdown conversion.
+
+### Removed
+
+- Dead filter parameters from `list_resources` tool schema.
+
 ## [0.3.1] - 2026-05-12
 
 ### Fixed
