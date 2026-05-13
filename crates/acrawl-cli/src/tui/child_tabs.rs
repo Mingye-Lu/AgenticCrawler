@@ -1,8 +1,4 @@
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, ListState};
-use ratatui::Frame;
+use ratatui::widgets::ListState;
 
 use crate::markdown::PredictiveMarkdownBuffer;
 use super::repl_app::{ToolCallStatus, TranscriptEntry};
@@ -29,11 +25,8 @@ pub struct ChildTabState {
     pub(super) items_extracted: usize,
     pub(super) follow_bottom: bool,
     pub(super) entries: Vec<TranscriptEntry>,
-    #[allow(dead_code)]
     pub(super) list_state: ListState,
-    #[allow(dead_code)]
     pub(super) last_wrapped_len: usize,
-    #[allow(dead_code)]
     pub(super) last_view_height: usize,
     pub(super) md_buffer: PredictiveMarkdownBuffer,
     pub(super) live_ansi: String,
@@ -60,25 +53,6 @@ impl ChildTabState {
             live_ansi: String::new(),
             scroll_offset: 0,
             scrollback: Vec::new(),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn status_indicator(&self) -> &'static str {
-        match &self.status {
-            ChildTabStatus::Running => "●",
-            ChildTabStatus::Paused { .. } => "⏸",
-            ChildTabStatus::Done => "✓",
-            ChildTabStatus::Error(_) => "✗",
-        }
-    }
-
-    fn status_color(&self) -> Color {
-        match &self.status {
-            ChildTabStatus::Running => Color::Cyan,
-            ChildTabStatus::Paused { .. } => Color::Yellow,
-            ChildTabStatus::Done => Color::Green,
-            ChildTabStatus::Error(_) => Color::Red,
         }
     }
 }
@@ -271,123 +245,14 @@ impl ChildTabPanel {
     pub fn active_child_id(&self) -> Option<&str> {
         self.tabs.get(self.active_tab).map(|t| t.child_id.as_str())
     }
-
-    #[allow(clippy::too_many_lines)]
-    pub fn render_fullscreen(&self, child_id: &str, frame: &mut Frame<'_>, area: Rect) {
-        let Some(tab) = self.tabs.iter().find(|t| t.child_id == child_id) else {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Rgb(50, 65, 90)));
-            let inner = block.inner(area);
-            frame.render_widget(block, area);
-            frame.render_widget(Paragraph::new("Child not found"), inner);
-            return;
-        };
-
-        let tab_idx = self.tabs.iter().position(|t| t.child_id == child_id).unwrap_or(0);
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(4),
-                Constraint::Length(1),
-            ])
-            .split(area);
-
-        let header_area = chunks[0];
-        let main_area = chunks[1];
-        let footer_area = chunks[2];
-
-        let status_text = match &tab.status {
-            ChildTabStatus::Paused { reason } => format!("⏸ PAUSED: {reason}"),
-            ChildTabStatus::Running => {
-                if let Some(ref tool) = tab.tool_in_progress {
-                    format!("● running {tool} — step {}/{}", tab.step, tab.max_steps)
-                } else {
-                    format!("● step {}/{}", tab.step, tab.max_steps)
-                }
-            }
-            ChildTabStatus::Done => format!("✓ Done — {} items extracted", tab.items_extracted),
-            ChildTabStatus::Error(e) => format!("✗ Error: {e}"),
-        };
-
-        let header_spans = vec![
-            Span::styled(
-                " Child ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!("  {} ", tab.sub_goal)),
-            Span::styled(
-                format!("  {status_text} "),
-                Style::default().fg(tab.status_color()),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!("{} of {}", tab_idx + 1, self.tabs.len()),
-                Style::default()
-                    .fg(Color::LightBlue)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ];
-        frame.render_widget(
-            Paragraph::new(Line::from(header_spans))
-                .style(Style::default().bg(Color::Rgb(14, 18, 28))),
-            header_area,
-        );
-
-        let border_color = match &tab.status {
-            ChildTabStatus::Paused { .. } => Color::Rgb(180, 140, 30),
-            ChildTabStatus::Running => Color::Rgb(40, 80, 110),
-            ChildTabStatus::Done => Color::Rgb(40, 100, 60),
-            ChildTabStatus::Error(_) => Color::Rgb(140, 40, 40),
-        };
-        let main_block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(Style::default().fg(border_color));
-        let main_inner = main_block.inner(main_area);
-        frame.render_widget(main_block, main_area);
-
-        // TODO: Task 2 will implement rendering from entries using build_wrapped_list
-        // For now, render empty since entries are populated in Task 2
-        let lines: Vec<Line<'_>> = Vec::new();
-        frame.render_widget(Paragraph::new(lines), main_inner);
-
-        let footer_spans = vec![
-            Span::styled(" ←", Style::default().fg(Color::DarkGray)),
-            Span::styled("Prev", Style::default().fg(Color::Gray)),
-            Span::styled("  →", Style::default().fg(Color::DarkGray)),
-            Span::styled("Next", Style::default().fg(Color::Gray)),
-            Span::styled("  Esc/↑", Style::default().fg(Color::DarkGray)),
-            Span::styled("Parent", Style::default().fg(Color::Gray)),
-            Span::styled("  j/k", Style::default().fg(Color::DarkGray)),
-            Span::styled("Scroll", Style::default().fg(Color::Gray)),
-            Span::styled("  Enter", Style::default().fg(Color::DarkGray)),
-            Span::styled("Resume", Style::default().fg(Color::Gray)),
-        ];
-        frame.render_widget(
-            Paragraph::new(Line::from(footer_spans))
-                .style(Style::default().bg(Color::Rgb(14, 18, 28))),
-            footer_area,
-        );
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
-    use ratatui::Terminal;
 
     #[test]
     fn child_tab_panel_event_state_transitions() {
-        let backend = TestBackend::new(80, 15);
-        let mut terminal = Terminal::new(backend).unwrap();
-
         let mut panel = ChildTabPanel::default();
         panel.get_or_create_tab("agent-a", "fetch data");
 
@@ -433,48 +298,7 @@ mod tests {
         );
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Done);
         assert_eq!(panel.tabs[0].items_extracted, 10);
-
-        // Render final state to confirm no panic
-        terminal
-            .draw(|frame| {
-                panel.render_fullscreen("agent-a", frame, frame.area());
-            })
-            .unwrap();
-
-        let buffer = terminal.backend().buffer().clone();
-        let content = buffer_to_string(&buffer);
-        assert!(
-            content.contains("Done") || content.contains("✓"),
-            "Done state should be visible in render"
-        );
-    }
-
-    #[test]
-    fn child_tab_panel_empty_renders_nothing() {
-        let backend = TestBackend::new(80, 15);
-        let mut terminal = Terminal::new(backend).unwrap();
-        let panel = ChildTabPanel::default();
-
-        terminal
-            .draw(|frame| {
-                panel.render_fullscreen("nonexistent", frame, frame.area());
-            })
-            .unwrap();
-        // Empty panel should render without panic and produce blank buffer
-    }
-
-    /// Helper: flatten a ratatui Buffer into a single string for assertion searches
-    fn buffer_to_string(buffer: &ratatui::buffer::Buffer) -> String {
-        let area = buffer.area();
-        let mut result = String::new();
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                let cell = &buffer[(x, y)];
-                result.push_str(cell.symbol());
-            }
-            result.push('\n');
-        }
-        result
+        assert!(matches!(panel.tabs[0].entries.last(), Some(TranscriptEntry::System(message)) if message.contains("Done") || message.contains('✓')));
     }
 
     #[test]

@@ -4,6 +4,7 @@ use std::io;
 use ansi_to_tui::IntoText;
 use crossterm::{event, execute};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::symbols::scrollbar;
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
@@ -929,10 +930,165 @@ pub(super) fn draw_slash_overlay(
     Some(overlay_area)
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState) {
-    if let super::repl_app::ViewMode::Child(ref id) = state.view_mode {
-        state.child_tab_panel.render_fullscreen(id, frame, frame.area());
+    let child_id = match &state.view_mode {
+        super::repl_app::ViewMode::Child(id) => id.clone(),
+        super::repl_app::ViewMode::Parent => return,
+    };
+
+    let spinner = state.spinner_char();
+    let debug_mode = state.debug_mode;
+    let tab_idx = state
+        .child_tab_panel
+        .tabs
+        .iter()
+        .position(|t| t.child_id == child_id)
+        .unwrap_or(0);
+    let total_tabs = state.child_tab_panel.tabs.len();
+
+    let area = frame.area();
+    let chunks = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Length(1),
+            ratatui::layout::Constraint::Min(4),
+            ratatui::layout::Constraint::Length(1),
+        ])
+        .split(area);
+    let header_area = chunks[0];
+    let main_area = chunks[1];
+    let footer_area = chunks[2];
+
+    let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) else {
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(50, 65, 90)));
+        let inner = block.inner(main_area);
+        frame.render_widget(block, main_area);
+        frame.render_widget(ratatui::widgets::Paragraph::new("Child not found"), inner);
+        return;
+    };
+
+    let status_text = match &tab.status {
+        super::child_tabs::ChildTabStatus::Paused { reason } => format!("⏸ PAUSED: {reason}"),
+        super::child_tabs::ChildTabStatus::Running => {
+            if let Some(ref tool) = tab.tool_in_progress {
+                format!("● running {tool} — step {}/{}", tab.step, tab.max_steps)
+            } else {
+                format!("● step {}/{}", tab.step, tab.max_steps)
+            }
+        }
+        super::child_tabs::ChildTabStatus::Done => {
+            format!("✓ Done — {} items extracted", tab.items_extracted)
+        }
+        super::child_tabs::ChildTabStatus::Error(e) => format!("✗ Error: {e}"),
+    };
+
+    let status_color = match &tab.status {
+        super::child_tabs::ChildTabStatus::Running => ratatui::style::Color::Cyan,
+        super::child_tabs::ChildTabStatus::Paused { .. } => ratatui::style::Color::Yellow,
+        super::child_tabs::ChildTabStatus::Done => ratatui::style::Color::Green,
+        super::child_tabs::ChildTabStatus::Error(_) => ratatui::style::Color::Red,
+    };
+
+    let header_spans = vec![
+        ratatui::text::Span::styled(
+            " Child ",
+            ratatui::style::Style::default()
+                .fg(ratatui::style::Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        ratatui::text::Span::raw(format!("  {} ", tab.sub_goal)),
+        ratatui::text::Span::styled(
+            format!("  {status_text} "),
+            ratatui::style::Style::default().fg(status_color),
+        ),
+        ratatui::text::Span::raw("  "),
+        ratatui::text::Span::styled(
+            format!("{} of {}", tab_idx + 1, total_tabs),
+            ratatui::style::Style::default()
+                .fg(ratatui::style::Color::LightBlue)
+                .add_modifier(ratatui::style::Modifier::DIM),
+        ),
+    ];
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(ratatui::text::Line::from(header_spans))
+            .style(ratatui::style::Style::default().bg(ratatui::style::Color::Rgb(14, 18, 28))),
+        header_area,
+    );
+
+    let border_color = match &tab.status {
+        super::child_tabs::ChildTabStatus::Paused { .. } => ratatui::style::Color::Rgb(180, 140, 30),
+        super::child_tabs::ChildTabStatus::Running => ratatui::style::Color::Rgb(40, 80, 110),
+        super::child_tabs::ChildTabStatus::Done => ratatui::style::Color::Rgb(40, 100, 60),
+        super::child_tabs::ChildTabStatus::Error(_) => ratatui::style::Color::Rgb(140, 40, 40),
+    };
+    let main_block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(ratatui::style::Style::default().fg(border_color));
+    let main_inner = main_block.inner(main_area);
+    frame.render_widget(main_block, main_area);
+
+    let (wrapped, _wrapped_text) = build_wrapped_list(
+        &tab.entries,
+        main_inner.width,
+        None,
+        spinner,
+        debug_mode,
+    );
+
+    tab.last_wrapped_len = wrapped.len();
+    tab.last_view_height = usize::from(main_inner.height.max(1));
+
+    let max_offset = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
+    if tab.list_state.offset() > max_offset {
+        *tab.list_state.offset_mut() = max_offset;
     }
+    if tab.follow_bottom {
+        *tab.list_state.offset_mut() = max_offset;
+    }
+
+    let list = List::new(wrapped)
+        .highlight_spacing(HighlightSpacing::Never)
+        .scroll_padding(2);
+    frame.render_stateful_widget(list, main_inner, &mut tab.list_state);
+
+    if tab.last_wrapped_len > tab.last_view_height {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .symbols(scrollbar::VERTICAL)
+            .thumb_symbol("▐")
+            .style(ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(60, 90, 120)));
+        let mut scrollbar_state = ScrollbarState::new(max_offset).position(tab.list_state.offset());
+        frame.render_stateful_widget(
+            scrollbar,
+            main_inner.inner(ratatui::layout::Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+
+    let footer_spans = vec![
+        ratatui::text::Span::styled(" ←", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
+        ratatui::text::Span::styled("Prev", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
+        ratatui::text::Span::styled("  →", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
+        ratatui::text::Span::styled("Next", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
+        ratatui::text::Span::styled("  Esc/↑", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
+        ratatui::text::Span::styled("Parent", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
+        ratatui::text::Span::styled("  j/k", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
+        ratatui::text::Span::styled("Scroll", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
+        ratatui::text::Span::styled("  Enter", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
+        ratatui::text::Span::styled("Resume", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
+    ];
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(ratatui::text::Line::from(footer_spans))
+            .style(ratatui::style::Style::default().bg(ratatui::style::Color::Rgb(14, 18, 28))),
+        footer_area,
+    );
 }
 
 #[allow(clippy::too_many_lines)]
