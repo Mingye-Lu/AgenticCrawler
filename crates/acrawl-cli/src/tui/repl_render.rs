@@ -929,6 +929,12 @@ pub(super) fn draw_slash_overlay(
     Some(overlay_area)
 }
 
+pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState) {
+    if let super::repl_app::ViewMode::Child(ref id) = state.view_mode {
+        state.child_tab_panel.render_fullscreen(id, frame, frame.area());
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 pub(super) fn draw_chat(
     frame: &mut ratatui::Frame<'_>,
@@ -941,28 +947,25 @@ pub(super) fn draw_chat(
         state.calculate_input_dimensions(area.width, &header.model);
 
     let has_children = !state.child_tab_panel.tabs.is_empty();
-    let child_panel_h: u16 = if has_children { 10 } else { 0 };
+    let hint_h: u16 = u16::from(has_children);
 
-    // Layout: 1-row header | transcript | child panel | 1-row spacer | input footer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(4),
-            Constraint::Length(child_panel_h),
+            Constraint::Length(hint_h),
             Constraint::Length(1),
             Constraint::Length(footer_h),
         ])
         .split(area);
     let header_area = chunks[0];
     let main_area = chunks[1];
-    let child_panel_area = chunks[2];
-    // chunks[3] is the spacer gap - intentionally left empty for breathing room
+    let hint_area = chunks[2];
     let input_area = chunks[4];
 
     draw_header(frame, header_area, header);
 
-    // --- Transcript block (rounded, matches welcome palette) ---
     let transcript_border_color = if state.paused {
         Color::Rgb(180, 140, 30)
     } else if state.busy {
@@ -1003,7 +1006,18 @@ pub(super) fn draw_chat(
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
 
     if has_children {
-        state.child_tab_panel.render(frame, child_panel_area);
+        let running_count = state
+            .child_tab_panel
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Running))
+            .count();
+        let hint_text = format!("Ctrl+X view children ({running_count} running)");
+        let hint_line = Line::from(Span::styled(
+            hint_text,
+            Style::default().fg(Color::DarkGray),
+        ));
+        frame.render_widget(Paragraph::new(hint_line), hint_area);
     }
 
     if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {

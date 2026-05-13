@@ -230,6 +230,66 @@ impl ChildTabPanel {
             frame.render_widget(Paragraph::new(lines), inner);
         }
     }
+
+    pub fn render_fullscreen(&self, child_id: &str, frame: &mut Frame<'_>, area: Rect) {
+        let Some(tab) = self.tabs.iter().find(|t| t.child_id == child_id) else {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Child View ");
+            let inner = block.inner(area);
+            frame.render_widget(block, area);
+            frame.render_widget(Paragraph::new("Child not found"), inner);
+            return;
+        };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(0),
+                Constraint::Length(1),
+            ])
+            .split(area);
+
+        let status_text = match &tab.status {
+            ChildTabStatus::Paused { reason } => format!("Paused: {reason}"),
+            ChildTabStatus::Running => format!("step {}/{}", tab.step, tab.max_steps),
+            ChildTabStatus::Done => "Done".to_string(),
+            ChildTabStatus::Error(e) => format!("Error: {e}"),
+        };
+        let header_line = Line::from(vec![
+            Span::styled(tab.status_indicator(), Style::default().fg(tab.status_color())),
+            Span::raw(format!(" {} — {status_text}", tab.sub_goal)),
+        ]);
+        frame.render_widget(Paragraph::new(header_line), chunks[0]);
+
+        let available = usize::from(chunks[1].height.max(1));
+        let start = if tab.follow_bottom {
+            tab.scrollback.len().saturating_sub(available)
+        } else {
+            tab.scroll_offset
+        };
+        let lines: Vec<Line<'_>> = tab
+            .scrollback
+            .iter()
+            .skip(start)
+            .take(available)
+            .map(|s| Line::raw(s.clone()))
+            .collect();
+        frame.render_widget(Paragraph::new(lines), chunks[1]);
+
+        let tab_idx = self.tabs.iter().position(|t| t.child_id == child_id).unwrap_or(0);
+        let footer_text = format!(
+            "Child {} of {} │ ←Prev  →Next  ↑Parent  Enter=Resume",
+            tab_idx + 1,
+            self.tabs.len()
+        );
+        let footer_line = Line::from(Span::styled(
+            footer_text,
+            Style::default().fg(Color::DarkGray),
+        ));
+        frame.render_widget(Paragraph::new(footer_line), chunks[2]);
+    }
 }
 
 #[cfg(test)]
