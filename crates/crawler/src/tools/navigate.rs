@@ -2,14 +2,25 @@ use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
 use crate::fetcher::FetchRouter;
-use crate::markdown::DEFAULT_MAX_MARKDOWN_CHARS;
+use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
 use crate::tools::page_map::apply_page_map_caps;
 use crate::{CrawlError, ToolEffect, ToolError};
+
+const SLIM_MAX_CHARS: usize = 2000;
+
+#[derive(Debug, PartialEq)]
+enum ContentDepth {
+    Full,
+    Main,
+    Slim,
+    None,
+}
 
 #[derive(Debug)]
 struct NavigateInput {
     url: String,
     format: String,
+    content_depth: ContentDepth,
 }
 
 fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
@@ -33,9 +44,26 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         ));
     }
 
+    let content_depth = match input
+        .get("content_depth")
+        .and_then(Value::as_str)
+        .unwrap_or("main")
+    {
+        "full" => ContentDepth::Full,
+        "main" => ContentDepth::Main,
+        "slim" => ContentDepth::Slim,
+        "none" => ContentDepth::None,
+        _ => {
+            return Err(CrawlError::new(
+                "content_depth must be one of: full, main, slim, none",
+            ))
+        }
+    };
+
     Ok(NavigateInput {
         url: url.to_string(),
         format: format.to_string(),
+        content_depth,
     })
 }
 
@@ -84,6 +112,50 @@ fn extract_headings_from_markdown(md: &str) -> Value {
     })
 }
 
+fn resolve_content(
+    html: &str,
+    text: &str,
+    markdown: &str,
+    format: &str,
+    depth: &ContentDepth,
+) -> (String, bool) {
+    if *depth == ContentDepth::None {
+        return (String::new(), false);
+    }
+
+    let max_chars = match depth {
+        ContentDepth::Slim => SLIM_MAX_CHARS,
+        _ => {
+            std::env::var("ACRAWL_MAX_MARKDOWN_CHARS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_MAX_MARKDOWN_CHARS)
+        }
+    };
+
+    match depth {
+        ContentDepth::Full => match format {
+            "markdown" => cap_content(markdown, max_chars),
+            "text" => cap_content(text, max_chars),
+            "html" => cap_content(html, max_chars),
+            _ => unreachable!(),
+        },
+        ContentDepth::Main | ContentDepth::Slim => {
+            let main_html = extract_main_html(html);
+            match format {
+                "markdown" => {
+                    let md = html_to_markdown(&main_html);
+                    cap_content(&md, max_chars)
+                }
+                "text" => cap_content(text, max_chars),
+                "html" => cap_content(&main_html, max_chars),
+                _ => unreachable!(),
+            }
+        }
+        ContentDepth::None => unreachable!(),
+    }
+}
+
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let params = parse_input(input)?;
 
@@ -94,12 +166,14 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         .map_err(|e| ToolError(e.to_string()))?;
 
     let title = page.title.clone().unwrap_or_default();
-    let (content, truncated) = match params.format.as_str() {
-        "markdown" => cap_content(&page.markdown, DEFAULT_MAX_MARKDOWN_CHARS),
-        "text" => cap_content(&page.text, 32_000),
-        "html" => cap_content(&page.html, 32_000),
-        _ => unreachable!("parse_input validates format"),
-    };
+
+    let (content, truncated) = resolve_content(
+        &page.html,
+        &page.text,
+        &page.markdown,
+        &params.format,
+        &params.content_depth,
+    );
 
     browser.set_navigated_url(&page.url, page.fetched_via_browser);
 
@@ -142,6 +216,12 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         "title": title,
         "content": content,
         "format": params.format,
+        "content_depth": match params.content_depth {
+            ContentDepth::Full => "full",
+            ContentDepth::Main => "main",
+            ContentDepth::Slim => "slim",
+            ContentDepth::None => "none",
+        },
         "truncated": truncated,
         "content_length": content_length,
         "page_map": page_map
@@ -176,6 +256,71 @@ mod tests {
         let input = json!({"url": "https://example.com", "format": "pdf"});
         let err = parse_input(&input).unwrap_err();
         assert!(err.to_string().contains("format"));
+    }
+
+    #[test]
+    fn navigate_parse_content_depth_defaults_to_main() {
+        let input = json!({"url": "https://example.com"});
+        let result = parse_input(&input).unwrap();
+        assert_eq!(result.content_depth, ContentDepth::Main);
+    }
+
+    #[test]
+    fn navigate_parse_content_depth_all_values() {
+        for (val, expected) in [
+            ("full", ContentDepth::Full),
+            ("main", ContentDepth::Main),
+            ("slim", ContentDepth::Slim),
+            ("none", ContentDepth::None),
+        ] {
+            let input = json!({"url": "https://x.com", "content_depth": val});
+            let result = parse_input(&input).unwrap();
+            assert_eq!(result.content_depth, expected);
+        }
+    }
+
+    #[test]
+    fn navigate_parse_content_depth_rejects_invalid() {
+        let input = json!({"url": "https://x.com", "content_depth": "deep"});
+        let err = parse_input(&input).unwrap_err();
+        assert!(err.to_string().contains("content_depth"));
+    }
+
+    #[test]
+    fn resolve_content_none_returns_empty() {
+        let (content, truncated) = resolve_content("<p>hello</p>", "hello", "hello", "markdown", &ContentDepth::None);
+        assert!(content.is_empty());
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn resolve_content_main_extracts_article() {
+        let html = r"<nav>Menu</nav><main><h1>Title</h1><p>Body text</p></main><footer>Footer</footer>";
+        let md = html_to_markdown(html);
+        let (content, _) = resolve_content(html, "text", &md, "markdown", &ContentDepth::Main);
+        assert!(content.contains("Title"));
+        assert!(content.contains("Body text"));
+        assert!(!content.contains("Menu"));
+        assert!(!content.contains("Footer"));
+    }
+
+    #[test]
+    fn resolve_content_full_includes_everything() {
+        let html = r"<header><p>Header</p></header><main><p>Body</p></main>";
+        let md = html_to_markdown(html);
+        let (content, _) = resolve_content(html, "text", &md, "markdown", &ContentDepth::Full);
+        assert!(content.contains("Header"));
+        assert!(content.contains("Body"));
+    }
+
+    #[test]
+    fn resolve_content_slim_caps_at_2000() {
+        let body = "a".repeat(5000);
+        let html = format!("<main><p>{body}</p></main>");
+        let md = html_to_markdown(&html);
+        let (content, truncated) = resolve_content(&html, "text", &md, "markdown", &ContentDepth::Slim);
+        assert!(truncated);
+        assert!(content.chars().count() <= SLIM_MAX_CHARS);
     }
 
     #[test]

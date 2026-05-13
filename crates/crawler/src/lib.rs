@@ -49,12 +49,13 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "url": { "type": "string" },
-                    "format": { "type": "string", "enum": ["markdown", "text", "html"] }
+                    "format": { "type": "string", "enum": ["markdown", "text", "html"] },
+                    "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main" }
                 },
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            instructions: Some("Always use full URLs including the protocol (https://). Returns markdown-formatted page content with an embedded page_map showing page structure. Use format='text' for plain text or format='html' for raw HTML. Read the content before taking further actions — the page_map.links array lets you navigate to linked pages without needing to click."),
+            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Use format='text' for plain text or format='html' for raw HTML. The page_map.links array lets you navigate to linked pages without needing to click."),
         },
         ToolSpec {
             name: "click",
