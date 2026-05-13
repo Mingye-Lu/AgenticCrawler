@@ -1,5 +1,3 @@
-#![allow(dead_code, reason = "callers wired in subsequent tasks")]
-
 use std::time::Duration;
 
 use serde_json::{json, Value};

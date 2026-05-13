@@ -78,13 +78,16 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
             .map_err(|e| ToolError(format!("failed to submit form: {e}")))?;
     }
 
+    let page_state = super::feedback::post_action_page_state(browser).await;
+
     let field_count = params.fields.len();
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "success": true,
         "message": format!(
             "Filled {field_count} field(s){}",
             if params.submit { " and submitted form" } else { "" }
-        )
+        ),
+        "page_state": page_state
     })))
 }
 
@@ -152,5 +155,23 @@ mod tests {
         let result = parse_input(&input).unwrap();
         assert!(!result.submit);
         assert_eq!(result.form_selector, "form");
+    }
+
+    #[test]
+    fn fill_form_response_includes_page_state() {
+        use serde_json::json;
+        let mock_pm = json!({
+            "headings": [], "landmarks": [], "forms": [], "links": [],
+            "interactive": {}, "meta": {"title": "Test", "url": "https://test.com", "description": ""}
+        });
+        let page_state = crate::tools::feedback::build_page_state_from_map(mock_pm);
+        let response = json!({
+            "success": true,
+            "message": "Filled 2 field(s) and submitted form",
+            "page_state": page_state
+        });
+        assert!(response["page_state"]["url"].is_string());
+        assert!(response["page_state"]["title"].is_string());
+        assert!(!response["page_state"]["page_map"].is_null());
     }
 }
