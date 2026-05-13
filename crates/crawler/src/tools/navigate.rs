@@ -21,6 +21,7 @@ struct NavigateInput {
     url: String,
     format: String,
     content_depth: ContentDepth,
+    strip_images: bool,
 }
 
 fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
@@ -60,10 +61,16 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         }
     };
 
+    let strip_images = input
+        .get("strip_images")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
     Ok(NavigateInput {
         url: url.to_string(),
         format: format.to_string(),
         content_depth,
+        strip_images,
     })
 }
 
@@ -77,6 +84,48 @@ fn cap_content(content: &str, max_chars: usize) -> (String, bool) {
         );
         (truncated, true)
     }
+}
+
+fn strip_markdown_images(md: &str) -> String {
+    let mut result = String::with_capacity(md.len());
+    let mut chars = md.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '!' && chars.peek() == Some(&'[') {
+            chars.next();
+            let mut depth = 1;
+            let mut found_close = false;
+            for c in chars.by_ref() {
+                if c == '[' {
+                    depth += 1;
+                } else if c == ']' {
+                    depth -= 1;
+                    if depth == 0 {
+                        found_close = true;
+                        break;
+                    }
+                }
+            }
+            if found_close && chars.peek() == Some(&'(') {
+                chars.next();
+                let mut paren_depth = 1;
+                for c in chars.by_ref() {
+                    if c == '(' {
+                        paren_depth += 1;
+                    } else if c == ')' {
+                        paren_depth -= 1;
+                        if paren_depth == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
 }
 
 fn extract_headings_from_markdown(md: &str) -> Value {
@@ -174,6 +223,12 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         &params.format,
         &params.content_depth,
     );
+
+    let content = if params.strip_images && params.format == "markdown" {
+        strip_markdown_images(&content)
+    } else {
+        content
+    };
 
     browser.set_navigated_url(&page.url, page.fetched_via_browser);
 
@@ -377,5 +432,40 @@ mod tests {
         assert_eq!(headings[1]["text"], "H2");
         assert_eq!(headings[2]["level"], 3);
         assert_eq!(headings[2]["text"], "H3");
+    }
+
+    #[test]
+    fn strip_images_removes_markdown_images() {
+        let md = "Before ![alt text](https://example.com/img.png) after";
+        let stripped = strip_markdown_images(md);
+        assert_eq!(stripped, "Before  after");
+    }
+
+    #[test]
+    fn strip_images_handles_nested_brackets() {
+        let md = "Text ![complex [alt]](url) more";
+        let stripped = strip_markdown_images(md);
+        assert_eq!(stripped, "Text  more");
+    }
+
+    #[test]
+    fn strip_images_preserves_regular_links() {
+        let md = "Click [here](https://example.com) to continue";
+        let stripped = strip_markdown_images(md);
+        assert_eq!(stripped, md);
+    }
+
+    #[test]
+    fn parse_strip_images_defaults_to_true() {
+        let input = json!({"url": "https://x.com"});
+        let result = parse_input(&input).unwrap();
+        assert!(result.strip_images);
+    }
+
+    #[test]
+    fn parse_strip_images_can_be_disabled() {
+        let input = json!({"url": "https://x.com", "strip_images": false});
+        let result = parse_input(&input).unwrap();
+        assert!(!result.strip_images);
     }
 }
