@@ -14,8 +14,10 @@ mod markdown {
             Self
         }
 
+        #[allow(clippy::unused_self)]
         pub fn feed_char(&mut self, _c: char, _out: &mut String) {}
 
+        #[allow(clippy::unused_self)]
         pub fn flush(&mut self, _out: &mut String) {}
     }
 }
