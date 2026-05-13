@@ -27,8 +27,6 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn list_resources_schema_has_no_filter_params() {
         let specs = crate::mvp_tool_specs();
