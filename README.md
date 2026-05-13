@@ -159,28 +159,28 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 | Tool | Description |
 |------|-------------|
-| `navigate` | Go to a URL. Uses HTTP first, auto-escalates to browser when JS is detected. |
-| `go_back` | Browser back button. |
-| `scroll` | Scroll up or down by pixel amount (default: 500px). |
-| `switch_tab` | Switch to a different browser tab by index. |
+| `navigate` | Go to a URL (supports `format`: markdown/text/html). Uses HTTP first, auto-escalates to browser when JS is detected. Returns structured content with a `page_map`. |
+| `go_back` | Browser back button. Returns `page_state` with the resulting page structure. |
+| `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
+| `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
 | `wait` | Wait for a CSS selector to appear or a timeout (up to 300s). |
 
 #### Interaction
 
 | Tool | Description |
 |------|-------------|
-| `click` | Click an element by CSS selector. |
-| `fill_form` | Fill form fields by selector or name, with optional auto-submit. |
-| `select_option` | Select a dropdown option by value, label, or index. |
-| `hover` | Hover over an element to reveal tooltips or menus. |
-| `press_key` | Press a keyboard key (Enter, Escape, Tab, etc.), optionally targeting an element. |
+| `click` | Click an element by CSS selector. Returns `page_state` after the click. |
+| `fill_form` | Fill form fields by selector or name, with optional auto-submit. Returns `page_state`. |
+| `select_option` | Select a dropdown option by value, label, or index. Returns `page_state`. |
+| `hover` | Hover over an element to reveal tooltips or menus. Returns `page_state`. |
+| `press_key` | Press a keyboard key (Enter, Escape, Tab, etc.), optionally targeting an element. Returns `page_state`. |
 | `execute_js` | Run arbitrary JavaScript in the page context and return the result. |
 
 #### Content Extraction
 
 | Tool | Description |
 |------|-------------|
-| `page_map` | Get the page's heading hierarchy with section sizes and text previews. |
+| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive element counts. |
 | `read_content` | Extract text by heading name or CSS selector, with offset/limit pagination for large pages. |
 | `list_resources` | List all links, images, and forms on the current page. |
 | `screenshot` | Capture a full-page screenshot (base64 PNG). |
