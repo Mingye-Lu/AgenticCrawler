@@ -15,7 +15,9 @@ mod markdown {
         }
 
         #[allow(clippy::unused_self)]
-        pub fn feed_char(&mut self, _c: char, _out: &mut String) {}
+        pub fn feed_char(&mut self, c: char, out: &mut String) {
+            out.push(c);
+        }
 
         #[allow(clippy::unused_self)]
         pub fn flush(&mut self, _out: &mut String) {}
@@ -52,8 +54,12 @@ mod repl_app {
 
 #[allow(dead_code)]
 mod repl_render {
-    pub fn ansi_to_lines(_ansi: &str) -> Vec<ratatui::text::Line<'static>> {
-        Vec::new()
+    pub fn ansi_to_lines(ansi: &str) -> Vec<ratatui::text::Line<'static>> {
+        if ansi.is_empty() {
+            Vec::new()
+        } else {
+            vec![ratatui::text::Line::from(ansi.to_string())]
+        }
     }
 }
 
