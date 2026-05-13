@@ -44,6 +44,8 @@ pub(super) fn build_runtime(
         observer,
         true,
         None,
+        None,
+        None,
     )
 }
 
@@ -57,6 +59,8 @@ pub(super) fn build_runtime_with_options(
     observer: Box<dyn RuntimeObserver + Send>,
     is_interactive: bool,
     control_state: Option<Arc<ControlState>>,
+    child_event_tx: Option<std::sync::mpsc::Sender<crawler::ChildEvent>>,
+    child_control_registry: Option<crawler::ChildControlRegistry>,
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, CliError> {
     session.model = Some(model.clone());
     let max_steps = settings_get_max_steps(&load_settings()) as usize;
@@ -74,6 +78,8 @@ pub(super) fn build_runtime_with_options(
             fork_client,
             is_interactive,
             Some(Arc::clone(&shared_control)),
+            child_event_tx,
+            child_control_registry,
         ),
         system_prompt,
         &build_runtime_feature_config()?,

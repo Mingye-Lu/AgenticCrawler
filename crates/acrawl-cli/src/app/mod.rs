@@ -113,6 +113,7 @@ pub(crate) struct LiveCli {
     output_mode: OutputMode,
     reasoning_effort: Option<api::ReasoningEffort>,
     debug_mode: bool,
+    child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
 }
 
 #[derive(Clone)]
@@ -180,53 +181,7 @@ impl LiveCli {
             output_mode.observer(),
             is_interactive,
             None,
-        )?;
-        let initial_effort = if model_supports_reasoning(&model) {
-            let saved = settings
-                .reasoning_effort
-                .as_deref()
-                .and_then(|effort| api::ReasoningEffort::from_str(effort).ok());
-            Some(saved.unwrap_or(api::ReasoningEffort::High))
-        } else {
-            None
-        };
-        let mut cli = Self {
-            model,
-            allowed_tools,
-            system_prompt,
-            runtime,
-            session,
-            output_mode,
-            reasoning_effort: initial_effort,
-            debug_mode: false,
-        };
-        if let Some(effort) = initial_effort {
-            cli.runtime
-                .api_client_mut()
-                .set_reasoning_effort(Some(effort));
-        }
-        cli.persist_session()?;
-        Ok(cli)
-    }
-
-    pub(crate) fn new_with_ui_tx(
-        model: String,
-        enable_tools: bool,
-        allowed_tools: Option<AllowedToolSet>,
-        event_tx: mpsc::Sender<ReplTuiEvent>,
-    ) -> Result<Self, CliError> {
-        let settings = runtime::load_settings();
-        let system_prompt = build_system_prompt()?;
-        let session = create_managed_session_handle()?;
-        let output_mode = OutputMode::Channel(event_tx);
-        let runtime = build_runtime_with_options(
-            Session::new(),
-            model.clone(),
-            system_prompt.clone(),
-            enable_tools,
-            allowed_tools.clone(),
-            output_mode.observer(),
-            true,
+            None,
             None,
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
@@ -247,6 +202,60 @@ impl LiveCli {
             output_mode,
             reasoning_effort: initial_effort,
             debug_mode: false,
+            child_event_rx: None,
+        };
+        if let Some(effort) = initial_effort {
+            cli.runtime
+                .api_client_mut()
+                .set_reasoning_effort(Some(effort));
+        }
+        cli.persist_session()?;
+        Ok(cli)
+    }
+
+    pub(crate) fn new_with_ui_tx(
+        model: String,
+        enable_tools: bool,
+        allowed_tools: Option<AllowedToolSet>,
+        event_tx: mpsc::Sender<ReplTuiEvent>,
+    ) -> Result<Self, CliError> {
+        let settings = runtime::load_settings();
+        let system_prompt = build_system_prompt()?;
+        let session = create_managed_session_handle()?;
+        let output_mode = OutputMode::Channel(event_tx);
+        let (child_event_tx, child_event_rx) = std::sync::mpsc::channel::<crawler::ChildEvent>();
+        let registry = crawler::ChildControlRegistry::default();
+        let runtime = build_runtime_with_options(
+            Session::new(),
+            model.clone(),
+            system_prompt.clone(),
+            enable_tools,
+            allowed_tools.clone(),
+            output_mode.observer(),
+            true,
+            None,
+            Some(child_event_tx),
+            Some(registry),
+        )?;
+        let initial_effort = if model_supports_reasoning(&model) {
+            let saved = settings
+                .reasoning_effort
+                .as_deref()
+                .and_then(|effort| api::ReasoningEffort::from_str(effort).ok());
+            Some(saved.unwrap_or(api::ReasoningEffort::High))
+        } else {
+            None
+        };
+        let mut cli = Self {
+            model,
+            allowed_tools,
+            system_prompt,
+            runtime,
+            session,
+            output_mode,
+            reasoning_effort: initial_effort,
+            debug_mode: false,
+            child_event_rx: Some(child_event_rx),
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -259,6 +268,10 @@ impl LiveCli {
 
     pub(crate) fn session_id(&self) -> &str {
         self.session.id.as_str()
+    }
+
+    pub(crate) fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<crawler::ChildEvent>> {
+        self.child_event_rx.take()
     }
 
     pub(crate) fn model_name(&self) -> &str {

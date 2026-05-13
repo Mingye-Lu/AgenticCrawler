@@ -95,11 +95,21 @@ impl CrawlerAgent {
         .with_max_steps(child_max_steps)
         .with_agent_id(child_id.clone())
         .with_agent_manager(self.agent_manager.clone())
-        .with_control_state(
-            self.control_state
-                .clone()
-                .unwrap_or_else(|| std::sync::Arc::new(runtime::ControlState::default())),
-        );
+        .with_control_state({
+            if let Some(registry) = &self.child_control_registry {
+                registry.register(&child_id)
+            } else {
+                self.control_state
+                    .clone()
+                    .unwrap_or_else(|| std::sync::Arc::new(runtime::ControlState::default()))
+            }
+        });
+        if let Some(ref tx) = self.child_event_tx {
+            child_agent = child_agent.with_child_event_sender(tx.clone());
+        }
+        if let Some(ref registry) = self.child_control_registry {
+            child_agent = child_agent.with_child_control_registry(registry.clone());
+        }
         child_agent.shared_bridge = Some(shared_bridge);
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
@@ -160,6 +170,11 @@ impl CrawlerAgent {
                 .checked_duration_since(Instant::now())
                 .unwrap_or_default();
             let items = if remaining.is_zero() {
+                if let Some(registry) = &self.child_control_registry {
+                    if let Some(state) = registry.get(&child_id) {
+                        state.request_cancel();
+                    }
+                }
                 handle.abort();
                 Vec::new()
             } else {
@@ -167,6 +182,11 @@ impl CrawlerAgent {
                     Ok(Ok(Some(items))) => items,
                     Ok(Ok(None) | Err(_)) => Vec::new(),
                     Err(_) => {
+                        if let Some(registry) = &self.child_control_registry {
+                            if let Some(state) = registry.get(&child_id) {
+                                state.request_cancel();
+                            }
+                        }
                         handle.abort();
                         Vec::new()
                     }
@@ -179,6 +199,9 @@ impl CrawlerAgent {
                 sub_goal,
                 items,
             });
+            if let Some(registry) = &self.child_control_registry {
+                registry.remove(&child_id);
+            }
             self.agent_manager.lock().await.mark_done(&child_id);
         }
 
