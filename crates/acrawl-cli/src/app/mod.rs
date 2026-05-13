@@ -15,15 +15,13 @@ use std::sync::{mpsc, Arc, Mutex};
 use crate::error::CliError;
 use crate::format::{
     format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
-    format_model_switch_report, format_resume_report, format_status_report, render_config_report,
-    render_export_text, render_repl_help, render_version_report, resolve_export_path,
-    status_context, StatusUsage, DEFAULT_DATE,
+    format_model_switch_report, format_status_report, render_config_report, render_export_text,
+    render_repl_help, render_version_report, resolve_export_path, status_context, StatusUsage,
+    DEFAULT_DATE,
 };
 use crate::markdown::{Spinner, TerminalRenderer};
 use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
-use crate::session_mgr::{
-    create_managed_session_handle, render_session_list, resolve_session_reference, SessionHandle,
-};
+use crate::session_mgr::{create_managed_session_handle, SessionHandle};
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crawler::mvp_tool_specs;
@@ -447,11 +445,6 @@ impl LiveCli {
                 println!("{}", self.cost_report());
                 false
             }
-            SlashCommand::Resume { session_path } => {
-                let result = self.resume_session_command(session_path)?;
-                println!("{}", result.message);
-                result.persist_after
-            }
             SlashCommand::Config { section } => {
                 println!("{}", Self::config_report(section.as_deref())?);
                 false
@@ -464,10 +457,9 @@ impl LiveCli {
                 println!("{}", self.export_session_report(path.as_deref())?);
                 false
             }
-            SlashCommand::Session { action, target } => {
-                let result = self.session_command(action.as_deref(), target.as_deref())?;
-                println!("{}", result.message);
-                result.persist_after
+            SlashCommand::Sessions => {
+                println!("Session picker is only available in the interactive TUI.");
+                false
             }
             SlashCommand::Auth { provider } => {
                 self.run_auth(provider.as_deref())?;
@@ -648,17 +640,10 @@ impl LiveCli {
         format_cost_report(self.runtime.usage().cumulative_usage())
     }
 
-    pub(crate) fn resume_session_command(
+    pub(crate) fn switch_to_session_handle(
         &mut self,
-        session_path: Option<String>,
-    ) -> Result<CommandUiResult, CliError> {
-        let Some(session_ref) = session_path else {
-            return Ok(CommandUiResult {
-                message: "Usage: /resume <session-path>".to_string(),
-                persist_after: false,
-            });
-        };
-        let handle = resolve_session_reference(&session_ref)?;
+        handle: SessionHandle,
+    ) -> Result<usize, CliError> {
         let session = Session::load_from_path(&handle.path)?;
         let message_count = session.messages.len();
         let model = session.model.clone().unwrap_or_else(|| self.model.clone());
@@ -675,14 +660,11 @@ impl LiveCli {
             s.model = Some(self.model.clone());
         });
         self.session = handle;
-        Ok(CommandUiResult {
-            message: format_resume_report(
-                &self.session.path.display().to_string(),
-                message_count,
-                self.runtime.usage().turns(),
-            ),
-            persist_after: true,
-        })
+        self.title_dispatched = true;
+        if let Ok(mut guard) = self.pending_title.lock() {
+            *guard = None;
+        }
+        Ok(message_count)
     }
 
     pub(crate) fn config_report(section: Option<&str>) -> Result<String, CliError> {
@@ -704,62 +686,6 @@ impl LiveCli {
             export_path.display(),
             self.runtime.session().messages.len()
         ))
-    }
-
-    pub(crate) fn session_command(
-        &mut self,
-        action: Option<&str>,
-        target: Option<&str>,
-    ) -> Result<CommandUiResult, CliError> {
-        match action {
-            None | Some("list") => Ok(CommandUiResult {
-                message: render_session_list(&self.session.id)?,
-                persist_after: false,
-            }),
-            Some("switch") => {
-                let Some(target) = target else {
-                    return Ok(CommandUiResult {
-                        message: "Usage: /session switch <session-id>".to_string(),
-                        persist_after: false,
-                    });
-                };
-                let handle = resolve_session_reference(target)?;
-                let session = Session::load_from_path(&handle.path)?;
-                let message_count = session.messages.len();
-                let model = session
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| self.model.clone());
-                self.runtime = build_runtime(
-                    session,
-                    model.clone(),
-                    self.system_prompt.clone(),
-                    true,
-                    self.allowed_tools.clone(),
-                    self.output_mode.observer(),
-                )?;
-                self.model = model;
-                let _ = runtime::update_settings(|s| {
-                    s.model = Some(self.model.clone());
-                });
-                self.session = handle;
-                Ok(CommandUiResult {
-                    message: format!(
-                        "Session switched\n  Active session   {}\n  File             {}\n  Messages         {}",
-                        self.session.id,
-                        self.session.path.display(),
-                        message_count
-                    ),
-                    persist_after: true,
-                })
-            }
-            Some(other) => Ok(CommandUiResult {
-                message: format!(
-                    "Unknown /session action '{other}'. Use /session list or /session switch <session-id>."
-                ),
-                persist_after: false,
-            }),
-        }
     }
 
     fn run_auth(&mut self, provider: Option<&str>) -> Result<(), CliError> {

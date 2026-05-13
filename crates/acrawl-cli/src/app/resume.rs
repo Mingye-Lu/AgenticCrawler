@@ -108,9 +108,8 @@ pub(crate) fn run_resume_command(
             })
         }
         SlashCommand::Debug
-        | SlashCommand::Resume { .. }
         | SlashCommand::Model { .. }
-        | SlashCommand::Session { .. }
+        | SlashCommand::Sessions
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed
         | SlashCommand::Headless

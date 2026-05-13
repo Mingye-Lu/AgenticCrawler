@@ -20,6 +20,7 @@ use crate::tui::repl_render::{
     ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
     rect_contains_mouse, suspend_for_stdout,
 };
+use crate::tui::session_modal::SessionModalEntry;
 use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
@@ -1009,6 +1010,138 @@ impl ReplTuiState {
     }
 }
 
+fn build_session_modal_entries(
+    current_id: &str,
+) -> Result<Vec<SessionModalEntry>, Box<dyn std::error::Error>> {
+    let summaries = crate::session_mgr::list_managed_sessions()?;
+    let dir = crate::session_mgr::sessions_dir();
+    Ok(summaries
+        .into_iter()
+        .map(|s| SessionModalEntry {
+            path: dir.join(format!("{}.json", s.id)),
+            is_current: s.id == current_id,
+            id: s.id,
+            title: s.title,
+            modified_epoch_secs: s.modified_epoch_secs,
+            message_count: s.message_count,
+        })
+        .collect())
+}
+
+#[allow(clippy::too_many_lines)]
+fn handle_session_modal_outcome(
+    state: &mut ReplTuiState,
+    cli: &Arc<Mutex<LiveCli>>,
+    outcome: crate::tui::session_modal::SessionModalOutcome,
+) {
+    use crate::tui::session_modal::SessionModalOutcome;
+    match outcome {
+        SessionModalOutcome::None => {}
+        SessionModalOutcome::Switch { id, path } => {
+            state.active_modal = None;
+            match cli.lock() {
+                Ok(mut guard) => {
+                    let handle = crate::session_mgr::SessionHandle {
+                        id: id.clone(),
+                        path: path.clone(),
+                    };
+                    match guard.switch_to_session_handle(handle) {
+                        Ok(message_count) => {
+                            let _ = guard.persist_session();
+                            state.push_system_card(
+                                "Session",
+                                &format!(
+                                    "Session switched\n  Active session   {}\n  File             {}\n  Messages         {}",
+                                    id,
+                                    path.display(),
+                                    message_count
+                                ),
+                            );
+                        }
+                        Err(e) => {
+                            state.push_system_card(
+                                "Session Error",
+                                &format!("Failed to switch session: {e}"),
+                            );
+                        }
+                    }
+                }
+                Err(_) => {
+                    state.push_system_card("Session Error", "Failed to acquire CLI lock.");
+                }
+            }
+        }
+        SessionModalOutcome::Delete {
+            id,
+            path,
+            is_current,
+        } => {
+            if let Err(e) = crate::session_mgr::delete_session(&path) {
+                state.push_system_card("Session Error", &format!("Failed to delete session: {e}"));
+            }
+            let new_current_id = if is_current {
+                match cli.lock() {
+                    Ok(mut guard) => {
+                        if let Err(e) = guard.clear_session_command(true) {
+                            state.push_system_card(
+                                "Session Error",
+                                &format!("Deleted current session but failed to reset: {e}"),
+                            );
+                        }
+                        guard.session_id().to_string()
+                    }
+                    Err(_) => id.clone(),
+                }
+            } else {
+                cli.lock().map(|g| g.session_id().to_string()).unwrap_or(id)
+            };
+            match build_session_modal_entries(&new_current_id) {
+                Ok(entries) => {
+                    if let Some(modal) = state
+                        .active_modal
+                        .as_mut()
+                        .and_then(ActiveModal::as_session_mut)
+                    {
+                        modal.set_entries(entries);
+                    }
+                }
+                Err(e) => {
+                    state.push_system_card(
+                        "Session Error",
+                        &format!("Failed to refresh session list: {e}"),
+                    );
+                }
+            }
+        }
+        SessionModalOutcome::Rename { id: _, path, title } => {
+            if let Err(e) = crate::session_mgr::rename_session(&path, &title) {
+                state.push_system_card("Session Error", &format!("Failed to rename session: {e}"));
+            }
+            let current_id = cli
+                .lock()
+                .map(|g| g.session_id().to_string())
+                .unwrap_or_default();
+            match build_session_modal_entries(&current_id) {
+                Ok(entries) => {
+                    if let Some(modal) = state
+                        .active_modal
+                        .as_mut()
+                        .and_then(ActiveModal::as_session_mut)
+                    {
+                        modal.set_entries(entries);
+                    }
+                }
+                Err(e) => {
+                    state.push_system_card(
+                        "Session Error",
+                        &format!("Failed to refresh session list: {e}"),
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn handle_slash_command_tui(
     terminal: &mut DefaultTerminal,
@@ -1082,14 +1215,6 @@ fn handle_slash_command_tui(
             }
             state.push_system_card("Session", &result.message);
         }
-        SlashCommand::Resume { session_path } => {
-            let mut g = cli.lock().expect("cli lock");
-            let result = g.resume_session_command(session_path)?;
-            if result.persist_after {
-                g.persist_session()?;
-            }
-            state.push_system_card("Session", &result.message);
-        }
         SlashCommand::Config { section } => {
             let report = LiveCli::config_report(section.as_deref())?;
             state.push_system_card("Config", &report);
@@ -1105,13 +1230,16 @@ fn handle_slash_command_tui(
                 .export_session_report(path.as_deref())?;
             state.push_system_card("Export", &report);
         }
-        SlashCommand::Session { action, target } => {
-            let mut g = cli.lock().expect("cli lock");
-            let result = g.session_command(action.as_deref(), target.as_deref())?;
-            if result.persist_after {
-                g.persist_session()?;
+        SlashCommand::Sessions => {
+            if state.busy {
+                state.push_system_card("Sessions", "Cannot open the session picker while busy.");
+                return Ok(());
             }
-            state.push_system_card("Session", &result.message);
+            let current_id = cli.lock().expect("cli lock").session_id().to_string();
+            let entries = build_session_modal_entries(&current_id)?;
+            state.active_modal = Some(ActiveModal::Session(
+                crate::tui::session_modal::SessionModal::new(entries),
+            ));
         }
         SlashCommand::Debug => {
             state.debug_mode = !state.debug_mode;
@@ -1733,6 +1861,7 @@ fn run_loop(
                 let mut modal_succeeded = false;
                 let mut oauth_provider = None;
                 let mut model_outcome = None;
+                let mut session_outcome = None;
 
                 if let Some(ref mut modal) = state.active_modal {
                     modal_action = Some(modal.handle_key(key));
@@ -1750,6 +1879,17 @@ fn run_loop(
                     if let Some(m) = modal.as_model() {
                         model_outcome = Some(m.outcome().clone());
                     }
+                    if let Some(m) = modal.as_session_mut() {
+                        let taken = m.take_outcome();
+                        if !matches!(taken, crate::tui::session_modal::SessionModalOutcome::None) {
+                            session_outcome = Some(taken);
+                        }
+                    }
+                }
+
+                if let Some(outcome) = session_outcome {
+                    handle_session_modal_outcome(&mut state, cli, outcome);
+                    continue;
                 }
 
                 if let Some(action) = modal_action {

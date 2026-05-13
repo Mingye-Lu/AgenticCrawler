@@ -1,6 +1,6 @@
 //! Slash command registry and parsing for the acrawl REPL.
 //!
-//! This crate provides the canonical set of 16 slash commands available in the interactive REPL,
+//! This crate provides the canonical set of 15 slash commands available in the interactive REPL,
 //! along with parsing, help rendering, and execution logic. Each command is defined as a
 //! [`SlashCommandSpec`] with metadata including name, summary, optional argument hints, and
 //! whether it is resume-safe.
@@ -11,16 +11,16 @@
 //! replayed when resuming a saved session via `--resume SESSION.json`. These include:
 //! `/help`, `/status`, `/compact`, `/clear`, `/cost`, `/config`, `/version`, and `/export`.
 //!
-//! Commands that are not resume-safe (e.g., `/model`, `/resume`, `/session`, `/auth`, `/headed`,
+//! Commands that are not resume-safe (e.g., `/model`, `/sessions`, `/auth`, `/headed`,
 //! `/headless`, `/debug`, `/exit`) are skipped during session replay because they either:
 //! - Require user interaction or runtime state (e.g., `/model` to switch providers)
-//! - Are only meaningful in the live REPL (e.g., `/resume` to load another session)
+//! - Are only meaningful in the live REPL (e.g., `/sessions` opens an interactive picker)
 //! - Modify browser or authentication state that should not be replayed
 //!
 //! ## Command Registry Pattern
 //!
 //! The module exports:
-//! - [`slash_command_specs()`] — returns the full 16-command spec list
+//! - [`slash_command_specs()`] — returns the full 15-command spec list
 //! - [`resume_supported_slash_commands()`] — filters to the 8 resume-safe commands
 //! - [`SlashCommand::parse()`] — parses user input into a [`SlashCommand`] enum
 //! - [`handle_slash_command()`] — executes a command and returns a [`SlashCommandResult`]
@@ -104,12 +104,6 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: true,
     },
     SlashCommandSpec {
-        name: "resume",
-        summary: "Load a saved session into the REPL",
-        argument_hint: Some("<session-path>"),
-        resume_supported: false,
-    },
-    SlashCommandSpec {
         name: "config",
         summary: "Inspect acrawl config files or merged sections",
         argument_hint: Some("[env|hooks|model]"),
@@ -134,9 +128,9 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: true,
     },
     SlashCommandSpec {
-        name: "session",
-        summary: "List or switch managed local sessions",
-        argument_hint: Some("[list|switch <session-id>]"),
+        name: "sessions",
+        summary: "Open the session picker (TUI)",
+        argument_hint: None,
         resume_supported: false,
     },
     SlashCommandSpec {
@@ -171,30 +165,14 @@ pub enum SlashCommand {
     Status,
     Compact,
     Debug,
-    Model {
-        model: Option<String>,
-    },
-    Clear {
-        confirm: bool,
-    },
+    Model { model: Option<String> },
+    Clear { confirm: bool },
     Cost,
-    Resume {
-        session_path: Option<String>,
-    },
-    Config {
-        section: Option<String>,
-    },
+    Config { section: Option<String> },
     Version,
-    Export {
-        path: Option<String>,
-    },
-    Session {
-        action: Option<String>,
-        target: Option<String>,
-    },
-    Auth {
-        provider: Option<String>,
-    },
+    Export { path: Option<String> },
+    Sessions,
+    Auth { provider: Option<String> },
     Headed,
     Headless,
     Unknown(String),
@@ -224,9 +202,6 @@ impl SlashCommand {
                 confirm: parts.next() == Some("--confirm"),
             },
             "cost" => Self::Cost,
-            "resume" => Self::Resume {
-                session_path: parts.next().map(ToOwned::to_owned),
-            },
             "config" => Self::Config {
                 section: parts.next().map(ToOwned::to_owned),
             },
@@ -234,10 +209,7 @@ impl SlashCommand {
             "export" => Self::Export {
                 path: parts.next().map(ToOwned::to_owned),
             },
-            "session" => Self::Session {
-                action: parts.next().map(ToOwned::to_owned),
-                target: parts.next().map(ToOwned::to_owned),
-            },
+            "sessions" => Self::Sessions,
             "auth" => Self::Auth {
                 provider: parts.next().map(ToOwned::to_owned),
             },
@@ -319,11 +291,10 @@ pub fn handle_slash_command(
         | SlashCommand::Model { .. }
         | SlashCommand::Clear { .. }
         | SlashCommand::Cost
-        | SlashCommand::Resume { .. }
         | SlashCommand::Config { .. }
         | SlashCommand::Version
         | SlashCommand::Export { .. }
-        | SlashCommand::Session { .. }
+        | SlashCommand::Sessions
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed
         | SlashCommand::Headless
@@ -365,12 +336,6 @@ mod tests {
         );
         assert_eq!(SlashCommand::parse("/cost"), Some(SlashCommand::Cost));
         assert_eq!(
-            SlashCommand::parse("/resume session.json"),
-            Some(SlashCommand::Resume {
-                session_path: Some("session.json".to_string()),
-            })
-        );
-        assert_eq!(
             SlashCommand::parse("/config"),
             Some(SlashCommand::Config { section: None })
         );
@@ -388,11 +353,8 @@ mod tests {
             })
         );
         assert_eq!(
-            SlashCommand::parse("/session switch abc123"),
-            Some(SlashCommand::Session {
-                action: Some("switch".to_string()),
-                target: Some("abc123".to_string())
-            })
+            SlashCommand::parse("/sessions"),
+            Some(SlashCommand::Sessions)
         );
         assert_eq!(
             SlashCommand::parse("/auth"),
@@ -441,15 +403,15 @@ mod tests {
         assert!(help.contains("/model [model]"));
         assert!(help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
-        assert!(help.contains("/resume <session-path>"));
         assert!(help.contains("/config [env|hooks|model]"));
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));
-        assert!(help.contains("/session [list|switch <session-id>]"));
+        assert!(help.contains("/sessions"));
         assert!(help.contains("/auth [anthropic|openai|other]"));
         assert!(help.contains("/headed"));
         assert!(help.contains("/headless"));
-        assert_eq!(slash_command_specs().len(), 16);
+        assert!(!help.contains("/resume"));
+        assert_eq!(slash_command_specs().len(), 15);
         assert_eq!(resume_supported_slash_commands().len(), 8);
     }
 
@@ -509,12 +471,6 @@ mod tests {
                 .is_none()
         );
         assert!(handle_slash_command("/cost", &session, CompactionConfig::default()).is_none());
-        assert!(handle_slash_command(
-            "/resume session.json",
-            &session,
-            CompactionConfig::default()
-        )
-        .is_none());
         assert!(handle_slash_command("/config", &session, CompactionConfig::default()).is_none());
         assert!(
             handle_slash_command("/config env", &session, CompactionConfig::default()).is_none()
@@ -524,9 +480,7 @@ mod tests {
             handle_slash_command("/export note.txt", &session, CompactionConfig::default())
                 .is_none()
         );
-        assert!(
-            handle_slash_command("/session list", &session, CompactionConfig::default()).is_none()
-        );
+        assert!(handle_slash_command("/sessions", &session, CompactionConfig::default()).is_none());
         assert!(
             handle_slash_command("/auth openai", &session, CompactionConfig::default()).is_none()
         );

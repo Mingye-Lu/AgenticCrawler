@@ -36,26 +36,6 @@ fn generate_session_id() -> String {
     format!("session-{millis}")
 }
 
-pub(crate) fn resolve_session_reference(
-    reference: &str,
-) -> Result<SessionHandle, Box<dyn std::error::Error>> {
-    let direct = PathBuf::from(reference);
-    let path = if direct.exists() {
-        direct
-    } else {
-        sessions_dir().join(format!("{reference}.json"))
-    };
-    if !path.exists() {
-        return Err(format!("session not found: {reference}").into());
-    }
-    let id = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or(reference)
-        .to_string();
-    Ok(SessionHandle { id, path })
-}
-
 pub(crate) fn list_managed_sessions(
 ) -> Result<Vec<ManagedSessionSummary>, Box<dyn std::error::Error>> {
     let mut sessions = Vec::new();
@@ -100,13 +80,11 @@ pub(crate) fn list_managed_sessions(
     Ok(sessions)
 }
 
-#[allow(dead_code)]
 pub(crate) fn delete_session(path: &Path) -> std::io::Result<()> {
     let _ = fs::remove_file(path.with_extension("tmp"));
     fs::remove_file(path)
 }
 
-#[allow(dead_code)]
 pub(crate) fn rename_session(path: &Path, new_title: &str) -> Result<(), SessionError> {
     let mut session = Session::load_from_path(path)?;
     let trimmed = new_title.trim();
@@ -116,36 +94,6 @@ pub(crate) fn rename_session(path: &Path, new_title: &str) -> Result<(), Session
         Some(trimmed.to_string())
     };
     session.save_to_path(path)
-}
-
-pub(crate) fn render_session_list(
-    active_session_id: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let sessions = list_managed_sessions()?;
-    let mut lines = vec![
-        "Sessions".to_string(),
-        format!("  Directory         {}", sessions_dir().display()),
-    ];
-    if sessions.is_empty() {
-        lines.push("  No managed sessions saved yet.".to_string());
-        return Ok(lines.join("\n"));
-    }
-    for session in sessions {
-        let marker = if session.id == active_session_id {
-            "● current"
-        } else {
-            "○ saved"
-        };
-        let title = session.title.as_deref().unwrap_or(&session.id);
-        lines.push(format!(
-            "  {title:<28} {marker:<10} id={id:<22} msgs={msgs:<4} modified={modified}",
-            title = title,
-            id = session.id,
-            msgs = session.message_count,
-            modified = session.modified_epoch_secs,
-        ));
-    }
-    Ok(lines.join("\n"))
 }
 
 #[cfg(test)]
