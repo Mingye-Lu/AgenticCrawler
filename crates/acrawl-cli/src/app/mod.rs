@@ -160,7 +160,7 @@ impl LiveCli {
     ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
-        let session = create_managed_session_handle()?;
+        let session = create_managed_session_handle();
         let output_mode = OutputMode::Stdout;
         let runtime = build_runtime_with_options(
             Session::new(),
@@ -208,7 +208,7 @@ impl LiveCli {
     ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
         let system_prompt = build_system_prompt()?;
-        let session = create_managed_session_handle()?;
+        let session = create_managed_session_handle();
         let output_mode = OutputMode::Channel(event_tx);
         let runtime = build_runtime_with_options(
             Session::new(),
@@ -582,7 +582,7 @@ impl LiveCli {
                 persist_after: false,
             });
         }
-        self.session = create_managed_session_handle()?;
+        self.session = create_managed_session_handle();
         self.runtime = build_runtime(
             Session::new(),
             self.model.clone(),
