@@ -240,43 +240,91 @@ impl ChildTabPanel {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn render_fullscreen(&self, child_id: &str, frame: &mut Frame<'_>, area: Rect) {
         let Some(tab) = self.tabs.iter().find(|t| t.child_id == child_id) else {
             let block = Block::default()
                 .borders(Borders::ALL)
-                .title(" Child View ");
+                .border_type(ratatui::widgets::BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Rgb(50, 65, 90)));
             let inner = block.inner(area);
             frame.render_widget(block, area);
             frame.render_widget(Paragraph::new("Child not found"), inner);
             return;
         };
 
+        let tab_idx = self.tabs.iter().position(|t| t.child_id == child_id).unwrap_or(0);
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
-                Constraint::Min(0),
+                Constraint::Min(4),
                 Constraint::Length(1),
             ])
             .split(area);
 
-        let status_text = match &tab.status {
-            ChildTabStatus::Paused { reason } => format!("Paused: {reason}"),
-            ChildTabStatus::Running => format!("step {}/{}", tab.step, tab.max_steps),
-            ChildTabStatus::Done => "Done".to_string(),
-            ChildTabStatus::Error(e) => format!("Error: {e}"),
-        };
-        let header_line = Line::from(vec![
-            Span::styled(tab.status_indicator(), Style::default().fg(tab.status_color())),
-            Span::raw(format!(" {} — {status_text}", tab.sub_goal)),
-        ]);
-        frame.render_widget(Paragraph::new(header_line), chunks[0]);
+        let header_area = chunks[0];
+        let main_area = chunks[1];
+        let footer_area = chunks[2];
 
-        let available = usize::from(chunks[1].height.max(1));
+        let status_text = match &tab.status {
+            ChildTabStatus::Paused { reason } => format!("⏸ PAUSED: {reason}"),
+            ChildTabStatus::Running => {
+                if let Some(ref tool) = tab.tool_in_progress {
+                    format!("● running {tool} — step {}/{}", tab.step, tab.max_steps)
+                } else {
+                    format!("● step {}/{}", tab.step, tab.max_steps)
+                }
+            }
+            ChildTabStatus::Done => format!("✓ Done — {} items extracted", tab.items_extracted),
+            ChildTabStatus::Error(e) => format!("✗ Error: {e}"),
+        };
+
+        let header_spans = vec![
+            Span::styled(
+                " Child ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("  {} ", tab.sub_goal)),
+            Span::styled(
+                format!("  {status_text} "),
+                Style::default().fg(tab.status_color()),
+            ),
+            Span::raw("  "),
+            Span::styled(
+                format!("{} of {}", tab_idx + 1, self.tabs.len()),
+                Style::default()
+                    .fg(Color::LightBlue)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ];
+        frame.render_widget(
+            Paragraph::new(Line::from(header_spans))
+                .style(Style::default().bg(Color::Rgb(14, 18, 28))),
+            header_area,
+        );
+
+        let border_color = match &tab.status {
+            ChildTabStatus::Paused { .. } => Color::Rgb(180, 140, 30),
+            ChildTabStatus::Running => Color::Rgb(40, 80, 110),
+            ChildTabStatus::Done => Color::Rgb(40, 100, 60),
+            ChildTabStatus::Error(_) => Color::Rgb(140, 40, 40),
+        };
+        let main_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(Style::default().fg(border_color));
+        let main_inner = main_block.inner(main_area);
+        frame.render_widget(main_block, main_area);
+
+        let available = usize::from(main_inner.height.max(1));
         let start = if tab.follow_bottom {
             tab.scrollback.len().saturating_sub(available)
         } else {
-            tab.scroll_offset
+            tab.scroll_offset.min(tab.scrollback.len().saturating_sub(available))
         };
         let lines: Vec<Line<'_>> = tab
             .scrollback
@@ -285,19 +333,25 @@ impl ChildTabPanel {
             .take(available)
             .map(|s| Line::raw(s.clone()))
             .collect();
-        frame.render_widget(Paragraph::new(lines), chunks[1]);
+        frame.render_widget(Paragraph::new(lines), main_inner);
 
-        let tab_idx = self.tabs.iter().position(|t| t.child_id == child_id).unwrap_or(0);
-        let footer_text = format!(
-            "Child {} of {} │ ←Prev  →Next  ↑Parent  Enter=Resume",
-            tab_idx + 1,
-            self.tabs.len()
+        let footer_spans = vec![
+            Span::styled(" ←", Style::default().fg(Color::DarkGray)),
+            Span::styled("Prev", Style::default().fg(Color::Gray)),
+            Span::styled("  →", Style::default().fg(Color::DarkGray)),
+            Span::styled("Next", Style::default().fg(Color::Gray)),
+            Span::styled("  Esc/↑", Style::default().fg(Color::DarkGray)),
+            Span::styled("Parent", Style::default().fg(Color::Gray)),
+            Span::styled("  j/k", Style::default().fg(Color::DarkGray)),
+            Span::styled("Scroll", Style::default().fg(Color::Gray)),
+            Span::styled("  Enter", Style::default().fg(Color::DarkGray)),
+            Span::styled("Resume", Style::default().fg(Color::Gray)),
+        ];
+        frame.render_widget(
+            Paragraph::new(Line::from(footer_spans))
+                .style(Style::default().bg(Color::Rgb(14, 18, 28))),
+            footer_area,
         );
-        let footer_line = Line::from(Span::styled(
-            footer_text,
-            Style::default().fg(Color::DarkGray),
-        ));
-        frame.render_widget(Paragraph::new(footer_line), chunks[2]);
     }
 }
 
