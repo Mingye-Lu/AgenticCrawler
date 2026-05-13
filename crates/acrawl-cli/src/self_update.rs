@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use runtime::{check_for_update, config_home_dir};
+use runtime::{check_for_update_force, config_home_dir};
 
 const REPO: &str = "Mingye-Lu/AgenticCrawler";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -10,7 +10,7 @@ const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
     println!("Checking for updates...");
 
-    let update_info = check_for_update().await;
+    let update_info = check_for_update_force().await;
     let update_info = match update_info {
         Some(info) if info.is_outdated => info,
         Some(info) => {
