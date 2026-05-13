@@ -281,7 +281,7 @@ The default interface is a full terminal UI with:
 | `Esc` `Esc` | Interrupt task (double-tap while busy) |
 | `Tab` | Auto-complete slash command |
 
-A classic line-mode REPL is also available via `classic_repl: true` in settings or for `--resume` sessions.
+Running `acrawl` without a TTY on stdout (e.g. piped or redirected) exits with an error pointing at `acrawl prompt` for one-shot use and `acrawl --resume` for session maintenance.
 
 ### Session Management
 
@@ -378,7 +378,6 @@ Created with defaults on first run. Edit directly or via `acrawl init`.
 | `headless` | `true` | Run browser without a visible window |
 | `max_steps` | `50` | Max agent loop iterations per goal |
 | `workspace_dir` | `"workspace"` | Where `save_file` writes output |
-| `classic_repl` | `false` | Use line-mode REPL instead of TUI |
 | `auto_compact_input_tokens` | `200000` | Token threshold for auto-compaction |
 | `reasoning_effort` | `"high"` | For reasoning models: `high` / `medium` / `low` |
 | `max_concurrent_per_parent` | `5` | Max concurrent sub-agents per parent |

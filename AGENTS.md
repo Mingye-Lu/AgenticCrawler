@@ -2,7 +2,7 @@
 
 ## Project
 
-`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 19-tool toolbox (16 browser + 2 agent-control + 1 human intervention). It ships as a single binary with an interactive Ratatui REPL and non-interactive modes.
+`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 19-tool toolbox (16 browser + 2 agent-control + 1 human intervention). It ships as a single binary with two modes: an interactive Ratatui TUI REPL (requires a TTY) and non-interactive `prompt` (one-shot) / `--resume` (slash-command replay).
 
 ## Commands
 
@@ -25,7 +25,7 @@ The CLI reads LLM credentials from `~/.acrawl/credentials.json` (managed by `acr
 
 Five crates under `crates/`, compiled with `resolver = "2"`:
 
-- **acrawl-cli** — binary entry (`src/main.rs`), arg parsing, REPL (`src/tui/`), session management, provider selection. `src/app/` directory owns `LiveCli` and the provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `classic_repl.rs`, `resume.rs`). `output_sink.rs` bridges runtime events to the UI. `markdown.rs` handles markdown/spinner rendering. `tool_format.rs` formats tool call output.
+- **acrawl-cli** — binary entry (`src/main.rs`), arg parsing, REPL (`src/tui/`), session management, provider selection. `src/app/` directory owns `LiveCli` and the provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`). `output_sink.rs` bridges runtime events to the UI. `markdown.rs` handles markdown/spinner rendering. `tool_format.rs` formats tool call output.
 - **api** — HTTP + SSE clients for Anthropic (`client.rs`), OpenAI-compatible (`openai.rs`), and Codex OAuth (`codex.rs`). `sse.rs` is the shared streaming frame parser; `types.rs` holds the Anthropic message schema. `provider/registry.rs` and `provider/factory.rs` handle provider discovery and client construction.
 - **runtime** — `ConversationRuntime` (the core turn loop), `RuntimeObserver` trait for event callbacks, `Session` persistence, system-prompt builder, permission model (`PermissionMode` = ReadOnly / WorkspaceWrite / DangerFullAccess), compaction, usage/pricing, OAuth PKCE, `observer.rs` for the observer trait, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/memory`, `/init`, `/diff`, `/version`). Knows which commands are safe to replay in `--resume`.
@@ -34,7 +34,7 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 ## Architecture: how a turn actually flows
 
 1. `acrawl-cli::app::LiveCli` builds a `ProviderClient` via `ProviderRegistry` from the persisted `CredentialStore` (`credentials.json`), plus a `ToolExecutor` backed by `crawler::ToolRegistry`.
-2. `runtime::ConversationRuntime::run_turn` drives the loop: call `ApiClient::stream` → feed `AssistantEvent`s (text deltas, tool_use, usage, stop) → execute tools through `ToolExecutor` → append results → repeat until the model emits `MessageStop` with no tool calls or `MAX_STEPS` is hit. The runtime notifies a `RuntimeObserver` at each event (text deltas, tool calls, turn end); `OutputSink` (`StdoutSink` for classic mode, `ChannelSink` for TUI) implements this trait to bridge events to the UI.
+2. `runtime::ConversationRuntime::run_turn` drives the loop: call `ApiClient::stream` → feed `AssistantEvent`s (text deltas, tool_use, usage, stop) → execute tools through `ToolExecutor` → append results → repeat until the model emits `MessageStop` with no tool calls or `MAX_STEPS` is hit. The runtime notifies a `RuntimeObserver` at each event (text deltas, tool calls, turn end); `OutputSink` (`StdoutSink` for non-interactive `prompt`/`--resume`, `ChannelSink` for TUI) implements this trait to bridge events to the UI.
 3. The crawler tool handlers (`crates/crawler/src/tools/*.rs`) take JSON input, consult `CrawlState`, and act through a `BrowserContext` that wraps either the `FetchRouter` (reqwest HTTP path) or the `PlaywrightBridge` (headless Chromium). The router auto-escalates from HTTP to the browser when JS is needed.
 4. `runtime::PermissionPolicy` gates every tool call against the current `PermissionMode`. Each of the 19 `ToolSpec`s declares `required_permission` — extraction/listing are `ReadOnly`, `save_file` is `WorkspaceWrite`, the rest require `DangerFullAccess`.
 5. `runtime::UsageTracker` + `pricing_for_model` feed `/cost` and `/status`. `runtime::compact` watches `ACRAWL_AUTO_COMPACT_INPUT_TOKENS` (default 200k) and auto-compacts the session when the threshold trips.
