@@ -410,8 +410,7 @@ mod tests {
     #[test]
     fn markdown_to_ansi_handles_fenced_code_block() {
         let renderer = TerminalRenderer::new();
-        let ansi =
-            renderer.markdown_to_ansi("```rust\nfn hi() { println!(\"hi\"); }\n```\n");
+        let ansi = renderer.markdown_to_ansi("```rust\nfn hi() { println!(\"hi\"); }\n```\n");
         let plain = strip_ansi(&ansi);
         assert!(plain.contains("fn hi"));
     }
@@ -469,7 +468,10 @@ mod tests {
             .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
             .collect();
         assert!(plain.contains("fn pending"));
-        assert!(buffer.is_empty(), "buffer should be drained, got {buffer:?}");
+        assert!(
+            buffer.is_empty(),
+            "buffer should be drained, got {buffer:?}"
+        );
     }
 
     #[test]
@@ -505,10 +507,7 @@ mod tests {
     #[test]
     fn text_to_ansi_emits_one_reset_per_line_when_style_unchanged() {
         let style = Style::default().fg(Color::Green);
-        let line = Line::from(vec![
-            Span::styled("foo", style),
-            Span::styled("bar", style),
-        ]);
+        let line = Line::from(vec![Span::styled("foo", style), Span::styled("bar", style)]);
         let ansi = text_to_ansi(&[line]);
         // Only one reset at end of line (style stayed the same across spans).
         let resets = ansi.matches("\u{1b}[0m").count();
