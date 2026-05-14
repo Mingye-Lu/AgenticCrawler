@@ -8,9 +8,12 @@ publish.workspace = true
 [dependencies]
 runtime = { path = "../runtime" }
 async-trait = "0.1"
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
 csv = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 htmd = "0.5"
