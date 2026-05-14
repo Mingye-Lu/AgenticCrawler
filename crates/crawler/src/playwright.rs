@@ -752,6 +752,9 @@ impl PlaywrightBridge {
     fn bridge_command(program: &str, args: &[String]) -> Command {
         let mut command = Command::new(program);
         let config_home = config_home_dir();
+        // Ensure config home exists so we can set it as CWD — this lets
+        // Node.js ESM `import()` resolve packages from the local node_modules.
+        let _ = std::fs::create_dir_all(&config_home);
         let acrawl_node_modules = config_home.join("node_modules");
         let node_path = match std::env::var_os("NODE_PATH") {
             Some(existing) => {
