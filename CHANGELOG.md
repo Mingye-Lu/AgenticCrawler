@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-05-14
+
+### Changed
+
+- **CloakBrowser binary downloaded during install** — `install.sh`, `install.ps1`, and `acrawl update` now explicitly run `npx cloakbrowser install` to download the browser binary up front, eliminating the cold-start delay on first `navigate` call. Falls back gracefully to lazy download if the explicit step fails.
+- **`acrawl update` always refreshes CloakBrowser** — the update command now upgrades the cloakbrowser npm package to `@latest` (previously skipped if the package directory already existed), ensuring users on older versions get the current browser engine.
+
 ## [0.4.2] - 2026-05-14
 
 ### Changed
@@ -194,6 +201,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.3
 [0.4.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.2
 [0.4.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.1
 [0.4.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.0
