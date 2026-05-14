@@ -1036,41 +1036,111 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
     let main_inner = main_block.inner(main_area);
     frame.render_widget(main_block, main_area);
 
-    let (wrapped, _wrapped_text) =
+    state.last_transcript_rect = main_inner;
+
+    let (wrapped, wrapped_text) =
         build_wrapped_list(&tab.entries, main_inner.width, None, spinner, debug_mode);
 
-    tab.last_wrapped_len = wrapped.len();
-    tab.last_view_height = usize::from(main_inner.height.max(1));
+    let scroll_offset = {
+        tab.last_wrapped_len = wrapped.len();
+        tab.last_view_height = usize::from(main_inner.height.max(1));
 
-    let max_offset = tab
-        .last_wrapped_len
-        .saturating_sub(tab.last_view_height.max(1));
-    if tab.list_state.offset() > max_offset {
-        *tab.list_state.offset_mut() = max_offset;
-    }
-    if tab.follow_bottom {
-        *tab.list_state.offset_mut() = max_offset;
-    }
+        let max_offset = tab
+            .last_wrapped_len
+            .saturating_sub(tab.last_view_height.max(1));
+        if tab.list_state.offset() > max_offset {
+            *tab.list_state.offset_mut() = max_offset;
+        }
+        if tab.follow_bottom {
+            *tab.list_state.offset_mut() = max_offset;
+        }
 
-    let list = List::new(wrapped)
-        .highlight_spacing(HighlightSpacing::Never)
-        .scroll_padding(2);
-    frame.render_stateful_widget(list, main_inner, &mut tab.list_state);
+        let list = List::new(wrapped)
+            .highlight_spacing(HighlightSpacing::Never)
+            .scroll_padding(2);
+        frame.render_stateful_widget(list, main_inner, &mut tab.list_state);
 
-    if tab.last_wrapped_len > tab.last_view_height {
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .symbols(scrollbar::VERTICAL)
-            .thumb_symbol("▐")
-            .style(ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(60, 90, 120)));
-        let mut scrollbar_state = ScrollbarState::new(max_offset).position(tab.list_state.offset());
-        frame.render_stateful_widget(
-            scrollbar,
-            main_inner.inner(ratatui::layout::Margin {
-                vertical: 0,
-                horizontal: 0,
-            }),
-            &mut scrollbar_state,
-        );
+        if tab.last_wrapped_len > tab.last_view_height {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .symbols(scrollbar::VERTICAL)
+                .thumb_symbol("▐")
+                .style(
+                    ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(60, 90, 120)),
+                );
+            let mut scrollbar_state = ScrollbarState::new(max_offset).position(tab.list_state.offset());
+            frame.render_stateful_widget(
+                scrollbar,
+                main_inner.inner(ratatui::layout::Margin {
+                    vertical: 0,
+                    horizontal: 0,
+                }),
+                &mut scrollbar_state,
+            );
+        }
+
+        tab.list_state.offset()
+    };
+
+    if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {
+        let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
+            (anchor, end)
+        } else {
+            (end, anchor)
+        };
+        let viewport_h = usize::from(main_inner.height);
+        let max_col = main_inner.width.saturating_sub(1);
+        if s_end.1 >= scroll_offset && s_start.1 < scroll_offset + viewport_h {
+            let vis_first = s_start.1.max(scroll_offset) - scroll_offset;
+            let vis_last = (s_end.1 - scroll_offset).min(viewport_h.saturating_sub(1));
+            let highlight_bg = ratatui::style::Color::Rgb(50, 80, 130);
+            let buf = frame.buffer_mut();
+            for screen_row in vis_first..=vis_last {
+                let abs_row = scroll_offset + screen_row;
+                let c0 = if abs_row == s_start.1 { s_start.0 } else { 0 };
+                let c1 = if abs_row == s_end.1 {
+                    s_end.0.min(max_col)
+                } else {
+                    max_col
+                };
+                let y = main_inner.y + u16::try_from(screen_row).unwrap_or(0);
+                for col in c0..=c1 {
+                    let x = main_inner.x + col;
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_bg(highlight_bg);
+                    }
+                }
+            }
+        }
+
+        if state.selection.pending_copy.take().is_some() {
+            let text = (s_start.1..=s_end.1)
+                .filter_map(|row| wrapped_text.get(row).map(|line| (row, line)))
+                .map(|(row, line)| {
+                    let start = if row == s_start.1 {
+                        usize::from(s_start.0)
+                    } else {
+                        0
+                    };
+                    let end_col = if row == s_end.1 {
+                        usize::from(s_end.0) + 1
+                    } else {
+                        usize::MAX
+                    };
+                    line.chars()
+                        .skip(start)
+                        .take(end_col.saturating_sub(start))
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.trim().is_empty() {
+                copy_osc52(&text);
+            }
+            state.selection.anchor = None;
+            state.selection.end = None;
+        }
     }
 
     let footer_spans = vec![
