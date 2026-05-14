@@ -37,6 +37,13 @@ use ratatui::DefaultTerminal;
 use runtime::ControlState;
 
 const MAX_INPUT_LINES: usize = 5;
+/// Cap on events processed in a single `drain_events` call so a producer that
+/// emits faster than the typewriter reveals can't starve the render loop.
+const MAX_EVENTS_PER_FRAME: usize = 256;
+/// Cap on the typewriter backlog. If the producer overruns this, flush the
+/// queue straight to the transcript (skipping the slow per-char reveal) so the
+/// VecDeque can't grow unbounded.
+const MAX_TYPEWRITER_BACKLOG: usize = 64 * 1024;
 pub(super) const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
 pub(super) const WELCOME_BOX_MAX_WIDTH: u16 = 82;
 pub(super) const WELCOME_BOX_MIN_WIDTH: u16 = 30;
@@ -849,12 +856,19 @@ impl ReplTuiState {
 
     #[allow(clippy::too_many_lines)]
     fn drain_events(&mut self, rx: &Receiver<ReplTuiEvent>) {
-        while let Ok(ev) = rx.try_recv() {
+        for _ in 0..MAX_EVENTS_PER_FRAME {
+            let Ok(ev) = rx.try_recv() else { break };
             match ev {
                 ReplTuiEvent::StreamText(s) => {
                     // Enqueue raw chars for typewriter reveal.
                     for c in s.chars() {
                         self.typewriter.chars.push_back(c);
+                    }
+                    // If the producer is faster than the reveal can keep up,
+                    // bypass the slow per-char reveal so the queue doesn't
+                    // grow unbounded.
+                    if self.typewriter.chars.len() > MAX_TYPEWRITER_BACKLOG {
+                        self.flush_typewriter();
                     }
                 }
                 ReplTuiEvent::TurnStarting => {
