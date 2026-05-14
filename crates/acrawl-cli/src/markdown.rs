@@ -9,6 +9,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct ColorTheme {
     pub spinner_active: CtColor,
     pub spinner_done: CtColor,
@@ -113,6 +114,7 @@ impl TerminalRenderer {
     }
 
     #[must_use]
+    #[allow(clippy::unused_self)]
     pub fn markdown_to_ansi(&self, markdown: &str) -> String {
         text_to_ansi(&render_lines(markdown))
     }
@@ -188,7 +190,7 @@ fn write_color(out: &mut String, c: Color, foreground: bool) {
             let _ = write!(out, "\u{1b}[{}m", base + 9);
         }
         Color::Black => {
-            let _ = write!(out, "\u{1b}[{}m", base);
+            let _ = write!(out, "\u{1b}[{base}m");
         }
         Color::Red => {
             let _ = write!(out, "\u{1b}[{}m", base + 1);
