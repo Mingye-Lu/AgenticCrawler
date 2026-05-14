@@ -397,4 +397,36 @@ mod tests {
             "page_map instructions should mention landmark"
         );
     }
+
+    #[tokio::test]
+    async fn test_cloakbrowser_launch_smoke() {
+        use super::{PlaywrightBridge, PlaywrightBridgeError};
+
+        // Self-skip if not in CI and CloakBrowser not installed locally
+        let in_ci = std::env::var("CI").is_ok();
+        let cloakbrowser_installed = runtime::config_home_dir()
+            .join("node_modules")
+            .join("cloakbrowser")
+            .exists();
+        if !in_ci && !cloakbrowser_installed {
+            eprintln!("test_cloakbrowser_launch_smoke: skipping — CloakBrowser not installed");
+            return;
+        }
+
+        // If installed, launch the bridge and verify bootstrap succeeds
+        let result = PlaywrightBridge::new().await;
+        match result {
+            Ok(bridge) => {
+                let _ = bridge.close().await;
+            }
+            Err(PlaywrightBridgeError::PlaywrightNotInstalled(_)) => {
+                eprintln!(
+                    "test_cloakbrowser_launch_smoke: skipping — CloakBrowser binary not available"
+                );
+            }
+            Err(e) => {
+                panic!("Unexpected error launching CloakBrowser bridge: {e}");
+            }
+        }
+    }
 }
