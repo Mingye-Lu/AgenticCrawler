@@ -95,11 +95,21 @@ impl CrawlerAgent {
         .with_max_steps(child_max_steps)
         .with_agent_id(child_id.clone())
         .with_agent_manager(self.agent_manager.clone())
-        .with_control_state(
-            self.control_state
-                .clone()
-                .unwrap_or_else(|| std::sync::Arc::new(runtime::ControlState::default())),
-        );
+        .with_control_state({
+            if let Some(registry) = &self.child_control_registry {
+                registry.register(&child_id)
+            } else {
+                self.control_state
+                    .clone()
+                    .unwrap_or_else(|| std::sync::Arc::new(runtime::ControlState::default()))
+            }
+        });
+        if let Some(ref tx) = self.child_event_tx {
+            child_agent = child_agent.with_child_event_sender(tx.clone());
+        }
+        if let Some(ref registry) = self.child_control_registry {
+            child_agent = child_agent.with_child_control_registry(registry.clone());
+        }
         child_agent.shared_bridge = Some(shared_bridge);
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
@@ -128,6 +138,20 @@ impl CrawlerAgent {
         &mut self,
         wait_spec: WaitSpec,
     ) -> Result<String, ToolError> {
+        let wait_timeout_secs = u64::from(runtime::settings_get_fork_wait_timeout_secs(
+            &runtime::load_settings(),
+        ));
+        self.handle_wait_effect_with_timeout(wait_spec, Duration::from_secs(wait_timeout_secs))
+            .await
+    }
+
+    // Sequential child wait loop — extracting helpers would obscure the timeout/cancel logic.
+    #[allow(clippy::too_many_lines)]
+    async fn handle_wait_effect_with_timeout(
+        &mut self,
+        wait_spec: WaitSpec,
+        wait_timeout: Duration,
+    ) -> Result<String, ToolError> {
         let child_ids = wait_spec
             .child_ids
             .unwrap_or_else(|| self.child_tasks.keys().cloned().collect());
@@ -135,10 +159,7 @@ impl CrawlerAgent {
             return Ok("No active subagents".to_string());
         }
 
-        let wait_timeout_secs = u64::from(runtime::settings_get_fork_wait_timeout_secs(
-            &runtime::load_settings(),
-        ));
-        let deadline = Instant::now() + Duration::from_secs(wait_timeout_secs);
+        let deadline = Instant::now() + wait_timeout;
         let tasks = child_ids
             .into_iter()
             .filter_map(|child_id| {
@@ -159,26 +180,85 @@ impl CrawlerAgent {
             let remaining = deadline
                 .checked_duration_since(Instant::now())
                 .unwrap_or_default();
-            let items = if remaining.is_zero() {
+            let (items, finished_event) = if remaining.is_zero() {
+                if let Some(registry) = &self.child_control_registry {
+                    if let Some(state) = registry.get(&child_id) {
+                        state.request_cancel();
+                    }
+                }
                 handle.abort();
-                Vec::new()
+                (
+                    Vec::new(),
+                    crate::child_events::ChildEventKind::Finished {
+                        success: false,
+                        items_extracted: 0,
+                        error: Some("timed out".to_string()),
+                    },
+                )
             } else {
                 match tokio::time::timeout(remaining, &mut handle).await {
-                    Ok(Ok(Some(items))) => items,
-                    Ok(Ok(None) | Err(_)) => Vec::new(),
+                    Ok(Ok(Some(items))) => {
+                        let item_count = items.len();
+                        (
+                            items,
+                            crate::child_events::ChildEventKind::Finished {
+                                success: true,
+                                items_extracted: item_count,
+                                error: None,
+                            },
+                        )
+                    }
+                    Ok(Ok(None)) => (
+                        Vec::new(),
+                        crate::child_events::ChildEventKind::Finished {
+                            success: false,
+                            items_extracted: 0,
+                            error: Some("child failed".to_string()),
+                        },
+                    ),
+                    Ok(Err(error)) => (
+                        Vec::new(),
+                        crate::child_events::ChildEventKind::Finished {
+                            success: false,
+                            items_extracted: 0,
+                            error: Some(error.to_string()),
+                        },
+                    ),
                     Err(_) => {
+                        if let Some(registry) = &self.child_control_registry {
+                            if let Some(state) = registry.get(&child_id) {
+                                state.request_cancel();
+                            }
+                        }
                         handle.abort();
-                        Vec::new()
+                        (
+                            Vec::new(),
+                            crate::child_events::ChildEventKind::Finished {
+                                success: false,
+                                items_extracted: 0,
+                                error: Some("timed out".to_string()),
+                            },
+                        )
                     }
                 }
             };
 
             total_items += items.len();
+            if let Some(ref tx) = self.child_event_tx {
+                let _ = tx.send(crate::child_events::ChildEvent {
+                    child_id: child_id.clone(),
+                    sub_goal: sub_goal.clone(),
+                    event: finished_event,
+                });
+            }
             self.crawl_state.child_blocks.push(ChildBlock {
                 child_id: child_id.clone(),
                 sub_goal,
                 items,
             });
+            if let Some(registry) = &self.child_control_registry {
+                registry.remove(&child_id);
+            }
             self.agent_manager.lock().await.mark_done(&child_id);
         }
 
@@ -474,5 +554,85 @@ mod tests {
         assert!(result.contains("Collected 3 item(s)"));
         assert_eq!(agent.crawl_state.child_blocks.len(), 2);
         assert!(agent.child_tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_wait_emits_finished_event_on_child_completion() {
+        let manager = super::super::default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry())
+            .with_agent_manager(manager)
+            .with_child_event_sender(tx);
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
+            tokio::spawn(async { Some(vec![serde_json::json!({"a": 1})]) });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal-1".to_string(), handle));
+
+        let result = agent
+            .handle_wait_effect(WaitSpec {
+                child_ids: Some(vec!["child-1".to_string()]),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.contains("Collected 1 item(s)"));
+        let event = rx.try_recv().expect("finished event should be emitted");
+        assert_eq!(event.child_id, "child-1");
+        assert_eq!(event.sub_goal, "goal-1");
+        assert!(matches!(
+            event.event,
+            crate::child_events::ChildEventKind::Finished {
+                success: true,
+                items_extracted: 1,
+                error: None,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_wait_emits_finished_event_on_timeout() {
+        let manager = super::super::default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let registry = crate::ChildControlRegistry::default();
+        let child_state = registry.register("child-1");
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry())
+            .with_agent_manager(manager)
+            .with_child_event_sender(tx)
+            .with_child_control_registry(registry.clone());
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Some(Vec::new())
+        });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal-1".to_string(), handle));
+
+        let result = agent
+            .handle_wait_effect_with_timeout(
+                WaitSpec {
+                    child_ids: Some(vec!["child-1".to_string()]),
+                },
+                Duration::ZERO,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.contains("Collected 0 item(s)"));
+        assert!(child_state.is_cancelled());
+        let event = rx.try_recv().expect("timeout event should be emitted");
+        assert_eq!(event.child_id, "child-1");
+        assert!(matches!(
+            event.event,
+            crate::child_events::ChildEventKind::Finished {
+                success: false,
+                items_extracted: 0,
+                error: Some(ref error),
+            } if error == "timed out"
+        ));
     }
 }

@@ -930,6 +930,250 @@ pub(super) fn draw_slash_overlay(
 }
 
 #[allow(clippy::too_many_lines)]
+pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTuiState) {
+    let child_id = match &state.view_mode {
+        super::repl_app::ViewMode::Child(id) => id.clone(),
+        super::repl_app::ViewMode::Parent => return,
+    };
+
+    let spinner = state.spinner_char();
+    let debug_mode = state.debug_mode;
+    let tab_idx = state
+        .child_tab_panel
+        .tabs
+        .iter()
+        .position(|t| t.child_id == child_id)
+        .unwrap_or(0);
+    let total_tabs = state.child_tab_panel.tabs.len();
+
+    let area = frame.area();
+    let chunks = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Length(1),
+            ratatui::layout::Constraint::Min(4),
+            ratatui::layout::Constraint::Length(1),
+        ])
+        .split(area);
+    let header_area = chunks[0];
+    let main_area = chunks[1];
+    let footer_area = chunks[2];
+
+    let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) else {
+        let block = ratatui::widgets::Block::default()
+            .borders(ratatui::widgets::Borders::ALL)
+            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_style(
+                ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(50, 65, 90)),
+            );
+        let inner = block.inner(main_area);
+        frame.render_widget(block, main_area);
+        frame.render_widget(ratatui::widgets::Paragraph::new("Child not found"), inner);
+        return;
+    };
+
+    let status_text = match &tab.status {
+        super::child_tabs::ChildTabStatus::Paused { reason } => format!("PAUSED: {reason}"),
+        super::child_tabs::ChildTabStatus::Running => {
+            if let Some(ref tool) = tab.tool_in_progress {
+                format!("running {tool} -- step {}/{}", tab.step, tab.max_steps)
+            } else {
+                format!("step {}/{}", tab.step, tab.max_steps)
+            }
+        }
+        super::child_tabs::ChildTabStatus::Done => {
+            format!("✓ Done -- {} items extracted", tab.items_extracted)
+        }
+        super::child_tabs::ChildTabStatus::Error(e) => format!("✗ Error: {e}"),
+    };
+
+    let status_color = match &tab.status {
+        super::child_tabs::ChildTabStatus::Running => ratatui::style::Color::Cyan,
+        super::child_tabs::ChildTabStatus::Paused { .. } => ratatui::style::Color::Yellow,
+        super::child_tabs::ChildTabStatus::Done => ratatui::style::Color::Green,
+        super::child_tabs::ChildTabStatus::Error(_) => ratatui::style::Color::Red,
+    };
+
+    let header_spans = vec![
+        ratatui::text::Span::styled(
+            " Child ",
+            ratatui::style::Style::default()
+                .fg(ratatui::style::Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        ratatui::text::Span::raw(format!("  {} ", tab.sub_goal)),
+        ratatui::text::Span::styled(
+            format!("  {status_text} "),
+            ratatui::style::Style::default().fg(status_color),
+        ),
+        ratatui::text::Span::raw("  "),
+        ratatui::text::Span::styled(
+            format!("{} of {}", tab_idx + 1, total_tabs),
+            ratatui::style::Style::default()
+                .fg(ratatui::style::Color::LightBlue)
+                .add_modifier(ratatui::style::Modifier::DIM),
+        ),
+    ];
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(ratatui::text::Line::from(header_spans))
+            .style(ratatui::style::Style::default().bg(ratatui::style::Color::Rgb(14, 18, 28))),
+        header_area,
+    );
+
+    let border_color = match &tab.status {
+        super::child_tabs::ChildTabStatus::Paused { .. } => {
+            ratatui::style::Color::Rgb(180, 140, 30)
+        }
+        super::child_tabs::ChildTabStatus::Running => ratatui::style::Color::Rgb(40, 80, 110),
+        super::child_tabs::ChildTabStatus::Done => ratatui::style::Color::Rgb(40, 100, 60),
+        super::child_tabs::ChildTabStatus::Error(_) => ratatui::style::Color::Rgb(140, 40, 40),
+    };
+    let main_block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(ratatui::style::Style::default().fg(border_color));
+    let main_inner = main_block.inner(main_area);
+    frame.render_widget(main_block, main_area);
+
+    state.last_transcript_rect = main_inner;
+
+    let (wrapped, wrapped_text) =
+        build_wrapped_list(&tab.entries, main_inner.width, None, spinner, debug_mode);
+
+    let scroll_offset = {
+        tab.last_wrapped_len = wrapped.len();
+        tab.last_view_height = usize::from(main_inner.height.max(1));
+
+        let max_offset = tab
+            .last_wrapped_len
+            .saturating_sub(tab.last_view_height.max(1));
+        if tab.list_state.offset() > max_offset {
+            *tab.list_state.offset_mut() = max_offset;
+        }
+        if tab.follow_bottom {
+            *tab.list_state.offset_mut() = max_offset;
+        }
+
+        let list = List::new(wrapped)
+            .highlight_spacing(HighlightSpacing::Never)
+            .scroll_padding(2);
+        frame.render_stateful_widget(list, main_inner, &mut tab.list_state);
+
+        tab.list_state.offset()
+    };
+
+    if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {
+        let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
+            (anchor, end)
+        } else {
+            (end, anchor)
+        };
+        let viewport_h = usize::from(main_inner.height);
+        let max_col = main_inner.width.saturating_sub(1);
+        if s_end.1 >= scroll_offset && s_start.1 < scroll_offset + viewport_h {
+            let vis_first = s_start.1.max(scroll_offset) - scroll_offset;
+            let vis_last = (s_end.1 - scroll_offset).min(viewport_h.saturating_sub(1));
+            let highlight_bg = ratatui::style::Color::Rgb(50, 80, 130);
+            let buf = frame.buffer_mut();
+            for screen_row in vis_first..=vis_last {
+                let abs_row = scroll_offset + screen_row;
+                let c0 = if abs_row == s_start.1 { s_start.0 } else { 0 };
+                let c1 = if abs_row == s_end.1 {
+                    s_end.0.min(max_col)
+                } else {
+                    max_col
+                };
+                let y = main_inner.y + u16::try_from(screen_row).unwrap_or(0);
+                for col in c0..=c1 {
+                    let x = main_inner.x + col;
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_bg(highlight_bg);
+                    }
+                }
+            }
+        }
+
+        if state.selection.pending_copy.take().is_some() {
+            let text = (s_start.1..=s_end.1)
+                .filter_map(|row| wrapped_text.get(row).map(|line| (row, line)))
+                .map(|(row, line)| {
+                    let start = if row == s_start.1 {
+                        usize::from(s_start.0)
+                    } else {
+                        0
+                    };
+                    let end_col = if row == s_end.1 {
+                        usize::from(s_end.0) + 1
+                    } else {
+                        usize::MAX
+                    };
+                    line.chars()
+                        .skip(start)
+                        .take(end_col.saturating_sub(start))
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.trim().is_empty() {
+                copy_osc52(&text);
+            }
+            state.selection.anchor = None;
+            state.selection.end = None;
+        }
+    }
+
+    let footer_spans = vec![
+        ratatui::text::Span::styled(
+            " ←",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Prev",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  →",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Next",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  Esc/↑",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Parent",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  j/k",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Scroll",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  Enter",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Resume",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+    ];
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(ratatui::text::Line::from(footer_spans))
+            .style(ratatui::style::Style::default().bg(ratatui::style::Color::Rgb(14, 18, 28))),
+        footer_area,
+    );
+}
+
+#[allow(clippy::too_many_lines)]
 pub(super) fn draw_chat(
     frame: &mut ratatui::Frame<'_>,
     state: &mut ReplTuiState,
@@ -940,24 +1184,26 @@ pub(super) fn draw_chat(
     let (footer_h, render_lines, max_scroll, cursor_pos) =
         state.calculate_input_dimensions(area.width, &header.model);
 
-    // Layout: 1-row header | transcript | 1-row spacer | input footer
+    let has_children = !state.child_tab_panel.tabs.is_empty();
+    let hint_h: u16 = u16::from(has_children);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(4),
+            Constraint::Length(hint_h),
             Constraint::Length(1),
             Constraint::Length(footer_h),
         ])
         .split(area);
     let header_area = chunks[0];
     let main_area = chunks[1];
-    // chunks[2] is the spacer gap - intentionally left empty for breathing room
-    let input_area = chunks[3];
+    let hint_area = chunks[2];
+    let input_area = chunks[4];
 
     draw_header(frame, header_area, header);
 
-    // --- Transcript block (rounded, matches welcome palette) ---
     let transcript_border_color = if state.paused {
         Color::Rgb(180, 140, 30)
     } else if state.busy {
@@ -996,6 +1242,44 @@ pub(super) fn draw_chat(
         .highlight_spacing(HighlightSpacing::Never)
         .scroll_padding(2);
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
+
+    if has_children {
+        // Check for paused children first (higher priority indicator)
+        let paused_child = state.child_tab_panel.tabs.iter().find(|t| {
+            matches!(
+                t.status,
+                crate::tui::child_tabs::ChildTabStatus::Paused { .. }
+            )
+        });
+
+        let hint_line = if let Some(tab) = paused_child {
+            let reason = match &tab.status {
+                crate::tui::child_tabs::ChildTabStatus::Paused { reason } => reason.as_str(),
+                _ => "",
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("PAUSED Child {}: {reason} ", tab.child_id),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("— Ctrl+X to view", Style::default().fg(Color::Yellow)),
+            ])
+        } else {
+            let running_count = state
+                .child_tab_panel
+                .tabs
+                .iter()
+                .filter(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Running))
+                .count();
+            Line::from(Span::styled(
+                format!("Ctrl+X view children ({running_count} running)"),
+                Style::default().fg(Color::DarkGray),
+            ))
+        };
+        frame.render_widget(Paragraph::new(hint_line), hint_area);
+    }
 
     if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {
         let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {

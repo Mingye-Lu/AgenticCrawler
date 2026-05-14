@@ -1,5 +1,6 @@
 pub mod active_modal;
 pub mod auth_modal;
+pub(super) mod child_tabs;
 pub mod events;
 pub mod grouped_model_list;
 pub mod modal;

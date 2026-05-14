@@ -88,6 +88,8 @@ pub struct CrawlerAgent {
     pub(crate) child_tasks: ChildTaskMap,
     pub(super) api_client_arc: Option<SharedApiClient>,
     control_state: Option<Arc<ControlState>>,
+    child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
+    child_control_registry: Option<crate::child_events::ChildControlRegistry>,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
@@ -109,6 +111,8 @@ impl CrawlerAgent {
             child_tasks: HashMap::new(),
             api_client_arc: None,
             control_state: None,
+            child_event_tx: None,
+            child_control_registry: None,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -130,6 +134,8 @@ impl CrawlerAgent {
             child_tasks: HashMap::new(),
             api_client_arc: None,
             control_state: None,
+            child_event_tx: None,
+            child_control_registry: None,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -151,6 +157,8 @@ impl CrawlerAgent {
             child_tasks: HashMap::new(),
             api_client_arc: None,
             control_state: None,
+            child_event_tx: None,
+            child_control_registry: None,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -187,6 +195,24 @@ impl CrawlerAgent {
         self
     }
 
+    #[must_use]
+    pub fn with_child_event_sender(
+        mut self,
+        tx: std::sync::mpsc::Sender<crate::child_events::ChildEvent>,
+    ) -> Self {
+        self.child_event_tx = Some(tx);
+        self
+    }
+
+    #[must_use]
+    pub fn with_child_control_registry(
+        mut self,
+        registry: crate::child_events::ChildControlRegistry,
+    ) -> Self {
+        self.child_control_registry = Some(registry);
+        self
+    }
+
     pub fn set_control_state(&mut self, state: Arc<ControlState>) {
         self.control_state = Some(state);
     }
@@ -216,6 +242,18 @@ impl CrawlerAgent {
         let mut runtime =
             ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
                 .with_max_iterations(max_steps);
+
+        // Attach child event observer for streaming child output to TUI
+        if let Some(tx) = runtime.tool_executor_mut().child_event_tx.take() {
+            let observer = crate::child_events::ChildEventSender::new(
+                runtime.tool_executor_mut().agent_id.clone(),
+                goal.to_string(),
+                tx,
+                max_steps,
+            );
+            runtime = runtime.with_observer(Box::new(observer));
+        }
+
         let control_state = runtime.control_state();
         runtime.tool_executor_mut().set_control_state(control_state);
         let result = runtime.run_turn(goal).await;
@@ -312,6 +350,16 @@ impl CrawlerAgent {
             .clone();
         control.request_pause_with_reason(&reason);
 
+        if let Some(ref tx) = self.child_event_tx {
+            let _ = tx.send(crate::child_events::ChildEvent {
+                child_id: self.agent_id.clone(),
+                sub_goal: String::new(),
+                event: crate::child_events::ChildEventKind::PauseRequested {
+                    reason: reason.clone(),
+                },
+            });
+        }
+
         loop {
             tokio::select! {
                 () = control.wait_for_resume() => { break; }
@@ -319,6 +367,14 @@ impl CrawlerAgent {
                     if !control.is_paused() { break; }
                 }
             }
+        }
+
+        if let Some(ref tx) = self.child_event_tx {
+            let _ = tx.send(crate::child_events::ChildEvent {
+                child_id: self.agent_id.clone(),
+                sub_goal: String::new(),
+                event: crate::child_events::ChildEventKind::Resumed,
+            });
         }
 
         let was_cancelled = control.is_cancelled();
