@@ -11,15 +11,15 @@ use std::time::{Duration, Instant};
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
 use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
 use crate::format::render_repl_help;
-use crate::markdown::PredictiveMarkdownBuffer;
+use crate::markdown::{drain_safe_boundary, render_lines};
 use crate::tool_format::tool_input_summary;
 use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
 use crate::tui::child_tabs;
 use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::repl_render::{
-    ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
-    rect_contains_mouse, suspend_for_stdout,
+    build_header_snapshot, draw_chat, draw_welcome, parse_report_rows, rect_contains_mouse,
+    suspend_for_stdout,
 };
 use crate::tui::session_modal::SessionModalEntry;
 use crate::tui::ReplTuiEvent;
@@ -153,8 +153,6 @@ pub(super) struct SelectionState {
 pub(super) struct TypewriterState {
     chars: VecDeque<char>,
     pub(super) live: String,
-    pub(super) live_ansi: String,
-    md_buffer: PredictiveMarkdownBuffer,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -243,8 +241,6 @@ impl ReplTuiState {
             typewriter: TypewriterState {
                 chars: VecDeque::new(),
                 live: String::new(),
-                live_ansi: String::new(),
-                md_buffer: PredictiveMarkdownBuffer::new(),
             },
             selection: SelectionState::default(),
             last_esc_at: None,
@@ -303,26 +299,23 @@ impl ReplTuiState {
     }
 
     /// Advance the typewriter: reveal `chars_per_tick` chars from the queue.
+    ///
+    /// Chars accumulate in `typewriter.live`; whenever the buffer reaches a
+    /// stream-safe markdown boundary (paragraph end or closed code fence) we
+    /// render that chunk through `tui-markdown` and push the resulting lines
+    /// to the transcript. This preserves multi-line constructs like fenced
+    /// code blocks (which need the whole block to syntax-highlight) at the
+    /// cost of a slight delay before they appear during streaming.
     fn tick_typewriter(&mut self, chars_per_tick: usize) {
         for _ in 0..chars_per_tick {
             match self.typewriter.chars.pop_front() {
                 None => break,
-                Some('\n') => {
-                    self.typewriter
-                        .md_buffer
-                        .feed_char('\n', &mut self.typewriter.live_ansi);
-                    let ansi = std::mem::take(&mut self.typewriter.live_ansi);
-                    for styled_line in ansi_to_lines(&ansi) {
-                        self.entries.push(TranscriptEntry::Stream(styled_line));
-                    }
-                    self.typewriter.live.clear();
-                }
-                Some(c) => {
-                    self.typewriter.live.push(c);
-                    self.typewriter
-                        .md_buffer
-                        .feed_char(c, &mut self.typewriter.live_ansi);
-                }
+                Some(c) => self.typewriter.live.push(c),
+            }
+        }
+        while let Some(styled_lines) = drain_safe_boundary(&mut self.typewriter.live) {
+            for line in styled_lines {
+                self.entries.push(TranscriptEntry::Stream(line));
             }
         }
     }
@@ -333,14 +326,10 @@ impl ReplTuiState {
             self.tick_typewriter(count);
         }
         if !self.typewriter.live.is_empty() {
-            self.typewriter
-                .md_buffer
-                .flush(&mut self.typewriter.live_ansi);
-            let ansi = std::mem::take(&mut self.typewriter.live_ansi);
-            for styled_line in ansi_to_lines(&ansi) {
+            let pending: String = std::mem::take(&mut self.typewriter.live);
+            for styled_line in render_lines(&pending) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
-            self.typewriter.live.clear();
         }
     }
 
@@ -497,14 +486,10 @@ impl ReplTuiState {
             self.tick_typewriter(count);
         }
         if !self.typewriter.live.is_empty() {
-            self.typewriter
-                .md_buffer
-                .flush(&mut self.typewriter.live_ansi);
-            let ansi = std::mem::take(&mut self.typewriter.live_ansi);
-            for styled_line in ansi_to_lines(&ansi) {
+            let pending: String = std::mem::take(&mut self.typewriter.live);
+            for styled_line in render_lines(&pending) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
-            self.typewriter.live.clear();
         }
         if name == "wait_for_human" {
             self.last_wait_for_human_reason = serde_json::from_str::<serde_json::Value>(input)
@@ -866,7 +851,7 @@ impl ReplTuiState {
     fn drain_events(&mut self, rx: &Receiver<ReplTuiEvent>) {
         while let Ok(ev) = rx.try_recv() {
             match ev {
-                ReplTuiEvent::StreamAnsi(s) => {
+                ReplTuiEvent::StreamText(s) => {
                     // Enqueue raw chars for typewriter reveal.
                     for c in s.chars() {
                         self.typewriter.chars.push_back(c);

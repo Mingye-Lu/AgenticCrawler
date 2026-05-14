@@ -1,7 +1,6 @@
 use std::cmp::min;
 use std::io;
 
-use ansi_to_tui::IntoText;
 use crossterm::{event, execute};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -102,14 +101,6 @@ pub(super) fn parse_report_rows(report: &str) -> Vec<(String, String)> {
         rows.push(("detail".to_string(), compact));
     }
     rows
-}
-
-pub(super) fn ansi_to_lines(ansi: &str) -> Vec<Line<'static>> {
-    let fallback_style = Style::default().fg(Color::Rgb(215, 225, 235));
-    match ansi.as_bytes().into_text() {
-        Ok(text) => text.lines,
-        Err(_) => vec![Line::from(Span::styled(ansi.to_string(), fallback_style))],
-    }
 }
 
 /// Simple ANSI-aware line wrapping for Ratatui Lines.
@@ -557,18 +548,10 @@ pub(super) fn build_wrapped_list(
     // Live typewriter line shown at the bottom during streaming
     if let Some(text) = live_text {
         if !text.is_empty() {
-            if let Ok(ansi_text) = text.as_bytes().into_text() {
-                for line in ansi_text {
-                    for wrapped_line in wrap_ansi_line(line, width) {
-                        text_out.push(line_to_plain_text(&wrapped_line));
-                        out.push(ListItem::new(wrapped_line));
-                    }
-                }
-            } else {
-                let live_style = Style::default().fg(Color::Rgb(215, 225, 235));
-                for row in wrap_plain_text(text, width) {
-                    text_out.push(row.clone());
-                    out.push(ListItem::new(Line::from(Span::styled(row, live_style))));
+            for line in crate::markdown::render_lines(text) {
+                for wrapped_line in wrap_ansi_line(line, width) {
+                    text_out.push(line_to_plain_text(&wrapped_line));
+                    out.push(ListItem::new(wrapped_line));
                 }
             }
         }
@@ -1221,7 +1204,7 @@ pub(super) fn draw_chat(
     let live_line = if state.typewriter.live.is_empty() {
         None
     } else {
-        Some(state.typewriter.live_ansi.as_str())
+        Some(state.typewriter.live.as_str())
     };
     let (wrapped, wrapped_text) = build_wrapped_list(
         &state.entries,

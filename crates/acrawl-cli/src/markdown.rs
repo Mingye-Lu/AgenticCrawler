@@ -2,46 +2,28 @@ use std::fmt::Write as FmtWrite;
 use std::io::{self, Write};
 
 use crossterm::cursor::{MoveToColumn, RestorePosition, SavePosition};
-use crossterm::style::{Color, Print, ResetColor, SetForegroundColor, Stylize};
+use crossterm::style::{Color as CtColor, Print, ResetColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, queue};
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Theme, ThemeSet};
-use syntect::parsing::SyntaxSet;
-use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
-
-use crate::display_width::text_display_width;
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct ColorTheme {
-    heading: Color,
-    emphasis: Color,
-    strong: Color,
-    inline_code: Color,
-    link: Color,
-    quote: Color,
-    table_border: Color,
-    code_block_border: Color,
-    spinner_active: Color,
-    spinner_done: Color,
-    spinner_failed: Color,
+    pub spinner_active: CtColor,
+    pub spinner_done: CtColor,
+    pub spinner_failed: CtColor,
 }
 
 impl Default for ColorTheme {
     fn default() -> Self {
         Self {
-            heading: Color::Cyan,
-            emphasis: Color::Magenta,
-            strong: Color::Yellow,
-            inline_code: Color::Green,
-            link: Color::Blue,
-            quote: Color::DarkGrey,
-            table_border: Color::DarkCyan,
-            code_block_border: Color::DarkGrey,
-            spinner_active: Color::Blue,
-            spinner_done: Color::Green,
-            spinner_failed: Color::Red,
+            spinner_active: CtColor::Blue,
+            spinner_done: CtColor::Green,
+            spinner_failed: CtColor::Red,
         }
     }
 }
@@ -117,125 +99,15 @@ impl Spinner {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ListKind {
-    Unordered,
-    Ordered { next_index: u64 },
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct TableState {
-    headers: Vec<String>,
-    rows: Vec<Vec<String>>,
-    current_row: Vec<String>,
-    current_cell: String,
-    in_head: bool,
-}
-
-impl TableState {
-    fn push_cell(&mut self) {
-        let cell = self.current_cell.trim().to_string();
-        self.current_row.push(cell);
-        self.current_cell.clear();
-    }
-
-    fn finish_row(&mut self) {
-        if self.current_row.is_empty() {
-            return;
-        }
-        let row = std::mem::take(&mut self.current_row);
-        if self.in_head {
-            self.headers = row;
-        } else {
-            self.rows.push(row);
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct RenderState {
-    emphasis: usize,
-    strong: usize,
-    heading_level: Option<u8>,
-    quote: usize,
-    list_stack: Vec<ListKind>,
-    link_stack: Vec<LinkState>,
-    table: Option<TableState>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LinkState {
-    destination: String,
-    text: String,
-}
-
-impl RenderState {
-    fn style_text(&self, text: &str, theme: &ColorTheme) -> String {
-        let mut style = text.stylize();
-
-        if matches!(self.heading_level, Some(1 | 2)) || self.strong > 0 {
-            style = style.bold();
-        }
-        if self.emphasis > 0 {
-            style = style.italic();
-        }
-
-        if let Some(level) = self.heading_level {
-            style = match level {
-                1 => style.with(theme.heading),
-                2 => style.white(),
-                3 => style.with(Color::Blue),
-                _ => style.with(Color::Grey),
-            };
-        } else if self.strong > 0 {
-            style = style.with(theme.strong);
-        } else if self.emphasis > 0 {
-            style = style.with(theme.emphasis);
-        }
-
-        if self.quote > 0 {
-            style = style.with(theme.quote);
-        }
-
-        format!("{style}")
-    }
-
-    fn append_raw(&mut self, output: &mut String, text: &str) {
-        if let Some(link) = self.link_stack.last_mut() {
-            link.text.push_str(text);
-        } else if let Some(table) = self.table.as_mut() {
-            table.current_cell.push_str(text);
-        } else {
-            output.push_str(text);
-        }
-    }
-
-    fn append_styled(&mut self, output: &mut String, text: &str, theme: &ColorTheme) {
-        let styled = self.style_text(text, theme);
-        self.append_raw(output, &styled);
-    }
-}
-
-#[derive(Debug)]
+/// Zero-sized API-stability shim retained so external call sites
+/// (`output_sink.rs`, `app/mod.rs`) compile without churn after the
+/// `tui-markdown` swap. `markdown_to_ansi` no longer needs `&self`, and
+/// `MarkdownStreamState::push`/`flush` still take `&TerminalRenderer` only
+/// to preserve their signatures. `color_theme()` is the one method that
+/// still carries useful state (the spinner palette).
+#[derive(Debug, Default, Clone, Copy)]
 pub struct TerminalRenderer {
-    syntax_set: SyntaxSet,
-    syntax_theme: Theme,
     color_theme: ColorTheme,
-}
-
-impl Default for TerminalRenderer {
-    fn default() -> Self {
-        let syntax_set = SyntaxSet::load_defaults_newlines();
-        let syntax_theme = ThemeSet::load_defaults()
-            .themes
-            .remove("base16-ocean.dark")
-            .unwrap_or_default();
-        Self {
-            syntax_set,
-            syntax_theme,
-            color_theme: ColorTheme::default(),
-        }
-    }
 }
 
 impl TerminalRenderer {
@@ -250,343 +122,646 @@ impl TerminalRenderer {
     }
 
     #[must_use]
-    pub fn render_markdown(&self, markdown: &str) -> String {
-        let mut output = String::new();
-        let mut state = RenderState::default();
-        let mut code_language = String::new();
-        let mut code_buffer = String::new();
-        let mut in_code_block = false;
+    #[allow(clippy::unused_self)]
+    pub fn markdown_to_ansi(&self, markdown: &str) -> String {
+        text_to_ansi(&render_lines(markdown))
+    }
+}
 
-        for event in Parser::new_ext(markdown, Options::all()) {
-            self.render_event(
-                event,
-                &mut state,
-                &mut output,
-                &mut code_buffer,
-                &mut code_language,
-                &mut in_code_block,
-            );
+#[must_use]
+pub fn render_lines(markdown: &str) -> Vec<Line<'static>> {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TABLES);
+
+    let mut writer = MdWriter::default();
+    for event in Parser::new_ext(markdown, opts) {
+        writer.handle_event(event);
+    }
+    writer.finish()
+}
+
+// Markdown renderer using pulldown-cmark directly.
+// Architecture inspired by common patterns in the pulldown-cmark ecosystem
+// (openai/codex Apache-2.0, nearai/ironclaw Apache-2.0, helix-editor MPL-2.0).
+
+#[derive(Debug, Clone)]
+struct IndentCtx {
+    first: Vec<Span<'static>>,
+    continuation: Vec<Span<'static>>,
+    first_pending: bool,
+}
+
+#[derive(Debug, Default, Clone)]
+struct TableState {
+    alignments: Vec<Alignment>,
+    header: Option<Vec<String>>,
+    rows: Vec<Vec<String>>,
+    current_row: Vec<String>,
+    current_cell: String,
+    in_head: bool,
+}
+
+#[derive(Debug, Default)]
+struct MdWriter {
+    lines: Vec<Line<'static>>,
+    current_spans: Vec<Span<'static>>,
+    inline_styles: Vec<Style>,
+    list_indices: Vec<Option<u64>>,
+    indent_stack: Vec<IndentCtx>,
+    in_code_block: bool,
+    code_block_buffer: String,
+    needs_newline: bool,
+    in_paragraph: bool,
+    table_state: Option<TableState>,
+    heading_level: Option<HeadingLevel>,
+    blockquote_depth: usize,
+}
+
+impl MdWriter {
+    fn handle_event(&mut self, event: Event<'_>) {
+        if self.in_code_block {
+            self.handle_code_block_event(event);
+            return;
         }
 
-        output.clone()
-    }
+        if self.handle_table_event(&event) {
+            return;
+        }
 
-    #[must_use]
-    pub fn markdown_to_ansi(&self, markdown: &str) -> String {
-        self.render_markdown(markdown)
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn render_event(
-        &self,
-        event: Event<'_>,
-        state: &mut RenderState,
-        output: &mut String,
-        code_buffer: &mut String,
-        code_language: &mut String,
-        in_code_block: &mut bool,
-    ) {
         match event {
-            Event::Start(Tag::Heading { level, .. }) => {
-                self.start_heading(state, level as u8, output);
+            Event::Start(tag) => self.handle_start(tag),
+            Event::End(tag) => self.handle_end(tag),
+            Event::Text(text) | Event::InlineMath(text) | Event::DisplayMath(text) => {
+                self.push_text(text.as_ref());
             }
-            Event::End(TagEnd::Paragraph) => output.push_str("\n\n"),
-            Event::Start(Tag::BlockQuote(..)) => self.start_quote(state, output),
-            Event::End(TagEnd::BlockQuote(..)) => {
-                state.quote = state.quote.saturating_sub(1);
-                output.push('\n');
-            }
-            Event::End(TagEnd::Heading(..)) => {
-                state.heading_level = None;
-                output.push_str("\n\n");
-            }
-            Event::End(TagEnd::Item) | Event::SoftBreak | Event::HardBreak => {
-                state.append_raw(output, "\n");
-            }
-            Event::Start(Tag::List(first_item)) => {
-                let kind = match first_item {
-                    Some(index) => ListKind::Ordered { next_index: index },
-                    None => ListKind::Unordered,
-                };
-                state.list_stack.push(kind);
-            }
-            Event::End(TagEnd::List(..)) => {
-                state.list_stack.pop();
-                output.push('\n');
-            }
-            Event::Start(Tag::Item) => Self::start_item(state, output),
-            Event::Start(Tag::CodeBlock(kind)) => {
-                *in_code_block = true;
-                *code_language = match kind {
-                    CodeBlockKind::Indented => String::from("text"),
-                    CodeBlockKind::Fenced(lang) => lang.to_string(),
-                };
-                code_buffer.clear();
-                self.start_code_block(code_language, output);
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                self.finish_code_block(code_buffer, code_language, output);
-                *in_code_block = false;
-                code_language.clear();
-                code_buffer.clear();
-            }
-            Event::Start(Tag::Emphasis) => state.emphasis += 1,
-            Event::End(TagEnd::Emphasis) => state.emphasis = state.emphasis.saturating_sub(1),
-            Event::Start(Tag::Strong) => state.strong += 1,
-            Event::End(TagEnd::Strong) => state.strong = state.strong.saturating_sub(1),
             Event::Code(code) => {
-                let rendered =
-                    format!("{}", format!("`{code}`").with(self.color_theme.inline_code));
-                state.append_raw(output, &rendered);
+                self.push_text_with_style(code.as_ref(), self.current_style().fg(Color::Cyan));
             }
-            Event::Rule => output.push_str("---\n"),
-            Event::Text(text) => {
-                self.push_text(text.as_ref(), state, output, code_buffer, *in_code_block);
-            }
-            Event::Html(html) | Event::InlineHtml(html) => {
-                state.append_raw(output, &html);
-            }
-            Event::FootnoteReference(reference) => {
-                state.append_raw(output, &format!("[{reference}]"));
-            }
+            Event::Html(html) | Event::InlineHtml(html) => self.push_text(html.as_ref()),
+            Event::SoftBreak => self.push_text(" "),
+            Event::HardBreak => self.flush_current_line(false),
+            Event::Rule => self.push_rule(),
             Event::TaskListMarker(done) => {
-                state.append_raw(output, if done { "[x] " } else { "[ ] " });
+                self.push_text(if done { "[x] " } else { "[ ] " });
             }
-            Event::InlineMath(math) | Event::DisplayMath(math) => {
-                state.append_raw(output, &math);
+            Event::FootnoteReference(label) => self.push_text(&format!("[{label}]")),
+        }
+    }
+
+    fn handle_start(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Paragraph => {
+                if !self.in_list() {
+                    self.begin_block();
+                }
+                self.in_paragraph = true;
             }
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                state.link_stack.push(LinkState {
-                    destination: dest_url.to_string(),
-                    text: String::new(),
+            Tag::Heading { level, .. } => {
+                self.begin_block();
+                self.heading_level = Some(level);
+                let style = heading_style(level);
+                self.inline_styles.push(style);
+                self.push_text_with_style(
+                    &format!("{} ", "#".repeat(heading_level_number(level))),
+                    style,
+                );
+            }
+            Tag::BlockQuote(..) => {
+                self.begin_block();
+                self.blockquote_depth += 1;
+            }
+            Tag::CodeBlock(kind) => {
+                match kind {
+                    CodeBlockKind::Indented | CodeBlockKind::Fenced(_) => {}
+                }
+                self.begin_block();
+                self.in_code_block = true;
+                self.code_block_buffer.clear();
+            }
+            Tag::List(start) => {
+                if self.current_spans.is_empty()
+                    && self.needs_newline
+                    && self.list_indices.is_empty()
+                    && !self.in_paragraph
+                {
+                    self.push_blank_line();
+                    self.needs_newline = false;
+                } else if !self.current_spans.is_empty() {
+                    self.flush_current_line(false);
+                }
+                self.list_indices.push(start);
+            }
+            Tag::Item => self.start_list_item(),
+            Tag::Emphasis => self
+                .inline_styles
+                .push(Style::default().add_modifier(Modifier::ITALIC)),
+            Tag::Strong => self
+                .inline_styles
+                .push(Style::default().add_modifier(Modifier::BOLD)),
+            Tag::Strikethrough => {
+                self.inline_styles
+                    .push(Style::default().add_modifier(Modifier::CROSSED_OUT));
+            }
+            Tag::Link { .. } | Tag::Image { .. } => self.inline_styles.push(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+            Tag::Table(alignments) => {
+                self.begin_block();
+                self.table_state = Some(TableState {
+                    alignments,
+                    ..TableState::default()
                 });
             }
-            Event::End(TagEnd::Link) => {
-                if let Some(link) = state.link_stack.pop() {
-                    let label = if link.text.is_empty() {
-                        link.destination.clone()
-                    } else {
-                        link.text
-                    };
-                    let rendered = format!(
-                        "{}",
-                        format!("[{label}]({})", link.destination)
-                            .underlined()
-                            .with(self.color_theme.link)
-                    );
-                    state.append_raw(output, &rendered);
+            _ => {}
+        }
+    }
+
+    fn handle_end(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph => {
+                self.in_paragraph = false;
+                self.flush_current_line(false);
+                if !self.in_list() {
+                    self.needs_newline = true;
                 }
             }
-            Event::Start(Tag::Image { dest_url, .. }) => {
-                let rendered = format!(
-                    "{}",
-                    format!("[image:{dest_url}]").with(self.color_theme.link)
-                );
-                state.append_raw(output, &rendered);
+            TagEnd::Heading(..) => {
+                let _ = self.inline_styles.pop();
+                let _ = self.heading_level.take();
+                self.flush_current_line(false);
+                self.needs_newline = true;
             }
-            Event::Start(Tag::Table(..)) => state.table = Some(TableState::default()),
-            Event::End(TagEnd::Table) => {
-                if let Some(table) = state.table.take() {
-                    output.push_str(&self.render_table(&table));
-                    output.push_str("\n\n");
+            TagEnd::BlockQuote(..) => {
+                self.flush_current_line(false);
+                self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                self.needs_newline = true;
+            }
+            TagEnd::CodeBlock => {
+                self.emit_code_block();
+            }
+            TagEnd::List(..) => {
+                self.flush_current_line(false);
+                self.list_indices.pop();
+                if self.list_indices.is_empty() {
+                    self.needs_newline = true;
                 }
             }
-            Event::Start(Tag::TableHead) => {
-                if let Some(table) = state.table.as_mut() {
-                    table.in_head = true;
-                }
+            TagEnd::Item => self.finish_list_item(),
+            TagEnd::Emphasis
+            | TagEnd::Strong
+            | TagEnd::Strikethrough
+            | TagEnd::Link
+            | TagEnd::Image => {
+                let _ = self.inline_styles.pop();
             }
-            Event::End(TagEnd::TableHead) => {
-                if let Some(table) = state.table.as_mut() {
-                    table.finish_row();
-                    table.in_head = false;
-                }
+            TagEnd::Table => {
+                self.render_table();
+                self.needs_newline = true;
             }
-            Event::Start(Tag::TableRow) => {
-                if let Some(table) = state.table.as_mut() {
-                    table.current_row.clear();
-                    table.current_cell.clear();
-                }
+            _ => {}
+        }
+    }
+
+    fn handle_code_block_event(&mut self, event: Event<'_>) {
+        match event {
+            Event::End(TagEnd::CodeBlock) => self.emit_code_block(),
+            Event::Text(text) | Event::Code(text) | Event::Html(text) | Event::InlineHtml(text) => {
+                self.code_block_buffer.push_str(text.as_ref());
             }
+            Event::SoftBreak | Event::HardBreak => self.code_block_buffer.push('\n'),
+            _ => {}
+        }
+    }
+
+    fn handle_table_event(&mut self, event: &Event<'_>) -> bool {
+        let Some(state) = self.table_state.as_mut() else {
+            return false;
+        };
+
+        match event {
+            Event::Start(Tag::TableHead) => state.in_head = true,
+            Event::End(TagEnd::TableHead) => state.in_head = false,
+            Event::Start(Tag::TableRow) => state.current_row.clear(),
             Event::End(TagEnd::TableRow) => {
-                if let Some(table) = state.table.as_mut() {
-                    table.finish_row();
+                let row = std::mem::take(&mut state.current_row);
+                if state.in_head {
+                    state.header = Some(row);
+                } else {
+                    state.rows.push(row);
                 }
             }
-            Event::Start(Tag::TableCell) => {
-                if let Some(table) = state.table.as_mut() {
-                    table.current_cell.clear();
-                }
-            }
+            Event::Start(Tag::TableCell) => state.current_cell.clear(),
             Event::End(TagEnd::TableCell) => {
-                if let Some(table) = state.table.as_mut() {
-                    table.push_cell();
-                }
+                state.current_row.push(normalize_cell(&state.current_cell));
+                state.current_cell.clear();
             }
-            Event::Start(Tag::Paragraph | Tag::MetadataBlock(..) | _)
-            | Event::End(TagEnd::Image | TagEnd::MetadataBlock(..) | _) => {}
-        }
-    }
-
-    #[allow(clippy::unused_self)]
-    fn start_heading(&self, state: &mut RenderState, level: u8, output: &mut String) {
-        state.heading_level = Some(level);
-        if !output.is_empty() {
-            output.push('\n');
-        }
-    }
-
-    fn start_quote(&self, state: &mut RenderState, output: &mut String) {
-        state.quote += 1;
-        let _ = write!(output, "{}", "│ ".with(self.color_theme.quote));
-    }
-
-    fn start_item(state: &mut RenderState, output: &mut String) {
-        let depth = state.list_stack.len().saturating_sub(1);
-        output.push_str(&"  ".repeat(depth));
-
-        let marker = match state.list_stack.last_mut() {
-            Some(ListKind::Ordered { next_index }) => {
-                let value = *next_index;
-                *next_index += 1;
-                format!("{value}. ")
+            Event::Text(text)
+            | Event::Code(text)
+            | Event::Html(text)
+            | Event::InlineHtml(text)
+            | Event::InlineMath(text)
+            | Event::DisplayMath(text) => state.current_cell.push_str(text.as_ref()),
+            Event::SoftBreak | Event::HardBreak => state.current_cell.push(' '),
+            Event::End(TagEnd::Table) => {
+                self.render_table();
+                self.needs_newline = true;
             }
-            _ => "• ".to_string(),
-        };
-        output.push_str(&marker);
+            _ => {}
+        }
+
+        true
     }
 
-    fn start_code_block(&self, code_language: &str, output: &mut String) {
-        let label = if code_language.is_empty() {
-            "code".to_string()
-        } else {
-            code_language.to_string()
-        };
-        let _ = writeln!(
-            output,
-            "{}",
-            format!("╭─ {label}")
-                .bold()
-                .with(self.color_theme.code_block_border)
+    fn begin_block(&mut self) {
+        self.flush_current_line(false);
+        if self.needs_newline {
+            self.push_blank_line();
+        }
+        self.needs_newline = false;
+    }
+
+    fn push_blank_line(&mut self) {
+        if self.lines.last().is_some_and(|line| !line.spans.is_empty()) {
+            self.lines.push(Line::default());
+        }
+    }
+
+    fn push_rule(&mut self) {
+        self.begin_block();
+        self.push_text_with_style(
+            &"─".repeat(40),
+            Style::default().add_modifier(Modifier::DIM),
         );
+        self.flush_current_line(false);
+        self.needs_newline = true;
     }
 
-    fn finish_code_block(&self, code_buffer: &str, code_language: &str, output: &mut String) {
-        output.push_str(&self.highlight_code(code_buffer, code_language));
-        let _ = write!(
-            output,
-            "{}",
-            "╰─".bold().with(self.color_theme.code_block_border)
-        );
-        output.push_str("\n\n");
-    }
-
-    fn push_text(
-        &self,
-        text: &str,
-        state: &mut RenderState,
-        output: &mut String,
-        code_buffer: &mut String,
-        in_code_block: bool,
-    ) {
-        if in_code_block {
-            code_buffer.push_str(text);
-        } else {
-            state.append_styled(output, text, &self.color_theme);
-        }
-    }
-
-    fn render_table(&self, table: &TableState) -> String {
-        let mut rows = Vec::new();
-        if !table.headers.is_empty() {
-            rows.push(table.headers.clone());
-        }
-        rows.extend(table.rows.iter().cloned());
-
-        if rows.is_empty() {
-            return String::new();
-        }
-
-        let column_count = rows.iter().map(Vec::len).max().unwrap_or(0);
-        let widths = (0..column_count)
-            .map(|column| {
-                rows.iter()
-                    .filter_map(|row| row.get(column))
-                    .map(|cell| visible_width(cell))
-                    .max()
-                    .unwrap_or(0)
-            })
-            .collect::<Vec<_>>();
-
-        let border = format!("{}", "│".with(self.color_theme.table_border));
-        let separator = widths
+    fn current_style(&self) -> Style {
+        self.inline_styles
             .iter()
-            .map(|width| "─".repeat(*width + 2))
-            .collect::<Vec<_>>()
-            .join(&format!("{}", "┼".with(self.color_theme.table_border)));
-        let separator = format!("{border}{separator}{border}");
-
-        let mut output = String::new();
-        if !table.headers.is_empty() {
-            output.push_str(&self.render_table_row(&table.headers, &widths, true));
-            output.push('\n');
-            output.push_str(&separator);
-            if !table.rows.is_empty() {
-                output.push('\n');
-            }
-        }
-
-        for (index, row) in table.rows.iter().enumerate() {
-            output.push_str(&self.render_table_row(row, &widths, false));
-            if index + 1 < table.rows.len() {
-                output.push('\n');
-            }
-        }
-
-        output
+            .copied()
+            .fold(Style::default(), Style::patch)
     }
 
-    fn render_table_row(&self, row: &[String], widths: &[usize], is_header: bool) -> String {
-        let border = format!("{}", "│".with(self.color_theme.table_border));
-        let mut line = String::new();
-        line.push_str(&border);
+    fn push_text(&mut self, text: &str) {
+        self.push_text_with_style(text, self.current_style());
+    }
 
-        for (index, width) in widths.iter().enumerate() {
-            let cell = row.get(index).map_or("", String::as_str);
-            line.push(' ');
-            if is_header {
-                let _ = write!(line, "{}", cell.bold().with(self.color_theme.heading));
+    fn push_text_with_style(&mut self, text: &str, style: Style) {
+        if text.is_empty() {
+            return;
+        }
+        self.ensure_line_prefix();
+        self.current_spans
+            .push(Span::styled(text.to_owned(), style));
+    }
+
+    fn ensure_line_prefix(&mut self) {
+        if !self.current_spans.is_empty() {
+            return;
+        }
+
+        for _ in 0..self.blockquote_depth {
+            self.current_spans.push(Span::styled(
+                "> ".to_owned(),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        for ctx in &mut self.indent_stack {
+            let spans = if ctx.first_pending {
+                ctx.first_pending = false;
+                ctx.first.clone()
             } else {
-                line.push_str(cell);
-            }
-            let padding = width.saturating_sub(visible_width(cell));
-            line.push_str(&" ".repeat(padding + 1));
-            line.push_str(&border);
+                ctx.continuation.clone()
+            };
+            self.current_spans.extend(spans);
         }
-
-        line
     }
 
-    #[must_use]
-    pub fn highlight_code(&self, code: &str, language: &str) -> String {
-        let syntax = self
-            .syntax_set
-            .find_syntax_by_token(language)
-            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
-        let mut syntax_highlighter = HighlightLines::new(syntax, &self.syntax_theme);
-        let mut colored_output = String::new();
+    fn flush_current_line(&mut self, force_empty: bool) {
+        if self.current_spans.is_empty() {
+            if force_empty {
+                self.lines.push(Line::default());
+            }
+            return;
+        }
 
-        for line in LinesWithEndings::from(code) {
-            match syntax_highlighter.highlight_line(line, &self.syntax_set) {
-                Ok(ranges) => {
-                    let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-                    colored_output.push_str(&apply_code_block_background(&escaped));
-                }
-                Err(_) => colored_output.push_str(&apply_code_block_background(line)),
+        self.lines
+            .push(Line::from(std::mem::take(&mut self.current_spans)));
+    }
+
+    fn start_list_item(&mut self) {
+        self.flush_current_line(false);
+        let depth = self.list_indices.len();
+        let base_indent = depth.saturating_sub(1) * 4;
+        let marker = match self.list_indices.last().copied().flatten() {
+            Some(index) => format!("{index}. "),
+            None => "- ".to_owned(),
+        };
+        let marker_style = if self.list_indices.last().copied().flatten().is_some() {
+            Style::default().fg(Color::LightBlue)
+        } else {
+            Style::default()
+        };
+        let mut first = Vec::new();
+        if base_indent > 0 {
+            first.push(Span::raw(" ".repeat(base_indent)));
+        }
+        first.push(Span::styled(marker.clone(), marker_style));
+        let continuation = vec![Span::raw(" ".repeat(base_indent + marker.len()))];
+        self.indent_stack.push(IndentCtx {
+            first,
+            continuation,
+            first_pending: true,
+        });
+    }
+
+    fn finish_list_item(&mut self) {
+        self.flush_current_line(false);
+        self.indent_stack.pop();
+        if let Some(Some(index)) = self.list_indices.last_mut() {
+            *index += 1;
+        }
+        self.in_paragraph = false;
+        self.needs_newline = false;
+    }
+
+    fn emit_code_block(&mut self) {
+        let code = std::mem::take(&mut self.code_block_buffer);
+        self.in_code_block = false;
+        let style = Style::default().fg(Color::Cyan);
+        if code.is_empty() {
+            self.flush_current_line(true);
+            self.needs_newline = true;
+            return;
+        }
+
+        for line in code.split_terminator('\n') {
+            self.push_text_with_style(line, style);
+            self.flush_current_line(false);
+        }
+        self.needs_newline = true;
+    }
+
+    fn render_table(&mut self) {
+        let Some(state) = self.table_state.take() else {
+            return;
+        };
+
+        let column_count = state
+            .header
+            .as_ref()
+            .map_or(0, Vec::len)
+            .max(state.rows.iter().map(Vec::len).max().unwrap_or(0))
+            .max(state.alignments.len());
+        if column_count == 0 {
+            return;
+        }
+
+        let mut widths = vec![0usize; column_count];
+        if let Some(header) = &state.header {
+            for (idx, cell) in header.iter().enumerate() {
+                widths[idx] = widths[idx].max(UnicodeWidthStr::width(cell.as_str()));
+            }
+        }
+        for row in &state.rows {
+            for (idx, cell) in row.iter().enumerate() {
+                widths[idx] = widths[idx].max(UnicodeWidthStr::width(cell.as_str()));
             }
         }
 
-        colored_output
+        let border_style = Style::default().add_modifier(Modifier::DIM);
+        self.lines
+            .push(table_border_line(&widths, '┌', '┬', '┐', border_style));
+        if let Some(header) = &state.header {
+            self.lines.push(table_row_line(
+                header,
+                &widths,
+                &state.alignments,
+                border_style,
+            ));
+            self.lines
+                .push(table_border_line(&widths, '├', '┼', '┤', border_style));
+        }
+        for row in &state.rows {
+            self.lines.push(table_row_line(
+                row,
+                &widths,
+                &state.alignments,
+                border_style,
+            ));
+        }
+        self.lines
+            .push(table_border_line(&widths, '└', '┴', '┘', border_style));
+    }
+
+    fn finish(mut self) -> Vec<Line<'static>> {
+        if self.in_code_block {
+            self.emit_code_block();
+        }
+        self.flush_current_line(false);
+        self.lines
+    }
+
+    fn in_list(&self) -> bool {
+        !self.list_indices.is_empty()
+    }
+}
+
+fn heading_style(level: HeadingLevel) -> Style {
+    match level {
+        HeadingLevel::H1 => Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        HeadingLevel::H2 => Style::default().add_modifier(Modifier::BOLD),
+        HeadingLevel::H3 => Style::default().add_modifier(Modifier::BOLD | Modifier::ITALIC),
+        HeadingLevel::H4 | HeadingLevel::H5 | HeadingLevel::H6 => {
+            Style::default().add_modifier(Modifier::ITALIC)
+        }
+    }
+}
+
+fn heading_level_number(level: HeadingLevel) -> usize {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+fn normalize_cell(cell: &str) -> String {
+    cell.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn table_border_line(
+    widths: &[usize],
+    left: char,
+    middle: char,
+    right: char,
+    style: Style,
+) -> Line<'static> {
+    let mut spans = vec![Span::styled(left.to_string(), style)];
+    for (idx, width) in widths.iter().enumerate() {
+        spans.push(Span::styled("─".repeat(*width + 2), style));
+        spans.push(Span::styled(
+            if idx + 1 == widths.len() {
+                right
+            } else {
+                middle
+            }
+            .to_string(),
+            style,
+        ));
+    }
+    Line::from(spans)
+}
+
+fn table_row_line(
+    row: &[String],
+    widths: &[usize],
+    alignments: &[Alignment],
+    border_style: Style,
+) -> Line<'static> {
+    let mut spans = vec![Span::styled("│".to_owned(), border_style)];
+    for (idx, width) in widths.iter().enumerate() {
+        let cell = row.get(idx).map_or("", String::as_str);
+        let alignment = alignments.get(idx).copied().unwrap_or(Alignment::None);
+        spans.push(Span::raw(" ".to_owned()));
+        spans.push(Span::raw(pad_cell(cell, *width, alignment)));
+        spans.push(Span::raw(" ".to_owned()));
+        spans.push(Span::styled("│".to_owned(), border_style));
+    }
+    Line::from(spans)
+}
+
+fn pad_cell(cell: &str, width: usize, alignment: Alignment) -> String {
+    let cell_width = UnicodeWidthStr::width(cell);
+    let padding = width.saturating_sub(cell_width);
+    let (left, right) = match alignment {
+        Alignment::Right => (padding, 0),
+        Alignment::Center => (padding / 2, padding - (padding / 2)),
+        Alignment::Left | Alignment::None => (0, padding),
+    };
+    format!("{}{}{}", " ".repeat(left), cell, " ".repeat(right))
+}
+
+pub(crate) fn text_to_ansi(lines: &[Line<'_>]) -> String {
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let line_style = line.style;
+        let mut prev_style: Option<Style> = None;
+        let mut any_styled = false;
+        for span in &line.spans {
+            let style = line_style.patch(span.style);
+            if prev_style != Some(style) {
+                if any_styled {
+                    out.push_str("\u{1b}[0m");
+                }
+                write_style(&mut out, style);
+                prev_style = Some(style);
+                any_styled = true;
+            }
+            out.push_str(&span.content);
+        }
+        if any_styled {
+            out.push_str("\u{1b}[0m");
+        }
+    }
+    out
+}
+
+fn write_style(out: &mut String, style: Style) {
+    if let Some(c) = style.fg {
+        write_color(out, c, true);
+    }
+    if let Some(c) = style.bg {
+        write_color(out, c, false);
+    }
+    let m = style.add_modifier;
+    if m.contains(Modifier::BOLD) {
+        out.push_str("\u{1b}[1m");
+    }
+    if m.contains(Modifier::DIM) {
+        out.push_str("\u{1b}[2m");
+    }
+    if m.contains(Modifier::ITALIC) {
+        out.push_str("\u{1b}[3m");
+    }
+    if m.contains(Modifier::UNDERLINED) {
+        out.push_str("\u{1b}[4m");
+    }
+    if m.contains(Modifier::CROSSED_OUT) {
+        out.push_str("\u{1b}[9m");
+    }
+}
+
+fn write_color(out: &mut String, c: Color, foreground: bool) {
+    let (base, ext) = if foreground { (30, "38") } else { (40, "48") };
+    match c {
+        Color::Reset => {
+            let _ = write!(out, "\u{1b}[{}m", base + 9);
+        }
+        Color::Black => {
+            let _ = write!(out, "\u{1b}[{base}m");
+        }
+        Color::Red => {
+            let _ = write!(out, "\u{1b}[{}m", base + 1);
+        }
+        Color::Green => {
+            let _ = write!(out, "\u{1b}[{}m", base + 2);
+        }
+        Color::Yellow => {
+            let _ = write!(out, "\u{1b}[{}m", base + 3);
+        }
+        Color::Blue => {
+            let _ = write!(out, "\u{1b}[{}m", base + 4);
+        }
+        Color::Magenta => {
+            let _ = write!(out, "\u{1b}[{}m", base + 5);
+        }
+        Color::Cyan => {
+            let _ = write!(out, "\u{1b}[{}m", base + 6);
+        }
+        Color::Gray => {
+            let _ = write!(out, "\u{1b}[{}m", base + 7);
+        }
+        Color::DarkGray => {
+            let _ = write!(out, "\u{1b}[{}m", base + 60);
+        }
+        Color::LightRed => {
+            let _ = write!(out, "\u{1b}[{}m", base + 61);
+        }
+        Color::LightGreen => {
+            let _ = write!(out, "\u{1b}[{}m", base + 62);
+        }
+        Color::LightYellow => {
+            let _ = write!(out, "\u{1b}[{}m", base + 63);
+        }
+        Color::LightBlue => {
+            let _ = write!(out, "\u{1b}[{}m", base + 64);
+        }
+        Color::LightMagenta => {
+            let _ = write!(out, "\u{1b}[{}m", base + 65);
+        }
+        Color::LightCyan => {
+            let _ = write!(out, "\u{1b}[{}m", base + 66);
+        }
+        Color::White => {
+            let _ = write!(out, "\u{1b}[{}m", base + 67);
+        }
+        Color::Rgb(r, g, b) => {
+            let _ = write!(out, "\u{1b}[{ext};2;{r};{g};{b}m");
+        }
+        Color::Indexed(i) => {
+            let _ = write!(out, "\u{1b}[{ext};5;{i}m");
+        }
     }
 }
 
@@ -617,539 +792,44 @@ impl MarkdownStreamState {
     }
 }
 
-fn apply_code_block_background(line: &str) -> String {
-    let trimmed = line.trim_end_matches('\n');
-    let trailing_newline = if trimmed.len() == line.len() {
-        ""
-    } else {
-        "\n"
-    };
-    let with_background = trimmed.replace("\u{1b}[0m", "\u{1b}[0;48;5;236m");
-    format!("\u{1b}[48;5;236m{with_background}\u{1b}[0m{trailing_newline}")
+/// Drain everything up to the next stream-safe boundary in `buffer` and
+/// render it through [`render_lines`]. Returns `None` if `buffer` has no
+/// complete block yet (e.g. mid-paragraph or inside an open fence).
+///
+/// Used by the TUI typewriter so multi-line constructs (fenced code blocks,
+/// tables, etc.) reach [`render_lines`] as a coherent chunk rather than one
+/// orphan line at a time.
+#[must_use]
+pub fn drain_safe_boundary(buffer: &mut String) -> Option<Vec<Line<'static>>> {
+    let split = find_stream_safe_boundary(buffer)?;
+    let chunk: String = buffer.drain(..split).collect();
+    Some(render_lines(&chunk))
 }
 
 fn find_stream_safe_boundary(markdown: &str) -> Option<usize> {
     let mut in_fence = false;
     let mut last_boundary = None;
+    let mut pos = 0usize;
 
-    // We yield at certain safe points to reduce perceived latency
-    // Lines are safest, but for typewriter feel, word endings are better.
-    for (offset, line) in markdown
-        .split_inclusive(['\n', ' '])
-        .scan(0usize, |cursor, part| {
-            let start = *cursor;
-            *cursor += part.len();
-            Some((start, part))
-        })
-    {
+    for line in markdown.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+        let opens_fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
+        pos += line.len();
+
+        if opens_fence {
             in_fence = !in_fence;
             if !in_fence {
-                last_boundary = Some(offset + line.len());
+                last_boundary = Some(pos);
             }
             continue;
         }
 
-        if in_fence {
-            continue;
-        }
-
-        // Reverted to newline-only boundary for stability.
-        // Real-time responsiveness will be handled by raw token streaming.
-        if line.ends_with('\n') {
-            last_boundary = Some(offset + line.len());
+        if !in_fence && line.ends_with('\n') {
+            last_boundary = Some(pos);
         }
     }
 
     last_boundary
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MarkerBuf {
-    Empty,
-    Star,
-    Backtick,
-    BacktickTwo,
-    Tilde,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PredictiveLinkState {
-    Inactive,
-    ReadingText(String),
-    ExpectingParen(String),
-    ReadingUrl { text: String, url: String },
-}
-
-#[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PredictiveMarkdownBuffer {
-    bold: bool,
-    italic: bool,
-    strikethrough: bool,
-    code_span: bool,
-
-    code_block: bool,
-    code_block_lang: String,
-    code_block_buf: String,
-    heading_level: u8,
-    blockquote: bool,
-
-    marker: MarkerBuf,
-    link: PredictiveLinkState,
-
-    at_line_start: bool,
-    line_start_buf: String,
-}
-
-impl Default for PredictiveMarkdownBuffer {
-    fn default() -> Self {
-        Self {
-            bold: false,
-            italic: false,
-            strikethrough: false,
-            code_span: false,
-            code_block: false,
-            code_block_lang: String::new(),
-            code_block_buf: String::new(),
-            heading_level: 0,
-            blockquote: false,
-            marker: MarkerBuf::Empty,
-            link: PredictiveLinkState::Inactive,
-            at_line_start: true,
-            line_start_buf: String::new(),
-        }
-    }
-}
-
-impl PredictiveMarkdownBuffer {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[cfg(test)]
-    pub fn feed(&mut self, delta: &str, out: &mut String) {
-        for c in delta.chars() {
-            self.feed_char(c, out);
-        }
-    }
-
-    pub fn flush(&mut self, out: &mut String) {
-        self.flush_marker(out);
-        self.flush_line_start(out);
-        self.flush_link(out);
-        if self.code_block {
-            self.emit_code_block(out);
-        }
-        out.push_str("\x1b[0m");
-        *self = Self::new();
-    }
-
-    pub fn feed_char(&mut self, c: char, out: &mut String) {
-        if self.marker != MarkerBuf::Empty {
-            self.resolve_marker(c, out);
-            return;
-        }
-
-        if self.code_span {
-            if c == '`' {
-                self.code_span = false;
-                self.emit_style_transition(out);
-            } else {
-                out.push(c);
-            }
-            return;
-        }
-
-        if self.code_block {
-            self.code_block_feed(c, out);
-            return;
-        }
-
-        if self.link != PredictiveLinkState::Inactive {
-            self.link_feed(c, out);
-            return;
-        }
-
-        if self.at_line_start {
-            self.line_start_feed(c, out);
-            return;
-        }
-
-        self.inline_char(c, out);
-    }
-
-    fn inline_char(&mut self, c: char, out: &mut String) {
-        match c {
-            '*' => self.marker = MarkerBuf::Star,
-            '`' => self.marker = MarkerBuf::Backtick,
-            '~' => self.marker = MarkerBuf::Tilde,
-            '[' => {
-                self.link = PredictiveLinkState::ReadingText(String::new());
-            }
-            '\n' => {
-                self.heading_level = 0;
-                self.blockquote = false;
-                self.emit_style_transition(out);
-                out.push('\n');
-                self.at_line_start = true;
-            }
-            _ => {
-                out.push(c);
-            }
-        }
-    }
-
-    fn resolve_marker(&mut self, c: char, out: &mut String) {
-        match self.marker {
-            MarkerBuf::Star => {
-                self.marker = MarkerBuf::Empty;
-                if c == '*' {
-                    self.bold = !self.bold;
-                    self.emit_style_transition(out);
-                } else {
-                    self.italic = !self.italic;
-                    self.emit_style_transition(out);
-                    self.inline_char(c, out);
-                }
-            }
-            MarkerBuf::Backtick => {
-                self.marker = MarkerBuf::Empty;
-                if c == '`' {
-                    self.marker = MarkerBuf::BacktickTwo;
-                } else {
-                    self.code_span = !self.code_span;
-                    self.emit_style_transition(out);
-                    if self.code_span {
-                        out.push(c);
-                    } else {
-                        self.inline_char(c, out);
-                    }
-                }
-            }
-            MarkerBuf::BacktickTwo => {
-                self.marker = MarkerBuf::Empty;
-                if c == '`' || c == '\n' {
-                    self.code_block = true;
-                    self.code_block_lang.clear();
-                    self.code_block_buf.clear();
-                    if c != '\n' && c != '`' {
-                        self.code_block_lang.push(c);
-                    }
-                } else {
-                    out.push_str("``");
-                    self.inline_char(c, out);
-                }
-            }
-            MarkerBuf::Tilde => {
-                self.marker = MarkerBuf::Empty;
-                if c == '~' {
-                    self.strikethrough = !self.strikethrough;
-                    self.emit_style_transition(out);
-                } else {
-                    out.push('~');
-                    self.inline_char(c, out);
-                }
-            }
-            MarkerBuf::Empty => {}
-        }
-    }
-
-    fn flush_marker(&mut self, out: &mut String) {
-        match self.marker {
-            MarkerBuf::Star => {
-                if self.italic || self.bold {
-                    if self.italic {
-                        self.italic = false;
-                    } else {
-                        self.bold = false;
-                    }
-                    self.emit_style_transition(out);
-                } else {
-                    out.push('*');
-                }
-            }
-            MarkerBuf::Backtick => {
-                if self.code_span {
-                    self.code_span = false;
-                    self.emit_style_transition(out);
-                } else {
-                    out.push('`');
-                }
-            }
-            MarkerBuf::BacktickTwo => out.push_str("``"),
-            MarkerBuf::Tilde => out.push('~'),
-            MarkerBuf::Empty => {}
-        }
-        self.marker = MarkerBuf::Empty;
-    }
-
-    fn code_block_feed(&mut self, c: char, out: &mut String) {
-        if c == '\n' && self.code_block_buf.is_empty() && self.code_block_lang.is_empty() {
-            return;
-        }
-        if c == '\n' && self.code_block_lang.is_empty() {
-            return;
-        }
-        if c != '\n' && self.code_block_buf.is_empty() && !self.code_block_lang.contains('\n') {
-            self.code_block_lang.push(c);
-            return;
-        }
-        if !self.code_block_lang.contains('\n') {
-            self.code_block_lang.push('\n');
-        }
-
-        self.code_block_buf.push(c);
-
-        if c == '\n' {
-            let is_closing = self.code_block_buf.lines().last().is_some_and(|line| {
-                let trimmed = line.trim();
-                trimmed == "```" || trimmed == "~~~"
-            });
-            if is_closing {
-                let content_end = self
-                    .code_block_buf
-                    .rfind("\n```")
-                    .or_else(|| self.code_block_buf.rfind("\n~~~"))
-                    .unwrap_or(self.code_block_buf.len());
-                let content = if content_end > 0 && content_end < self.code_block_buf.len() {
-                    &self.code_block_buf[..content_end]
-                } else {
-                    ""
-                };
-                let lang = self.code_block_lang.trim();
-                let label = if lang.is_empty() { "code" } else { lang };
-                let _ = writeln!(out, "\x1b[1;90m╭─ {label}\x1b[0m");
-                for line in content.lines() {
-                    let _ = writeln!(out, "\x1b[48;5;236m{line}\x1b[0m");
-                }
-                let _ = write!(out, "\x1b[1;90m╰─\x1b[0m");
-
-                self.code_block = false;
-                self.code_block_buf.clear();
-                self.code_block_lang.clear();
-                self.at_line_start = true;
-            }
-        }
-    }
-
-    fn emit_code_block(&mut self, out: &mut String) {
-        let lang = self.code_block_lang.trim();
-        let label = if lang.is_empty() { "code" } else { lang };
-        let _ = writeln!(out, "\x1b[1;90m╭─ {label}\x1b[0m");
-        for line in self.code_block_buf.lines() {
-            let _ = writeln!(out, "\x1b[48;5;236m{line}\x1b[0m");
-        }
-        let _ = write!(out, "\x1b[1;90m╰─\x1b[0m");
-        self.code_block = false;
-        self.code_block_buf.clear();
-        self.code_block_lang.clear();
-    }
-
-    fn try_heading(buf: &str) -> Option<(u8, &str)> {
-        const PREFIXES: &[(&str, u8)] = &[
-            ("###### ", 6),
-            ("##### ", 5),
-            ("#### ", 4),
-            ("### ", 3),
-            ("## ", 2),
-            ("# ", 1),
-        ];
-        for &(prefix, level) in PREFIXES {
-            if let Some(rest) = buf.strip_prefix(prefix) {
-                return Some((level, rest));
-            }
-        }
-        None
-    }
-
-    fn line_start_feed(&mut self, c: char, out: &mut String) {
-        self.line_start_buf.push(c);
-        let buf = &self.line_start_buf;
-
-        if buf.chars().all(|ch| ch == '#') && buf.len() <= 6 {
-            return;
-        }
-
-        if let Some((level, rest)) = Self::try_heading(buf) {
-            let rest = rest.to_string();
-            self.heading_level = level;
-            self.emit_style_transition(out);
-            out.push_str(&rest);
-            self.line_start_buf.clear();
-            self.at_line_start = false;
-            return;
-        }
-
-        if buf == "- " || buf == "* " || buf == "+ " {
-            out.push_str("• ");
-            self.line_start_buf.clear();
-            self.at_line_start = false;
-            return;
-        }
-        if buf == "-" || buf == "+" || buf == "*" {
-            return;
-        }
-        if buf == "> " {
-            self.blockquote = true;
-            self.emit_style_transition(out);
-            out.push_str("│ ");
-            self.line_start_buf.clear();
-            self.at_line_start = false;
-            return;
-        }
-        if buf == ">" {
-            return;
-        }
-
-        if buf.len() >= 2 && buf.ends_with(". ") {
-            let prefix = &buf[..buf.len() - 2];
-            if prefix.chars().all(|ch| ch.is_ascii_digit()) {
-                out.push_str(buf);
-                self.line_start_buf.clear();
-                self.at_line_start = false;
-                return;
-            }
-        }
-        if buf.chars().all(|ch| ch.is_ascii_digit()) {
-            return;
-        }
-        if buf.len() >= 2
-            && buf.ends_with('.')
-            && buf[..buf.len() - 1].chars().all(|ch| ch.is_ascii_digit())
-        {
-            return;
-        }
-
-        if buf.starts_with("```") || buf.starts_with("~~~") {
-            if c == '\n' {
-                self.code_block = true;
-                let lang_part = &buf[3..];
-                self.code_block_lang = lang_part.trim_end_matches('\n').to_string();
-                self.code_block_buf.clear();
-                self.line_start_buf.clear();
-                self.at_line_start = false;
-            }
-            return;
-        }
-        if buf == "`" || buf == "``" || buf == "~" || buf == "~~" {
-            return;
-        }
-
-        self.flush_line_start(out);
-    }
-
-    fn flush_line_start(&mut self, out: &mut String) {
-        if self.line_start_buf.is_empty() {
-            return;
-        }
-        let buf = std::mem::take(&mut self.line_start_buf);
-        self.at_line_start = false;
-        for c in buf.chars() {
-            self.feed_char(c, out);
-        }
-    }
-
-    fn link_feed(&mut self, c: char, out: &mut String) {
-        let next = match std::mem::replace(&mut self.link, PredictiveLinkState::Inactive) {
-            PredictiveLinkState::ReadingText(mut text) => {
-                if c == ']' {
-                    PredictiveLinkState::ExpectingParen(text)
-                } else {
-                    text.push(c);
-                    PredictiveLinkState::ReadingText(text)
-                }
-            }
-            PredictiveLinkState::ExpectingParen(text) => {
-                if c == '(' {
-                    PredictiveLinkState::ReadingUrl {
-                        text,
-                        url: String::new(),
-                    }
-                } else {
-                    out.push('[');
-                    out.push_str(&text);
-                    out.push(']');
-                    self.link = PredictiveLinkState::Inactive;
-                    self.inline_char(c, out);
-                    return;
-                }
-            }
-            PredictiveLinkState::ReadingUrl { text, mut url } => {
-                if c == ')' {
-                    let _ = write!(out, "\x1b[4;34m[{text}]({url})\x1b[0m");
-                    self.emit_style_transition(out);
-                    self.link = PredictiveLinkState::Inactive;
-                    return;
-                }
-                url.push(c);
-                PredictiveLinkState::ReadingUrl { text, url }
-            }
-            PredictiveLinkState::Inactive => {
-                self.inline_char(c, out);
-                return;
-            }
-        };
-        self.link = next;
-    }
-
-    fn flush_link(&mut self, out: &mut String) {
-        match std::mem::replace(&mut self.link, PredictiveLinkState::Inactive) {
-            PredictiveLinkState::ReadingText(text) => {
-                out.push('[');
-                out.push_str(&text);
-            }
-            PredictiveLinkState::ExpectingParen(text) => {
-                out.push('[');
-                out.push_str(&text);
-                out.push(']');
-            }
-            PredictiveLinkState::ReadingUrl { text, url } => {
-                out.push('[');
-                out.push_str(&text);
-                out.push_str("](");
-                out.push_str(&url);
-            }
-            PredictiveLinkState::Inactive => {}
-        }
-    }
-
-    fn emit_style_transition(&self, out: &mut String) {
-        out.push_str("\x1b[0m");
-        let mut sgr = Vec::new();
-        if self.bold || matches!(self.heading_level, 1 | 2) {
-            sgr.push("1");
-        }
-        if self.italic {
-            sgr.push("3");
-        }
-        if self.strikethrough {
-            sgr.push("9");
-        }
-        if self.code_span {
-            sgr.push("32");
-        } else {
-            match self.heading_level {
-                1 => sgr.push("36"),
-                2 => sgr.push("37"),
-                3 => sgr.push("34"),
-                h if h > 0 => sgr.push("90"),
-                _ if self.bold => sgr.push("33"),
-                _ if self.italic => sgr.push("35"),
-                _ if self.blockquote => sgr.push("90"),
-                _ => {}
-            }
-        }
-        if !sgr.is_empty() {
-            let _ = write!(out, "\x1b[{}m", sgr.join(";"));
-        }
-    }
-}
-
-fn visible_width(input: &str) -> usize {
-    text_display_width(&strip_ansi(input))
 }
 
 pub fn strip_ansi(input: &str) -> String {
@@ -1177,85 +857,124 @@ pub fn strip_ansi(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        strip_ansi, MarkdownStreamState, PredictiveMarkdownBuffer, Spinner, TerminalRenderer,
+        drain_safe_boundary, render_lines, strip_ansi, text_to_ansi, MarkdownStreamState, Spinner,
+        TerminalRenderer,
     };
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
 
     #[test]
-    fn renders_markdown_with_styling_and_lists() {
-        let terminal_renderer = TerminalRenderer::new();
-        let markdown_output = terminal_renderer
-            .render_markdown("# Heading\n\nThis is **bold** and *italic*.\n\n- item\n\n`code`");
-
-        assert!(markdown_output.contains("Heading"));
-        assert!(markdown_output.contains("• item"));
-        assert!(markdown_output.contains("code"));
-        assert!(markdown_output.contains('\u{1b}'));
+    fn render_lines_styles_heading() {
+        let lines = render_lines("# Heading\n");
+        let plain = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect::<String>();
+        assert!(plain.contains("Heading"));
+        // headings receive at least some style (color or bold)
+        let any_styled = lines.iter().any(|line| {
+            line.style.fg.is_some()
+                || !line.style.add_modifier.is_empty()
+                || line
+                    .spans
+                    .iter()
+                    .any(|s| s.style.fg.is_some() || !s.style.add_modifier.is_empty())
+        });
+        assert!(any_styled, "heading should carry styling");
     }
 
     #[test]
-    fn renders_links_as_colored_markdown_labels() {
-        let terminal_renderer = TerminalRenderer::new();
-        let markdown_output =
-            terminal_renderer.render_markdown("See [Docs](https://example.com/docs) now.");
-        let plain_text = strip_ansi(&markdown_output);
-
-        assert!(plain_text.contains("[Docs](https://example.com/docs)"));
-        assert!(markdown_output.contains('\u{1b}'));
+    fn render_lines_handles_lists_and_emphasis() {
+        let lines = render_lines("- one\n- two\n\n**bold** and *italic*\n");
+        let plain = lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect::<String>();
+        assert!(plain.contains("one"));
+        assert!(plain.contains("two"));
+        assert!(plain.contains("bold"));
+        assert!(plain.contains("italic"));
     }
 
     #[test]
-    fn highlights_fenced_code_blocks() {
-        let terminal_renderer = TerminalRenderer::new();
-        let markdown_output =
-            terminal_renderer.markdown_to_ansi("```rust\nfn hi() { println!(\"hi\"); }\n```");
-        let plain_text = strip_ansi(&markdown_output);
-
-        assert!(plain_text.contains("╭─ rust"));
-        assert!(plain_text.contains("fn hi"));
-        assert!(markdown_output.contains('\u{1b}'));
-        assert!(markdown_output.contains("[48;5;236m"));
+    fn render_lines_nested_lists() {
+        let md = "1. First item\n    - Nested bullet\n    - Another\n2. Second item\n";
+        let lines = render_lines(md);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+        let nested_line = texts
+            .iter()
+            .find(|text| text.contains("Nested bullet"))
+            .expect("nested bullet line");
+        let top_line = texts
+            .iter()
+            .find(|text| text.contains("First item"))
+            .expect("first item line");
+        let nested_indent = nested_line.len() - nested_line.trim_start().len();
+        let top_indent = top_line.len() - top_line.trim_start().len();
+        assert!(
+            nested_indent > top_indent,
+            "nested={nested_indent}, top={top_indent}, lines={texts:?}"
+        );
     }
 
     #[test]
-    fn renders_ordered_and_nested_lists() {
-        let terminal_renderer = TerminalRenderer::new();
-        let markdown_output =
-            terminal_renderer.render_markdown("1. first\n2. second\n   - nested\n   - child");
-        let plain_text = strip_ansi(&markdown_output);
-
-        assert!(plain_text.contains("1. first"));
-        assert!(plain_text.contains("2. second"));
-        assert!(plain_text.contains("  • nested"));
-        assert!(plain_text.contains("  • child"));
+    fn render_lines_styled_list_items_same_line() {
+        let md = "1. **Bold item** with text\n2. Normal item\n";
+        let lines = render_lines(md);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .filter(|text: &String| !text.is_empty())
+            .collect();
+        let first = texts
+            .iter()
+            .find(|text| text.contains("Bold item"))
+            .expect("bold item line");
+        assert!(
+            first.contains("1.") || first.starts_with('1'),
+            "marker and content on same line: {first:?}"
+        );
     }
 
     #[test]
-    fn renders_tables_with_alignment() {
-        let terminal_renderer = TerminalRenderer::new();
-        let markdown_output = terminal_renderer
-            .render_markdown("| Name | Value |\n| ---- | ----- |\n| alpha | 1 |\n| beta | 22 |");
-        let plain_text = strip_ansi(&markdown_output);
-        let lines = plain_text.lines().collect::<Vec<_>>();
-
-        assert_eq!(lines[0], "│ Name  │ Value │");
-        assert_eq!(lines[1], "│───────┼───────│");
-        assert_eq!(lines[2], "│ alpha │ 1     │");
-        assert_eq!(lines[3], "│ beta  │ 22    │");
-        assert!(markdown_output.contains('\u{1b}'));
+    fn markdown_to_ansi_round_trips_through_strip_ansi() {
+        let renderer = TerminalRenderer::new();
+        let ansi = renderer.markdown_to_ansi(
+            "# Heading\n\n**bold** and `code` and a [link](https://example.com).\n",
+        );
+        let plain = strip_ansi(&ansi);
+        for needle in ["Heading", "bold", "code", "link"] {
+            assert!(plain.contains(needle), "missing {needle:?} in {plain:?}");
+        }
+        assert!(ansi.contains('\u{1b}'), "expected ANSI escapes");
     }
 
     #[test]
-    fn renders_tables_with_wide_chars_aligned() {
-        let terminal_renderer = TerminalRenderer::new();
-        let markdown_output = terminal_renderer
-            .render_markdown("| Name | Value |\n| ---- | ----- |\n| 中文 | 1 |\n| a | 22 |");
-        let plain_text = strip_ansi(&markdown_output);
-        let lines = plain_text.lines().collect::<Vec<_>>();
+    fn markdown_to_ansi_handles_fenced_code_block() {
+        let renderer = TerminalRenderer::new();
+        let ansi = renderer.markdown_to_ansi("```rust\nfn hi() { println!(\"hi\"); }\n```\n");
+        let plain = strip_ansi(&ansi);
+        assert!(plain.contains("fn hi"));
+    }
 
-        assert_eq!(lines[0], "│ Name │ Value │");
-        assert_eq!(lines[1], "│──────┼───────│");
-        assert_eq!(lines[2], "│ 中文 │ 1     │");
-        assert_eq!(lines[3], "│ a    │ 22    │");
+    #[test]
+    fn empty_markdown_yields_empty_ansi() {
+        let renderer = TerminalRenderer::new();
+        let ansi = renderer.markdown_to_ansi("");
+        assert!(ansi.is_empty(), "got {ansi:?}");
     }
 
     #[test]
@@ -1267,9 +986,9 @@ mod tests {
         let flushed = state
             .push(&renderer, "\n\nParagraph\n\n")
             .expect("completed block");
-        let plain_text = strip_ansi(&flushed);
-        assert!(plain_text.contains("Heading"));
-        assert!(plain_text.contains("Paragraph"));
+        let plain = strip_ansi(&flushed);
+        assert!(plain.contains("Heading"));
+        assert!(plain.contains("Paragraph"));
 
         assert_eq!(state.push(&renderer, "```rust\nfn main() {}\n"), None);
         let code = state
@@ -1279,269 +998,106 @@ mod tests {
     }
 
     #[test]
+    fn streaming_state_buffers_tilde_fences() {
+        let renderer = TerminalRenderer::new();
+        let mut state = MarkdownStreamState::default();
+
+        assert_eq!(state.push(&renderer, "~~~rust\nfn body() {}\n"), None);
+        let code = state
+            .push(&renderer, "~~~\n")
+            .expect("closed tilde fence flushes");
+        assert!(strip_ansi(&code).contains("fn body()"));
+    }
+
+    #[test]
+    fn drain_safe_boundary_holds_open_fence() {
+        let mut buffer = String::from("```rust\nfn pending() {}\n");
+        assert!(drain_safe_boundary(&mut buffer).is_none());
+        // buffer unchanged because no safe boundary reached
+        assert!(buffer.starts_with("```rust"));
+
+        buffer.push_str("```\n");
+        let rendered = drain_safe_boundary(&mut buffer).expect("now boundary reached");
+        let plain: String = rendered
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(plain.contains("fn pending"));
+        assert!(
+            buffer.is_empty(),
+            "buffer should be drained, got {buffer:?}"
+        );
+    }
+
+    #[test]
+    fn text_to_ansi_emits_foreground_and_modifiers() {
+        let style = Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC);
+        let line = Line::from(Span::styled("hi", style));
+        let ansi = text_to_ansi(&[line]);
+        assert!(ansi.contains("\u{1b}[31m"), "missing red fg in {ansi:?}");
+        assert!(ansi.contains("\u{1b}[1m"), "missing bold in {ansi:?}");
+        assert!(ansi.contains("\u{1b}[3m"), "missing italic in {ansi:?}");
+        assert!(ansi.contains("hi"));
+        assert!(ansi.ends_with("\u{1b}[0m"), "missing trailing reset");
+    }
+
+    #[test]
+    fn text_to_ansi_emits_rgb_indexed_and_background() {
+        let rgb = Style::default().fg(Color::Rgb(10, 20, 30));
+        let indexed = Style::default().fg(Color::Indexed(208));
+        let bg = Style::default().bg(Color::Black);
+        let rgb_ansi = text_to_ansi(&[Line::from(Span::styled("a", rgb))]);
+        let idx_ansi = text_to_ansi(&[Line::from(Span::styled("b", indexed))]);
+        let bg_ansi = text_to_ansi(&[Line::from(Span::styled("c", bg))]);
+        assert!(
+            rgb_ansi.contains("\u{1b}[38;2;10;20;30m"),
+            "got {rgb_ansi:?}"
+        );
+        assert!(idx_ansi.contains("\u{1b}[38;5;208m"), "got {idx_ansi:?}");
+        assert!(bg_ansi.contains("\u{1b}[40m"), "got {bg_ansi:?}");
+    }
+
+    #[test]
+    fn text_to_ansi_emits_one_reset_per_line_when_style_unchanged() {
+        let style = Style::default().fg(Color::Green);
+        let line = Line::from(vec![Span::styled("foo", style), Span::styled("bar", style)]);
+        let ansi = text_to_ansi(&[line]);
+        // Only one reset at end of line (style stayed the same across spans).
+        let resets = ansi.matches("\u{1b}[0m").count();
+        assert_eq!(resets, 1, "got {ansi:?}");
+    }
+
+    #[test]
+    fn streaming_flush_drains_pending() {
+        let renderer = TerminalRenderer::new();
+        let mut state = MarkdownStreamState::default();
+        assert_eq!(state.push(&renderer, "trailing text without newline"), None);
+        let flushed = state.flush(&renderer).expect("flush emits remainder");
+        assert!(strip_ansi(&flushed).contains("trailing text"));
+        assert!(state.flush(&renderer).is_none());
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_sequences() {
+        assert_eq!(strip_ansi("\u{1b}[31mred\u{1b}[0m"), "red");
+        assert_eq!(strip_ansi("no escapes here"), "no escapes here");
+    }
+
+    #[test]
     fn spinner_advances_frames() {
-        let terminal_renderer = TerminalRenderer::new();
+        let renderer = TerminalRenderer::new();
         let mut spinner = Spinner::new();
         let mut out = Vec::new();
         spinner
-            .tick("Working", terminal_renderer.color_theme(), &mut out)
+            .tick("Working", renderer.color_theme(), &mut out)
             .expect("tick succeeds");
         spinner
-            .tick("Working", terminal_renderer.color_theme(), &mut out)
+            .tick("Working", renderer.color_theme(), &mut out)
             .expect("tick succeeds");
 
         let output = String::from_utf8_lossy(&out);
         assert!(output.contains("Working"));
-    }
-
-    // ── PredictiveMarkdownBuffer tests ──────────────────────────────
-
-    fn feed(input: &str) -> String {
-        let mut buf = PredictiveMarkdownBuffer::new();
-        let mut out = String::new();
-        buf.feed(input, &mut out);
-        buf.flush(&mut out);
-        out
-    }
-
-    fn feed_plain(input: &str) -> String {
-        strip_ansi(&feed(input))
-    }
-
-    // -- plain text passthrough --
-
-    #[test]
-    fn predictive_plain_text_passes_through() {
-        assert_eq!(feed_plain("hello world"), "hello world");
-    }
-
-    #[test]
-    fn predictive_newline_passes_through() {
-        assert_eq!(feed_plain("a\nb"), "a\nb");
-    }
-
-    // -- bold toggle --
-
-    #[test]
-    fn predictive_bold_produces_ansi() {
-        let out = feed("**bold**");
-        assert!(out.contains('\x1b'), "should contain ANSI codes");
-        assert_eq!(strip_ansi(&out), "bold");
-    }
-
-    #[test]
-    fn predictive_bold_toggle_on_off() {
-        let out = feed("before **bold** after");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "before bold after");
-        assert!(out.contains('\x1b'));
-    }
-
-    #[test]
-    fn predictive_bold_streamed_char_by_char() {
-        let mut buf = PredictiveMarkdownBuffer::new();
-        let mut out = String::new();
-        for c in "**hi**".chars() {
-            buf.feed_char(c, &mut out);
-        }
-        buf.flush(&mut out);
-        assert_eq!(strip_ansi(&out), "hi");
-        assert!(out.contains('\x1b'));
-    }
-
-    // -- italic toggle --
-
-    #[test]
-    fn predictive_italic_produces_ansi() {
-        let out = feed("*italic*");
-        assert_eq!(strip_ansi(&out), "italic");
-        assert!(out.contains('\x1b'));
-    }
-
-    #[test]
-    fn predictive_italic_toggle_on_off() {
-        let out = feed("before *italic* after");
-        assert_eq!(strip_ansi(&out), "before italic after");
-    }
-
-    // -- bold+italic mixed --
-
-    #[test]
-    fn predictive_bold_and_italic_independent() {
-        let out = feed("**bold *both* bold**");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "bold both bold");
-    }
-
-    // -- code span toggle --
-
-    #[test]
-    fn predictive_code_span() {
-        let out = feed("use `code` here");
-        assert_eq!(strip_ansi(&out), "use code here");
-        assert!(out.contains('\x1b'));
-    }
-
-    #[test]
-    fn predictive_code_span_suppresses_markers() {
-        let out = feed("`**not bold**`");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "**not bold**");
-    }
-
-    // -- strikethrough toggle --
-
-    #[test]
-    fn predictive_strikethrough() {
-        let out = feed("~~struck~~");
-        assert_eq!(strip_ansi(&out), "struck");
-        assert!(out.contains('\x1b'));
-    }
-
-    // -- marker disambiguation --
-
-    #[test]
-    fn predictive_lone_star_is_italic() {
-        let out = feed("*a* b");
-        assert_eq!(strip_ansi(&out), "a b");
-    }
-
-    #[test]
-    fn predictive_double_star_is_bold() {
-        let out = feed("**a** b");
-        assert_eq!(strip_ansi(&out), "a b");
-    }
-
-    #[test]
-    fn predictive_lone_tilde_is_literal() {
-        assert_eq!(feed_plain("~x"), "~x");
-    }
-
-    #[test]
-    fn predictive_lone_backtick_is_code_span() {
-        let out = feed("`x`");
-        assert_eq!(strip_ansi(&out), "x");
-    }
-
-    // -- headings --
-
-    #[test]
-    fn predictive_heading_level_1() {
-        let out = feed("# Title\n");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "Title\n");
-        assert!(out.contains('\x1b'));
-    }
-
-    #[test]
-    fn predictive_heading_level_2() {
-        let out = feed("## Sub\n");
-        assert_eq!(strip_ansi(&out), "Sub\n");
-    }
-
-    #[test]
-    fn predictive_heading_resets_after_newline() {
-        let out = feed("# H\nnormal");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "H\nnormal");
-    }
-
-    // -- lists --
-
-    #[test]
-    fn predictive_unordered_list_dash() {
-        let out = feed("- item\n");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "• item\n");
-    }
-
-    #[test]
-    fn predictive_unordered_list_star() {
-        let out = feed("* item\n");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "• item\n");
-    }
-
-    #[test]
-    fn predictive_ordered_list() {
-        let out = feed("1. first\n");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "1. first\n");
-    }
-
-    // -- blockquote --
-
-    #[test]
-    fn predictive_blockquote() {
-        let out = feed("> quoted\n");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "│ quoted\n");
-    }
-
-    // -- code block --
-
-    #[test]
-    fn predictive_code_block_buffered() {
-        let mut buf = PredictiveMarkdownBuffer::new();
-        let mut out = String::new();
-        buf.feed("```\ncode line\n```\n", &mut out);
-        buf.flush(&mut out);
-        let plain = strip_ansi(&out);
-        assert!(plain.contains("code line"));
-    }
-
-    #[test]
-    fn predictive_code_block_suppresses_inline_markers() {
-        let out = feed("```\n**not bold**\n```\n");
-        let plain = strip_ansi(&out);
-        assert!(plain.contains("**not bold**"));
-    }
-
-    #[test]
-    fn predictive_code_block_with_language() {
-        let out = feed("```rust\nfn main() {}\n```\n");
-        let plain = strip_ansi(&out);
-        assert!(plain.contains("fn main()"));
-    }
-
-    // -- links --
-
-    #[test]
-    fn predictive_link_renders() {
-        let out = feed("[click](https://example.com)");
-        let plain = strip_ansi(&out);
-        assert!(plain.contains("click"));
-        assert!(plain.contains("https://example.com"));
-    }
-
-    #[test]
-    fn predictive_link_aborted_no_paren() {
-        let out = feed("[text] rest");
-        let plain = strip_ansi(&out);
-        assert_eq!(plain, "[text] rest");
-    }
-
-    // -- flush --
-
-    #[test]
-    fn predictive_flush_emits_pending_marker() {
-        let mut buf = PredictiveMarkdownBuffer::new();
-        let mut out = String::new();
-        buf.feed("trailing*", &mut out);
-        buf.flush(&mut out);
-        assert_eq!(strip_ansi(&out), "trailing*");
-    }
-
-    #[test]
-    fn predictive_flush_resets_state() {
-        let mut buf = PredictiveMarkdownBuffer::new();
-        let mut out = String::new();
-        buf.feed("**bold not closed", &mut out);
-        buf.flush(&mut out);
-        let mut out2 = String::new();
-        buf.feed("new text", &mut out2);
-        buf.flush(&mut out2);
-        let plain2 = strip_ansi(&out2);
-        assert_eq!(plain2, "new text");
     }
 }

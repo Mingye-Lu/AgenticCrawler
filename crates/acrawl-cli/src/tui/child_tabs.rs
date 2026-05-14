@@ -1,8 +1,7 @@
 use ratatui::widgets::ListState;
 
 use super::repl_app::{ToolCallStatus, TranscriptEntry};
-use super::repl_render::ansi_to_lines;
-use crate::markdown::PredictiveMarkdownBuffer;
+use crate::markdown::{drain_safe_boundary, render_lines};
 
 const MAX_ENTRIES: usize = 1000;
 
@@ -28,8 +27,7 @@ pub struct ChildTabState {
     pub(super) list_state: ListState,
     pub(super) last_wrapped_len: usize,
     pub(super) last_view_height: usize,
-    pub(super) md_buffer: PredictiveMarkdownBuffer,
-    pub(super) live_ansi: String,
+    pub(super) live: String,
 }
 
 impl ChildTabState {
@@ -47,8 +45,25 @@ impl ChildTabState {
             list_state: ListState::default(),
             last_wrapped_len: 0,
             last_view_height: 0,
-            md_buffer: PredictiveMarkdownBuffer::new(),
-            live_ansi: String::new(),
+            live: String::new(),
+        }
+    }
+
+    fn drain_completed_lines(&mut self) {
+        while let Some(styled_lines) = drain_safe_boundary(&mut self.live) {
+            for line in styled_lines {
+                self.entries.push(TranscriptEntry::Stream(line));
+            }
+        }
+    }
+
+    fn flush_remainder(&mut self) {
+        if self.live.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.live);
+        for styled_line in render_lines(&pending) {
+            self.entries.push(TranscriptEntry::Stream(styled_line));
         }
     }
 }
@@ -103,15 +118,8 @@ impl ChildTabPanel {
         match event {
             crawler::ChildEventKind::TextDelta(text) => {
                 let tab = &mut self.tabs[idx];
-                for c in text.chars() {
-                    tab.md_buffer.feed_char(c, &mut tab.live_ansi);
-                    if c == '\n' {
-                        let ansi = std::mem::take(&mut tab.live_ansi);
-                        for styled_line in ansi_to_lines(&ansi) {
-                            tab.entries.push(TranscriptEntry::Stream(styled_line));
-                        }
-                    }
-                }
+                tab.live.push_str(text);
+                tab.drain_completed_lines();
             }
             crawler::ChildEventKind::ToolCallStart {
                 name,
@@ -196,14 +204,8 @@ impl ChildTabPanel {
                     )
                 };
                 tab.tool_in_progress = None;
-
-                tab.md_buffer.flush(&mut tab.live_ansi);
-                if !tab.live_ansi.is_empty() {
-                    let ansi = std::mem::take(&mut tab.live_ansi);
-                    for styled_line in ansi_to_lines(&ansi) {
-                        tab.entries.push(TranscriptEntry::Stream(styled_line));
-                    }
-                }
+                tab.drain_completed_lines();
+                tab.flush_remainder();
 
                 for entry in &mut tab.entries {
                     if let TranscriptEntry::ToolCall {
