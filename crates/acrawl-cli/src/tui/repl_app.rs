@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
 use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
 use crate::format::render_repl_help;
-use crate::markdown::render_lines;
+use crate::markdown::{drain_safe_boundary, render_lines};
 use crate::tool_format::tool_input_summary;
 use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
@@ -299,19 +299,23 @@ impl ReplTuiState {
     }
 
     /// Advance the typewriter: reveal `chars_per_tick` chars from the queue.
+    ///
+    /// Chars accumulate in `typewriter.live`; whenever the buffer reaches a
+    /// stream-safe markdown boundary (paragraph end or closed code fence) we
+    /// render that chunk through `tui-markdown` and push the resulting lines
+    /// to the transcript. This preserves multi-line constructs like fenced
+    /// code blocks (which need the whole block to syntax-highlight) at the
+    /// cost of a slight delay before they appear during streaming.
     fn tick_typewriter(&mut self, chars_per_tick: usize) {
         for _ in 0..chars_per_tick {
             match self.typewriter.chars.pop_front() {
                 None => break,
-                Some('\n') => {
-                    let line: String = std::mem::take(&mut self.typewriter.live);
-                    for styled_line in render_lines(&line) {
-                        self.entries.push(TranscriptEntry::Stream(styled_line));
-                    }
-                }
-                Some(c) => {
-                    self.typewriter.live.push(c);
-                }
+                Some(c) => self.typewriter.live.push(c),
+            }
+        }
+        while let Some(styled_lines) = drain_safe_boundary(&mut self.typewriter.live) {
+            for line in styled_lines {
+                self.entries.push(TranscriptEntry::Stream(line));
             }
         }
     }
@@ -322,8 +326,8 @@ impl ReplTuiState {
             self.tick_typewriter(count);
         }
         if !self.typewriter.live.is_empty() {
-            let line: String = std::mem::take(&mut self.typewriter.live);
-            for styled_line in render_lines(&line) {
+            let pending: String = std::mem::take(&mut self.typewriter.live);
+            for styled_line in render_lines(&pending) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
         }
@@ -482,8 +486,8 @@ impl ReplTuiState {
             self.tick_typewriter(count);
         }
         if !self.typewriter.live.is_empty() {
-            let line: String = std::mem::take(&mut self.typewriter.live);
-            for styled_line in render_lines(&line) {
+            let pending: String = std::mem::take(&mut self.typewriter.live);
+            for styled_line in render_lines(&pending) {
                 self.entries.push(TranscriptEntry::Stream(styled_line));
             }
         }

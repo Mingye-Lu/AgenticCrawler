@@ -15,6 +15,12 @@ mod markdown {
             vec![Line::from(input.to_string())]
         }
     }
+
+    pub fn drain_safe_boundary(buffer: &mut String) -> Option<Vec<Line<'static>>> {
+        let idx = buffer.find('\n')?;
+        let chunk: String = buffer.drain(..=idx).collect();
+        Some(render_lines(&chunk))
+    }
 }
 
 #[allow(dead_code)]

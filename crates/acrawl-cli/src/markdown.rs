@@ -273,6 +273,20 @@ impl MarkdownStreamState {
     }
 }
 
+/// Drain everything up to the next stream-safe boundary in `buffer` and
+/// render it through [`render_lines`]. Returns `None` if `buffer` has no
+/// complete block yet (e.g. mid-paragraph or inside an open fence).
+///
+/// Used by the TUI typewriter so multi-line constructs (fenced code blocks,
+/// tables, etc.) reach `tui_markdown::from_str` as a coherent chunk rather
+/// than one orphan line at a time.
+#[must_use]
+pub fn drain_safe_boundary(buffer: &mut String) -> Option<Vec<Line<'static>>> {
+    let split = find_stream_safe_boundary(buffer)?;
+    let chunk: String = buffer.drain(..split).collect();
+    Some(render_lines(&chunk))
+}
+
 fn find_stream_safe_boundary(markdown: &str) -> Option<usize> {
     let mut in_fence = false;
     let mut last_boundary = None;
