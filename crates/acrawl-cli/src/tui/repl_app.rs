@@ -1032,10 +1032,8 @@ impl ReplTuiState {
                     &child_ev.sub_goal,
                     &child_ev.event,
                 );
-                if matches!(
-                    child_ev.event,
-                    crawler::ChildEventKind::PauseRequested { .. }
-                ) && matches!(self.view_mode, ViewMode::Parent)
+                if matches!(child_ev.event, crawler::ChildEventKind::PauseRequested { .. })
+                    && matches!(self.view_mode, ViewMode::Parent)
                 {
                     self.view_mode = ViewMode::Child(child_ev.child_id.clone());
                 }
@@ -1770,7 +1768,7 @@ fn run_loop(
                         draw_welcome(frame, frame.area(), &mut state, show_input_cursor);
                     }
                     AppUiState::ChatMode => {
-                        draw_chat(frame, &mut state, &header, show_input_cursor)
+                        draw_chat(frame, &mut state, &header, show_input_cursor);
                     }
                 }
             } else {
@@ -1865,6 +1863,60 @@ fn run_loop(
                                 tab.follow_bottom = tab.list_state.offset() >= max;
                             }
                         }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            let tr = state.last_transcript_rect;
+                            if rect_contains_mouse(tr, me.column, me.row) {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                    let cur = tab.list_state.offset();
+                                    let col = me.column.saturating_sub(tr.x);
+                                    let row = cur + usize::from(me.row.saturating_sub(tr.y));
+                                    state.selection.anchor = Some((col, row));
+                                    state.selection.end = Some((col, row));
+                                    state.selection.mouse_drag_occurred = false;
+                                }
+                            }
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            let tr = state.last_transcript_rect;
+                            if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                let cur = tab.list_state.offset();
+                                let col =
+                                    me.column.saturating_sub(tr.x).min(tr.width.saturating_sub(1));
+                                let row = cur
+                                    + usize::from(
+                                        me.row
+                                            .saturating_sub(tr.y)
+                                            .min(tr.height.saturating_sub(1)),
+                                    );
+                                state.selection.end = Some((col, row));
+                                state.selection.mouse_drag_occurred = true;
+                            }
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            if state.selection.mouse_drag_occurred {
+                                let tr = state.last_transcript_rect;
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                    let cur = tab.list_state.offset();
+                                    let col =
+                                        me.column.saturating_sub(tr.x).min(tr.width.saturating_sub(1));
+                                    let row = cur
+                                        + usize::from(
+                                            me.row
+                                                .saturating_sub(tr.y)
+                                                .min(tr.height.saturating_sub(1)),
+                                        );
+                                    state.selection.end = Some((col, row));
+                                }
+                            } else {
+                                state.selection.anchor = None;
+                                state.selection.end = None;
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Right)
+                            if state.selection.anchor.is_some() =>
+                        {
+                            state.selection.pending_copy = Some(true);
+                        }
                         _ => {}
                     }
                     continue;
@@ -1956,6 +2008,8 @@ fn run_loop(
                     } else {
                         match key.code {
                             KeyCode::Esc | KeyCode::Up => {
+                                state.selection.anchor = None;
+                                state.selection.end = None;
                                 state.view_mode = ViewMode::Parent;
                                 continue;
                             }
@@ -2277,6 +2331,8 @@ fn run_loop(
                         .get(state.child_tab_panel.active_tab)
                         .map(|tab| tab.child_id.clone())
                     {
+                        state.selection.anchor = None;
+                        state.selection.end = None;
                         state.view_mode = ViewMode::Child(child_id);
                         continue;
                     }
