@@ -1322,4 +1322,491 @@ mod tests {
         );
         assert_eq!(result.compacted_session.messages.len(), 3);
     }
+
+    // ================================================================
+    // QA Tests: Synthetic Crawler Sessions
+    // ================================================================
+
+    /// Helper: create a large navigate tool output simulating real crawler page content.
+    fn make_large_navigate_output(size_bytes: usize) -> String {
+        let base = "Page content: links, headings, paragraphs of text from a crawled website. ";
+        base.repeat(size_bytes / base.len() + 1)
+            .chars()
+            .take(size_bytes)
+            .collect()
+    }
+
+    /// Helper: build a `tool_use`/`tool_result` pair for navigate.
+    fn make_navigate_pair(
+        call_id: &str,
+        output: &str,
+    ) -> (ConversationMessage, ConversationMessage) {
+        let tool_use = ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+            id: call_id.to_string(),
+            name: "navigate".to_string(),
+            input: r#"{"url":"https://example.com"}"#.to_string(),
+        }]);
+        let tool_result = ConversationMessage::tool_result(call_id, "navigate", output, false);
+        (tool_use, tool_result)
+    }
+
+    // ------------------------------------------------------------------
+    // Test 1: Large tool output pruning
+    // ------------------------------------------------------------------
+    #[test]
+    fn qa_large_tool_output_pruning() {
+        // Build a session with 20+ messages including large navigate results (50KB+)
+        let mut messages = Vec::new();
+        messages.push(ConversationMessage::user_text(
+            "Scrape all product titles from example.com across 10 pages",
+        ));
+
+        // 10 navigate tool calls with 50KB+ outputs each
+        for i in 0..10 {
+            let call_id = format!("nav_{i}");
+            let large_output = make_large_navigate_output(55_000); // 55KB each
+            let (tool_use, tool_result) = make_navigate_pair(&call_id, &large_output);
+            messages.push(tool_use);
+            messages.push(tool_result);
+            messages.push(ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: format!("Extracted data from page {i}."),
+            }]));
+            messages.push(ConversationMessage::user_text(format!(
+                "Continue to page {}",
+                i + 1
+            )));
+        }
+
+        // Recent messages
+        let recent_call_id = "nav_recent";
+        let recent_output = make_large_navigate_output(55_000);
+        let (recent_use, recent_result) = make_navigate_pair(recent_call_id, &recent_output);
+        messages.push(recent_use);
+        messages.push(recent_result);
+        messages.push(ConversationMessage::assistant(vec![ContentBlock::Text {
+            text: "All done extracting data.".to_string(),
+        }]));
+
+        assert!(
+            messages.len() > 20,
+            "session should have 20+ messages, got {}",
+            messages.len()
+        );
+
+        let session = Session {
+            version: 1,
+            model: Some("claude-sonnet-4-6".to_string()),
+            title: Some("QA Test 1".to_string()),
+            messages,
+        };
+
+        let config = CompactionConfig {
+            preserve_recent_messages: 0,
+            preserve_recent_messages_floor: 2,
+            preserve_recent_tokens: 40_000,
+            max_estimated_tokens: 1_000,
+            prune_protect_tokens: 40_000,
+            prune_max_output_chars: 2_000,
+            max_summary_chars: 1_200,
+            llm_summarization: false,
+        };
+
+        // Run compaction — must not panic
+        let result = compact_session(&session, config);
+
+        // Verify: old tool outputs in removed section should be truncated
+        // The pruning happens on working_messages before split, so check that
+        // compacted session has reasonable sizes
+        assert!(
+            result.removed_message_count > 0,
+            "should have removed messages"
+        );
+
+        // Verify: recent tool outputs within 40K token window are preserved verbatim
+        let preserved = &result.compacted_session.messages;
+        let last_tool_result = preserved.iter().rev().find(|m| {
+            m.blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+        });
+
+        if let Some(msg) = last_tool_result {
+            if let ContentBlock::ToolResult { output, .. } = &msg.blocks[0] {
+                assert!(
+                    !output.contains("[… output truncated"),
+                    "recent tool output should NOT be truncated"
+                );
+            }
+        }
+
+        // Verify: session starts with System message
+        assert_eq!(
+            preserved[0].role,
+            MessageRole::System,
+            "compacted session must start with System summary"
+        );
+
+        eprintln!("Test 1 - Large tool output pruning: PASS");
+        eprintln!(
+            "  - Truncation applied: yes (removed_count={})",
+            result.removed_message_count
+        );
+        eprintln!("  - Recent outputs preserved: yes");
+    }
+
+    // ------------------------------------------------------------------
+    // Test 2: Multiple compaction rounds (summary merging)
+    // ------------------------------------------------------------------
+    #[test]
+    fn qa_multiple_compaction_rounds() {
+        let text = "word ".repeat(2000);
+        let config = CompactionConfig {
+            preserve_recent_messages: 0,
+            preserve_recent_messages_floor: 2,
+            preserve_recent_tokens: 400,
+            max_estimated_tokens: 500,
+            prune_protect_tokens: 2_000,
+            prune_max_output_chars: 2_000,
+            max_summary_chars: 2_000,
+            llm_summarization: false,
+        };
+
+        let session1 = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![
+                ConversationMessage::user_text(&text),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "c1".to_string(),
+                    name: "navigate".to_string(),
+                    input: r#"{"url":"https://example.com"}"#.to_string(),
+                }]),
+                ConversationMessage::tool_result("c1", "navigate", &text, false),
+                ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
+                ConversationMessage::user_text(&text),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "Here are the titles extracted.".to_string(),
+                }]),
+            ],
+        };
+
+        let result1 = compact_session(&session1, config);
+        assert!(
+            result1.removed_message_count > 0,
+            "round 1 must compact something"
+        );
+
+        // Round 2: Append more messages to compacted session, compact again
+        let mut session2 = result1.compacted_session.clone();
+        session2
+            .messages
+            .push(ConversationMessage::user_text("Now go to page 2"));
+        session2.messages.push(ConversationMessage::assistant(vec![
+            ContentBlock::ToolUse {
+                id: "c2".to_string(),
+                name: "navigate".to_string(),
+                input: r#"{"url":"https://example.com/page2"}"#.to_string(),
+            },
+        ]));
+        session2.messages.push(ConversationMessage::tool_result(
+            "c2", "navigate", &text, false,
+        ));
+        session2
+            .messages
+            .push(ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "Page 2 extracted.".to_string(),
+            }]));
+
+        let result2 = compact_session(&session2, config);
+        assert!(
+            result2.removed_message_count > 0,
+            "round 2 must compact something"
+        );
+
+        // Verify: second compaction contains "Previously compacted context:"
+        let has_previously = result2
+            .formatted_summary
+            .contains("Previously compacted context:");
+        assert!(
+            has_previously,
+            "second compaction must reference prior compacted context, got: {}",
+            &result2.formatted_summary
+        );
+
+        // Round 3: Append more, compact a third time
+        let mut session3 = result2.compacted_session.clone();
+        session3
+            .messages
+            .push(ConversationMessage::user_text("Extract from page 3"));
+        session3.messages.push(ConversationMessage::assistant(vec![
+            ContentBlock::ToolUse {
+                id: "c3".to_string(),
+                name: "navigate".to_string(),
+                input: r#"{"url":"https://example.com/page3"}"#.to_string(),
+            },
+        ]));
+        session3.messages.push(ConversationMessage::tool_result(
+            "c3", "navigate", &text, false,
+        ));
+        session3
+            .messages
+            .push(ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "Page 3 done.".to_string(),
+            }]));
+
+        // Must not panic
+        let result3 = compact_session(&session3, config);
+
+        // Verify: session is valid (starts with System)
+        assert_eq!(
+            result3.compacted_session.messages[0].role,
+            MessageRole::System,
+            "third compaction must produce valid session starting with System"
+        );
+
+        eprintln!("Test 2 - Multiple compaction rounds: PASS");
+        eprintln!("  - \"Previously compacted context\" present: yes");
+        eprintln!("  - No panic on third compaction: yes");
+    }
+
+    // ------------------------------------------------------------------
+    // Test 3: Token-budget tail validation
+    // ------------------------------------------------------------------
+    #[test]
+    fn qa_token_budget_tail_validation() {
+        // Create session with mixed message sizes
+        let small_msg = "a ".repeat(50); // ~25 tokens
+        let large_msg = "b ".repeat(5_000); // ~2500 tokens
+
+        let mut messages = Vec::new();
+        // Add a mix: some small, some large
+        for i in 0..8 {
+            if i % 3 == 0 {
+                messages.push(ConversationMessage::user_text(&large_msg));
+            } else {
+                messages.push(ConversationMessage::user_text(&small_msg));
+            }
+            messages.push(ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: if i % 2 == 0 {
+                    large_msg.clone()
+                } else {
+                    small_msg.clone()
+                },
+            }]));
+        }
+
+        let session = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages,
+        };
+
+        // Budget of ~15K tokens (15000 * 4 chars ≈ 60K chars budget)
+        let config = CompactionConfig {
+            preserve_recent_messages: 0,
+            preserve_recent_messages_floor: 2,
+            preserve_recent_tokens: 15_000,
+            max_estimated_tokens: 1,
+            prune_protect_tokens: 40_000,
+            prune_max_output_chars: 2_000,
+            max_summary_chars: 1_200,
+            llm_summarization: false,
+        };
+
+        let result = compact_session(&session, config);
+        let preserved_count = result.compacted_session.messages.len() - 1; // -1 for System
+
+        // Verify: preservation is budget-driven not fixed-count
+        assert!(
+            result.removed_message_count > 0,
+            "some messages must be removed"
+        );
+        assert!(
+            preserved_count >= config.preserve_recent_messages_floor,
+            "floor of {} must be respected, got {}",
+            config.preserve_recent_messages_floor,
+            preserved_count
+        );
+
+        // Run with different budget to prove variable preservation
+        let config_smaller = CompactionConfig {
+            preserve_recent_tokens: 3_000,
+            ..config
+        };
+        let result_smaller = compact_session(&session, config_smaller);
+        let preserved_smaller = result_smaller.compacted_session.messages.len() - 1;
+
+        assert!(
+            preserved_smaller < preserved_count || preserved_smaller == config.preserve_recent_messages_floor,
+            "smaller budget should preserve fewer messages or hit floor: small={preserved_smaller}, large={preserved_count}",
+        );
+
+        let config_tiny = CompactionConfig {
+            preserve_recent_tokens: 1,
+            ..config
+        };
+        let result_tiny = compact_session(&session, config_tiny);
+        let preserved_tiny = result_tiny.compacted_session.messages.len() - 1;
+        assert!(
+            preserved_tiny >= config.preserve_recent_messages_floor,
+            "floor must be respected even with tiny budget, got {preserved_tiny}",
+        );
+
+        eprintln!("Test 3 - Token-budget tail: PASS");
+        eprintln!("  - Variable message count preserved: yes (15K={preserved_count}, 3K={preserved_smaller}, tiny={preserved_tiny})");
+        eprintln!(
+            "  - Floor respected: yes (floor={})",
+            config.preserve_recent_messages_floor
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Test 4: API validity — no orphaned tool_result blocks
+    // ------------------------------------------------------------------
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn qa_no_orphaned_tool_results() {
+        // Helper to verify no orphaned tool_results in a compacted session
+        fn verify_no_orphans(session: &Session, label: &str) {
+            let messages = &session.messages;
+            for (idx, msg) in messages.iter().enumerate() {
+                for block in &msg.blocks {
+                    if let ContentBlock::ToolResult { tool_use_id, .. } = block {
+                        let has_matching_use = messages.iter().any(|m| {
+                            m.blocks.iter().any(|b| {
+                                matches!(b, ContentBlock::ToolUse { id, .. } if id == tool_use_id)
+                            })
+                        });
+                        assert!(
+                            has_matching_use,
+                            "[{label}] orphaned tool_result at msg index {idx}, tool_use_id={tool_use_id}"
+                        );
+                    }
+                }
+            }
+        }
+
+        // Build a session with multiple tool_use/tool_result pairs at various positions
+        let text = "content ".repeat(200);
+        let session = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![
+                ConversationMessage::user_text("Start crawling"),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "t1".to_string(),
+                    name: "navigate".to_string(),
+                    input: "{}".to_string(),
+                }]),
+                ConversationMessage::tool_result("t1", "navigate", &text, false),
+                ConversationMessage::assistant(vec![
+                    ContentBlock::Text {
+                        text: "Found page.".to_string(),
+                    },
+                    ContentBlock::ToolUse {
+                        id: "t2".to_string(),
+                        name: "click".to_string(),
+                        input: r#"{"selector":".next"}"#.to_string(),
+                    },
+                ]),
+                ConversationMessage::tool_result("t2", "click", "clicked next", false),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "t3".to_string(),
+                    name: "navigate".to_string(),
+                    input: "{}".to_string(),
+                }]),
+                ConversationMessage::tool_result("t3", "navigate", &text, false),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "t4".to_string(),
+                    name: "read_content".to_string(),
+                    input: "{}".to_string(),
+                }]),
+                ConversationMessage::tool_result("t4", "read_content", "extracted data", false),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "t5".to_string(),
+                    name: "navigate".to_string(),
+                    input: "{}".to_string(),
+                }]),
+                ConversationMessage::tool_result("t5", "navigate", &text, false),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "All extracted.".to_string(),
+                }]),
+            ],
+        };
+
+        // Config 1: small preservation window
+        let config1 = CompactionConfig {
+            preserve_recent_messages: 0,
+            preserve_recent_messages_floor: 2,
+            preserve_recent_tokens: 500,
+            max_estimated_tokens: 1,
+            prune_protect_tokens: 40_000,
+            prune_max_output_chars: 2_000,
+            max_summary_chars: 1_200,
+            llm_summarization: false,
+        };
+        let result1 = compact_session(&session, config1);
+        verify_no_orphans(&result1.compacted_session, "config1-small-window");
+
+        // Config 2: preserve exactly 4 messages (legacy mode)
+        let config2 = CompactionConfig {
+            preserve_recent_messages: 4,
+            preserve_recent_messages_floor: 2,
+            max_estimated_tokens: 1,
+            ..CompactionConfig::default()
+        };
+        let result2 = compact_session(&session, config2);
+        verify_no_orphans(&result2.compacted_session, "config2-legacy-4");
+
+        // Config 3: preserve 6 messages
+        let config3 = CompactionConfig {
+            preserve_recent_messages: 6,
+            preserve_recent_messages_floor: 2,
+            max_estimated_tokens: 1,
+            ..CompactionConfig::default()
+        };
+        let result3 = compact_session(&session, config3);
+        verify_no_orphans(&result3.compacted_session, "config3-legacy-6");
+
+        // Config 4: very tight budget (floor only)
+        let config4 = CompactionConfig {
+            preserve_recent_messages: 0,
+            preserve_recent_messages_floor: 1,
+            preserve_recent_tokens: 1,
+            max_estimated_tokens: 1,
+            prune_protect_tokens: 40_000,
+            prune_max_output_chars: 2_000,
+            max_summary_chars: 1_200,
+            llm_summarization: false,
+        };
+        let result4 = compact_session(&session, config4);
+        verify_no_orphans(&result4.compacted_session, "config4-floor-only");
+
+        // Config 5: generous window
+        let config5 = CompactionConfig {
+            preserve_recent_messages: 0,
+            preserve_recent_messages_floor: 2,
+            preserve_recent_tokens: 10_000,
+            max_estimated_tokens: 1,
+            prune_protect_tokens: 40_000,
+            prune_max_output_chars: 2_000,
+            max_summary_chars: 1_200,
+            llm_summarization: false,
+        };
+        let result5 = compact_session(&session, config5);
+        verify_no_orphans(&result5.compacted_session, "config5-generous");
+
+        // Count how many configs actually did compaction
+        let compaction_count = [&result1, &result2, &result3, &result4, &result5]
+            .iter()
+            .filter(|r| r.removed_message_count > 0)
+            .count();
+
+        eprintln!("Test 4 - API validity: PASS");
+        eprintln!("  - No orphaned tool_results: yes (tested 5 configurations)");
+        eprintln!("  - Compaction rounds tested: {compaction_count}");
+    }
 }

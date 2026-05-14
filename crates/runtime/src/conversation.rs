@@ -423,8 +423,12 @@ where
             prune_max_output_chars: crate::settings::settings_get_compaction_prune_max_output_chars(
                 &settings,
             ),
-            max_summary_chars: crate::settings::settings_get_compaction_max_summary_chars(&settings),
-            llm_summarization: crate::settings::settings_get_compaction_llm_summarization(&settings),
+            max_summary_chars: crate::settings::settings_get_compaction_max_summary_chars(
+                &settings,
+            ),
+            llm_summarization: crate::settings::settings_get_compaction_llm_summarization(
+                &settings,
+            ),
         };
 
         let mut result = compact_session(&self.session, config);
@@ -434,8 +438,8 @@ where
         }
 
         if config.llm_summarization {
-            let existing_prefix = usize::from(
-                self.session.messages.first().is_some_and(|message| {
+            let existing_prefix =
+                usize::from(self.session.messages.first().is_some_and(|message| {
                     message.role == crate::session::MessageRole::System
                         && message.blocks.iter().any(|block| matches!(
                             block,
@@ -444,10 +448,9 @@ where
                                     "This session is being continued from a previous conversation",
                                 )
                         ))
-                }),
-            );
-            let removed_end = (existing_prefix + result.removed_message_count)
-                .min(self.session.messages.len());
+                }));
+            let removed_end =
+                (existing_prefix + result.removed_message_count).min(self.session.messages.len());
             let removed_messages = &self.session.messages[existing_prefix..removed_end];
 
             if let Some(llm_summary) = try_llm_summarize(
@@ -948,7 +951,10 @@ mod tests {
 
         assert!(result.is_some(), "should return Some on success");
         let summary = result.expect("summary should exist");
-        assert!(summary.contains("<summary>"), "should be wrapped in summary tags");
+        assert!(
+            summary.contains("<summary>"),
+            "should be wrapped in summary tags"
+        );
         assert!(
             summary.contains("Goal") || summary.contains("goal"),
             "should contain structured output"
@@ -981,7 +987,10 @@ mod tests {
 
         let result = super::try_llm_summarize(&[], &mut client, None);
 
-        assert!(result.is_none(), "should return None when no messages to summarize");
+        assert!(
+            result.is_none(),
+            "should return None when no messages to summarize"
+        );
     }
 
     #[test]
