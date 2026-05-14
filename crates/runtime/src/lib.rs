@@ -21,9 +21,6 @@ pub use compact::{
     compact_session, estimate_session_tokens, format_compact_summary,
     get_compact_continuation_message, should_compact, CompactionConfig, CompactionResult,
 };
-pub use summary_compression::{
-    compress_summary, compress_summary_text, SummaryCompressionBudget, SummaryCompressionResult,
-};
 pub use config::{
     ConfigEntry, ConfigError, ConfigLoader, ConfigSource, McpClaudeAiProxyServerConfig,
     McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig,
@@ -34,6 +31,9 @@ pub use control::ControlState;
 pub use conversation::{
     auto_compaction_threshold_from_env, ApiClient, ApiRequest, AssistantEvent, AutoCompactionEvent,
     ConversationRuntime, RuntimeError, StaticToolExecutor, ToolError, ToolExecutor, TurnSummary,
+};
+pub use summary_compression::{
+    compress_summary, compress_summary_text, SummaryCompressionBudget, SummaryCompressionResult,
 };
 
 pub use mcp::{
@@ -73,7 +73,10 @@ pub use remote::{
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use settings::{
     config_home_dir, load_settings, save_settings, settings_file_path,
-    settings_get_auto_compact_tokens, settings_get_fork_child_max_steps,
+    settings_get_auto_compact_tokens, settings_get_compaction_llm_summarization,
+    settings_get_compaction_max_summary_chars, settings_get_compaction_preserve_recent_messages_floor,
+    settings_get_compaction_preserve_recent_tokens, settings_get_compaction_prune_max_output_chars,
+    settings_get_compaction_prune_protect_tokens, settings_get_fork_child_max_steps,
     settings_get_fork_wait_timeout_secs, settings_get_headless,
     settings_get_max_concurrent_per_parent, settings_get_max_fork_depth, settings_get_max_steps,
     settings_get_max_total_agents, settings_get_workspace_dir, update_settings, Settings,

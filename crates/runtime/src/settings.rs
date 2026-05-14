@@ -50,6 +50,30 @@ pub struct Settings {
     /// Timeout in seconds for `wait_for_subagents` (default: 60)
     #[serde(default)]
     pub fork_wait_timeout_secs: Option<u32>,
+
+    /// Compaction: token window protecting recent messages from pruning (default: 40000)
+    #[serde(default)]
+    pub compaction_prune_protect_tokens: Option<u64>,
+
+    /// Compaction: max chars for truncated tool outputs (default: 2000)
+    #[serde(default)]
+    pub compaction_prune_max_output_chars: Option<u64>,
+
+    /// Compaction: token budget for preserved tail (default: 80000)
+    #[serde(default)]
+    pub compaction_preserve_recent_tokens: Option<u64>,
+
+    /// Compaction: minimum messages always preserved (default: 2)
+    #[serde(default)]
+    pub compaction_preserve_recent_messages_floor: Option<u32>,
+
+    /// Compaction: max chars for the compacted summary (default: 1200)
+    #[serde(default)]
+    pub compaction_max_summary_chars: Option<u64>,
+
+    /// Compaction: enable LLM-powered summarization (default: false)
+    #[serde(default)]
+    pub compaction_llm_summarization: Option<bool>,
 }
 
 impl Default for Settings {
@@ -66,6 +90,12 @@ impl Default for Settings {
             max_total_agents: Some(10),
             fork_child_max_steps: Some(15),
             fork_wait_timeout_secs: Some(60),
+            compaction_prune_protect_tokens: None,
+            compaction_prune_max_output_chars: None,
+            compaction_preserve_recent_tokens: None,
+            compaction_preserve_recent_messages_floor: None,
+            compaction_max_summary_chars: None,
+            compaction_llm_summarization: None,
         }
     }
 }
@@ -188,6 +218,47 @@ pub fn settings_get_fork_wait_timeout_secs(s: &Settings) -> u32 {
     s.fork_wait_timeout_secs.unwrap_or(60)
 }
 
+/// Get `compaction_prune_protect_tokens` setting, with default fallback.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn settings_get_compaction_prune_protect_tokens(s: &Settings) -> usize {
+    s.compaction_prune_protect_tokens.map_or(40_000, |v| v as usize)
+}
+
+/// Get `compaction_prune_max_output_chars` setting, with default fallback.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn settings_get_compaction_prune_max_output_chars(s: &Settings) -> usize {
+    s.compaction_prune_max_output_chars.map_or(2_000, |v| v as usize)
+}
+
+/// Get `compaction_preserve_recent_tokens` setting, with default fallback.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn settings_get_compaction_preserve_recent_tokens(s: &Settings) -> usize {
+    s.compaction_preserve_recent_tokens.map_or(80_000, |v| v as usize)
+}
+
+/// Get `compaction_preserve_recent_messages_floor` setting, with default fallback.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn settings_get_compaction_preserve_recent_messages_floor(s: &Settings) -> usize {
+    s.compaction_preserve_recent_messages_floor.map_or(2, |v| v as usize)
+}
+
+/// Get `compaction_max_summary_chars` setting, with default fallback.
+#[must_use]
+#[allow(clippy::cast_possible_truncation)]
+pub fn settings_get_compaction_max_summary_chars(s: &Settings) -> usize {
+    s.compaction_max_summary_chars.map_or(1_200, |v| v as usize)
+}
+
+/// Get `compaction_llm_summarization` setting, with default fallback.
+#[must_use]
+pub fn settings_get_compaction_llm_summarization(s: &Settings) -> bool {
+    s.compaction_llm_summarization.unwrap_or(false)
+}
+
 /// Helper to get home directory.
 /// On Windows, tries USERPROFILE then HOMEPATH.
 /// On Unix, tries HOME.
@@ -289,6 +360,12 @@ mod tests {
             max_total_agents: Some(20),
             fork_child_max_steps: Some(25),
             fork_wait_timeout_secs: Some(120),
+            compaction_prune_protect_tokens: None,
+            compaction_prune_max_output_chars: None,
+            compaction_preserve_recent_tokens: None,
+            compaction_preserve_recent_messages_floor: None,
+            compaction_max_summary_chars: None,
+            compaction_llm_summarization: None,
         };
 
         save_settings(&original).expect("Failed to save settings");
@@ -434,6 +511,12 @@ mod tests {
             max_total_agents: Some(15),
             fork_child_max_steps: Some(20),
             fork_wait_timeout_secs: Some(90),
+            compaction_prune_protect_tokens: None,
+            compaction_prune_max_output_chars: None,
+            compaction_preserve_recent_tokens: None,
+            compaction_preserve_recent_messages_floor: None,
+            compaction_max_summary_chars: None,
+            compaction_llm_summarization: None,
         })
         .expect("save settings");
 
@@ -487,6 +570,12 @@ mod tests {
             max_total_agents: Some(16),
             fork_child_max_steps: Some(20),
             fork_wait_timeout_secs: Some(75),
+            compaction_prune_protect_tokens: None,
+            compaction_prune_max_output_chars: None,
+            compaction_preserve_recent_tokens: None,
+            compaction_preserve_recent_messages_floor: None,
+            compaction_max_summary_chars: None,
+            compaction_llm_summarization: None,
         };
 
         save_settings(&original).expect("Failed to save settings");
@@ -540,6 +629,12 @@ mod tests {
             max_total_agents: None,
             fork_child_max_steps: None,
             fork_wait_timeout_secs: None,
+            compaction_prune_protect_tokens: None,
+            compaction_prune_max_output_chars: None,
+            compaction_preserve_recent_tokens: None,
+            compaction_preserve_recent_messages_floor: None,
+            compaction_max_summary_chars: None,
+            compaction_llm_summarization: None,
         };
 
         assert_eq!(settings_get_max_concurrent_per_parent(&settings), 5);
@@ -547,5 +642,58 @@ mod tests {
         assert_eq!(settings_get_max_total_agents(&settings), 10);
         assert_eq!(settings_get_fork_child_max_steps(&settings), 15);
         assert_eq!(settings_get_fork_wait_timeout_secs(&settings), 60);
+    }
+
+    #[test]
+    fn test_compaction_settings_defaults() {
+        let settings = Settings {
+            compaction_prune_protect_tokens: None,
+            compaction_prune_max_output_chars: None,
+            compaction_preserve_recent_tokens: None,
+            compaction_preserve_recent_messages_floor: None,
+            compaction_max_summary_chars: None,
+            compaction_llm_summarization: None,
+            ..Default::default()
+        };
+        assert_eq!(settings_get_compaction_prune_protect_tokens(&settings), 40_000);
+        assert_eq!(settings_get_compaction_prune_max_output_chars(&settings), 2_000);
+        assert_eq!(settings_get_compaction_preserve_recent_tokens(&settings), 80_000);
+        assert_eq!(settings_get_compaction_preserve_recent_messages_floor(&settings), 2);
+        assert_eq!(settings_get_compaction_max_summary_chars(&settings), 1_200);
+        assert!(!settings_get_compaction_llm_summarization(&settings));
+    }
+
+    #[test]
+    fn test_compaction_settings_custom_values() {
+        let settings = Settings {
+            compaction_prune_protect_tokens: Some(20_000),
+            compaction_preserve_recent_tokens: Some(50_000),
+            compaction_llm_summarization: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(settings_get_compaction_prune_protect_tokens(&settings), 20_000);
+        assert_eq!(settings_get_compaction_preserve_recent_tokens(&settings), 50_000);
+        assert!(settings_get_compaction_llm_summarization(&settings));
+        // Unset fields use defaults
+        assert_eq!(settings_get_compaction_prune_max_output_chars(&settings), 2_000);
+    }
+
+    #[test]
+    fn test_compaction_settings_round_trip() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        let original = Settings {
+            compaction_prune_protect_tokens: Some(30_000),
+            compaction_llm_summarization: Some(true),
+            ..Default::default()
+        };
+        save_settings(&original).expect("save");
+        let loaded = load_settings();
+        assert_eq!(loaded.compaction_prune_protect_tokens, Some(30_000));
+        assert_eq!(loaded.compaction_llm_summarization, Some(true));
+
+        cleanup_temp_dir(&temp_dir);
     }
 }
