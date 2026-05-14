@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-14
+
+### Changed
+
+- **Markdown renderer rewritten** — replaced `tui-markdown` with a custom `pulldown-cmark` event consumer. Fixes nested list rendering (items no longer flatten to top-level), styled list content (bold/italic) no longer splits to the next line, and tables render with Unicode box-drawing borders.
+
+### Fixed
+
+- **Nested list indentation** — sub-bullets under numbered items now render with proper depth-based indentation instead of appearing as top-level items (`tui-markdown` issue #88).
+- **Typewriter streaming boundary** — TUI typewriter now buffers to stream-safe block boundaries (closed fences, paragraph breaks) instead of flushing per-line, preventing mid-block rendering artifacts in code fences and tables.
+
 ## [0.4.1] - 2026-05-14
 
 ### Added
