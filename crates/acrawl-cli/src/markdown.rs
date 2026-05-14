@@ -5,8 +5,10 @@ use crossterm::cursor::{MoveToColumn, RestorePosition, SavePosition};
 use crossterm::style::{Color as CtColor, Print, ResetColor, SetForegroundColor};
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, queue};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::struct_field_names)]
@@ -128,23 +130,523 @@ impl TerminalRenderer {
 
 #[must_use]
 pub fn render_lines(markdown: &str) -> Vec<Line<'static>> {
-    let text = tui_markdown::from_str(markdown);
-    text.lines.into_iter().map(line_into_owned).collect()
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+    opts.insert(Options::ENABLE_TABLES);
+
+    let mut writer = MdWriter::default();
+    for event in Parser::new_ext(markdown, opts) {
+        writer.handle_event(event);
+    }
+    writer.finish()
 }
 
-fn line_into_owned(line: Line<'_>) -> Line<'static> {
-    let style = line.style;
-    let alignment = line.alignment;
-    let spans: Vec<Span<'static>> = line
-        .spans
-        .into_iter()
-        .map(|s| Span::styled(s.content.into_owned(), s.style))
-        .collect();
-    let mut owned = Line::from(spans).style(style);
-    if let Some(a) = alignment {
-        owned = owned.alignment(a);
+// Markdown renderer using pulldown-cmark directly.
+// Architecture inspired by common patterns in the pulldown-cmark ecosystem
+// (openai/codex Apache-2.0, nearai/ironclaw Apache-2.0, helix-editor MPL-2.0).
+
+#[derive(Debug, Clone)]
+struct IndentCtx {
+    first: Vec<Span<'static>>,
+    continuation: Vec<Span<'static>>,
+    first_pending: bool,
+}
+
+#[derive(Debug, Default, Clone)]
+struct TableState {
+    alignments: Vec<Alignment>,
+    header: Option<Vec<String>>,
+    rows: Vec<Vec<String>>,
+    current_row: Vec<String>,
+    current_cell: String,
+    in_head: bool,
+}
+
+#[derive(Debug, Default)]
+struct MdWriter {
+    lines: Vec<Line<'static>>,
+    current_spans: Vec<Span<'static>>,
+    inline_styles: Vec<Style>,
+    list_indices: Vec<Option<u64>>,
+    indent_stack: Vec<IndentCtx>,
+    in_code_block: bool,
+    code_block_buffer: String,
+    needs_newline: bool,
+    in_paragraph: bool,
+    table_state: Option<TableState>,
+    heading_level: Option<HeadingLevel>,
+    blockquote_depth: usize,
+}
+
+impl MdWriter {
+    fn handle_event(&mut self, event: Event<'_>) {
+        if self.in_code_block {
+            self.handle_code_block_event(event);
+            return;
+        }
+
+        if self.handle_table_event(&event) {
+            return;
+        }
+
+        match event {
+            Event::Start(tag) => self.handle_start(tag),
+            Event::End(tag) => self.handle_end(tag),
+            Event::Text(text) | Event::InlineMath(text) | Event::DisplayMath(text) => {
+                self.push_text(text.as_ref());
+            }
+            Event::Code(code) => {
+                self.push_text_with_style(code.as_ref(), self.current_style().fg(Color::Cyan));
+            }
+            Event::Html(html) | Event::InlineHtml(html) => self.push_text(html.as_ref()),
+            Event::SoftBreak => self.push_text(" "),
+            Event::HardBreak => self.flush_current_line(false),
+            Event::Rule => self.push_rule(),
+            Event::TaskListMarker(done) => {
+                self.push_text(if done { "[x] " } else { "[ ] " });
+            }
+            Event::FootnoteReference(label) => self.push_text(&format!("[{label}]")),
+        }
     }
-    owned
+
+    fn handle_start(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Paragraph => {
+                if !self.in_list() {
+                    self.begin_block();
+                }
+                self.in_paragraph = true;
+            }
+            Tag::Heading { level, .. } => {
+                self.begin_block();
+                self.heading_level = Some(level);
+                let style = heading_style(level);
+                self.inline_styles.push(style);
+                self.push_text_with_style(
+                    &format!("{} ", "#".repeat(heading_level_number(level))),
+                    style,
+                );
+            }
+            Tag::BlockQuote(..) => {
+                self.begin_block();
+                self.blockquote_depth += 1;
+            }
+            Tag::CodeBlock(kind) => {
+                match kind {
+                    CodeBlockKind::Indented | CodeBlockKind::Fenced(_) => {}
+                }
+                self.begin_block();
+                self.in_code_block = true;
+                self.code_block_buffer.clear();
+            }
+            Tag::List(start) => {
+                if self.current_spans.is_empty()
+                    && self.needs_newline
+                    && self.list_indices.is_empty()
+                    && !self.in_paragraph
+                {
+                    self.push_blank_line();
+                    self.needs_newline = false;
+                } else if !self.current_spans.is_empty() {
+                    self.flush_current_line(false);
+                }
+                self.list_indices.push(start);
+            }
+            Tag::Item => self.start_list_item(),
+            Tag::Emphasis => self
+                .inline_styles
+                .push(Style::default().add_modifier(Modifier::ITALIC)),
+            Tag::Strong => self
+                .inline_styles
+                .push(Style::default().add_modifier(Modifier::BOLD)),
+            Tag::Strikethrough => {
+                self.inline_styles
+                    .push(Style::default().add_modifier(Modifier::CROSSED_OUT));
+            }
+            Tag::Link { .. } | Tag::Image { .. } => self.inline_styles.push(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+            Tag::Table(alignments) => {
+                self.begin_block();
+                self.table_state = Some(TableState {
+                    alignments,
+                    ..TableState::default()
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_end(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph => {
+                self.in_paragraph = false;
+                self.flush_current_line(false);
+                if !self.in_list() {
+                    self.needs_newline = true;
+                }
+            }
+            TagEnd::Heading(..) => {
+                let _ = self.inline_styles.pop();
+                let _ = self.heading_level.take();
+                self.flush_current_line(false);
+                self.needs_newline = true;
+            }
+            TagEnd::BlockQuote(..) => {
+                self.flush_current_line(false);
+                self.blockquote_depth = self.blockquote_depth.saturating_sub(1);
+                self.needs_newline = true;
+            }
+            TagEnd::CodeBlock => {
+                self.emit_code_block();
+            }
+            TagEnd::List(..) => {
+                self.flush_current_line(false);
+                self.list_indices.pop();
+                if self.list_indices.is_empty() {
+                    self.needs_newline = true;
+                }
+            }
+            TagEnd::Item => self.finish_list_item(),
+            TagEnd::Emphasis
+            | TagEnd::Strong
+            | TagEnd::Strikethrough
+            | TagEnd::Link
+            | TagEnd::Image => {
+                let _ = self.inline_styles.pop();
+            }
+            TagEnd::Table => {
+                self.render_table();
+                self.needs_newline = true;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_code_block_event(&mut self, event: Event<'_>) {
+        match event {
+            Event::End(TagEnd::CodeBlock) => self.emit_code_block(),
+            Event::Text(text) | Event::Code(text) | Event::Html(text) | Event::InlineHtml(text) => {
+                self.code_block_buffer.push_str(text.as_ref());
+            }
+            Event::SoftBreak | Event::HardBreak => self.code_block_buffer.push('\n'),
+            _ => {}
+        }
+    }
+
+    fn handle_table_event(&mut self, event: &Event<'_>) -> bool {
+        let Some(state) = self.table_state.as_mut() else {
+            return false;
+        };
+
+        match event {
+            Event::Start(Tag::TableHead) => state.in_head = true,
+            Event::End(TagEnd::TableHead) => state.in_head = false,
+            Event::Start(Tag::TableRow) => state.current_row.clear(),
+            Event::End(TagEnd::TableRow) => {
+                let row = std::mem::take(&mut state.current_row);
+                if state.in_head {
+                    state.header = Some(row);
+                } else {
+                    state.rows.push(row);
+                }
+            }
+            Event::Start(Tag::TableCell) => state.current_cell.clear(),
+            Event::End(TagEnd::TableCell) => {
+                state.current_row.push(normalize_cell(&state.current_cell));
+                state.current_cell.clear();
+            }
+            Event::Text(text)
+            | Event::Code(text)
+            | Event::Html(text)
+            | Event::InlineHtml(text)
+            | Event::InlineMath(text)
+            | Event::DisplayMath(text) => state.current_cell.push_str(text.as_ref()),
+            Event::SoftBreak | Event::HardBreak => state.current_cell.push(' '),
+            Event::End(TagEnd::Table) => {
+                self.render_table();
+                self.needs_newline = true;
+            }
+            _ => {}
+        }
+
+        true
+    }
+
+    fn begin_block(&mut self) {
+        self.flush_current_line(false);
+        if self.needs_newline {
+            self.push_blank_line();
+        }
+        self.needs_newline = false;
+    }
+
+    fn push_blank_line(&mut self) {
+        if self.lines.last().is_some_and(|line| !line.spans.is_empty()) {
+            self.lines.push(Line::default());
+        }
+    }
+
+    fn push_rule(&mut self) {
+        self.begin_block();
+        self.push_text_with_style(
+            &"─".repeat(40),
+            Style::default().add_modifier(Modifier::DIM),
+        );
+        self.flush_current_line(false);
+        self.needs_newline = true;
+    }
+
+    fn current_style(&self) -> Style {
+        self.inline_styles
+            .iter()
+            .copied()
+            .fold(Style::default(), Style::patch)
+    }
+
+    fn push_text(&mut self, text: &str) {
+        self.push_text_with_style(text, self.current_style());
+    }
+
+    fn push_text_with_style(&mut self, text: &str, style: Style) {
+        if text.is_empty() {
+            return;
+        }
+        self.ensure_line_prefix();
+        self.current_spans
+            .push(Span::styled(text.to_owned(), style));
+    }
+
+    fn ensure_line_prefix(&mut self) {
+        if !self.current_spans.is_empty() {
+            return;
+        }
+
+        for _ in 0..self.blockquote_depth {
+            self.current_spans.push(Span::styled(
+                "> ".to_owned(),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        for ctx in &mut self.indent_stack {
+            let spans = if ctx.first_pending {
+                ctx.first_pending = false;
+                ctx.first.clone()
+            } else {
+                ctx.continuation.clone()
+            };
+            self.current_spans.extend(spans);
+        }
+    }
+
+    fn flush_current_line(&mut self, force_empty: bool) {
+        if self.current_spans.is_empty() {
+            if force_empty {
+                self.lines.push(Line::default());
+            }
+            return;
+        }
+
+        self.lines
+            .push(Line::from(std::mem::take(&mut self.current_spans)));
+    }
+
+    fn start_list_item(&mut self) {
+        self.flush_current_line(false);
+        let depth = self.list_indices.len();
+        let base_indent = depth.saturating_sub(1) * 4;
+        let marker = match self.list_indices.last().copied().flatten() {
+            Some(index) => format!("{index}. "),
+            None => "- ".to_owned(),
+        };
+        let marker_style = if self.list_indices.last().copied().flatten().is_some() {
+            Style::default().fg(Color::LightBlue)
+        } else {
+            Style::default()
+        };
+        let mut first = Vec::new();
+        if base_indent > 0 {
+            first.push(Span::raw(" ".repeat(base_indent)));
+        }
+        first.push(Span::styled(marker.clone(), marker_style));
+        let continuation = vec![Span::raw(" ".repeat(base_indent + marker.len()))];
+        self.indent_stack.push(IndentCtx {
+            first,
+            continuation,
+            first_pending: true,
+        });
+    }
+
+    fn finish_list_item(&mut self) {
+        self.flush_current_line(false);
+        self.indent_stack.pop();
+        if let Some(Some(index)) = self.list_indices.last_mut() {
+            *index += 1;
+        }
+        self.in_paragraph = false;
+        self.needs_newline = false;
+    }
+
+    fn emit_code_block(&mut self) {
+        let code = std::mem::take(&mut self.code_block_buffer);
+        self.in_code_block = false;
+        let style = Style::default().fg(Color::Cyan);
+        if code.is_empty() {
+            self.flush_current_line(true);
+            self.needs_newline = true;
+            return;
+        }
+
+        for line in code.split_terminator('\n') {
+            self.push_text_with_style(line, style);
+            self.flush_current_line(false);
+        }
+        self.needs_newline = true;
+    }
+
+    fn render_table(&mut self) {
+        let Some(state) = self.table_state.take() else {
+            return;
+        };
+
+        let column_count = state
+            .header
+            .as_ref()
+            .map_or(0, Vec::len)
+            .max(state.rows.iter().map(Vec::len).max().unwrap_or(0))
+            .max(state.alignments.len());
+        if column_count == 0 {
+            return;
+        }
+
+        let mut widths = vec![0usize; column_count];
+        if let Some(header) = &state.header {
+            for (idx, cell) in header.iter().enumerate() {
+                widths[idx] = widths[idx].max(UnicodeWidthStr::width(cell.as_str()));
+            }
+        }
+        for row in &state.rows {
+            for (idx, cell) in row.iter().enumerate() {
+                widths[idx] = widths[idx].max(UnicodeWidthStr::width(cell.as_str()));
+            }
+        }
+
+        let border_style = Style::default().add_modifier(Modifier::DIM);
+        self.lines
+            .push(table_border_line(&widths, '┌', '┬', '┐', border_style));
+        if let Some(header) = &state.header {
+            self.lines.push(table_row_line(
+                header,
+                &widths,
+                &state.alignments,
+                border_style,
+            ));
+            self.lines
+                .push(table_border_line(&widths, '├', '┼', '┤', border_style));
+        }
+        for row in &state.rows {
+            self.lines.push(table_row_line(
+                row,
+                &widths,
+                &state.alignments,
+                border_style,
+            ));
+        }
+        self.lines
+            .push(table_border_line(&widths, '└', '┴', '┘', border_style));
+    }
+
+    fn finish(mut self) -> Vec<Line<'static>> {
+        if self.in_code_block {
+            self.emit_code_block();
+        }
+        self.flush_current_line(false);
+        self.lines
+    }
+
+    fn in_list(&self) -> bool {
+        !self.list_indices.is_empty()
+    }
+}
+
+fn heading_style(level: HeadingLevel) -> Style {
+    match level {
+        HeadingLevel::H1 => Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        HeadingLevel::H2 => Style::default().add_modifier(Modifier::BOLD),
+        HeadingLevel::H3 => Style::default().add_modifier(Modifier::BOLD | Modifier::ITALIC),
+        HeadingLevel::H4 | HeadingLevel::H5 | HeadingLevel::H6 => {
+            Style::default().add_modifier(Modifier::ITALIC)
+        }
+    }
+}
+
+fn heading_level_number(level: HeadingLevel) -> usize {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+fn normalize_cell(cell: &str) -> String {
+    cell.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn table_border_line(
+    widths: &[usize],
+    left: char,
+    middle: char,
+    right: char,
+    style: Style,
+) -> Line<'static> {
+    let mut spans = vec![Span::styled(left.to_string(), style)];
+    for (idx, width) in widths.iter().enumerate() {
+        spans.push(Span::styled("─".repeat(*width + 2), style));
+        spans.push(Span::styled(
+            if idx + 1 == widths.len() {
+                right
+            } else {
+                middle
+            }
+            .to_string(),
+            style,
+        ));
+    }
+    Line::from(spans)
+}
+
+fn table_row_line(
+    row: &[String],
+    widths: &[usize],
+    alignments: &[Alignment],
+    border_style: Style,
+) -> Line<'static> {
+    let mut spans = vec![Span::styled("│".to_owned(), border_style)];
+    for (idx, width) in widths.iter().enumerate() {
+        let cell = row.get(idx).map_or("", String::as_str);
+        let alignment = alignments.get(idx).copied().unwrap_or(Alignment::None);
+        spans.push(Span::raw(" ".to_owned()));
+        spans.push(Span::raw(pad_cell(cell, *width, alignment)));
+        spans.push(Span::raw(" ".to_owned()));
+        spans.push(Span::styled("│".to_owned(), border_style));
+    }
+    Line::from(spans)
+}
+
+fn pad_cell(cell: &str, width: usize, alignment: Alignment) -> String {
+    let cell_width = UnicodeWidthStr::width(cell);
+    let padding = width.saturating_sub(cell_width);
+    let (left, right) = match alignment {
+        Alignment::Right => (padding, 0),
+        Alignment::Center => (padding / 2, padding - (padding / 2)),
+        Alignment::Left | Alignment::None => (0, padding),
+    };
+    format!("{}{}{}", " ".repeat(left), cell, " ".repeat(right))
 }
 
 pub(crate) fn text_to_ansi(lines: &[Line<'_>]) -> String {
@@ -295,8 +797,8 @@ impl MarkdownStreamState {
 /// complete block yet (e.g. mid-paragraph or inside an open fence).
 ///
 /// Used by the TUI typewriter so multi-line constructs (fenced code blocks,
-/// tables, etc.) reach `tui_markdown::from_str` as a coherent chunk rather
-/// than one orphan line at a time.
+/// tables, etc.) reach [`render_lines`] as a coherent chunk rather than one
+/// orphan line at a time.
 #[must_use]
 pub fn drain_safe_boundary(buffer: &mut String) -> Option<Vec<Line<'static>>> {
     let split = find_stream_safe_boundary(buffer)?;
@@ -392,6 +894,59 @@ mod tests {
         assert!(plain.contains("two"));
         assert!(plain.contains("bold"));
         assert!(plain.contains("italic"));
+    }
+
+    #[test]
+    fn render_lines_nested_lists() {
+        let md = "1. First item\n    - Nested bullet\n    - Another\n2. Second item\n";
+        let lines = render_lines(md);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .collect();
+        let nested_line = texts
+            .iter()
+            .find(|text| text.contains("Nested bullet"))
+            .expect("nested bullet line");
+        let top_line = texts
+            .iter()
+            .find(|text| text.contains("First item"))
+            .expect("first item line");
+        let nested_indent = nested_line.len() - nested_line.trim_start().len();
+        let top_indent = top_line.len() - top_line.trim_start().len();
+        assert!(
+            nested_indent > top_indent,
+            "nested={nested_indent}, top={top_indent}, lines={texts:?}"
+        );
+    }
+
+    #[test]
+    fn render_lines_styled_list_items_same_line() {
+        let md = "1. **Bold item** with text\n2. Normal item\n";
+        let lines = render_lines(md);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect()
+            })
+            .filter(|text: &String| !text.is_empty())
+            .collect();
+        let first = texts
+            .iter()
+            .find(|text| text.contains("Bold item"))
+            .expect("bold item line");
+        assert!(
+            first.contains("1.") || first.starts_with('1'),
+            "marker and content on same line: {first:?}"
+        );
     }
 
     #[test]
