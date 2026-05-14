@@ -427,10 +427,43 @@ where
             llm_summarization: crate::settings::settings_get_compaction_llm_summarization(&settings),
         };
 
-        let result = compact_session(&self.session, config);
+        let mut result = compact_session(&self.session, config);
 
         if result.removed_message_count == 0 {
             return None;
+        }
+
+        if config.llm_summarization {
+            let existing_prefix = usize::from(
+                self.session.messages.first().is_some_and(|message| {
+                    message.role == crate::session::MessageRole::System
+                        && message.blocks.iter().any(|block| matches!(
+                            block,
+                            ContentBlock::Text { text }
+                                if text.starts_with(
+                                    "This session is being continued from a previous conversation",
+                                )
+                        ))
+                }),
+            );
+            let removed_end = (existing_prefix + result.removed_message_count)
+                .min(self.session.messages.len());
+            let removed_messages = &self.session.messages[existing_prefix..removed_end];
+
+            if let Some(llm_summary) = try_llm_summarize(
+                removed_messages,
+                &mut self.api_client,
+                self.session.model.as_deref(),
+            ) {
+                let continuation = crate::compact::get_compact_continuation_message(
+                    &llm_summary,
+                    true,
+                    result.compacted_session.messages.len() > 1,
+                );
+                if let Some(first_msg) = result.compacted_session.messages.first_mut() {
+                    first_msg.blocks = vec![ContentBlock::Text { text: continuation }];
+                }
+            }
         }
 
         self.session = result.compacted_session;
@@ -438,6 +471,103 @@ where
             removed_message_count: result.removed_message_count,
         })
     }
+}
+
+/// Attempts LLM-powered summarization of the removed messages.
+/// Returns `Some(summary_text)` on success, `None` on any failure (fall back to mechanical).
+fn try_llm_summarize<C: ApiClient>(
+    removed: &[ConversationMessage],
+    api_client: &mut C,
+    model: Option<&str>,
+) -> Option<String> {
+    const MAX_SUMMARIZER_TOKENS: usize = 100_000;
+    const MAX_SUMMARY_CHARS: usize = 1_200;
+    const SUMMARY_TEMPLATE: &str = "Summarize this conversation segment concisely.\n\
+Output EXACTLY this structure with no other text:\n\
+## Goal\n\
+[what the user was trying to accomplish]\n\
+## Progress (Done / In Progress)\n\
+[what has been completed and what is in progress]\n\
+## Key Decisions\n\
+[important choices made during the conversation]\n\
+## Next Steps\n\
+[pending work or what should happen next]\n\
+## Relevant Files\n\
+[any file paths mentioned, or 'None']";
+
+    let mut context_parts = Vec::new();
+    let mut estimated_tokens = 0usize;
+
+    for msg in removed {
+        let role = match msg.role {
+            crate::session::MessageRole::System => "system",
+            crate::session::MessageRole::User => "user",
+            crate::session::MessageRole::Assistant => "assistant",
+            crate::session::MessageRole::Tool => "tool",
+        };
+        let text = msg
+            .blocks
+            .iter()
+            .map(|block| match block {
+                ContentBlock::Text { text } => text.as_str(),
+                ContentBlock::ToolUse { input, .. } => input.as_str(),
+                ContentBlock::ToolResult { output, .. } => output.as_str(),
+                ContentBlock::Reasoning { data } => data.as_str(),
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let part = format!("[{role}]: {text}");
+        let part_tokens = part.len() / 4 + 1;
+        if estimated_tokens + part_tokens > MAX_SUMMARIZER_TOKENS {
+            break;
+        }
+        estimated_tokens += part_tokens;
+        context_parts.push(part);
+    }
+
+    if context_parts.is_empty() {
+        return None;
+    }
+
+    let user_content = format!(
+        "Conversation to summarize:\n\n{}\n\n---\n\n{SUMMARY_TEMPLATE}",
+        context_parts.join("\n\n")
+    );
+
+    let system_hint = model.map_or_else(
+        || "You are summarizing a conversation segment.".to_string(),
+        |model| format!("You are summarizing a conversation with model {model}."),
+    );
+
+    let events = api_client
+        .stream(ApiRequest {
+            system_prompt: vec![system_hint],
+            messages: vec![ConversationMessage::user_text(user_content)],
+        })
+        .ok()?;
+
+    let llm_summary: String = events
+        .iter()
+        .filter_map(|event| match event {
+            AssistantEvent::TextDelta(text) => Some(text.as_str()),
+            AssistantEvent::ToolUse { .. }
+            | AssistantEvent::Reasoning { .. }
+            | AssistantEvent::Usage(_)
+            | AssistantEvent::MessageStop => None,
+        })
+        .collect();
+
+    let llm_summary = llm_summary.trim();
+    if llm_summary.is_empty() || llm_summary.len() > MAX_SUMMARY_CHARS {
+        return None;
+    }
+
+    let compressed = crate::summary_compression::compress_summary_text(llm_summary);
+    if compressed.is_empty() {
+        return None;
+    }
+
+    Some(format!("<summary>{compressed}</summary>"))
 }
 
 #[must_use]
@@ -659,6 +789,25 @@ mod tests {
         }
     }
 
+    struct MockApiClientWithText(String);
+
+    impl ApiClient for MockApiClientWithText {
+        fn stream(&mut self, _req: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            Ok(vec![
+                AssistantEvent::TextDelta(self.0.clone()),
+                AssistantEvent::MessageStop,
+            ])
+        }
+    }
+
+    struct MockApiClientError;
+
+    impl ApiClient for MockApiClientError {
+        fn stream(&mut self, _req: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            Err(RuntimeError::new("simulated API error"))
+        }
+    }
+
     #[tokio::test]
     async fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
         let api_client = ScriptedApiClient { call_count: 0 };
@@ -779,6 +928,95 @@ mod tests {
         assert_eq!(
             result.compacted_session.messages[0].role,
             MessageRole::System
+        );
+    }
+
+    #[test]
+    fn try_llm_summarize_returns_some_on_success() {
+        let removed = vec![
+            crate::session::ConversationMessage::user_text("scrape books.toscrape.com"),
+            crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "Navigating to books.toscrape.com".to_string(),
+            }]),
+        ];
+        let mut client = MockApiClientWithText(
+            "## Goal\nScrape books\n## Progress\nNavigated to site\n## Key Decisions\nNone\n## Next Steps\nExtract data\n## Relevant Files\nNone"
+                .to_string(),
+        );
+
+        let result = super::try_llm_summarize(&removed, &mut client, Some("test-model"));
+
+        assert!(result.is_some(), "should return Some on success");
+        let summary = result.expect("summary should exist");
+        assert!(summary.contains("<summary>"), "should be wrapped in summary tags");
+        assert!(
+            summary.contains("Goal") || summary.contains("goal"),
+            "should contain structured output"
+        );
+    }
+
+    #[test]
+    fn try_llm_summarize_returns_none_on_api_error() {
+        let removed = vec![crate::session::ConversationMessage::user_text("hello")];
+        let mut client = MockApiClientError;
+
+        let result = super::try_llm_summarize(&removed, &mut client, None);
+
+        assert!(result.is_none(), "should return None on API error");
+    }
+
+    #[test]
+    fn try_llm_summarize_returns_none_on_empty_response() {
+        let removed = vec![crate::session::ConversationMessage::user_text("hello")];
+        let mut client = MockApiClientWithText(String::new());
+
+        let result = super::try_llm_summarize(&removed, &mut client, None);
+
+        assert!(result.is_none(), "should return None on empty response");
+    }
+
+    #[test]
+    fn try_llm_summarize_returns_none_for_empty_messages() {
+        let mut client = MockApiClientWithText("some summary".to_string());
+
+        let result = super::try_llm_summarize(&[], &mut client, None);
+
+        assert!(result.is_none(), "should return None when no messages to summarize");
+    }
+
+    #[test]
+    fn llm_summarization_disabled_uses_mechanical_path() {
+        use crate::compact::compact_session;
+
+        let text = "word ".repeat(200);
+        let session = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![
+                crate::session::ConversationMessage::user_text(&text),
+                crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: text.clone(),
+                }]),
+                crate::session::ConversationMessage::user_text(&text),
+                crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "done".to_string(),
+                }]),
+            ],
+        };
+        let config = CompactionConfig {
+            llm_summarization: false,
+            max_estimated_tokens: 1,
+            preserve_recent_messages: 2,
+            ..CompactionConfig::default()
+        };
+
+        let result = compact_session(&session, config);
+
+        assert!(result.removed_message_count > 0);
+        assert!(
+            result.formatted_summary.contains("Scope:"),
+            "mechanical summary should contain 'Scope:'"
         );
     }
 
