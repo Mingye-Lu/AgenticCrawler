@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 19 tools. 24 LLM providers. CloakBrowser for the hard parts.
+  Single binary. No Python runtime. 19 tools. 25 LLM providers. CloakBrowser for the hard parts.
 </p>
 
 ---
@@ -35,7 +35,7 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 - **One binary, zero runtimes.** `cargo build --release` produces a self-contained executable. No Python, no Node runtime — just Rust and a Chromium download for browser automation.
 - **Smart fetching.** Static pages are served over HTTP (fast). When JavaScript or interaction is needed, acrawl detects JS framework markers (`__next_data__`, `__nuxt`, `__vue`, `ng-app`, React roots), auth redirects, and short `<noscript>` bodies — then transparently escalates to a headless browser.
 - **19 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
-- **24 LLM providers.** Anthropic, OpenAI, Google Gemini, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
+- **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
 - **MCP support.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
 
 ### How does it compare?
@@ -49,7 +49,7 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 | No Python required | Yes | No | No | No |
 | Form filling / interaction | Yes | Limited | Yes | Yes |
 | Sub-agent parallelism | Yes | N/A | No | No |
-| 24 provider support | Yes | N/A | N/A | Limited |
+| 25 provider support | Yes | N/A | N/A | Limited |
 | MCP extensibility | Yes | No | No | No |
 
 ## Quick Start
@@ -218,14 +218,15 @@ Every `navigate` call goes through a two-tier fetch router:
 
 When `--no-headless` / `--headed` is set, all fetches go directly through the browser.
 
-### 24 LLM Providers
+### 25 LLM Providers
 
 <table>
 <tr><th>Category</th><th>Provider</th><th>Auth</th><th>Env Var</th></tr>
-<tr><td rowspan="3"><strong>Popular</strong></td>
+<tr><td rowspan="4"><strong>Popular</strong></td>
   <td>Anthropic</td><td>API key</td><td><code>ANTHROPIC_API_KEY</code></td></tr>
 <tr><td>OpenAI</td><td>API key</td><td><code>OPENAI_API_KEY</code></td></tr>
 <tr><td>Google Gemini</td><td>API key</td><td><code>GEMINI_API_KEY</code></td></tr>
+<tr><td>DeepSeek</td><td>API key</td><td><code>DEEPSEEK_API_KEY</code></td></tr>
 <tr><td rowspan="6"><strong>Enterprise</strong></td>
   <td>Amazon Bedrock</td><td>AWS SigV4</td><td><code>AWS_ACCESS_KEY_ID</code></td></tr>
 <tr><td>Azure OpenAI</td><td>Azure API key</td><td><code>AZURE_OPENAI_API_KEY</code></td></tr>
@@ -418,7 +419,7 @@ flowchart LR
 ```
 crates/
   acrawl-cli/   CLI binary, TUI REPL, arg parsing, session management
-  api/          24 provider clients (Anthropic, OpenAI, Gemini, Bedrock, Azure, ...), SSE streaming
+  api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   commands/     16 slash commands with resume-safety annotations
   crawler/      19 tools, agent loop, FetchRouter, PlaywrightBridge, sub-agent fork/join
   runtime/      ConversationRuntime, permissions, config, sessions, MCP server manager, OAuth PKCE

@@ -42,7 +42,7 @@ pub struct ProviderPreset {
     pub transform_id: Option<&'static str>,
 }
 
-static BUILTIN_PRESETS: [ProviderPreset; 24] = [
+static BUILTIN_PRESETS: [ProviderPreset; 25] = [
     ProviderPreset {
         id: "anthropic",
         display_name: "Anthropic",
@@ -206,6 +206,21 @@ static BUILTIN_PRESETS: [ProviderPreset; 24] = [
         model_prefixes: &["grok-"],
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
+        transform_id: None,
+    },
+    ProviderPreset {
+        id: "deepseek",
+        display_name: "DeepSeek",
+        base_url: "https://api.deepseek.com",
+        chat_path: "/chat/completions",
+        api_key_env_var: Some("DEEPSEEK_API_KEY"),
+        auth_header_format: AuthHeaderFormat::Bearer,
+        supports_tools: true,
+        supports_streaming_tools: true,
+        supports_vision: false,
+        model_prefixes: &["deepseek-"],
+        protocol: ProviderProtocol::ChatCompletions,
+        category: ProviderCategory::Popular,
         transform_id: None,
     },
     ProviderPreset {
@@ -512,6 +527,16 @@ mod tests {
             "https://api.ai.prod.us-east-1.aws.ml.hana.ondemand.com/v2"
         );
         assert!(matches!(p.category, ProviderCategory::Enterprise));
+    }
+
+    #[test]
+    fn test_deepseek_preset_exists() {
+        let p = find_preset("deepseek").expect("deepseek preset should exist");
+        assert_eq!(p.base_url, "https://api.deepseek.com");
+        assert!(matches!(p.protocol, ProviderProtocol::ChatCompletions));
+        assert!(matches!(p.category, ProviderCategory::Popular));
+        assert!(p.supports_tools);
+        assert!(!p.supports_vision);
     }
 
     #[test]

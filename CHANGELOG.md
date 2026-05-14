@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DeepSeek provider** — `deepseek/deepseek-chat` (V3, 128K context) and `deepseek/deepseek-reasoner` (R1, 64K context, reasoning) via the OpenAI-compatible ChatCompletions API. Set `DEEPSEEK_API_KEY` or configure via `acrawl auth`.
+
 ## [0.4.0] - 2026-05-14
 
 ### Changed
