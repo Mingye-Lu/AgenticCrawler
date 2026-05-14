@@ -693,7 +693,7 @@ pub(super) fn draw_welcome(
         )));
     }
     lines.push(Line::from(""));
-    let version_str = format!("v{VERSION} · Playwright ready");
+    let version_str = format!("v{VERSION} · CloakBrowser ready");
     let max_w = ascii
         .iter()
         .map(|s| text_display_width(s))

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Changed
+- Replaced Playwright with CloakBrowser as the browser engine — passes bot detection (reCAPTCHA v3 0.9, Cloudflare Turnstile, FingerprintJS) with source-level stealth patches
+- Human-like interaction enabled by default (Bézier mouse curves, natural keyboard timing)
+- Browser binary auto-downloads on first use (no separate `npx playwright install` step)
+
 ## [0.3.4] - 2026-05-14
 
 ### Added

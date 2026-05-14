@@ -56,7 +56,7 @@ pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
     let current_exe = env::current_exe()?;
     replace_binary(&current_exe, &binary_bytes)?;
 
-    install_playwright_if_needed().await;
+    install_cloakbrowser_if_needed().await;
 
     println!("Updated to v{version} successfully!");
     Ok(())
@@ -138,32 +138,24 @@ fn replace_binary(
     Ok(())
 }
 
-async fn install_playwright_if_needed() {
-    let playwright_dir = config_home_dir().join("node_modules").join("playwright");
-    if playwright_dir.exists() {
+async fn install_cloakbrowser_if_needed() {
+    let cloakbrowser_dir = config_home_dir().join("node_modules").join("cloakbrowser");
+    if cloakbrowser_dir.exists() {
         return;
     }
 
-    println!("Installing Playwright...");
+    println!("Installing CloakBrowser...");
     let config_home = config_home_dir();
     let npm_result = tokio::process::Command::new("npm")
         .args(["install", "--prefix"])
         .arg(&config_home)
-        .arg("playwright")
+        .arg("cloakbrowser")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .await;
 
     if npm_result.is_ok_and(|s| s.success()) {
-        let _ = tokio::process::Command::new("npx")
-            .args(["--prefix"])
-            .arg(&config_home)
-            .args(["playwright", "install", "chromium"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .await;
-        println!("Playwright installed.");
+        println!("CloakBrowser installed.");
     }
 }

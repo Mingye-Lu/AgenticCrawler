@@ -20,21 +20,6 @@ const CLOSE_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"
 const readline = require('node:readline');
 
-let playwright;
-try {
-  playwright = require('playwright');
-} catch (_error) {
-  process.stdout.write(JSON.stringify({
-    event: 'bridge_bootstrap',
-    ok: false,
-    error: {
-      kind: 'playwright_not_installed',
-      message: 'Playwright package not found. Install with `npm install playwright` and browser binaries with `npx playwright install chromium`.'
-    }
-  }) + '\n');
-  process.exit(1);
-}
-
 function parseHeadless() {
   const raw = process.env.HEADLESS;
   if (raw === undefined) return true;
@@ -61,7 +46,23 @@ async function resolveFillSelector(pg, raw) {
 }
 
 async function bootstrap() {
-  const browser = await playwright.chromium.launch({ headless: parseHeadless() });
+  let launch;
+  try {
+    ({ launch } = await import('cloakbrowser'));
+  } catch (_error) {
+    process.stdout.write(JSON.stringify({
+      event: 'bridge_bootstrap',
+      ok: false,
+      error: {
+        kind: 'playwright_not_installed',
+        message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
+      }
+    }) + '\n');
+    process.exit(1);
+    return;
+  }
+  console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
+  const browser = await launch({ headless: parseHeadless(), humanize: true });
   const context = await browser.newContext();
   let page = await context.newPage();
   const pages = [page];
@@ -634,29 +635,29 @@ impl fmt::Display for PlaywrightBridgeError {
         match self {
             Self::ProcessSpawn { command, source } => write!(
                 f,
-                "failed to spawn `{command}` for Playwright bridge: {source}. Ensure Node.js and Playwright are installed"
+                "failed to spawn `{command}` for CloakBrowser bridge: {source}. Ensure Node.js and CloakBrowser are installed"
             ),
             Self::LaunchTimeout { timeout } => write!(
                 f,
-                "Playwright bridge launch exceeded {} seconds",
+                "CloakBrowser bridge launch exceeded {} seconds",
                 timeout.as_secs()
             ),
-            Self::Protocol(message) => write!(f, "Playwright bridge protocol error: {message}"),
+            Self::Protocol(message) => write!(f, "CloakBrowser bridge protocol error: {message}"),
             Self::PlaywrightNotInstalled(message) => write!(
                 f,
-                "Playwright is not installed: {message}. Install with `npm install playwright` and `npx playwright install chromium`"
+                "CloakBrowser is not installed: {message}. Install with `npm install cloakbrowser`"
             ),
-            Self::Io(error) => write!(f, "Playwright bridge I/O error: {error}"),
-            Self::Json(error) => write!(f, "Playwright bridge JSON error: {error}"),
-            Self::ChildClosed => write!(f, "Playwright bridge process closed unexpectedly"),
+            Self::Io(error) => write!(f, "CloakBrowser bridge I/O error: {error}"),
+            Self::Json(error) => write!(f, "CloakBrowser bridge JSON error: {error}"),
+            Self::ChildClosed => write!(f, "CloakBrowser bridge process closed unexpectedly"),
             Self::ShutdownTimeout { timeout } => write!(
                 f,
-                "Playwright bridge did not shut down within {} seconds",
+                "CloakBrowser bridge did not shut down within {} seconds",
                 timeout.as_secs()
             ),
             Self::CommandTimeout { timeout } => write!(
                 f,
-                "Playwright bridge command timed out after {} seconds",
+                "CloakBrowser bridge command timed out after {} seconds",
                 timeout.as_secs()
             ),
         }
