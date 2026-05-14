@@ -1,6 +1,6 @@
 //! Slash command registry and parsing for the acrawl REPL.
 //!
-//! This crate provides the canonical set of 15 slash commands available in the interactive REPL,
+//! This crate provides the canonical set of 17 slash commands available in the interactive REPL,
 //! along with parsing, help rendering, and execution logic. Each command is defined as a
 //! [`SlashCommandSpec`] with metadata including name, summary, optional argument hints, and
 //! whether it is resume-safe.
@@ -20,7 +20,7 @@
 //! ## Command Registry Pattern
 //!
 //! The module exports:
-//! - [`slash_command_specs()`] — returns the full 15-command spec list
+//! - [`slash_command_specs()`] — returns the full 17-command spec list
 //! - [`resume_supported_slash_commands()`] — filters to the 8 resume-safe commands
 //! - [`SlashCommand::parse()`] — parses user input into a [`SlashCommand`] enum
 //! - [`handle_slash_command()`] — executes a command and returns a [`SlashCommandResult`]
@@ -152,6 +152,18 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: false,
     },
     SlashCommandSpec {
+        name: "extension",
+        summary: "Switch to Chrome extension browser backend",
+        argument_hint: None,
+        resume_supported: false,
+    },
+    SlashCommandSpec {
+        name: "cloakbrowser",
+        summary: "Switch back to CloakBrowser backend",
+        argument_hint: None,
+        resume_supported: false,
+    },
+    SlashCommandSpec {
         name: "exit",
         summary: "Exit the REPL and save the session",
         argument_hint: None,
@@ -175,6 +187,8 @@ pub enum SlashCommand {
     Auth { provider: Option<String> },
     Headed,
     Headless,
+    Extension,
+    CloakBrowser,
     Unknown(String),
 }
 
@@ -215,6 +229,8 @@ impl SlashCommand {
             },
             "headed" => Self::Headed,
             "headless" => Self::Headless,
+            "extension" => Self::Extension,
+            "cloakbrowser" => Self::CloakBrowser,
             other => Self::Unknown(other.to_string()),
         })
     }
@@ -298,6 +314,8 @@ pub fn handle_slash_command(
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed
         | SlashCommand::Headless
+        | SlashCommand::Extension
+        | SlashCommand::CloakBrowser
         | SlashCommand::Unknown(_) => None,
     }
 }
@@ -371,6 +389,14 @@ mod tests {
             SlashCommand::parse("/headless"),
             Some(SlashCommand::Headless)
         );
+        assert_eq!(
+            SlashCommand::parse("/extension"),
+            Some(SlashCommand::Extension)
+        );
+        assert_eq!(
+            SlashCommand::parse("/cloakbrowser"),
+            Some(SlashCommand::CloakBrowser)
+        );
     }
 
     #[test]
@@ -410,8 +436,10 @@ mod tests {
         assert!(help.contains("/auth [anthropic|openai|other]"));
         assert!(help.contains("/headed"));
         assert!(help.contains("/headless"));
+        assert!(help.contains("/extension"));
+        assert!(help.contains("/cloakbrowser"));
         assert!(!help.contains("/resume"));
-        assert_eq!(slash_command_specs().len(), 15);
+        assert_eq!(slash_command_specs().len(), 17);
         assert_eq!(resume_supported_slash_commands().len(), 8);
     }
 
@@ -486,5 +514,11 @@ mod tests {
         );
         assert!(handle_slash_command("/headed", &session, CompactionConfig::default()).is_none());
         assert!(handle_slash_command("/headless", &session, CompactionConfig::default()).is_none());
+        assert!(
+            handle_slash_command("/extension", &session, CompactionConfig::default()).is_none()
+        );
+        assert!(
+            handle_slash_command("/cloakbrowser", &session, CompactionConfig::default()).is_none()
+        );
     }
 }
