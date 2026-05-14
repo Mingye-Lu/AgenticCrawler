@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
@@ -281,6 +282,12 @@ impl BrowserBackend for ExtensionBridge {
     }
 
     async fn save_file(&mut self, url: &str, path: &str) -> Result<String, PlaywrightBridgeError> {
+        if path.contains("..") {
+            return Err(PlaywrightBridgeError::Protocol(
+                "save_file path contains path traversal".into(),
+            ));
+        }
+
         let response = self
             .send_command(
                 "save_file",
@@ -291,11 +298,23 @@ impl BrowserBackend for ExtensionBridge {
             )
             .await?;
         let result = Self::require_result(response, "save_file")?;
-        Ok(result
-            .get("path")
+
+        let data_base64 = result
+            .get("data_base64")
             .and_then(Value::as_str)
-            .unwrap_or(path)
-            .to_string())
+            .ok_or_else(|| {
+                PlaywrightBridgeError::Protocol("save_file missing data_base64".into())
+            })?;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data_base64)
+            .map_err(|e| PlaywrightBridgeError::Protocol(format!("base64 decode failed: {e}")))?;
+
+        tokio::fs::write(path, &bytes)
+            .await
+            .map_err(|e| PlaywrightBridgeError::Protocol(format!("write failed: {e}")))?;
+
+        Ok(path.to_string())
     }
 
     async fn click(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {

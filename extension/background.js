@@ -15,7 +15,8 @@ try {
     'commands/press_key.js',
     'commands/scroll.js',
     'commands/wait.js',
-    'commands/select_option.js'
+    'commands/select_option.js',
+    'commands/save_file.js'
   );
 } catch (e) {
   console.error('Failed to import command scripts:', e);
@@ -217,6 +218,9 @@ async function handleCommand(cmd) {
             break;
           case 'select_option':
             result = await handleSelectOption(tabId, cmd.payload || {});
+            break;
+          case 'save_file':
+            result = await handleSaveFile(tabId, cmd.payload || {});
             break;
           default:
             sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
