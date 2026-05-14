@@ -20,16 +20,16 @@ const CLOSE_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"
 const readline = require('node:readline');
 
-let playwright;
+let launch;
 try {
-  playwright = require('playwright');
+  ({ launch } = require('cloakbrowser'));
 } catch (_error) {
   process.stdout.write(JSON.stringify({
     event: 'bridge_bootstrap',
     ok: false,
     error: {
       kind: 'playwright_not_installed',
-      message: 'Playwright package not found. Install with `npm install playwright` and browser binaries with `npx playwright install chromium`.'
+      message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
     }
   }) + '\n');
   process.exit(1);
@@ -61,7 +61,7 @@ async function resolveFillSelector(pg, raw) {
 }
 
 async function bootstrap() {
-  const browser = await playwright.chromium.launch({ headless: parseHeadless() });
+  const browser = await launch({ headless: parseHeadless(), humanize: true });
   const context = await browser.newContext();
   let page = await context.newPage();
   const pages = [page];
