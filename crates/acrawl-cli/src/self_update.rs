@@ -139,23 +139,37 @@ fn replace_binary(
 }
 
 async fn install_cloakbrowser_if_needed() {
-    let cloakbrowser_dir = config_home_dir().join("node_modules").join("cloakbrowser");
-    if cloakbrowser_dir.exists() {
-        return;
-    }
-
-    println!("Installing CloakBrowser...");
     let config_home = config_home_dir();
+
+    println!("Updating CloakBrowser...");
     let npm_result = tokio::process::Command::new("npm")
         .args(["install", "--prefix"])
         .arg(&config_home)
-        .arg("cloakbrowser")
+        .arg("cloakbrowser@latest")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
         .await;
 
-    if npm_result.is_ok_and(|s| s.success()) {
-        println!("CloakBrowser installed.");
+    if !npm_result.is_ok_and(|s| s.success()) {
+        println!("WARNING: CloakBrowser package update failed.");
+        return;
+    }
+    println!("CloakBrowser package updated.");
+
+    println!("Ensuring browser binary is downloaded...");
+    let browser_dl = tokio::process::Command::new("npx")
+        .args(["--prefix"])
+        .arg(&config_home)
+        .args(["cloakbrowser", "install"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+
+    if browser_dl.is_ok_and(|s| s.success()) {
+        println!("Browser binary ready.");
+    } else {
+        println!("WARNING: Browser binary download failed. It will be downloaded on first use.");
     }
 }
