@@ -516,6 +516,7 @@ name = "crawler"
 version = "0.4.3"
 dependencies = [
  "async-trait",
+ "base64",
  "csv",
  "futures-util",
  "htmd",
