@@ -6,21 +6,14 @@ use runtime::RuntimeObserver;
 
 #[allow(dead_code)]
 mod markdown {
-    #[derive(Clone)]
-    pub struct PredictiveMarkdownBuffer;
+    use ratatui::text::Line;
 
-    impl PredictiveMarkdownBuffer {
-        pub fn new() -> Self {
-            Self
+    pub fn render_lines(input: &str) -> Vec<Line<'static>> {
+        if input.is_empty() {
+            Vec::new()
+        } else {
+            vec![Line::from(input.to_string())]
         }
-
-        #[allow(clippy::unused_self)]
-        pub fn feed_char(&mut self, c: char, out: &mut String) {
-            out.push(c);
-        }
-
-        #[allow(clippy::unused_self)]
-        pub fn flush(&mut self, _out: &mut String) {}
     }
 }
 
