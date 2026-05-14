@@ -15,6 +15,7 @@ mod state;
 pub mod tool_effect;
 mod tool_registry;
 mod tools;
+pub mod ws_server;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
@@ -31,6 +32,9 @@ pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
 pub use tool_effect::{ForkSpec, ToolEffect, ToolError, WaitSpec};
 pub use tool_registry::{ToolHandler, ToolRegistry};
+pub use ws_server::{
+    generate_bridge_token, BridgeCommand, BridgeResponse, WsBridgeError, WsBridgeServer,
+};
 
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {
