@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-14
+
 ### Added
 
 - **DeepSeek provider** — `deepseek/deepseek-chat` (V3, 128K context) and `deepseek/deepseek-reasoner` (R1, 64K context, reasoning) via the OpenAI-compatible ChatCompletions API. Set `DEEPSEEK_API_KEY` or configure via `acrawl auth`.
+
+### Fixed
+
+- **Model selection after auth** — providers other than Anthropic and OpenAI (Groq, Mistral, xAI, DeepSeek, etc.) now show the model picker after entering an API key. Previously they jumped straight to the success screen. The picker tries `models.dev` first and falls back to the built-in catalog.
+- **DeepSeek-reasoner `reasoning_content` round-trip** — `reasoning_content` from `deepseek-reasoner` responses is now captured from the SSE stream and included in subsequent requests, fixing the `400 reasoning_content must be passed back` error on multi-turn conversations.
+- **`/headed` on Linux without a display server** — `/headed` now checks `$DISPLAY` / `$WAYLAND_DISPLAY` before switching and shows a clear error if neither is set, instead of crashing Chromium silently.
 
 ## [0.4.0] - 2026-05-14
 
@@ -175,6 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.1
 [0.4.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.0
 [0.3.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.3
