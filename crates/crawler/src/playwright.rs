@@ -751,7 +751,8 @@ impl PlaywrightBridge {
 
     fn bridge_command(program: &str, args: &[String]) -> Command {
         let mut command = Command::new(program);
-        let acrawl_node_modules = config_home_dir().join("node_modules");
+        let config_home = config_home_dir();
+        let acrawl_node_modules = config_home.join("node_modules");
         let node_path = match std::env::var_os("NODE_PATH") {
             Some(existing) => {
                 let mut paths = std::env::split_paths(&existing).collect::<Vec<_>>();
@@ -764,6 +765,7 @@ impl PlaywrightBridge {
         };
         command
             .args(args)
+            .current_dir(&config_home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -1294,6 +1296,21 @@ mod tests {
         assert!(
             paths.contains(&expected),
             "NODE_PATH should contain {expected:?}, got {paths:?}"
+        );
+    }
+
+    #[test]
+    fn bridge_command_sets_cwd_to_config_home() {
+        let args = vec!["-e".to_string(), "console.log('ok')".to_string()];
+        let command = PlaywrightBridge::bridge_command("node", &args);
+        let cwd = command
+            .as_std()
+            .get_current_dir()
+            .expect("current_dir should be set");
+        assert_eq!(
+            cwd,
+            config_home_dir(),
+            "bridge CWD should be config home so ESM import() resolves node_modules"
         );
     }
 
