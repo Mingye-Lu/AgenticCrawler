@@ -634,29 +634,29 @@ impl fmt::Display for PlaywrightBridgeError {
         match self {
             Self::ProcessSpawn { command, source } => write!(
                 f,
-                "failed to spawn `{command}` for Playwright bridge: {source}. Ensure Node.js and Playwright are installed"
+                "failed to spawn `{command}` for CloakBrowser bridge: {source}. Ensure Node.js and CloakBrowser are installed"
             ),
             Self::LaunchTimeout { timeout } => write!(
                 f,
-                "Playwright bridge launch exceeded {} seconds",
+                "CloakBrowser bridge launch exceeded {} seconds",
                 timeout.as_secs()
             ),
-            Self::Protocol(message) => write!(f, "Playwright bridge protocol error: {message}"),
+            Self::Protocol(message) => write!(f, "CloakBrowser bridge protocol error: {message}"),
             Self::PlaywrightNotInstalled(message) => write!(
                 f,
-                "Playwright is not installed: {message}. Install with `npm install playwright` and `npx playwright install chromium`"
+                "CloakBrowser is not installed: {message}. Install with `npm install cloakbrowser`"
             ),
-            Self::Io(error) => write!(f, "Playwright bridge I/O error: {error}"),
-            Self::Json(error) => write!(f, "Playwright bridge JSON error: {error}"),
-            Self::ChildClosed => write!(f, "Playwright bridge process closed unexpectedly"),
+            Self::Io(error) => write!(f, "CloakBrowser bridge I/O error: {error}"),
+            Self::Json(error) => write!(f, "CloakBrowser bridge JSON error: {error}"),
+            Self::ChildClosed => write!(f, "CloakBrowser bridge process closed unexpectedly"),
             Self::ShutdownTimeout { timeout } => write!(
                 f,
-                "Playwright bridge did not shut down within {} seconds",
+                "CloakBrowser bridge did not shut down within {} seconds",
                 timeout.as_secs()
             ),
             Self::CommandTimeout { timeout } => write!(
                 f,
-                "Playwright bridge command timed out after {} seconds",
+                "CloakBrowser bridge command timed out after {} seconds",
                 timeout.as_secs()
             ),
         }
