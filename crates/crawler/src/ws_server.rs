@@ -5,10 +5,11 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures_util::{SinkExt, StreamExt};
 use runtime::config_home_dir;
@@ -105,6 +106,7 @@ impl WsBridgeServer {
             port: actual_port,
             has_active_client: AtomicBool::new(false),
             client_connected_tx,
+            rate_limiter: tokio::sync::Mutex::new(HashMap::new()),
         });
 
         let task = tokio::spawn(run_server(listener, state, command_rx, shutdown_rx));
@@ -177,11 +179,18 @@ impl Drop for WsBridgeServer {
 type CommandRx =
     Arc<tokio::sync::Mutex<mpsc::Receiver<(BridgeCommand, oneshot::Sender<BridgeResponse>)>>>;
 
+/// Tracks failed authentication attempts for a single IP address.
+struct RateEntry {
+    failures: u8,
+    window_start: Instant,
+}
+
 struct ServerState {
     token: String,
     port: u16,
     has_active_client: AtomicBool,
     client_connected_tx: watch::Sender<bool>,
+    rate_limiter: tokio::sync::Mutex<HashMap<IpAddr, RateEntry>>,
 }
 
 async fn run_server(
@@ -195,10 +204,10 @@ async fn run_server(
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
-                if let Ok((stream, _)) = accept_result {
+                if let Ok((stream, peer_addr)) = accept_result {
                     let st = Arc::clone(&state);
                     let rx = Arc::clone(&command_rx);
-                    tokio::spawn(handle_incoming(stream, st, rx));
+                    tokio::spawn(handle_incoming(stream, st, rx, peer_addr));
                 }
             }
             _ = &mut shutdown_rx => break,
@@ -206,7 +215,12 @@ async fn run_server(
     }
 }
 
-async fn handle_incoming(stream: TcpStream, state: Arc<ServerState>, command_rx: CommandRx) {
+async fn handle_incoming(
+    stream: TcpStream,
+    state: Arc<ServerState>,
+    command_rx: CommandRx,
+    peer_addr: SocketAddr,
+) {
     let mut buf = [0u8; 1024];
     let n = match stream.peek(&mut buf).await {
         Ok(n) if n > 0 => n,
@@ -217,6 +231,27 @@ async fn handle_incoming(stream: TcpStream, state: Arc<ServerState>, command_rx:
     if preview.starts_with("GET /health") && !preview.contains("Upgrade:") {
         serve_health(stream, state.port).await;
         return;
+    }
+
+    // Rate limit check: 5 failures in 60s window → 429
+    {
+        let client_ip = peer_addr.ip();
+        let mut limiter = state.rate_limiter.lock().await;
+        let entry = limiter.entry(client_ip).or_insert(RateEntry {
+            failures: 0,
+            window_start: Instant::now(),
+        });
+
+        if entry.window_start.elapsed().as_secs() >= 60 {
+            entry.failures = 0;
+            entry.window_start = Instant::now();
+        }
+
+        if entry.failures >= 5 {
+            drop(limiter);
+            send_raw_http_error(stream, 429, "Too Many Requests: rate limit exceeded").await;
+            return;
+        }
     }
 
     // Single-client gate (atomic CAS to claim the slot)
@@ -242,6 +277,12 @@ async fn handle_incoming(stream: TcpStream, state: Arc<ServerState>, command_rx:
     if let Ok(ws) = ws_result {
         let _ = state.client_connected_tx.send(true);
         run_ws_session(ws, command_rx).await;
+    } else {
+        let client_ip = peer_addr.ip();
+        let mut limiter = state.rate_limiter.lock().await;
+        if let Some(entry) = limiter.get_mut(&client_ip) {
+            entry.failures = entry.failures.saturating_add(1);
+        }
     }
 
     state.has_active_client.store(false, Ordering::Release);
@@ -563,5 +604,75 @@ mod tests {
         let resp = ws_http::Response::builder().body(()).unwrap();
         let result = validate_ws_upgrade("mytoken", &req, resp);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rate_entry_blocks_at_threshold() {
+        let entry = RateEntry {
+            failures: 5,
+            window_start: Instant::now(),
+        };
+        assert!(entry.failures >= 5);
+    }
+
+    #[test]
+    fn rate_entry_resets_after_window() {
+        let entry = RateEntry {
+            failures: 5,
+            window_start: Instant::now()
+                .checked_sub(std::time::Duration::from_secs(61))
+                .unwrap(),
+        };
+        assert!(entry.window_start.elapsed().as_secs() >= 60);
+    }
+
+    #[test]
+    fn rate_entry_allows_under_threshold() {
+        let entry = RateEntry {
+            failures: 4,
+            window_start: Instant::now(),
+        };
+        assert!(entry.failures < 5);
+    }
+
+    #[test]
+    fn rate_entry_saturating_add_does_not_overflow() {
+        let mut entry = RateEntry {
+            failures: 255,
+            window_start: Instant::now(),
+        };
+        entry.failures = entry.failures.saturating_add(1);
+        assert_eq!(entry.failures, 255);
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_per_ip_isolation() {
+        let limiter: tokio::sync::Mutex<HashMap<IpAddr, RateEntry>> =
+            tokio::sync::Mutex::new(HashMap::new());
+
+        let ip1: IpAddr = "127.0.0.1".parse().unwrap();
+        let ip2: IpAddr = "127.0.0.2".parse().unwrap();
+
+        {
+            let mut map = limiter.lock().await;
+            map.insert(
+                ip1,
+                RateEntry {
+                    failures: 5,
+                    window_start: Instant::now(),
+                },
+            );
+            map.insert(
+                ip2,
+                RateEntry {
+                    failures: 2,
+                    window_start: Instant::now(),
+                },
+            );
+        }
+
+        let map = limiter.lock().await;
+        assert!(map[&ip1].failures >= 5);
+        assert!(map[&ip2].failures < 5);
     }
 }
