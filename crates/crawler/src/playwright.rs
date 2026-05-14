@@ -20,21 +20,6 @@ const CLOSE_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT: &str = r#"
 const readline = require('node:readline');
 
-let launch;
-try {
-  ({ launch } = require('cloakbrowser'));
-} catch (_error) {
-  process.stdout.write(JSON.stringify({
-    event: 'bridge_bootstrap',
-    ok: false,
-    error: {
-      kind: 'playwright_not_installed',
-      message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
-    }
-  }) + '\n');
-  process.exit(1);
-}
-
 function parseHeadless() {
   const raw = process.env.HEADLESS;
   if (raw === undefined) return true;
@@ -61,6 +46,22 @@ async function resolveFillSelector(pg, raw) {
 }
 
 async function bootstrap() {
+  let launch;
+  try {
+    ({ launch } = await import('cloakbrowser'));
+  } catch (_error) {
+    process.stdout.write(JSON.stringify({
+      event: 'bridge_bootstrap',
+      ok: false,
+      error: {
+        kind: 'playwright_not_installed',
+        message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
+      }
+    }) + '\n');
+    process.exit(1);
+    return;
+  }
+  console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
   const context = await browser.newContext();
   let page = await context.newPage();
