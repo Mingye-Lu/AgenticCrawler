@@ -589,8 +589,11 @@ impl LiveCli {
                             false
                         } else {
                             eprintln!(
-                                "Extension not connected after 30s. \
-                                 Ensure the extension is installed and configured."
+                                "Extension not connected after 30s.\n  \
+                                 Install the acrawl Bridge extension from the Chrome Web Store.\n  \
+                                 Open extension options and configure:\n    \
+                                 Port: 19876\n    \
+                                 Token: <the-token>"
                             );
                             false
                         }
