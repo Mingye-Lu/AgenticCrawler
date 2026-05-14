@@ -1,7 +1,7 @@
 use ratatui::widgets::ListState;
 
 use super::repl_app::{ToolCallStatus, TranscriptEntry};
-use crate::markdown::render_lines;
+use crate::markdown::{drain_safe_boundary, render_lines};
 
 const MAX_ENTRIES: usize = 1000;
 
@@ -50,10 +50,9 @@ impl ChildTabState {
     }
 
     fn drain_completed_lines(&mut self) {
-        while let Some(idx) = self.live.find('\n') {
-            let line: String = self.live.drain(..=idx).collect();
-            for styled_line in render_lines(&line) {
-                self.entries.push(TranscriptEntry::Stream(styled_line));
+        while let Some(styled_lines) = drain_safe_boundary(&mut self.live) {
+            for line in styled_lines {
+                self.entries.push(TranscriptEntry::Stream(line));
             }
         }
     }
