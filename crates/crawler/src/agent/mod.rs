@@ -20,6 +20,9 @@ use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, Share
 mod fork;
 mod lifecycle;
 
+#[cfg(test)]
+use crate::BrowserBackend;
+
 const DEFAULT_MAX_STEPS: usize = 50;
 const DEFAULT_MAX_CONCURRENT_PER_PARENT: usize = 5;
 const DEFAULT_MAX_FORK_DEPTH: usize = 3;
@@ -616,11 +619,12 @@ mod tests {
             .with_agent_id("root".to_string())
             .with_agent_manager(manager.clone());
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
-        agent.shared_bridge = Some(Arc::new(Mutex::new(
+        agent.shared_bridge = Some(Arc::new(Mutex::new(Box::new(
             crate::PlaywrightBridge::new()
                 .await
                 .expect("bridge should initialize for spawn test"),
-        )));
+        )
+            as Box<dyn BrowserBackend + Send>)));
         agent.fork_page_index_override = Some(1);
 
         let observation = agent
@@ -826,11 +830,12 @@ mod tests {
             .with_agent_id("root".to_string())
             .with_agent_manager(manager.clone());
         agent.api_client_arc = Some(shared_client);
-        agent.shared_bridge = Some(Arc::new(Mutex::new(
+        agent.shared_bridge = Some(Arc::new(Mutex::new(Box::new(
             crate::PlaywrightBridge::new()
                 .await
                 .expect("bridge should initialize for fork test"),
-        )));
+        )
+            as Box<dyn BrowserBackend + Send>)));
         agent.fork_page_index_override = Some(1);
 
         let observation = agent
@@ -867,11 +872,12 @@ mod tests {
             .with_agent_id("root".to_string())
             .with_agent_manager(manager);
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
-        agent.shared_bridge = Some(Arc::new(Mutex::new(
+        agent.shared_bridge = Some(Arc::new(Mutex::new(Box::new(
             crate::PlaywrightBridge::new()
                 .await
                 .expect("bridge should initialize for fork test"),
-        )));
+        )
+            as Box<dyn BrowserBackend + Send>)));
         agent.fork_page_index_override = Some(1);
 
         let observation = agent

@@ -295,6 +295,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
+    use crate::BrowserBackend;
 
     struct TextOnlyApiClient;
 
@@ -345,11 +346,11 @@ mod tests {
     }
 
     async fn test_bridge() -> crate::SharedBridge {
-        Arc::new(Mutex::new(
+        Arc::new(Mutex::new(Box::new(
             crate::PlaywrightBridge::new()
                 .await
                 .expect("bridge should initialize for fork test"),
-        ))
+        ) as Box<dyn BrowserBackend + Send>))
     }
 
     #[tokio::test]

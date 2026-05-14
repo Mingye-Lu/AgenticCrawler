@@ -2,7 +2,7 @@ use runtime::ToolError;
 use tokio::sync::Mutex;
 
 use super::CrawlerAgent;
-use crate::{BrowserContext, BrowserState, SharedBridge};
+use crate::{BrowserBackend, BrowserContext, BrowserState, SharedBridge};
 
 #[derive(Clone)]
 pub(crate) struct BrowserSession {
@@ -18,7 +18,9 @@ impl BrowserSession {
             let bridge = crate::PlaywrightBridge::new()
                 .await
                 .map_err(|error| ToolError::new(error.to_string()))?;
-            std::sync::Arc::new(Mutex::new(bridge))
+            std::sync::Arc::new(Mutex::new(
+                Box::new(bridge) as Box<dyn BrowserBackend + Send>
+            ))
         };
 
         Ok(Self {
@@ -169,11 +171,11 @@ mod tests {
     }
 
     async fn test_bridge() -> SharedBridge {
-        Arc::new(Mutex::new(
+        Arc::new(Mutex::new(Box::new(
             crate::PlaywrightBridge::new()
                 .await
                 .expect("bridge should initialize for lifecycle test"),
-        ))
+        ) as Box<dyn BrowserBackend + Send>))
     }
 
     #[tokio::test]
