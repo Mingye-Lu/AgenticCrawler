@@ -153,6 +153,15 @@ pub fn save_credentials_to_path(
     let temp_path = path.with_extension("json.tmp");
     std::fs::write(&temp_path, json).map_err(|e| CredentialError::Io(e.to_string()))?;
 
+    // Restrict to owner-only before the atomic rename so the final file is never
+    // world-readable, even momentarily, on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| CredentialError::Io(e.to_string()))?;
+    }
+
     // Atomic rename
     std::fs::rename(&temp_path, path).map_err(|e| CredentialError::Io(e.to_string()))?;
 
@@ -429,6 +438,25 @@ mod tests {
     fn test_get_active_config_returns_none_when_no_active_provider() {
         let store = CredentialStore::default();
         assert_eq!(get_active_config(&store), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_credentials_sets_owner_only_perms() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = test_temp_dir("perms");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let cred_path = temp_dir.join("credentials.json");
+        let store = CredentialStore::default();
+        save_credentials_to_path(&store, &cred_path).unwrap();
+
+        let mode = fs::metadata(&cred_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "credentials file must be readable only by owner");
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
