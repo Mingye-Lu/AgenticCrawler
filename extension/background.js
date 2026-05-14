@@ -136,30 +136,48 @@ function handleMessage(data) {
 }
 
 async function handleCommand(cmd) {
-  const tabId = getActiveTabId();
-  if (!tabId) {
-    sendResponse(cmd.id, false, null, 'No active tab. Use new_page to open a tab first.');
-    return;
-  }
-
   try {
     let result;
     switch (cmd.action) {
-      case 'navigate':
-        result = await handleNavigate(tabId, cmd.payload || {});
+      // Tab lifecycle (no active tab required)
+      case 'new_page':
+        result = await handleNewPage(cmd.payload || {});
         break;
-      case 'go_back':
-        result = await handleGoBack(tabId, cmd.payload || {});
+      case 'close_page':
+        result = await handleClosePage(cmd.payload || {});
         break;
-      case 'click':
-        result = await handleClick(tabId, cmd.payload || {});
+      case 'switch_tab':
+        result = await handleSwitchTab(cmd.payload || {});
         break;
-      case 'fill':
-        result = await handleFill(tabId, cmd.payload || {});
+      case 'close':
+        result = await handleClose();
         break;
-      default:
-        sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
-        return;
+
+      // Commands requiring an active tab
+      default: {
+        const tabId = getActiveTabId();
+        if (!tabId) {
+          sendResponse(cmd.id, false, null, 'No active tab. Use new_page to open a tab first.');
+          return;
+        }
+        switch (cmd.action) {
+          case 'navigate':
+            result = await handleNavigate(tabId, cmd.payload || {});
+            break;
+          case 'go_back':
+            result = await handleGoBack(tabId, cmd.payload || {});
+            break;
+          case 'click':
+            result = await handleClick(tabId, cmd.payload || {});
+            break;
+          case 'fill':
+            result = await handleFill(tabId, cmd.payload || {});
+            break;
+          default:
+            sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
+            return;
+        }
+      }
     }
     sendResponse(cmd.id, true, result, null);
   } catch (e) {
@@ -191,6 +209,108 @@ function getActiveTabId() {
 
   return indices.length > 0 ? managedTabs[indices[indices.length - 1]] : null;
 }
+
+// ----------- Tab management -----------
+
+async function handleNewPage(payload) {
+  const url = payload.url || 'about:blank';
+  const tab = await new Promise((resolve, reject) => {
+    chrome.tabs.create({ url, active: false }, (t) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(t);
+    });
+  });
+  const pageIndex = nextPageIndex++;
+  managedTabs[pageIndex] = tab.id;
+  activePageIndex = pageIndex;
+  await saveState();
+  return { pageIndex };
+}
+
+async function handleClosePage(payload) {
+  const pageIndex = payload.page_index ?? activePageIndex;
+  const tabId = managedTabs[pageIndex];
+  if (tabId) {
+    await detachDebugger(tabId);
+    await new Promise((resolve) => chrome.tabs.remove(tabId, resolve));
+    delete managedTabs[pageIndex];
+    await saveState();
+  }
+  return { closed: true };
+}
+
+async function handleSwitchTab(payload) {
+  const index = payload.index ?? 0;
+  const tabId = managedTabs[index];
+  if (!tabId) throw new Error(`No tab at index ${index}`);
+  await new Promise((resolve, reject) => {
+    chrome.tabs.update(tabId, { active: true }, (t) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(t);
+    });
+  });
+  activePageIndex = index;
+  await saveState();
+  return { switched: true, pageIndex: index };
+}
+
+async function handleClose() {
+  const tabIds = Object.values(managedTabs);
+  for (const tabId of tabIds) {
+    await detachDebugger(tabId).catch(() => {});
+  }
+  for (const tabId of tabIds) {
+    await new Promise((resolve) => chrome.tabs.remove(tabId, resolve)).catch(() => {});
+  }
+  Object.keys(managedTabs).forEach((k) => delete managedTabs[k]);
+  nextPageIndex = 0;
+  activePageIndex = 0;
+  await saveState();
+  if (ws) ws.close();
+  return { closed: true };
+}
+
+async function detachDebugger(tabId) {
+  await new Promise((resolve) => {
+    chrome.debugger.detach({ tabId }, () => {
+      if (chrome.runtime.lastError) { /* already detached */ }
+      resolve();
+    });
+  });
+}
+
+// ----------- Tab lifecycle events -----------
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const entry = Object.entries(managedTabs).find(([, id]) => id === tabId);
+  if (entry) {
+    const [pageIndex] = entry;
+    delete managedTabs[Number(pageIndex)];
+    saveState();
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'tab_closed',
+        pageIndex: Number(pageIndex),
+        error: 'Tab was closed externally by user',
+      }));
+    }
+  }
+});
+
+chrome.debugger.onDetach.addListener((source, reason) => {
+  const tabId = source.tabId;
+  const entry = Object.entries(managedTabs).find(([, id]) => id === tabId);
+  if (entry) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'debugger_detached',
+        tabId,
+        reason,
+        error: 'Browser debugger was dismissed. Run /extension to re-attach.',
+      }));
+    }
+  }
+});
 
 // ----------- Alarms watchdog -----------
 
