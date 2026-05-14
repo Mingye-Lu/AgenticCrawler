@@ -23,6 +23,7 @@ ratatui = "0.30.0"
 textwrap = "0.16"
 pulldown-cmark = "0.13"
 unicode-width = "0.2"
+zeroize = "1"
 
 [lints]
 workspace = true

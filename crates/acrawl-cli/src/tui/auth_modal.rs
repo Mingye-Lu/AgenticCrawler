@@ -2,6 +2,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use crossterm::event::{KeyCode, KeyEvent};
+use zeroize::Zeroizing;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -76,7 +77,10 @@ pub(crate) enum AuthModalStep {
     ApiKeyInput {
         provider: ProviderKind,
         base_url: Option<String>,
-        key_buffer: String,
+        // Wrapped so the heap-allocated bytes are zeroed when the modal
+        // transitions out of this step (or is dropped), keeping the API key
+        // out of memory past the moment it's saved.
+        key_buffer: Zeroizing<String>,
         cursor: usize,
         masked: bool,
         error: Option<String>,
@@ -152,7 +156,7 @@ impl AuthModal {
                 crate::app::Provider::OpenAi => AuthModalStep::ApiKeyInput {
                     provider: ProviderKind::OpenAi,
                     base_url: None,
-                    key_buffer: String::new(),
+                    key_buffer: Zeroizing::new(String::new()),
                     cursor: 0,
                     masked: true,
                     error: None,
@@ -281,7 +285,7 @@ impl AuthModal {
         }
     }
 
-    fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: String) {
+    fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: Zeroizing<String>) {
         let (provider_str, preset_base_url): (&str, Option<String>) = match provider {
             ProviderKind::Anthropic => ("anthropic", None),
             ProviderKind::OpenAi => ("openai", None),
@@ -307,7 +311,10 @@ impl AuthModal {
                 "api_key".to_string()
             }
         };
-        config.api_key = Some(key);
+        // Move the inner String into the config. `key` (Zeroizing<String>) is
+        // dropped at function exit and wipes the local copy. The serialized
+        // JSON written to disk lives only inside save_credentials.
+        config.api_key = Some((*key).clone());
         config.base_url = base_url.or(preset_base_url);
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
@@ -573,10 +580,10 @@ impl Modal for AuthModal {
                 error,
                 ..
             } => {
-                let display_key = if *masked {
+                let display_key: String = if *masked {
                     "*".repeat(key_buffer.chars().count())
                 } else {
-                    key_buffer.clone()
+                    (**key_buffer).clone()
                 };
                 let mut lines = vec![
                     Line::from("Paste your API key:"),
@@ -840,7 +847,7 @@ impl Modal for AuthModal {
                                 self.step = AuthModalStep::ApiKeyInput {
                                     provider: ProviderKind::Preset(preset),
                                     base_url: None,
-                                    key_buffer: String::new(),
+                                    key_buffer: Zeroizing::new(String::new()),
                                     cursor: 0,
                                     masked: true,
                                     error: None,
@@ -882,7 +889,7 @@ impl Modal for AuthModal {
                             self.step = AuthModalStep::ApiKeyInput {
                                 provider: *provider,
                                 base_url: None,
-                                key_buffer: String::new(),
+                                key_buffer: Zeroizing::new(String::new()),
                                 cursor: 0,
                                 masked: true,
                                 error: None,
@@ -960,7 +967,7 @@ impl Modal for AuthModal {
                         self.step = AuthModalStep::ApiKeyInput {
                             provider: ProviderKind::Other,
                             base_url: Some(input.clone()),
-                            key_buffer: String::new(),
+                            key_buffer: Zeroizing::new(String::new()),
                             cursor: 0,
                             masked: true,
                             error: None,
@@ -1383,7 +1390,7 @@ mod tests {
             AuthModalStep::ApiKeyInput {
                 key_buffer, error, ..
             } => {
-                assert_eq!(key_buffer, "sk");
+                assert_eq!(key_buffer.as_str(), "sk");
                 assert_eq!(error, &None);
             }
             _ => panic!("expected api key input step"),
@@ -1402,7 +1409,9 @@ mod tests {
             ModalAction::Consumed
         );
         match &modal.step {
-            AuthModalStep::ApiKeyInput { key_buffer, .. } => assert_eq!(key_buffer, "s"),
+            AuthModalStep::ApiKeyInput { key_buffer, .. } => {
+                assert_eq!(key_buffer.as_str(), "s");
+            }
             _ => panic!("expected api key input step"),
         }
     }
