@@ -5,8 +5,10 @@ use crawler::ChildEvent;
 /// UI updates from the LLM stream, tool executor, or worker thread.
 #[derive(Debug)]
 pub enum ReplTuiEvent {
-    /// Assistant or tool output as ANSI (parsed with ansi-to-tui).
-    StreamAnsi(String),
+    /// Assistant or tool output as a raw markdown delta. The TUI typewriter
+    /// renders this through `markdown::render_lines`; the non-TUI stdout
+    /// sink feeds it into `MarkdownStreamState`.
+    StreamText(String),
     TurnStarting,
     /// `Ok` when the model turn finished; `Err` is a user-visible error string.
     TurnFinished(Result<(), String>),

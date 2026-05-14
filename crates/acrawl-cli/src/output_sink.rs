@@ -434,7 +434,7 @@ impl ChannelSink {
 
 impl OutputSink for ChannelSink {
     fn on_text_delta(&mut self, raw_text: &str) {
-        let _ = self.tx.send(ReplTuiEvent::StreamAnsi(raw_text.to_string()));
+        let _ = self.tx.send(ReplTuiEvent::StreamText(raw_text.to_string()));
     }
 
     fn on_tool_call(&mut self, name: &str, input: &str) {
@@ -595,7 +595,7 @@ mod tests {
         sink.on_text_delta("hello");
 
         match rx.recv().expect("channel event") {
-            ReplTuiEvent::StreamAnsi(text) => assert_eq!(text, "hello"),
+            ReplTuiEvent::StreamText(text) => assert_eq!(text, "hello"),
             other => panic!("unexpected event: {other:?}"),
         }
     }
@@ -628,7 +628,7 @@ mod tests {
         forward_text(&mut sink);
 
         match rx.recv().expect("channel event") {
-            ReplTuiEvent::StreamAnsi(text) => assert_eq!(text, "observer text"),
+            ReplTuiEvent::StreamText(text) => assert_eq!(text, "observer text"),
             other => panic!("unexpected event: {other:?}"),
         }
     }

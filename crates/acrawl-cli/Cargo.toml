@@ -14,16 +14,14 @@ api = { path = "../api" }
 commands = { path = "../commands" }
 crawler = { path = "../crawler" }
 crossterm = "0.28"
-pulldown-cmark = "0.13"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 runtime = { path = "../runtime" }
 serde_json = "1"
 sha2 = "0.10"
-syntect = "5"
 tokio = { version = "1", features = ["rt-multi-thread", "time", "process"] }
 ratatui = "0.30.0"
-ansi-to-tui = "8.0.1"
 textwrap = "0.16"
+pulldown-cmark = "0.13"
 unicode-width = "0.2"
 
 [lints]
