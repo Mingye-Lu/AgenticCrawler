@@ -82,10 +82,18 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         };
     }
 
-    let keep_from = session
+    let mut keep_from = session
         .messages
         .len()
         .saturating_sub(config.preserve_recent_messages);
+
+    // Never split a tool_use/tool_result pair. If the preserved window starts
+    // with a Tool message (containing tool_result blocks), walk backwards to
+    // include the preceding Assistant message that holds the matching tool_use.
+    while keep_from > 0 && session.messages[keep_from].role == MessageRole::Tool {
+        keep_from -= 1;
+    }
+
     let removed = &session.messages[..keep_from];
     let preserved = session.messages[keep_from..].to_vec();
     let summary = summarize_messages(removed);
@@ -421,7 +429,7 @@ mod tests {
                 ConversationMessage::assistant(vec![ContentBlock::Text {
                     text: "two ".repeat(200),
                 }]),
-                ConversationMessage::tool_result("1", "bash", "ok ".repeat(200), false),
+                ConversationMessage::user_text("three ".repeat(200)),
                 ConversationMessage {
                     role: MessageRole::Assistant,
                     blocks: vec![ContentBlock::Text {
@@ -491,5 +499,105 @@ mod tests {
         ]);
         assert_eq!(pending.len(), 1);
         assert!(pending[0].contains("Next: update tests"));
+    }
+
+    #[test]
+    fn compaction_never_orphans_tool_result() {
+        let session = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![
+                ConversationMessage::user_text("x ".repeat(200)),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "navigate".to_string(),
+                    input: "{}".to_string(),
+                }]),
+                ConversationMessage::tool_result("call_1", "navigate", "page content", false),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "call_2".to_string(),
+                    name: "click".to_string(),
+                    input: "{}".to_string(),
+                }]),
+                ConversationMessage::tool_result("call_2", "click", "ok", false),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "done".to_string(),
+                }]),
+            ],
+        };
+
+        let result = compact_session(
+            &session,
+            CompactionConfig {
+                preserve_recent_messages: 3,
+                max_estimated_tokens: 1,
+            },
+        );
+
+        let preserved = &result.compacted_session.messages;
+        assert_eq!(preserved[0].role, MessageRole::System);
+
+        for message in &preserved[1..] {
+            for block in &message.blocks {
+                if let ContentBlock::ToolResult { tool_use_id, .. } = block {
+                    let has_matching_use = preserved.iter().any(|m| {
+                        m.blocks.iter().any(|b| matches!(
+                            b,
+                            ContentBlock::ToolUse { id, .. } if id == tool_use_id
+                        ))
+                    });
+                    assert!(
+                        has_matching_use,
+                        "orphaned tool_result with tool_use_id={tool_use_id}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compaction_pulls_back_past_tool_boundary() {
+        let session = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![
+                ConversationMessage::user_text("x ".repeat(200)),
+                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "navigate".to_string(),
+                    input: "{}".to_string(),
+                }]),
+                ConversationMessage::tool_result("call_1", "navigate", "page", false),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "final".to_string(),
+                }]),
+            ],
+        };
+
+        let result = compact_session(
+            &session,
+            CompactionConfig {
+                preserve_recent_messages: 2,
+                max_estimated_tokens: 1,
+            },
+        );
+
+        let preserved = &result.compacted_session.messages;
+        assert_ne!(preserved[1].role, MessageRole::Tool,
+            "preserved window must not start with a Tool message");
+
+        let has_tool_use = preserved.iter().any(|m| {
+            m.blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "call_1"))
+        });
+        let has_tool_result = preserved.iter().any(|m| {
+            m.blocks.iter().any(|b| matches!(
+                b,
+                ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "call_1"
+            ))
+        });
+        assert_eq!(has_tool_use, has_tool_result,
+            "tool_use and tool_result for call_1 must both be present or both absent");
     }
 }
