@@ -426,7 +426,7 @@ mod tests {
                 ConversationMessage::assistant(vec![ContentBlock::Text {
                     text: "b ".repeat(200),
                 }]),
-                ConversationMessage::tool_result("1", "bash", "ok ".repeat(200), false),
+                ConversationMessage::user_text("c ".repeat(200)),
                 ConversationMessage::assistant(vec![ContentBlock::Text {
                     text: "recent".to_string(),
                 }]),

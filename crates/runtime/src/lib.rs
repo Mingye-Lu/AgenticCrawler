@@ -74,7 +74,8 @@ pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, Sessi
 pub use settings::{
     config_home_dir, load_settings, save_settings, settings_file_path,
     settings_get_auto_compact_tokens, settings_get_compaction_llm_summarization,
-    settings_get_compaction_max_summary_chars, settings_get_compaction_preserve_recent_messages_floor,
+    settings_get_compaction_max_summary_chars,
+    settings_get_compaction_preserve_recent_messages_floor,
     settings_get_compaction_preserve_recent_tokens, settings_get_compaction_prune_max_output_chars,
     settings_get_compaction_prune_protect_tokens, settings_get_fork_child_max_steps,
     settings_get_fork_wait_timeout_secs, settings_get_headless,

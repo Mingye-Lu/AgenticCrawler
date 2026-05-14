@@ -222,28 +222,32 @@ pub fn settings_get_fork_wait_timeout_secs(s: &Settings) -> u32 {
 #[must_use]
 #[allow(clippy::cast_possible_truncation)]
 pub fn settings_get_compaction_prune_protect_tokens(s: &Settings) -> usize {
-    s.compaction_prune_protect_tokens.map_or(40_000, |v| v as usize)
+    s.compaction_prune_protect_tokens
+        .map_or(40_000, |v| v as usize)
 }
 
 /// Get `compaction_prune_max_output_chars` setting, with default fallback.
 #[must_use]
 #[allow(clippy::cast_possible_truncation)]
 pub fn settings_get_compaction_prune_max_output_chars(s: &Settings) -> usize {
-    s.compaction_prune_max_output_chars.map_or(2_000, |v| v as usize)
+    s.compaction_prune_max_output_chars
+        .map_or(2_000, |v| v as usize)
 }
 
 /// Get `compaction_preserve_recent_tokens` setting, with default fallback.
 #[must_use]
 #[allow(clippy::cast_possible_truncation)]
 pub fn settings_get_compaction_preserve_recent_tokens(s: &Settings) -> usize {
-    s.compaction_preserve_recent_tokens.map_or(80_000, |v| v as usize)
+    s.compaction_preserve_recent_tokens
+        .map_or(80_000, |v| v as usize)
 }
 
 /// Get `compaction_preserve_recent_messages_floor` setting, with default fallback.
 #[must_use]
 #[allow(clippy::cast_possible_truncation)]
 pub fn settings_get_compaction_preserve_recent_messages_floor(s: &Settings) -> usize {
-    s.compaction_preserve_recent_messages_floor.map_or(2, |v| v as usize)
+    s.compaction_preserve_recent_messages_floor
+        .map_or(2, |v| v as usize)
 }
 
 /// Get `compaction_max_summary_chars` setting, with default fallback.
@@ -655,10 +659,22 @@ mod tests {
             compaction_llm_summarization: None,
             ..Default::default()
         };
-        assert_eq!(settings_get_compaction_prune_protect_tokens(&settings), 40_000);
-        assert_eq!(settings_get_compaction_prune_max_output_chars(&settings), 2_000);
-        assert_eq!(settings_get_compaction_preserve_recent_tokens(&settings), 80_000);
-        assert_eq!(settings_get_compaction_preserve_recent_messages_floor(&settings), 2);
+        assert_eq!(
+            settings_get_compaction_prune_protect_tokens(&settings),
+            40_000
+        );
+        assert_eq!(
+            settings_get_compaction_prune_max_output_chars(&settings),
+            2_000
+        );
+        assert_eq!(
+            settings_get_compaction_preserve_recent_tokens(&settings),
+            80_000
+        );
+        assert_eq!(
+            settings_get_compaction_preserve_recent_messages_floor(&settings),
+            2
+        );
         assert_eq!(settings_get_compaction_max_summary_chars(&settings), 1_200);
         assert!(!settings_get_compaction_llm_summarization(&settings));
     }
@@ -671,11 +687,20 @@ mod tests {
             compaction_llm_summarization: Some(true),
             ..Default::default()
         };
-        assert_eq!(settings_get_compaction_prune_protect_tokens(&settings), 20_000);
-        assert_eq!(settings_get_compaction_preserve_recent_tokens(&settings), 50_000);
+        assert_eq!(
+            settings_get_compaction_prune_protect_tokens(&settings),
+            20_000
+        );
+        assert_eq!(
+            settings_get_compaction_preserve_recent_tokens(&settings),
+            50_000
+        );
         assert!(settings_get_compaction_llm_summarization(&settings));
         // Unset fields use defaults
-        assert_eq!(settings_get_compaction_prune_max_output_chars(&settings), 2_000);
+        assert_eq!(
+            settings_get_compaction_prune_max_output_chars(&settings),
+            2_000
+        );
     }
 
     #[test]
