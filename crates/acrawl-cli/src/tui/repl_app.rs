@@ -15,6 +15,7 @@ use crate::markdown::PredictiveMarkdownBuffer;
 use crate::tool_format::tool_input_summary;
 use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
+use crate::tui::child_tabs;
 use crate::tui::modal::{Modal, ModalAction};
 use crate::tui::repl_render::{
     ansi_to_lines, build_header_snapshot, draw_chat, draw_welcome, parse_report_rows,
@@ -48,6 +49,12 @@ pub(super) const SLASH_OVERLAY_HINT_TEXT: &str =
 pub(super) enum AppUiState {
     WelcomeMode,
     ChatMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ViewMode {
+    Parent,
+    Child(String),
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +197,10 @@ pub(super) struct ReplTuiState {
     pub(super) update_info: Option<runtime::update_check::UpdateInfo>,
     pub(super) update_rx:
         Option<tokio::sync::oneshot::Receiver<Option<runtime::update_check::UpdateInfo>>>,
+    pub(super) child_tab_panel: child_tabs::ChildTabPanel,
+    child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
+    pub(super) child_control_registry: Option<crawler::ChildControlRegistry>,
+    pub(super) view_mode: ViewMode,
 }
 
 impl ReplTuiState {
@@ -240,6 +251,10 @@ impl ReplTuiState {
             debug_mode: false,
             update_info: None,
             update_rx: None,
+            child_tab_panel: child_tabs::ChildTabPanel::default(),
+            child_event_rx: None,
+            child_control_registry: None,
+            view_mode: ViewMode::Parent,
         }
     }
 
@@ -1005,6 +1020,45 @@ impl ReplTuiState {
                     self.pause_reason = String::new();
                     self.status_line = "Thinking...".to_string();
                 }
+                ReplTuiEvent::ChildEvent(_) => {}
+            }
+        }
+
+        // Drain child agent events
+        if let Some(ref child_rx) = self.child_event_rx {
+            while let Ok(child_ev) = child_rx.try_recv() {
+                self.child_tab_panel.apply_event(
+                    &child_ev.child_id,
+                    &child_ev.sub_goal,
+                    &child_ev.event,
+                );
+                if matches!(
+                    child_ev.event,
+                    crawler::ChildEventKind::PauseRequested { .. }
+                ) && matches!(self.view_mode, ViewMode::Parent)
+                {
+                    self.view_mode = ViewMode::Child(child_ev.child_id.clone());
+                }
+            }
+        }
+    }
+
+    fn reconcile_child_view_mode(&mut self) {
+        if self.child_tab_panel.tabs.is_empty() {
+            if matches!(self.view_mode, ViewMode::Child(_)) {
+                self.view_mode = ViewMode::Parent;
+            }
+            return;
+        }
+
+        if let ViewMode::Child(child_id) = &self.view_mode {
+            let child_exists = self
+                .child_tab_panel
+                .tabs
+                .iter()
+                .any(|tab| tab.child_id == *child_id);
+            if !child_exists {
+                self.view_mode = ViewMode::Parent;
             }
         }
     }
@@ -1643,6 +1697,13 @@ fn run_loop(
 
     let mut state = ReplTuiState::new();
 
+    // Claim child event receiver and registry from LiveCli
+    {
+        let mut g = cli.lock().expect("cli lock");
+        state.child_event_rx = g.take_child_event_rx();
+        state.child_control_registry = g.take_child_control_registry();
+    }
+
     let (update_tx, update_rx) =
         tokio::sync::oneshot::channel::<Option<runtime::update_check::UpdateInfo>>();
     state.update_rx = Some(update_rx);
@@ -1662,6 +1723,7 @@ fn run_loop(
 
     loop {
         state.drain_events(ui_rx);
+        state.reconcile_child_view_mode();
 
         if let Some(rx) = state.update_rx.as_mut() {
             if let Ok(info) = rx.try_recv() {
@@ -1702,11 +1764,17 @@ fn run_loop(
 
         terminal.draw(|frame| {
             let show_input_cursor = state.active_modal.is_none();
-            match state.ui_state {
-                AppUiState::WelcomeMode => {
-                    draw_welcome(frame, frame.area(), &mut state, show_input_cursor);
+            if state.view_mode == ViewMode::Parent {
+                match state.ui_state {
+                    AppUiState::WelcomeMode => {
+                        draw_welcome(frame, frame.area(), &mut state, show_input_cursor);
+                    }
+                    AppUiState::ChatMode => {
+                        draw_chat(frame, &mut state, &header, show_input_cursor);
+                    }
                 }
-                AppUiState::ChatMode => draw_chat(frame, &mut state, &header, show_input_cursor),
+            } else {
+                crate::tui::repl_render::draw_child_view(frame, &mut state);
             }
             if let Some(ref modal) = state.active_modal {
                 modal.draw(frame, frame.area());
@@ -1777,6 +1845,88 @@ fn run_loop(
                 let in_transcript =
                     rect_contains_mouse(state.last_transcript_rect, me.column, me.row);
                 let in_input = rect_contains_mouse(state.last_input_rect, me.column, me.row);
+
+                if let ViewMode::Child(ref id) = state.view_mode {
+                    match me.kind {
+                        MouseEventKind::ScrollUp => {
+                            if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                tab.follow_bottom = false;
+                                *tab.list_state.offset_mut() =
+                                    tab.list_state.offset().saturating_sub(3);
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                let max = tab
+                                    .last_wrapped_len
+                                    .saturating_sub(tab.last_view_height.max(1));
+                                *tab.list_state.offset_mut() =
+                                    (tab.list_state.offset().saturating_add(3)).min(max);
+                                tab.follow_bottom = tab.list_state.offset() >= max;
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            let tr = state.last_transcript_rect;
+                            if rect_contains_mouse(tr, me.column, me.row) {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                    let cur = tab.list_state.offset();
+                                    let col = me.column.saturating_sub(tr.x);
+                                    let row = cur + usize::from(me.row.saturating_sub(tr.y));
+                                    state.selection.anchor = Some((col, row));
+                                    state.selection.end = Some((col, row));
+                                    state.selection.mouse_drag_occurred = false;
+                                }
+                            }
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            let tr = state.last_transcript_rect;
+                            if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                let cur = tab.list_state.offset();
+                                let col = me
+                                    .column
+                                    .saturating_sub(tr.x)
+                                    .min(tr.width.saturating_sub(1));
+                                let row = cur
+                                    + usize::from(
+                                        me.row
+                                            .saturating_sub(tr.y)
+                                            .min(tr.height.saturating_sub(1)),
+                                    );
+                                state.selection.end = Some((col, row));
+                                state.selection.mouse_drag_occurred = true;
+                            }
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            if state.selection.mouse_drag_occurred {
+                                let tr = state.last_transcript_rect;
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
+                                    let cur = tab.list_state.offset();
+                                    let col = me
+                                        .column
+                                        .saturating_sub(tr.x)
+                                        .min(tr.width.saturating_sub(1));
+                                    let row = cur
+                                        + usize::from(
+                                            me.row
+                                                .saturating_sub(tr.y)
+                                                .min(tr.height.saturating_sub(1)),
+                                        );
+                                    state.selection.end = Some((col, row));
+                                }
+                            } else {
+                                state.selection.anchor = None;
+                                state.selection.end = None;
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Right)
+                            if state.selection.anchor.is_some() =>
+                        {
+                            state.selection.pending_copy = Some(true);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
 
                 if state.ui_state == AppUiState::ChatMode && in_transcript {
                     let max_off = state
@@ -1855,6 +2005,114 @@ fn run_loop(
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
                     state.selection.anchor = None;
                     state.selection.end = None;
+                }
+
+                if let ViewMode::Child(child_id) = state.view_mode.clone() {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                    } else {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Up => {
+                                state.selection.anchor = None;
+                                state.selection.end = None;
+                                state.view_mode = ViewMode::Parent;
+                                continue;
+                            }
+                            KeyCode::Left => {
+                                state.child_tab_panel.prev_tab();
+                                if let Some(tab) = state.child_tab_panel.active_tab_state_mut() {
+                                    state.view_mode = ViewMode::Child(tab.child_id.clone());
+                                } else {
+                                    state.view_mode = ViewMode::Parent;
+                                }
+                                continue;
+                            }
+                            KeyCode::Right => {
+                                state.child_tab_panel.next_tab();
+                                if let Some(tab) = state.child_tab_panel.active_tab_state_mut() {
+                                    state.view_mode = ViewMode::Child(tab.child_id.clone());
+                                } else {
+                                    state.view_mode = ViewMode::Parent;
+                                }
+                                continue;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    let max = tab
+                                        .last_wrapped_len
+                                        .saturating_sub(tab.last_view_height.max(1));
+                                    *tab.list_state.offset_mut() =
+                                        (tab.list_state.offset().saturating_add(1)).min(max);
+                                    tab.follow_bottom = false;
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('k') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    *tab.list_state.offset_mut() =
+                                        tab.list_state.offset().saturating_sub(1);
+                                }
+                                continue;
+                            }
+                            KeyCode::PageDown => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    let max = tab
+                                        .last_wrapped_len
+                                        .saturating_sub(tab.last_view_height.max(1));
+                                    *tab.list_state.offset_mut() =
+                                        (tab.list_state.offset().saturating_add(10)).min(max);
+                                    tab.follow_bottom = false;
+                                }
+                                continue;
+                            }
+                            KeyCode::PageUp => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    *tab.list_state.offset_mut() =
+                                        tab.list_state.offset().saturating_sub(10);
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('G') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = true;
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('g') => {
+                                if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
+                                    tab.follow_bottom = false;
+                                    *tab.list_state.offset_mut() = 0;
+                                }
+                                continue;
+                            }
+                            KeyCode::Enter => {
+                                let should_resume = state
+                                    .child_tab_panel
+                                    .find_tab_mut(&child_id)
+                                    .is_some_and(|tab| {
+                                        matches!(
+                                            tab.status,
+                                            child_tabs::ChildTabStatus::Paused { .. }
+                                        )
+                                    });
+                                if should_resume {
+                                    if let Some(registry) = &state.child_control_registry {
+                                        if let Some(child_state) = registry.get(&child_id) {
+                                            child_state.resume();
+                                            state.push_system(&format!(
+                                                "Resuming child {child_id}..."
+                                            ));
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            _ => continue,
+                        }
+                    }
                 }
 
                 let mut modal_action = None;
@@ -2019,6 +2277,9 @@ fn run_loop(
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     if state.busy {
                         cancel_flag.request_cancel();
+                        if let Some(registry) = &state.child_control_registry {
+                            registry.cancel_all();
+                        }
                         state.cancelling = true;
                         state.push_system("Interrupting…");
                         continue;
@@ -2066,6 +2327,23 @@ fn run_loop(
                     continue;
                 }
 
+                if key.code == KeyCode::Char('x')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(state.view_mode, ViewMode::Parent)
+                {
+                    if let Some(child_id) = state
+                        .child_tab_panel
+                        .tabs
+                        .get(state.child_tab_panel.active_tab)
+                        .map(|tab| tab.child_id.clone())
+                    {
+                        state.selection.anchor = None;
+                        state.selection.end = None;
+                        state.view_mode = ViewMode::Child(child_id);
+                        continue;
+                    }
+                }
+
                 match key.code {
                     KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                         state.insert_input_char('\n');
@@ -2073,6 +2351,18 @@ fn run_loop(
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
+                        // Child tab resume (check before parent pause)
+                        if state.child_tab_panel.active_tab_is_paused() {
+                            if let Some(child_id) = state.child_tab_panel.active_child_id() {
+                                if let Some(registry) = &state.child_control_registry {
+                                    if let Some(child_state) = registry.get(child_id) {
+                                        child_state.resume();
+                                        state.push_system(&format!("Resuming child {child_id}..."));
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         if state.paused {
                             cancel_flag.resume();
                             state.paused = false;
@@ -2214,6 +2504,9 @@ fn run_loop(
                                 .is_some_and(|t| now.duration_since(t) < Duration::from_millis(500))
                             {
                                 cancel_flag.request_cancel();
+                                if let Some(registry) = &state.child_control_registry {
+                                    registry.cancel_all();
+                                }
                                 state.cancelling = true;
                                 state.push_system("Interrupting…");
                                 state.last_esc_at = None;

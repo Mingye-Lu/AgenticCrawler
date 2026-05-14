@@ -111,6 +111,8 @@ pub(crate) struct LiveCli {
     output_mode: OutputMode,
     reasoning_effort: Option<api::ReasoningEffort>,
     debug_mode: bool,
+    child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
+    child_control_registry: Option<crawler::ChildControlRegistry>,
     pending_title: Arc<Mutex<Option<String>>>,
     title_dispatched: bool,
 }
@@ -172,6 +174,8 @@ impl LiveCli {
             output_mode.observer(),
             is_interactive,
             None,
+            None,
+            None,
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
             let saved = settings
@@ -191,6 +195,8 @@ impl LiveCli {
             output_mode,
             reasoning_effort: initial_effort,
             debug_mode: false,
+            child_event_rx: None,
+            child_control_registry: None,
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
         };
@@ -212,6 +218,8 @@ impl LiveCli {
         let system_prompt = build_system_prompt()?;
         let session = create_managed_session_handle();
         let output_mode = OutputMode::Channel(event_tx);
+        let (child_event_tx, child_event_rx) = std::sync::mpsc::channel::<crawler::ChildEvent>();
+        let registry = crawler::ChildControlRegistry::default();
         let runtime = build_runtime_with_options(
             Session::new(),
             model.clone(),
@@ -221,6 +229,8 @@ impl LiveCli {
             output_mode.observer(),
             true,
             None,
+            Some(child_event_tx),
+            Some(registry.clone()),
         )?;
         let initial_effort = if model_supports_reasoning(&model) {
             let saved = settings
@@ -240,6 +250,8 @@ impl LiveCli {
             output_mode,
             reasoning_effort: initial_effort,
             debug_mode: false,
+            child_event_rx: Some(child_event_rx),
+            child_control_registry: Some(registry.clone()),
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
         };
@@ -253,6 +265,16 @@ impl LiveCli {
 
     pub(crate) fn session_id(&self) -> &str {
         self.session.id.as_str()
+    }
+
+    pub(crate) fn take_child_event_rx(
+        &mut self,
+    ) -> Option<std::sync::mpsc::Receiver<crawler::ChildEvent>> {
+        self.child_event_rx.take()
+    }
+
+    pub(crate) fn take_child_control_registry(&mut self) -> Option<crawler::ChildControlRegistry> {
+        self.child_control_registry.take()
     }
 
     pub(crate) fn model_name(&self) -> &str {
