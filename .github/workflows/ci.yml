@@ -42,7 +42,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: node -e "require('cloakbrowser')"
+      - run: npx cloakbrowser install
       - run: cargo test --workspace
 
   build:
