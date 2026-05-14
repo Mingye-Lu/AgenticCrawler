@@ -54,6 +54,9 @@ struct OpenAiDelta {
     content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<OpenAiToolCallDelta>>,
+    /// DeepSeek-reasoner and similar providers stream chain-of-thought here.
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -346,6 +349,7 @@ struct OpenAiStreamState {
     model: String,
     started: bool,
     text_block_active: bool,
+    reasoning_block_active: bool,
     next_block_index: u32,
     active_tools: HashMap<u32, u32>,
     input_tokens: u32,
@@ -359,6 +363,7 @@ impl OpenAiStreamState {
             model: String::new(),
             started: false,
             text_block_active: false,
+            reasoning_block_active: false,
             next_block_index: 0,
             active_tools: HashMap::new(),
             input_tokens: 0,
@@ -393,6 +398,7 @@ impl OpenAiStreamState {
         let delta = &choice.delta;
 
         self.maybe_emit_message_start(delta, &mut events);
+        self.emit_reasoning_deltas(delta, &mut events);
         self.emit_text_deltas(delta, &mut events);
         self.emit_tool_call_events(delta, &mut events);
 
@@ -407,7 +413,11 @@ impl OpenAiStreamState {
         if self.started {
             return;
         }
-        if delta.role.is_none() && delta.content.is_none() && delta.tool_calls.is_none() {
+        if delta.role.is_none()
+            && delta.content.is_none()
+            && delta.tool_calls.is_none()
+            && delta.reasoning_content.is_none()
+        {
             return;
         }
         self.started = true;
@@ -453,6 +463,30 @@ impl OpenAiStreamState {
             index: self.next_block_index - 1,
             delta: ContentBlockDelta::TextDelta {
                 text: content.clone(),
+            },
+        }));
+    }
+
+    fn emit_reasoning_deltas(&mut self, delta: &OpenAiDelta, events: &mut Vec<StreamEvent>) {
+        let Some(thinking) = &delta.reasoning_content else {
+            return;
+        };
+        if thinking.is_empty() {
+            return;
+        }
+        if !self.reasoning_block_active {
+            self.reasoning_block_active = true;
+            let idx = self.next_block_index;
+            self.next_block_index += 1;
+            events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
+                index: idx,
+                content_block: OutputContentBlock::Reasoning,
+            }));
+        }
+        events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
+            index: self.next_block_index - 1,
+            delta: ContentBlockDelta::ThinkingDelta {
+                thinking: thinking.clone(),
             },
         }));
     }
@@ -510,6 +544,12 @@ impl OpenAiStreamState {
     }
 
     fn emit_finish(&mut self, finish_reason: &str, events: &mut Vec<StreamEvent>) {
+        if self.reasoning_block_active {
+            self.reasoning_block_active = false;
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index: self.next_block_index - 1,
+            }));
+        }
         if self.text_block_active {
             self.text_block_active = false;
             events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
@@ -632,6 +672,7 @@ fn convert_assistant_message(
 ) {
     let mut text_parts: Vec<String> = Vec::new();
     let mut tool_calls: Vec<Value> = Vec::new();
+    let mut reasoning_content: Option<String> = None;
 
     for block in &msg.content {
         match block {
@@ -649,7 +690,12 @@ fn convert_assistant_message(
                     },
                 }));
             }
-            InputContentBlock::ToolResult { .. } | InputContentBlock::Reasoning { .. } => {}
+            InputContentBlock::ToolResult { .. } => {}
+            InputContentBlock::Reasoning { data } => {
+                if let Some(rc) = data.get("reasoning_content").and_then(Value::as_str) {
+                    reasoning_content = Some(rc.to_string());
+                }
+            }
         }
     }
 
@@ -663,6 +709,10 @@ fn convert_assistant_message(
         "role": "assistant",
         "content": content,
     });
+
+    if let Some(rc) = reasoning_content {
+        msg_obj["reasoning_content"] = Value::String(rc);
+    }
 
     if !tool_calls.is_empty() {
         msg_obj["tool_calls"] = Value::Array(tool_calls);

@@ -223,6 +223,9 @@ pub enum OutputContentBlock {
         name: String,
         input: Value,
     },
+    /// Sentinel emitted by ChatCompletions providers (e.g. DeepSeek-reasoner) when a
+    /// reasoning/thinking block starts in the SSE stream.
+    Reasoning,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,6 +281,8 @@ pub struct ContentBlockDeltaEvent {
 pub enum ContentBlockDelta {
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },
+    /// Incremental reasoning/thinking text from providers like DeepSeek-reasoner.
+    ThinkingDelta { thinking: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
