@@ -25,6 +25,7 @@ async function ensureAttached(tabId) {
       resolve();
     });
   });
+  await setupAutoAttach(tabId);
 }
 
 function waitForLoad(tabId, timeoutMs = 30000) {
@@ -52,6 +53,25 @@ function waitForLoad(tabId, timeoutMs = 30000) {
 async function enablePageEvents(tabId) {
   await cdp(tabId, 'Page.enable');
 }
+
+async function setupAutoAttach(tabId) {
+  await cdp(tabId, 'Target.setAutoAttach', {
+    autoAttach: true,
+    waitForDebuggerOnStart: false,
+    flatten: true,
+  }).catch(() => {}); // Ignore errors on older Chrome versions
+}
+
+// Auto-dismiss JavaScript dialogs (alert, confirm, prompt, beforeunload)
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  if (method === 'Page.javascriptDialogOpening') {
+    chrome.debugger.sendCommand(
+      { tabId: source.tabId },
+      'Page.handleJavaScriptDialog',
+      { accept: true, promptText: '' }
+    );
+  }
+});
 
 async function getPageContent(tabId) {
   const [titleRes, htmlRes] = await Promise.all([
