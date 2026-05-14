@@ -22,6 +22,8 @@ pub enum FetchError {
     Http(reqwest::Error),
     Browser(String),
     StatusError { status: u16, url: String },
+    /// Response body exceeded the configured maximum size.
+    BodyTooLarge { url: String, limit: usize },
 }
 
 impl fmt::Display for FetchError {
@@ -32,6 +34,9 @@ impl fmt::Display for FetchError {
             Self::StatusError { status, url } => {
                 write!(f, "HTTP {status} for {url}")
             }
+            Self::BodyTooLarge { url, limit } => {
+                write!(f, "response body for {url} exceeds {limit} bytes")
+            }
         }
     }
 }
@@ -40,7 +45,7 @@ impl std::error::Error for FetchError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Http(e) => Some(e),
-            Self::Browser(_) | Self::StatusError { .. } => None,
+            Self::Browser(_) | Self::StatusError { .. } | Self::BodyTooLarge { .. } => None,
         }
     }
 }
@@ -76,6 +81,12 @@ const AUTH_REDIRECT_PATTERNS: &[&str] = &[
 ];
 
 const MIN_BODY_LENGTH: usize = 500;
+
+/// Hard cap on a single HTTP response body. A page that is much larger than
+/// this is almost never useful to the agent (and is almost certainly a binary
+/// dump, generated content, or an attack) — and without a cap, reqwest's
+/// `.text()` will happily buffer multi-gigabyte responses into memory.
+const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 fn needs_escalation(status: StatusCode, body: &str) -> bool {
     if ESCALATION_STATUS_CODES.contains(&status.as_u16()) {
@@ -240,10 +251,38 @@ impl HttpFetcher {
     ///
     /// Returns `FetchError::Http` on network or protocol errors.
     pub async fn fetch(&self, url: &str) -> Result<HttpResponse, FetchError> {
-        let resp = self.client.get(url).send().await?;
+        let mut resp = self.client.get(url).send().await?;
         let status = resp.status();
         let final_url = resp.url().to_string();
-        let body = resp.text().await?;
+
+        // Reject up front if the server advertises a body over the limit so we
+        // don't even start downloading the payload.
+        if let Some(declared) = resp.content_length() {
+            if declared > MAX_BODY_BYTES as u64 {
+                return Err(FetchError::BodyTooLarge {
+                    url: final_url,
+                    limit: MAX_BODY_BYTES,
+                });
+            }
+        }
+
+        // Stream the body chunk-by-chunk so a missing or lying Content-Length
+        // header can still be caught mid-transfer.
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(chunk) = resp.chunk().await? {
+            if bytes.len() + chunk.len() > MAX_BODY_BYTES {
+                return Err(FetchError::BodyTooLarge {
+                    url: final_url,
+                    limit: MAX_BODY_BYTES,
+                });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+
+        // Match reqwest's text() in being lossy on invalid UTF-8 — the
+        // downstream HTML/markdown pipelines can tolerate replacement chars,
+        // and erroring here would break legitimately mojibake'd pages.
+        let body = String::from_utf8_lossy(&bytes).into_owned();
 
         Ok(HttpResponse {
             url: final_url,
@@ -671,6 +710,44 @@ mod tests {
             page.markdown.starts_with("```"),
             "non-HTML input should be wrapped in a code block"
         );
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_oversized_content_length() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+
+        // Serve a single connection that advertises a body well over the cap
+        // and then closes — we expect the client to bail out before reading
+        // anywhere near that many bytes.
+        let server = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let _ = socket.shutdown().await;
+            }
+        });
+
+        let fetcher = HttpFetcher::new().expect("client");
+        let url = format!("http://{addr}/");
+        let err = fetcher
+            .fetch(&url)
+            .await
+            .expect_err("oversized body must be rejected");
+        let _ = server.await;
+
+        match err {
+            FetchError::BodyTooLarge { limit, .. } => {
+                assert_eq!(limit, MAX_BODY_BYTES);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
