@@ -21,6 +21,7 @@ pub fn builtin_models() -> Vec<ModelInfo> {
     models.extend(togetherai_models());
     models.extend(perplexity_models());
     models.extend(xai_models());
+    models.extend(deepseek_models());
     models.extend(venice_models());
     models.extend(alibaba_models());
     models.extend(cloudflare_models());
@@ -699,6 +700,53 @@ fn xai_models() -> Vec<ModelInfo> {
                 reasoning_efforts: vec![],
             },
             pricing: None,
+        },
+    ]
+}
+
+fn deepseek_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "deepseek-chat".into(),
+            display_name: "DeepSeek Chat (V3)".into(),
+            aliases: vec![],
+            provider_id: "deepseek".into(),
+            max_output_tokens: 8_192,
+            context_window: 128_000,
+            capabilities: ModelCapabilities {
+                reasoning: false,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: vec![],
+            },
+            pricing: Some(ModelPricing {
+                input_per_mtok: 0.27,
+                output_per_mtok: 1.10,
+                cache_read_per_mtok: Some(0.07),
+                cache_write_per_mtok: None,
+            }),
+        },
+        ModelInfo {
+            id: "deepseek-reasoner".into(),
+            display_name: "DeepSeek Reasoner (R1)".into(),
+            aliases: vec![],
+            provider_id: "deepseek".into(),
+            max_output_tokens: 8_192,
+            context_window: 64_000,
+            capabilities: ModelCapabilities {
+                reasoning: true,
+                tool_use: true,
+                vision: false,
+                streaming: true,
+                reasoning_efforts: ReasoningEffort::OPENAI.to_vec(),
+            },
+            pricing: Some(ModelPricing {
+                input_per_mtok: 0.55,
+                output_per_mtok: 2.19,
+                cache_read_per_mtok: Some(0.14),
+                cache_write_per_mtok: None,
+            }),
         },
     ]
 }
@@ -1388,6 +1436,7 @@ const MODELS_DEV_PROVIDER_MAP: &[(&str, &str)] = &[
     ("togetherai", "togetherai"),
     ("perplexity", "perplexity"),
     ("xai", "xai"),
+    ("deepseek", "deepseek"),
     ("venice", "venice"),
     ("alibaba", "alibaba"),
     ("cloudflare", "cloudflare-workers-ai"),
@@ -1566,6 +1615,7 @@ mod tests {
             "togetherai",
             "perplexity",
             "xai",
+            "deepseek",
             "venice",
             "alibaba",
             "cloudflare",
