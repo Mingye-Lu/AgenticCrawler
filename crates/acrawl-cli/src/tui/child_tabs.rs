@@ -172,14 +172,14 @@ impl ChildTabPanel {
                 };
                 self.tabs[idx]
                     .entries
-                    .push(TranscriptEntry::System(format!("⏸ Paused: {reason}")));
+                    .push(TranscriptEntry::System(format!("PAUSED: {reason}")));
                 self.active_tab = idx;
             }
             crawler::ChildEventKind::Resumed => {
                 let tab = &mut self.tabs[idx];
                 tab.status = ChildTabStatus::Running;
                 tab.entries
-                    .push(TranscriptEntry::System("▶ Resumed".to_string()));
+                    .push(TranscriptEntry::System("Resumed".to_string()));
             }
             crawler::ChildEventKind::Finished {
                 success,
@@ -218,7 +218,7 @@ impl ChildTabPanel {
                 }
 
                 let message = if *success {
-                    format!("✓ Done — {items_extracted} items extracted")
+                    format!("✓ Done -- {items_extracted} items extracted")
                 } else {
                     format!("✗ Error: {}", error.as_deref().unwrap_or("unknown error"))
                 };
@@ -294,7 +294,7 @@ mod tests {
         );
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Done);
         assert_eq!(panel.tabs[0].items_extracted, 10);
-        assert!(matches!(panel.tabs[0].entries.last(), Some(TranscriptEntry::System(message)) if message.contains("Done") || message.contains('✓')));
+        assert!(matches!(panel.tabs[0].entries.last(), Some(TranscriptEntry::System(message)) if message.contains("Done")));
     }
 
     #[test]
