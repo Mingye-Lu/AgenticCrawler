@@ -512,6 +512,16 @@ impl LiveCli {
                 use crawler::ws_server::generate_bridge_token;
                 use crawler::{BrowserBackend, ExtensionBridge, WsBridgeServer};
 
+                let saved_state = block_on_runtime_future(async {
+                    Ok::<Option<crawler::BrowserState>, RuntimeError>(
+                        self.runtime
+                            .tool_executor_mut()
+                            .export_current_state()
+                            .await,
+                    )
+                })
+                .unwrap_or(None);
+
                 let settings = runtime::load_settings();
                 let token = settings
                     .extension_bridge_token
@@ -560,10 +570,21 @@ impl LiveCli {
                             self.runtime
                                 .tool_executor_mut()
                                 .set_extension_bridge(shared);
+
+                            if let Some(state) = saved_state.as_ref() {
+                                let _ = block_on_runtime_future(async {
+                                    self.runtime
+                                        .tool_executor_mut()
+                                        .restore_state_to_bridge(state)
+                                        .await;
+                                    Ok::<(), RuntimeError>(())
+                                });
+                            }
+
                             self.ws_bridge_server = Some(server);
                             println!(
                                 "  Result           extension connected \
-                                 — browser commands routed to Chrome"
+                                 — browser commands routed to Chrome, state preserved"
                             );
                             false
                         } else {
@@ -577,10 +598,39 @@ impl LiveCli {
                 }
             }
             SlashCommand::CloakBrowser => {
+                let saved_state = block_on_runtime_future(async {
+                    Ok::<Option<crawler::BrowserState>, RuntimeError>(
+                        self.runtime
+                            .tool_executor_mut()
+                            .export_current_state()
+                            .await,
+                    )
+                })
+                .unwrap_or(None);
+
                 self.ws_bridge_server = None;
                 self.reset_browser();
+
+                let _ = block_on_runtime_future(async {
+                    self.runtime
+                        .tool_executor_mut()
+                        .ensure_browser()
+                        .await
+                        .map_err(|error| RuntimeError::new(error.to_string()))
+                });
+
+                if let Some(state) = saved_state.as_ref() {
+                    let _ = block_on_runtime_future(async {
+                        self.runtime
+                            .tool_executor_mut()
+                            .restore_state_to_bridge(state)
+                            .await;
+                        Ok::<(), RuntimeError>(())
+                    });
+                }
+
                 println!(
-                    "Browser mode\n  Result           switched back to CloakBrowser (headless)"
+                    "Browser mode\n  Result           switched back to CloakBrowser (headless), state preserved"
                 );
                 false
             }
