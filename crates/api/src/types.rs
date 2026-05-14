@@ -241,7 +241,40 @@ pub struct Usage {
 impl Usage {
     #[must_use]
     pub const fn total_tokens(&self) -> u32 {
-        self.input_tokens + self.output_tokens
+        // All four fields count against context spend when prompt caching is
+        // enabled; summing only input + output silently undercounted total
+        // tokens (and therefore reported cost) for cached conversations.
+        self.input_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+            + self.output_tokens
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::Usage;
+
+    #[test]
+    fn total_tokens_sums_all_four_fields() {
+        let usage = Usage {
+            input_tokens: 100,
+            cache_creation_input_tokens: 50,
+            cache_read_input_tokens: 25,
+            output_tokens: 200,
+        };
+        assert_eq!(usage.total_tokens(), 375);
+    }
+
+    #[test]
+    fn total_tokens_zero_when_all_zero() {
+        let usage = Usage {
+            input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            output_tokens: 0,
+        };
+        assert_eq!(usage.total_tokens(), 0);
     }
 }
 
