@@ -4,6 +4,7 @@ mod agent;
 mod browser;
 mod browser_backend;
 pub mod child_events;
+mod extension;
 mod fetcher;
 mod manager;
 pub mod markdown;
@@ -21,6 +22,7 @@ pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, Cr
 pub use browser::BrowserContext;
 pub use browser_backend::BrowserBackend;
 pub use child_events::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
+pub use extension::ExtensionBridge;
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};

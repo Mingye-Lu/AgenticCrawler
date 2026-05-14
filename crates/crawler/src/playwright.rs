@@ -621,15 +621,30 @@ pub struct BrowserState {
 
 #[derive(Debug)]
 pub enum PlaywrightBridgeError {
-    ProcessSpawn { command: String, source: io::Error },
-    LaunchTimeout { timeout: Duration },
+    ProcessSpawn {
+        command: String,
+        source: io::Error,
+    },
+    LaunchTimeout {
+        timeout: Duration,
+    },
     Protocol(String),
     PlaywrightNotInstalled(String),
     Io(io::Error),
     Json(serde_json::Error),
     ChildClosed,
-    ShutdownTimeout { timeout: Duration },
-    CommandTimeout { timeout: Duration },
+    ShutdownTimeout {
+        timeout: Duration,
+    },
+    CommandTimeout {
+        timeout: Duration,
+    },
+    /// Extension WebSocket disconnected — run /extension to reconnect.
+    ExtensionDisconnected,
+    /// Extension did not respond within the timeout.
+    ExtensionTimeout {
+        timeout: Duration,
+    },
 }
 
 impl fmt::Display for PlaywrightBridgeError {
@@ -662,6 +677,14 @@ impl fmt::Display for PlaywrightBridgeError {
                 "CloakBrowser bridge command timed out after {} seconds",
                 timeout.as_secs()
             ),
+            Self::ExtensionDisconnected => {
+                write!(f, "extension bridge disconnected — run /extension to reconnect")
+            }
+            Self::ExtensionTimeout { timeout } => write!(
+                f,
+                "extension bridge did not respond within {} seconds",
+                timeout.as_secs()
+            ),
         }
     }
 }
@@ -677,7 +700,9 @@ impl std::error::Error for PlaywrightBridgeError {
             | Self::PlaywrightNotInstalled(_)
             | Self::ChildClosed
             | Self::ShutdownTimeout { .. }
-            | Self::CommandTimeout { .. } => None,
+            | Self::CommandTimeout { .. }
+            | Self::ExtensionDisconnected
+            | Self::ExtensionTimeout { .. } => None,
         }
     }
 }
