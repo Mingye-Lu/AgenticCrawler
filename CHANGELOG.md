@@ -6,10 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-05-14
+
 ### Changed
 - Replaced Playwright with CloakBrowser as the browser engine — passes bot detection (reCAPTCHA v3 0.9, Cloudflare Turnstile, FingerprintJS) with source-level stealth patches
 - Human-like interaction enabled by default (Bézier mouse curves, natural keyboard timing)
 - Browser binary auto-downloads on first use (no separate `npx playwright install` step)
+- Minimum Node.js version raised from 16 to 20 (required by CloakBrowser)
 
 ## [0.3.4] - 2026-05-14
 
@@ -167,6 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.0
 [0.3.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.2
