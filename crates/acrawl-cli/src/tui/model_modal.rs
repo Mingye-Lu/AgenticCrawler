@@ -162,8 +162,11 @@ impl ModelModal {
         }
     }
 
-    pub fn outcome(&self) -> &ModelModalOutcome {
-        &self.outcome
+    /// Consume the pending outcome, replacing it with `None`, so a single
+    /// Enter press can't be observed twice (and applied twice) by callers
+    /// that re-inspect the modal on the next event.
+    pub fn take_outcome(&mut self) -> ModelModalOutcome {
+        std::mem::replace(&mut self.outcome, ModelModalOutcome::None)
     }
 
     fn visible_rows(&self) -> (Vec<RowKind<'_>>, usize, usize) {

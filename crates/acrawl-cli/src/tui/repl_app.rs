@@ -2146,8 +2146,14 @@ fn run_loop(
                         } => Some(*provider),
                         _ => None,
                     });
-                    if let Some(m) = modal.as_model() {
-                        model_outcome = Some(m.outcome().clone());
+                    if let Some(m) = modal.as_model_mut() {
+                        // `take_outcome` swaps the modal's outcome back to
+                        // `None`, so a single Enter press can't be observed
+                        // (and applied) twice on the next key event.
+                        let taken = m.take_outcome();
+                        if !matches!(taken, crate::tui::model_modal::ModelModalOutcome::None) {
+                            model_outcome = Some(taken);
+                        }
                     }
                     if let Some(m) = modal.as_session_mut() {
                         let taken = m.take_outcome();
