@@ -107,8 +107,16 @@ jobs:
         id: notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Extract the section between ## [VERSION] and the next ## [
-          NOTES=$(awk "/^## \\[${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+          # Extract the section between `## [VERSION]` and the next `## [...]`.
+          # Pass VERSION via -v so its characters are treated literally — embedding
+          # it inside the awk pattern would let regex metacharacters in a tag
+          # name break or silently broaden the match.
+          NOTES=$(awk -v ver="$VERSION" '
+            BEGIN { header = "## [" ver "]" }
+            index($0, header) == 1 { found=1; next }
+            /^## \[/ { if (found) exit }
+            found { print }
+          ' CHANGELOG.md)
           if [ -z "$NOTES" ]; then
             NOTES="Release ${GITHUB_REF_NAME}"
           fi
