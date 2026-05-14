@@ -97,6 +97,12 @@ impl Spinner {
     }
 }
 
+/// Zero-sized API-stability shim retained so external call sites
+/// (`output_sink.rs`, `app/mod.rs`) compile without churn after the
+/// `tui-markdown` swap. `markdown_to_ansi` no longer needs `&self`, and
+/// `MarkdownStreamState::push`/`flush` still take `&TerminalRenderer` only
+/// to preserve their signatures. `color_theme()` is the one method that
+/// still carries useful state (the spinner palette).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TerminalRenderer {
     color_theme: ColorTheme,
@@ -141,17 +147,28 @@ fn line_into_owned(line: Line<'_>) -> Line<'static> {
     owned
 }
 
-fn text_to_ansi(lines: &[Line<'_>]) -> String {
+pub(crate) fn text_to_ansi(lines: &[Line<'_>]) -> String {
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
         let line_style = line.style;
+        let mut prev_style: Option<Style> = None;
+        let mut any_styled = false;
         for span in &line.spans {
             let style = line_style.patch(span.style);
-            write_style(&mut out, style);
+            if prev_style != Some(style) {
+                if any_styled {
+                    out.push_str("\u{1b}[0m");
+                }
+                write_style(&mut out, style);
+                prev_style = Some(style);
+                any_styled = true;
+            }
             out.push_str(&span.content);
+        }
+        if any_styled {
             out.push_str("\u{1b}[0m");
         }
     }
@@ -337,7 +354,12 @@ pub fn strip_ansi(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_lines, strip_ansi, MarkdownStreamState, Spinner, TerminalRenderer};
+    use super::{
+        drain_safe_boundary, render_lines, strip_ansi, text_to_ansi, MarkdownStreamState, Spinner,
+        TerminalRenderer,
+    };
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
 
     #[test]
     fn render_lines_styles_heading() {
@@ -419,6 +441,78 @@ mod tests {
             .push(&renderer, "```\n")
             .expect("closed code fence flushes");
         assert!(strip_ansi(&code).contains("fn main()"));
+    }
+
+    #[test]
+    fn streaming_state_buffers_tilde_fences() {
+        let renderer = TerminalRenderer::new();
+        let mut state = MarkdownStreamState::default();
+
+        assert_eq!(state.push(&renderer, "~~~rust\nfn body() {}\n"), None);
+        let code = state
+            .push(&renderer, "~~~\n")
+            .expect("closed tilde fence flushes");
+        assert!(strip_ansi(&code).contains("fn body()"));
+    }
+
+    #[test]
+    fn drain_safe_boundary_holds_open_fence() {
+        let mut buffer = String::from("```rust\nfn pending() {}\n");
+        assert!(drain_safe_boundary(&mut buffer).is_none());
+        // buffer unchanged because no safe boundary reached
+        assert!(buffer.starts_with("```rust"));
+
+        buffer.push_str("```\n");
+        let rendered = drain_safe_boundary(&mut buffer).expect("now boundary reached");
+        let plain: String = rendered
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(plain.contains("fn pending"));
+        assert!(buffer.is_empty(), "buffer should be drained, got {buffer:?}");
+    }
+
+    #[test]
+    fn text_to_ansi_emits_foreground_and_modifiers() {
+        let style = Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC);
+        let line = Line::from(Span::styled("hi", style));
+        let ansi = text_to_ansi(&[line]);
+        assert!(ansi.contains("\u{1b}[31m"), "missing red fg in {ansi:?}");
+        assert!(ansi.contains("\u{1b}[1m"), "missing bold in {ansi:?}");
+        assert!(ansi.contains("\u{1b}[3m"), "missing italic in {ansi:?}");
+        assert!(ansi.contains("hi"));
+        assert!(ansi.ends_with("\u{1b}[0m"), "missing trailing reset");
+    }
+
+    #[test]
+    fn text_to_ansi_emits_rgb_indexed_and_background() {
+        let rgb = Style::default().fg(Color::Rgb(10, 20, 30));
+        let indexed = Style::default().fg(Color::Indexed(208));
+        let bg = Style::default().bg(Color::Black);
+        let rgb_ansi = text_to_ansi(&[Line::from(Span::styled("a", rgb))]);
+        let idx_ansi = text_to_ansi(&[Line::from(Span::styled("b", indexed))]);
+        let bg_ansi = text_to_ansi(&[Line::from(Span::styled("c", bg))]);
+        assert!(
+            rgb_ansi.contains("\u{1b}[38;2;10;20;30m"),
+            "got {rgb_ansi:?}"
+        );
+        assert!(idx_ansi.contains("\u{1b}[38;5;208m"), "got {idx_ansi:?}");
+        assert!(bg_ansi.contains("\u{1b}[40m"), "got {bg_ansi:?}");
+    }
+
+    #[test]
+    fn text_to_ansi_emits_one_reset_per_line_when_style_unchanged() {
+        let style = Style::default().fg(Color::Green);
+        let line = Line::from(vec![
+            Span::styled("foo", style),
+            Span::styled("bar", style),
+        ]);
+        let ansi = text_to_ansi(&[line]);
+        // Only one reset at end of line (style stayed the same across spans).
+        let resets = ansi.matches("\u{1b}[0m").count();
+        assert_eq!(resets, 1, "got {ansi:?}");
     }
 
     #[test]
