@@ -16,7 +16,8 @@ try {
     'commands/scroll.js',
     'commands/wait.js',
     'commands/select_option.js',
-    'commands/save_file.js'
+    'commands/save_file.js',
+    'commands/cookies.js'
   );
 } catch (e) {
   console.error('Failed to import command scripts:', e);
@@ -221,6 +222,18 @@ async function handleCommand(cmd) {
             break;
           case 'save_file':
             result = await handleSaveFile(tabId, cmd.payload || {});
+            break;
+          case 'export_cookies':
+            result = await handleExportCookies(tabId);
+            break;
+          case 'import_cookies':
+            result = await handleImportCookies(tabId, cmd.payload || {});
+            break;
+          case 'import_cookies_only':
+            result = await handleImportCookiesOnly(tabId, cmd.payload || {});
+            break;
+          case 'import_local_storage':
+            result = await handleImportLocalStorage(tabId, cmd.payload || {});
             break;
           default:
             sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
