@@ -312,6 +312,34 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   }
 });
 
+// ----------- State persistence -----------
+
+async function saveState() {
+  await new Promise((resolve) => {
+    chrome.storage.session.set({
+      managedTabs: JSON.parse(JSON.stringify(managedTabs)),
+      nextPageIndex,
+      activePageIndex,
+    }, resolve);
+  });
+}
+
+async function loadState() {
+  return new Promise((resolve) => {
+    chrome.storage.session.get(
+      { managedTabs: {}, nextPageIndex: 0, activePageIndex: 0 },
+      resolve
+    );
+  });
+}
+
+async function restoreState() {
+  const state = await loadState();
+  Object.assign(managedTabs, state.managedTabs);
+  nextPageIndex = state.nextPageIndex;
+  activePageIndex = state.activePageIndex;
+}
+
 // ----------- Alarms watchdog -----------
 
 chrome.alarms.create('ws-watchdog', { periodInMinutes: 0.5 });
@@ -327,12 +355,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // ----------- Startup -----------
 
 chrome.runtime.onStartup.addListener(() => {
-  connect();
+  restoreState().then(connect);
 });
 
 chrome.runtime.onInstalled.addListener(() => {
   connect();
 });
 
-// Connect on service worker activation
-connect();
+(async () => {
+  await restoreState();
+  connect();
+})();
