@@ -113,6 +113,8 @@ pub(crate) fn run_resume_command(
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed
         | SlashCommand::Headless
+        | SlashCommand::Extension
+        | SlashCommand::CloakBrowser
         | SlashCommand::Unknown(_) => Err("unsupported resumed slash command".into()),
     }
 }

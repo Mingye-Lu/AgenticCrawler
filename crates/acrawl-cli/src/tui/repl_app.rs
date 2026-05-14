@@ -1327,6 +1327,13 @@ fn handle_slash_command_tui(
                 "Browser mode\n  Result           switched to headless",
             );
         }
+        cmd @ (SlashCommand::Extension | SlashCommand::CloakBrowser) => {
+            suspend_for_stdout(terminal, || {
+                let mut g = cli.lock().expect("cli lock");
+                let _ = g.handle_repl_command(cmd);
+            })?;
+            state.push_system("(extension bridge command output printed to stdout)");
+        }
         SlashCommand::Auth { provider } => {
             if state.busy {
                 state.push_system("Please wait for the current task to finish.");

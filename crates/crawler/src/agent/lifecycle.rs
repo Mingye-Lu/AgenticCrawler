@@ -39,6 +39,11 @@ impl CrawlerAgent {
         self.shared_bridge = None;
     }
 
+    pub fn set_shared_bridge(&mut self, bridge: SharedBridge) {
+        self.browser = None;
+        self.shared_bridge = Some(bridge);
+    }
+
     pub(super) async fn ensure_browser(&mut self) -> Result<(), ToolError> {
         if self.browser.is_some() {
             return Ok(());

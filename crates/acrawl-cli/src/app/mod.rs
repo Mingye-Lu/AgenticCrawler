@@ -115,6 +115,7 @@ pub(crate) struct LiveCli {
     child_control_registry: Option<crawler::ChildControlRegistry>,
     pending_title: Arc<Mutex<Option<String>>>,
     title_dispatched: bool,
+    ws_bridge_server: Option<crawler::WsBridgeServer>,
 }
 
 #[derive(Clone)]
@@ -199,6 +200,7 @@ impl LiveCli {
             child_control_registry: None,
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
+            ws_bridge_server: None,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -254,6 +256,7 @@ impl LiveCli {
             child_control_registry: Some(registry.clone()),
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
+            ws_bridge_server: None,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -503,6 +506,82 @@ impl LiveCli {
                 });
                 self.reset_browser();
                 println!("Browser mode\n  Result           switched to headless");
+                false
+            }
+            SlashCommand::Extension => {
+                use crawler::ws_server::generate_bridge_token;
+                use crawler::{BrowserBackend, ExtensionBridge, WsBridgeServer};
+
+                let settings = runtime::load_settings();
+                let token = settings
+                    .extension_bridge_token
+                    .unwrap_or_else(generate_bridge_token);
+
+                let _ = runtime::update_settings(|s| {
+                    s.extension_bridge_token = Some(token.clone());
+                });
+
+                let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
+
+                let server_result = block_on_runtime_future(async {
+                    WsBridgeServer::start(port, token.clone())
+                        .await
+                        .map_err(|e| RuntimeError::new(e.to_string()))
+                });
+
+                match server_result {
+                    Err(e) => {
+                        eprintln!("Failed to start extension bridge server: {e}");
+                        false
+                    }
+                    Ok(mut server) => {
+                        println!(
+                            "Extension mode\n  \
+                             Waiting for connection (port {port})...\n  \
+                             Token: {token}\n  \
+                             Paste token into the acrawl Bridge extension options page."
+                        );
+
+                        let connected = block_on_runtime_future(async {
+                            Ok::<bool, RuntimeError>(
+                                server
+                                    .wait_for_connection(std::time::Duration::from_secs(30))
+                                    .await,
+                            )
+                        })
+                        .unwrap_or(false);
+
+                        if connected {
+                            let sender = server.command_sender();
+                            let bridge = ExtensionBridge::new(sender);
+                            let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
+                                Box::new(bridge) as Box<dyn BrowserBackend + Send>,
+                            ));
+                            self.runtime
+                                .tool_executor_mut()
+                                .set_extension_bridge(shared);
+                            self.ws_bridge_server = Some(server);
+                            println!(
+                                "  Result           extension connected \
+                                 — browser commands routed to Chrome"
+                            );
+                            false
+                        } else {
+                            eprintln!(
+                                "Extension not connected after 30s. \
+                                 Ensure the extension is installed and configured."
+                            );
+                            false
+                        }
+                    }
+                }
+            }
+            SlashCommand::CloakBrowser => {
+                self.ws_bridge_server = None;
+                self.reset_browser();
+                println!(
+                    "Browser mode\n  Result           switched back to CloakBrowser (headless)"
+                );
                 false
             }
             SlashCommand::Unknown(name) => {

@@ -15,7 +15,7 @@ use runtime::config_home_dir;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -66,6 +66,7 @@ pub struct WsBridgeServer {
     command_tx: mpsc::Sender<(BridgeCommand, oneshot::Sender<BridgeResponse>)>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     bridge_file_path: PathBuf,
+    client_connected_rx: watch::Receiver<bool>,
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -97,11 +98,13 @@ impl WsBridgeServer {
         let (command_tx, command_rx) =
             mpsc::channel::<(BridgeCommand, oneshot::Sender<BridgeResponse>)>(32);
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let (client_connected_tx, client_connected_rx) = watch::channel(false);
 
         let state = Arc::new(ServerState {
             token,
             port: actual_port,
             has_active_client: AtomicBool::new(false),
+            client_connected_tx,
         });
 
         let task = tokio::spawn(run_server(listener, state, command_rx, shutdown_rx));
@@ -111,6 +114,7 @@ impl WsBridgeServer {
             command_tx,
             shutdown_tx: Some(shutdown_tx),
             bridge_file_path,
+            client_connected_rx,
             _task: task,
         })
     }
@@ -137,6 +141,27 @@ impl WsBridgeServer {
         }
         let _ = std::fs::remove_file(&self.bridge_file_path);
     }
+
+    /// Wait until a client connects or the timeout elapses.
+    /// Returns `true` if a client connected, `false` on timeout.
+    pub async fn wait_for_connection(&mut self, timeout: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if *self.client_connected_rx.borrow() {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            if tokio::time::timeout(remaining, self.client_connected_rx.changed())
+                .await
+                .is_err()
+            {
+                return *self.client_connected_rx.borrow();
+            }
+        }
+    }
 }
 
 impl Drop for WsBridgeServer {
@@ -156,6 +181,7 @@ struct ServerState {
     token: String,
     port: u16,
     has_active_client: AtomicBool,
+    client_connected_tx: watch::Sender<bool>,
 }
 
 async fn run_server(
@@ -214,6 +240,7 @@ async fn handle_incoming(stream: TcpStream, state: Arc<ServerState>, command_rx:
     .await;
 
     if let Ok(ws) = ws_result {
+        let _ = state.client_connected_tx.send(true);
         run_ws_session(ws, command_rx).await;
     }
 

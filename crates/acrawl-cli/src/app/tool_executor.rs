@@ -39,6 +39,10 @@ impl CliToolExecutor {
     pub(crate) fn reset_browser(&mut self) {
         self.agent.reset_browser();
     }
+
+    pub(crate) fn set_extension_bridge(&mut self, bridge: crawler::SharedBridge) {
+        self.agent.set_shared_bridge(bridge);
+    }
 }
 
 impl ToolExecutor for CliToolExecutor {
