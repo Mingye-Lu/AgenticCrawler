@@ -2,6 +2,7 @@ use serde_json::json;
 
 mod agent;
 mod browser;
+mod browser_backend;
 pub mod child_events;
 mod fetcher;
 mod manager;
@@ -17,6 +18,7 @@ mod tools;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
+pub use browser_backend::BrowserBackend;
 pub use child_events::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};

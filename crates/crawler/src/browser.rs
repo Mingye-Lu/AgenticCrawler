@@ -1,6 +1,6 @@
 use tokio::sync::MutexGuard;
 
-use crate::{PlaywrightBridge, PlaywrightBridgeError, SharedBridge};
+use crate::{BrowserBackend, PlaywrightBridgeError, SharedBridge};
 
 #[derive(Debug, Clone)]
 pub struct BrowserContext {
@@ -33,7 +33,7 @@ impl BrowserContext {
 
     pub async fn acquire_bridge(
         &mut self,
-    ) -> Result<MutexGuard<'_, PlaywrightBridge>, PlaywrightBridgeError> {
+    ) -> Result<MutexGuard<'_, Box<dyn BrowserBackend + Send>>, PlaywrightBridgeError> {
         let needs_navigate = match (&self.current_url, &self.browser_has_url) {
             (Some(current), Some(loaded)) => current != loaded,
             (Some(_), None) => true,

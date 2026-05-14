@@ -515,6 +515,7 @@ dependencies = [
 name = "crawler"
 version = "0.4.3"
 dependencies = [
+ "async-trait",
  "csv",
  "htmd",
  "reqwest 0.12.28",
