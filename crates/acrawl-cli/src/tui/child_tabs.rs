@@ -1,8 +1,8 @@
 use ratatui::widgets::ListState;
 
-use crate::markdown::PredictiveMarkdownBuffer;
 use super::repl_app::{ToolCallStatus, TranscriptEntry};
 use super::repl_render::ansi_to_lines;
+use crate::markdown::PredictiveMarkdownBuffer;
 
 const MAX_ENTRIES: usize = 1000;
 
@@ -192,9 +192,7 @@ impl ChildTabPanel {
                     ChildTabStatus::Done
                 } else {
                     ChildTabStatus::Error(
-                        error
-                            .clone()
-                            .unwrap_or_else(|| "unknown error".to_string()),
+                        error.clone().unwrap_or_else(|| "unknown error".to_string()),
                     )
                 };
                 tab.tool_in_progress = None;
@@ -294,7 +292,9 @@ mod tests {
         );
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Done);
         assert_eq!(panel.tabs[0].items_extracted, 10);
-        assert!(matches!(panel.tabs[0].entries.last(), Some(TranscriptEntry::System(message)) if message.contains("Done")));
+        assert!(
+            matches!(panel.tabs[0].entries.last(), Some(TranscriptEntry::System(message)) if message.contains("Done"))
+        );
     }
 
     #[test]
