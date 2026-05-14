@@ -1,5 +1,11 @@
 'use strict';
 
+try {
+  importScripts('commands/cdp.js', 'commands/navigate.js', 'commands/click.js', 'commands/fill.js');
+} catch (e) {
+  console.error('Failed to import command scripts:', e);
+}
+
 // Connection state
 let ws = null;
 let wsConnected = false;
@@ -10,6 +16,7 @@ let keepaliveInterval = null;
 // Tab management: maps pageIndex -> Chrome tabId
 const managedTabs = {};
 let nextPageIndex = 0;
+let activePageIndex = 0;
 
 // Pending commands: requestId -> {resolve, reject, timeoutId}
 const pendingRequests = {};
@@ -129,15 +136,60 @@ function handleMessage(data) {
 }
 
 async function handleCommand(cmd) {
-  // Placeholder — will be implemented in T5-T9
-  const response = {
-    id: cmd.id,
-    ok: false,
-    error: 'not implemented'
-  };
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(response));
+  const tabId = getActiveTabId();
+  if (!tabId) {
+    sendResponse(cmd.id, false, null, 'No active tab. Use new_page to open a tab first.');
+    return;
   }
+
+  try {
+    let result;
+    switch (cmd.action) {
+      case 'navigate':
+        result = await handleNavigate(tabId, cmd.payload || {});
+        break;
+      case 'go_back':
+        result = await handleGoBack(tabId, cmd.payload || {});
+        break;
+      case 'click':
+        result = await handleClick(tabId, cmd.payload || {});
+        break;
+      case 'fill':
+        result = await handleFill(tabId, cmd.payload || {});
+        break;
+      default:
+        sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
+        return;
+    }
+    sendResponse(cmd.id, true, result, null);
+  } catch (e) {
+    sendResponse(cmd.id, false, null, e && e.message ? e.message : String(e));
+  }
+}
+
+function sendResponse(id, ok, result, error) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    const msg = { id, ok };
+    if (result !== null) {
+      msg.result = result;
+    }
+    if (error !== null) {
+      msg.error = error;
+    }
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+function getActiveTabId() {
+  if (Number.isInteger(activePageIndex) && managedTabs[activePageIndex]) {
+    return managedTabs[activePageIndex];
+  }
+
+  const indices = Object.keys(managedTabs)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  return indices.length > 0 ? managedTabs[indices[indices.length - 1]] : null;
 }
 
 // ----------- Alarms watchdog -----------
