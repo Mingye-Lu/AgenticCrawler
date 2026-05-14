@@ -44,7 +44,7 @@ impl CrawlerAgent {
         self.shared_bridge = Some(bridge);
     }
 
-    pub(super) async fn ensure_browser(&mut self) -> Result<(), ToolError> {
+    pub async fn ensure_browser(&mut self) -> Result<(), ToolError> {
         if self.browser.is_some() {
             return Ok(());
         }
@@ -96,6 +96,10 @@ impl CrawlerAgent {
         Ok(())
     }
 
+    pub async fn export_browser_state_any(&self) -> Option<BrowserState> {
+        self.export_browser_state().await
+    }
+
     async fn export_browser_state(&self) -> Option<BrowserState> {
         let state_result = if let Some(browser) = self.browser.as_ref() {
             let mut browser = browser.clone();
@@ -116,7 +120,12 @@ impl CrawlerAgent {
         }
     }
 
-    async fn restore_browser_state(&mut self, state: &BrowserState) {
+    pub async fn restore_browser_state(&mut self, state: &BrowserState) {
+        if let Err(error) = self.ensure_browser().await {
+            eprintln!("Warning: failed to initialize browser for state restore: {error}");
+            return;
+        }
+
         let Some(browser) = self.browser.as_mut() else {
             return;
         };
