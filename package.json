@@ -1,10 +1,8 @@
 {
   "private": true,
   "description": "Runtime Node.js dependencies for acrawl's Playwright browser bridge",
-  "scripts": {
-    "postinstall": "npx playwright install chromium"
-  },
   "dependencies": {
-    "playwright": "^1.52.0"
+    "cloakbrowser": "^0.3.26",
+    "playwright-core": "^1.52.0"
   }
 }

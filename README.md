@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 19 tools. 24 LLM providers. Playwright for the hard parts.
+  Single binary. No Python runtime. 19 tools. 24 LLM providers. CloakBrowser for the hard parts.
 </p>
 
 ---
@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/insta
 irm https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.ps1 | iex
 ```
 
-This downloads the latest binary, verifies its SHA256 checksum, and sets up Playwright for browser automation. Requires Node.js 16+ for browser features.
+This downloads the latest binary, verifies its SHA256 checksum, and sets up CloakBrowser for stealth browser automation. Requires Node.js 20+ for browser features.
 
 acrawl checks for updates on startup and shows a notification when a new version is available.
 
@@ -78,9 +78,8 @@ git clone https://github.com/Mingye-Lu/AgenticCrawler.git
 cd AgenticCrawler
 cargo build --release
 
-# Install Playwright's Chromium (required for browser automation)
+# Install CloakBrowser (required for browser automation — binary auto-downloads on first use)
 npm install
-npx playwright install chromium
 ```
 
 </details>
@@ -409,7 +408,7 @@ flowchart LR
 1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/crawler/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
 2. Each turn, it picks from its 19 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
-4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — not a Rust Playwright binding.
+4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright.
 5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` or `done` merges results.
 6. When context grows large, auto-compaction summarizes older messages while preserving recent turns, tool usage, pending work, and file references.
 7. The agent calls `done` when the goal is met, or stops when the step limit is reached.

@@ -13,7 +13,6 @@ cargo test -p <crate> <test_name>                            # run a single test
 cargo clippy --workspace --all-targets -- -D warnings        # lints must be clean (workspace lints set pedantic = warn)
 cargo fmt --check                                            # format check
 
-npx playwright install chromium                              # required for the Playwright bridge
 ./target/release/acrawl                                      # launch REPL
 ./target/release/acrawl prompt "scrape all titles from example.com"   # one-shot
 ./target/release/acrawl --resume session.json /status /compact        # non-interactive session maintenance
@@ -39,7 +38,7 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 4. `runtime::PermissionPolicy` gates every tool call against the current `PermissionMode`. Each of the 19 `ToolSpec`s declares `required_permission` — extraction/listing are `ReadOnly`, `save_file` is `WorkspaceWrite`, the rest require `DangerFullAccess`.
 5. `runtime::UsageTracker` + `pricing_for_model` feed `/cost` and `/status`. `runtime::compact` watches `ACRAWL_AUTO_COMPACT_INPUT_TOKENS` (default 200k) and auto-compacts the session when the threshold trips.
 
-The Playwright bridge is notable: it is a **single embedded Node script** launched as a subprocess, not a Rust Playwright binding. This is why `npx playwright install chromium` is a runtime requirement, not a build-time one.
+The CloakBrowser bridge is notable: it is a **single embedded Node script** launched as a subprocess, using CloakBrowser (not stock Playwright) for stealth browsing. The browser binary auto-downloads on first use — no separate install step needed.
 
 ## Provider routing
 
