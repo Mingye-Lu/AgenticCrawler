@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-05-14
+
+### Added
+
+- **Child agent progress view** — full-screen view (`Ctrl+X`) renders child agent activity with the same styled transcript as the parent: tool calls show animated spinner/tick/cross, LLM text renders with markdown styling via `PredictiveMarkdownBuffer`, and line wrapping respects terminal width.
+- **Child event pipeline** — `ChildEventKind` variants (TextDelta, ToolCallStart/Complete, StepStarted, PauseRequested, Resumed, Finished) convert to `TranscriptEntry` and render through the shared `build_wrapped_list` pipeline.
+- **Child `wait_for_human` escalation** — when a child agent calls `wait_for_human`, the TUI auto-navigates to that child's view. Parent view shows a prominent yellow hint with the pause reason. Enter resumes the child via `ChildControlRegistry`.
+- **Text selection in child view** — drag-to-select and right-click copy (OSC52) now works in child view, matching parent behavior.
+- **Per-child scroll state** — each child tab has independent `ListState`-based scrolling with keyboard (j/k/G/g/PgUp/PgDn) and mouse wheel support.
+
+### Changed
+
+- Child tab data model migrated from `VecDeque<String>` to `Vec<TranscriptEntry>` + `ListState` + `PredictiveMarkdownBuffer` for rendering parity with parent.
+- Bounded child transcript storage enforced at 1000 entries per child.
+- On child `Finished`, any still-running tool entries are marked as interrupted.
+
+### Known Issues
+
+- Child panel view has unresolved rendering issues — `wait_for_human` auto-navigation and the parent hint indicator may not trigger reliably at runtime despite passing unit tests. Full interactive QA pending.
+
 ## [0.3.3] - 2026-05-13
 
 ### Added
@@ -141,6 +161,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.3.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.4
+[0.3.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.3
+[0.3.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.2
+[0.3.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.1
+[0.3.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.2.2
 [0.2.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.2.0
