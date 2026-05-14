@@ -73,7 +73,7 @@ Default model comes from the `default_model` field in the active provider's `Sto
 ## Releasing a new version
 
 1. Bump `version` in the root `Cargo.toml` (workspace-level — all crates inherit via `version.workspace = true`).
-2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` following the Keep a Changelog format. The release workflow extracts this section verbatim as the GitHub Release body.
+2. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` following the Keep a Changelog format. The release workflow extracts this section verbatim as the GitHub Release body. **Also add the corresponding reference link at the bottom of the file:** `[X.Y.Z]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/vX.Y.Z`
 3. Run `cargo check` to regenerate `Cargo.lock` (CI builds with `--locked`).
 4. Commit both files: `git commit -am "chore: bump version to X.Y.Z"`
 5. Tag at the version-bump commit: `git tag vX.Y.Z`
