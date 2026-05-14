@@ -1,7 +1,17 @@
 'use strict';
 
 try {
-  importScripts('commands/cdp.js', 'commands/navigate.js', 'commands/click.js', 'commands/fill.js');
+  importScripts(
+    'commands/cdp.js',
+    'commands/navigate.js',
+    'commands/click.js',
+    'commands/fill.js',
+    'commands/screenshot.js',
+    'commands/execute_js.js',
+    'commands/page_map.js',
+    'commands/read_content.js',
+    'commands/list_resources.js'
+  );
 } catch (e) {
   console.error('Failed to import command scripts:', e);
 }
@@ -172,6 +182,21 @@ async function handleCommand(cmd) {
             break;
           case 'fill':
             result = await handleFill(tabId, cmd.payload || {});
+            break;
+          case 'screenshot':
+            result = await handleScreenshot(tabId);
+            break;
+          case 'execute_js':
+            result = await handleExecuteJs(tabId, cmd.payload || {});
+            break;
+          case 'page_map':
+            result = await handlePageMap(tabId);
+            break;
+          case 'read_content':
+            result = await handleReadContent(tabId, cmd.payload || {});
+            break;
+          case 'list_resources':
+            result = await handleListResources(tabId);
             break;
           default:
             sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
