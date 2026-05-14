@@ -19,6 +19,7 @@ dependencies = [
  "textwrap",
  "tokio",
  "unicode-width",
+ "zeroize",
 ]
 
 [[package]]
