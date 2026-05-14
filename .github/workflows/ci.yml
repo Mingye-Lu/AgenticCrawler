@@ -42,7 +42,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - run: node -e "require('cloakbrowser')"
       - run: cargo test --workspace
 
   build:

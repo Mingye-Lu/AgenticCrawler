@@ -6,7 +6,7 @@
 .DESCRIPTION
     Downloads the latest acrawl binary from GitHub Releases, verifies the
     SHA256 checksum, installs to $HOME\.acrawl\bin\, adds to user PATH,
-    and optionally sets up Playwright for browser automation.
+    and optionally sets up CloakBrowser for browser automation.
 
 .EXAMPLE
     irm https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.ps1 | iex
@@ -147,20 +147,19 @@ try {
     Write-Warning "Install from https://nodejs.org/ to enable headless browser features."
 }
 
-# --- 10. Playwright install ---
+# --- 10. CloakBrowser install ---
 if ($nodeAvailable) {
-    $playwrightDir = Join-Path $ConfigHome "node_modules\playwright"
-    if (Test-Path $playwrightDir) {
-        Write-Host "  Playwright already installed." -ForegroundColor Gray
+    $cloakbrowserDir = Join-Path $ConfigHome "node_modules\cloakbrowser"
+    if (Test-Path $cloakbrowserDir) {
+        Write-Host "  CloakBrowser already installed." -ForegroundColor Gray
     } else {
-        Write-Host "Installing Playwright..." -ForegroundColor Gray
+        Write-Host "Installing CloakBrowser..." -ForegroundColor Gray
         try {
-            & npm install --prefix $ConfigHome playwright 2>&1 | Out-Null
-            & npx --prefix $ConfigHome playwright install chromium 2>&1 | Out-Null
-            Write-Host "  Playwright + Chromium installed." -ForegroundColor Green
+            & npm install --prefix $ConfigHome cloakbrowser 2>&1 | Out-Null
+            Write-Host "  CloakBrowser installed." -ForegroundColor Green
         } catch {
-            Write-Warning "Playwright installation failed: $_"
-            Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" playwright && npx --prefix `"$ConfigHome`" playwright install chromium"
+            Write-Warning "CloakBrowser installation failed: $_"
+            Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" cloakbrowser"
         }
     }
 }

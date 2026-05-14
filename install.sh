@@ -136,18 +136,17 @@ elif [ -n "$node_major" ] && [ "$node_major" -lt 16 ]; then
     echo "WARNING: Node.js 16+ required for browser automation, you have ${node_version}"
 fi
 
-# --- 10. Playwright install ---
+# --- 10. CloakBrowser install ---
 if [ -n "$node_major" ] && [ "$node_major" -ge 16 ]; then
-    if [ -d "${CONFIG_HOME}/node_modules/playwright" ]; then
-        echo "Playwright already installed at ${CONFIG_HOME}/node_modules/playwright (skipping)"
+    if [ -d "${CONFIG_HOME}/node_modules/cloakbrowser" ]; then
+        echo "CloakBrowser already installed at ${CONFIG_HOME}/node_modules/cloakbrowser (skipping)"
     else
-        echo "Installing Playwright..."
+        echo "Installing CloakBrowser..."
         mkdir -p "$CONFIG_HOME"
-        if npm install --prefix "$CONFIG_HOME" playwright; then
-            echo "Installing Chromium browser..."
-            npx --prefix "$CONFIG_HOME" playwright install chromium || echo "WARNING: Chromium install failed. Run manually: npx --prefix \"$CONFIG_HOME\" playwright install chromium"
+        if npm install --prefix "$CONFIG_HOME" cloakbrowser; then
+            echo "CloakBrowser installed."
         else
-            echo "WARNING: Playwright install failed. Run manually: npm install --prefix \"$CONFIG_HOME\" playwright"
+            echo "WARNING: CloakBrowser install failed. Run manually: npm install --prefix \"$CONFIG_HOME\" cloakbrowser"
         fi
     fi
 fi
