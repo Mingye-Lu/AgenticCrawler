@@ -58,6 +58,7 @@ Default model comes from the `default_model` field in the active provider's `Sto
 
 ## Conventions specific to this repo
 
+- **Always run `cargo fmt` before committing.** CI checks formatting with `cargo fmt --check` — commits that fail this check will be rejected.
 - `unsafe_code = "forbid"` at the workspace level — do not introduce `unsafe`.
 - Clippy `pedantic` is on as a warning; `module_name_repetitions`, `missing_panics_doc`, `missing_errors_doc` are explicitly allowed. New lint warnings should be fixed rather than suppressed locally unless there's a reason.
 - Tests that mutate process env (provider, model, workspace dir) must serialize with a `OnceLock<Mutex<()>>` guard, following the pattern in `acrawl-cli/src/main.rs` and `crates/runtime/src/lib.rs::test_env_lock`.

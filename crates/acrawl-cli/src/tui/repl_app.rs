@@ -1032,8 +1032,10 @@ impl ReplTuiState {
                     &child_ev.sub_goal,
                     &child_ev.event,
                 );
-                if matches!(child_ev.event, crawler::ChildEventKind::PauseRequested { .. })
-                    && matches!(self.view_mode, ViewMode::Parent)
+                if matches!(
+                    child_ev.event,
+                    crawler::ChildEventKind::PauseRequested { .. }
+                ) && matches!(self.view_mode, ViewMode::Parent)
                 {
                     self.view_mode = ViewMode::Child(child_ev.child_id.clone());
                 }
@@ -1880,8 +1882,10 @@ fn run_loop(
                             let tr = state.last_transcript_rect;
                             if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
                                 let cur = tab.list_state.offset();
-                                let col =
-                                    me.column.saturating_sub(tr.x).min(tr.width.saturating_sub(1));
+                                let col = me
+                                    .column
+                                    .saturating_sub(tr.x)
+                                    .min(tr.width.saturating_sub(1));
                                 let row = cur
                                     + usize::from(
                                         me.row
@@ -1897,8 +1901,10 @@ fn run_loop(
                                 let tr = state.last_transcript_rect;
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
                                     let cur = tab.list_state.offset();
-                                    let col =
-                                        me.column.saturating_sub(tr.x).min(tr.width.saturating_sub(1));
+                                    let col = me
+                                        .column
+                                        .saturating_sub(tr.x)
+                                        .min(tr.width.saturating_sub(1));
                                     let row = cur
                                         + usize::from(
                                             me.row
