@@ -10,7 +10,12 @@ try {
     'commands/execute_js.js',
     'commands/page_map.js',
     'commands/read_content.js',
-    'commands/list_resources.js'
+    'commands/list_resources.js',
+    'commands/hover.js',
+    'commands/press_key.js',
+    'commands/scroll.js',
+    'commands/wait.js',
+    'commands/select_option.js'
   );
 } catch (e) {
   console.error('Failed to import command scripts:', e);
@@ -197,6 +202,21 @@ async function handleCommand(cmd) {
             break;
           case 'list_resources':
             result = await handleListResources(tabId);
+            break;
+          case 'hover':
+            result = await handleHover(tabId, cmd.payload || {});
+            break;
+          case 'press_key':
+            result = await handlePressKey(tabId, cmd.payload || {});
+            break;
+          case 'scroll':
+            result = await handleScroll(tabId, cmd.payload || {});
+            break;
+          case 'wait_for_selector':
+            result = await handleWait(tabId, cmd.payload || {});
+            break;
+          case 'select_option':
+            result = await handleSelectOption(tabId, cmd.payload || {});
             break;
           default:
             sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
