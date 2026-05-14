@@ -4,8 +4,8 @@ use std::io;
 use ansi_to_tui::IntoText;
 use crossterm::{event, execute};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
-use ratatui::symbols::scrollbar;
 use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::symbols::scrollbar;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
@@ -964,7 +964,9 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
         let block = ratatui::widgets::Block::default()
             .borders(ratatui::widgets::Borders::ALL)
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .border_style(ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(50, 65, 90)));
+            .border_style(
+                ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(50, 65, 90)),
+            );
         let inner = block.inner(main_area);
         frame.render_widget(block, main_area);
         frame.render_widget(ratatui::widgets::Paragraph::new("Child not found"), inner);
@@ -1020,7 +1022,9 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
     );
 
     let border_color = match &tab.status {
-        super::child_tabs::ChildTabStatus::Paused { .. } => ratatui::style::Color::Rgb(180, 140, 30),
+        super::child_tabs::ChildTabStatus::Paused { .. } => {
+            ratatui::style::Color::Rgb(180, 140, 30)
+        }
         super::child_tabs::ChildTabStatus::Running => ratatui::style::Color::Rgb(40, 80, 110),
         super::child_tabs::ChildTabStatus::Done => ratatui::style::Color::Rgb(40, 100, 60),
         super::child_tabs::ChildTabStatus::Error(_) => ratatui::style::Color::Rgb(140, 40, 40),
@@ -1032,18 +1036,15 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
     let main_inner = main_block.inner(main_area);
     frame.render_widget(main_block, main_area);
 
-    let (wrapped, _wrapped_text) = build_wrapped_list(
-        &tab.entries,
-        main_inner.width,
-        None,
-        spinner,
-        debug_mode,
-    );
+    let (wrapped, _wrapped_text) =
+        build_wrapped_list(&tab.entries, main_inner.width, None, spinner, debug_mode);
 
     tab.last_wrapped_len = wrapped.len();
     tab.last_view_height = usize::from(main_inner.height.max(1));
 
-    let max_offset = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
+    let max_offset = tab
+        .last_wrapped_len
+        .saturating_sub(tab.last_view_height.max(1));
     if tab.list_state.offset() > max_offset {
         *tab.list_state.offset_mut() = max_offset;
     }
@@ -1073,16 +1074,46 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
     }
 
     let footer_spans = vec![
-        ratatui::text::Span::styled(" ←", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
-        ratatui::text::Span::styled("Prev", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
-        ratatui::text::Span::styled("  →", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
-        ratatui::text::Span::styled("Next", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
-        ratatui::text::Span::styled("  Esc/↑", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
-        ratatui::text::Span::styled("Parent", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
-        ratatui::text::Span::styled("  j/k", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
-        ratatui::text::Span::styled("Scroll", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
-        ratatui::text::Span::styled("  Enter", ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray)),
-        ratatui::text::Span::styled("Resume", ratatui::style::Style::default().fg(ratatui::style::Color::Gray)),
+        ratatui::text::Span::styled(
+            " ←",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Prev",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  →",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Next",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  Esc/↑",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Parent",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  j/k",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Scroll",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
+        ratatui::text::Span::styled(
+            "  Enter",
+            ratatui::style::Style::default().fg(ratatui::style::Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            "Resume",
+            ratatui::style::Style::default().fg(ratatui::style::Color::Gray),
+        ),
     ];
     frame.render_widget(
         ratatui::widgets::Paragraph::new(ratatui::text::Line::from(footer_spans))
@@ -1163,11 +1194,12 @@ pub(super) fn draw_chat(
 
     if has_children {
         // Check for paused children first (higher priority indicator)
-        let paused_child = state
-            .child_tab_panel
-            .tabs
-            .iter()
-            .find(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Paused { .. }));
+        let paused_child = state.child_tab_panel.tabs.iter().find(|t| {
+            matches!(
+                t.status,
+                crate::tui::child_tabs::ChildTabStatus::Paused { .. }
+            )
+        });
 
         let hint_line = if let Some(tab) = paused_child {
             let reason = match &tab.status {
@@ -1181,10 +1213,7 @@ pub(super) fn draw_chat(
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    "— Ctrl+X to view",
-                    Style::default().fg(Color::Yellow),
-                ),
+                Span::styled("— Ctrl+X to view", Style::default().fg(Color::Yellow)),
             ])
         } else {
             let running_count = state

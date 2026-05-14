@@ -1032,8 +1032,10 @@ impl ReplTuiState {
                     &child_ev.sub_goal,
                     &child_ev.event,
                 );
-                if matches!(child_ev.event, crawler::ChildEventKind::PauseRequested { .. })
-                    && matches!(self.view_mode, ViewMode::Parent)
+                if matches!(
+                    child_ev.event,
+                    crawler::ChildEventKind::PauseRequested { .. }
+                ) && matches!(self.view_mode, ViewMode::Parent)
                 {
                     self.view_mode = ViewMode::Child(child_ev.child_id.clone());
                 }
@@ -1050,7 +1052,11 @@ impl ReplTuiState {
         }
 
         if let ViewMode::Child(child_id) = &self.view_mode {
-            let child_exists = self.child_tab_panel.tabs.iter().any(|tab| tab.child_id == *child_id);
+            let child_exists = self
+                .child_tab_panel
+                .tabs
+                .iter()
+                .any(|tab| tab.child_id == *child_id);
             if !child_exists {
                 self.view_mode = ViewMode::Parent;
             }
@@ -1763,7 +1769,9 @@ fn run_loop(
                     AppUiState::WelcomeMode => {
                         draw_welcome(frame, frame.area(), &mut state, show_input_cursor);
                     }
-                    AppUiState::ChatMode => draw_chat(frame, &mut state, &header, show_input_cursor),
+                    AppUiState::ChatMode => {
+                        draw_chat(frame, &mut state, &header, show_input_cursor)
+                    }
                 }
             } else {
                 crate::tui::repl_render::draw_child_view(frame, &mut state);
@@ -1843,13 +1851,17 @@ fn run_loop(
                         MouseEventKind::ScrollUp => {
                             if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
                                 tab.follow_bottom = false;
-                                *tab.list_state.offset_mut() = tab.list_state.offset().saturating_sub(3);
+                                *tab.list_state.offset_mut() =
+                                    tab.list_state.offset().saturating_sub(3);
                             }
                         }
                         MouseEventKind::ScrollDown => {
                             if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
-                                let max = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
-                                *tab.list_state.offset_mut() = (tab.list_state.offset().saturating_add(3)).min(max);
+                                let max = tab
+                                    .last_wrapped_len
+                                    .saturating_sub(tab.last_view_height.max(1));
+                                *tab.list_state.offset_mut() =
+                                    (tab.list_state.offset().saturating_add(3)).min(max);
                                 tab.follow_bottom = tab.list_state.offset() >= max;
                             }
                         }
@@ -1967,8 +1979,11 @@ fn run_loop(
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
-                                    let max = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
-                                    *tab.list_state.offset_mut() = (tab.list_state.offset().saturating_add(1)).min(max);
+                                    let max = tab
+                                        .last_wrapped_len
+                                        .saturating_sub(tab.last_view_height.max(1));
+                                    *tab.list_state.offset_mut() =
+                                        (tab.list_state.offset().saturating_add(1)).min(max);
                                     tab.follow_bottom = false;
                                 }
                                 continue;
@@ -1976,14 +1991,18 @@ fn run_loop(
                             KeyCode::Char('k') => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
                                     tab.follow_bottom = false;
-                                    *tab.list_state.offset_mut() = tab.list_state.offset().saturating_sub(1);
+                                    *tab.list_state.offset_mut() =
+                                        tab.list_state.offset().saturating_sub(1);
                                 }
                                 continue;
                             }
                             KeyCode::PageDown => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
-                                    let max = tab.last_wrapped_len.saturating_sub(tab.last_view_height.max(1));
-                                    *tab.list_state.offset_mut() = (tab.list_state.offset().saturating_add(10)).min(max);
+                                    let max = tab
+                                        .last_wrapped_len
+                                        .saturating_sub(tab.last_view_height.max(1));
+                                    *tab.list_state.offset_mut() =
+                                        (tab.list_state.offset().saturating_add(10)).min(max);
                                     tab.follow_bottom = false;
                                 }
                                 continue;
@@ -1991,7 +2010,8 @@ fn run_loop(
                             KeyCode::PageUp => {
                                 if let Some(tab) = state.child_tab_panel.find_tab_mut(&child_id) {
                                     tab.follow_bottom = false;
-                                    *tab.list_state.offset_mut() = tab.list_state.offset().saturating_sub(10);
+                                    *tab.list_state.offset_mut() =
+                                        tab.list_state.offset().saturating_sub(10);
                                 }
                                 continue;
                             }
@@ -2013,7 +2033,10 @@ fn run_loop(
                                     .child_tab_panel
                                     .find_tab_mut(&child_id)
                                     .is_some_and(|tab| {
-                                        matches!(tab.status, child_tabs::ChildTabStatus::Paused { .. })
+                                        matches!(
+                                            tab.status,
+                                            child_tabs::ChildTabStatus::Paused { .. }
+                                        )
                                     });
                                 if should_resume {
                                     if let Some(registry) = &state.child_control_registry {
