@@ -211,9 +211,9 @@ impl BrowserBackend for ExtensionBridge {
 
     async fn evaluate(&mut self, script: &str) -> Result<Value, PlaywrightBridgeError> {
         let response = self
-            .send_command("evaluate", json!({ "script": script }))
+            .send_command("execute_js", json!({ "script": script }))
             .await?;
-        Self::require_result(response, "evaluate")
+        Self::require_result(response, "execute_js")
     }
 
     async fn hover(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
