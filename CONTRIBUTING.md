@@ -17,9 +17,8 @@ git clone https://github.com/Mingye-Lu/AgenticCrawler.git
 cd AgenticCrawler
 cargo build --release
 
-# Browser automation requires Playwright's Chromium
+# Browser automation requires CloakBrowser (auto-downloads on first use)
 npm install
-npx playwright install chromium
 ```
 
 ## Code Style
@@ -53,7 +52,7 @@ crates/
   acrawl-cli/   CLI binary, TUI REPL, session management
   api/          LLM provider clients (Anthropic, OpenAI, Codex)
   commands/     Slash command registry
-  crawler/      Browser tools, agent loop, Playwright bridge
+  crawler/      Browser tools, agent loop, CloakBrowser bridge
   runtime/      ConversationRuntime, config, permissions, sessions
 ```
 
