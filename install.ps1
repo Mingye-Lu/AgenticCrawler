@@ -131,19 +131,19 @@ try {
     if ($nodeVersionRaw) {
         $nodeVersion = $nodeVersionRaw.TrimStart('v')
         $nodeMajor = [int]($nodeVersion -split '\.')[0]
-        if ($nodeMajor -lt 16) {
-            Write-Warning "Node.js 16+ is required for browser automation. You have v$nodeVersion."
+        if ($nodeMajor -lt 20) {
+            Write-Warning "Node.js 20+ is required for browser automation. You have v$nodeVersion."
             Write-Warning "Install from https://nodejs.org/ to enable headless browser features."
         } else {
             $nodeAvailable = $true
             Write-Host "  Node.js v$nodeVersion detected." -ForegroundColor Green
         }
     } else {
-        Write-Warning "Node.js not found. Browser automation requires Node.js 16+."
+        Write-Warning "Node.js not found. Browser automation requires Node.js 20+."
         Write-Warning "Install from https://nodejs.org/ to enable headless browser features."
     }
 } catch {
-    Write-Warning "Node.js not found. Browser automation requires Node.js 16+."
+    Write-Warning "Node.js not found. Browser automation requires Node.js 20+."
     Write-Warning "Install from https://nodejs.org/ to enable headless browser features."
 }
 

@@ -66,7 +66,7 @@ curl -fsSL https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/insta
 irm https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.ps1 | iex
 ```
 
-This downloads the latest binary, verifies its SHA256 checksum, and sets up CloakBrowser for stealth browser automation. Requires Node.js 16+ for browser features.
+This downloads the latest binary, verifies its SHA256 checksum, and sets up CloakBrowser for stealth browser automation. Requires Node.js 20+ for browser features.
 
 acrawl checks for updates on startup and shows a notification when a new version is available.
 
