@@ -408,13 +408,26 @@ where
             return None;
         }
 
-        let result = compact_session(
-            &self.session,
-            CompactionConfig {
-                max_estimated_tokens: 0,
-                ..CompactionConfig::default()
-            },
-        );
+        let settings = crate::settings::load_settings();
+        let config = CompactionConfig {
+            max_estimated_tokens: 0,
+            preserve_recent_tokens: crate::settings::settings_get_compaction_preserve_recent_tokens(
+                &settings,
+            ),
+            preserve_recent_messages_floor:
+                crate::settings::settings_get_compaction_preserve_recent_messages_floor(&settings),
+            preserve_recent_messages: CompactionConfig::default().preserve_recent_messages,
+            prune_protect_tokens: crate::settings::settings_get_compaction_prune_protect_tokens(
+                &settings,
+            ),
+            prune_max_output_chars: crate::settings::settings_get_compaction_prune_max_output_chars(
+                &settings,
+            ),
+            max_summary_chars: crate::settings::settings_get_compaction_max_summary_chars(&settings),
+            llm_summarization: crate::settings::settings_get_compaction_llm_summarization(&settings),
+        };
+
+        let result = compact_session(&self.session, config);
 
         if result.removed_message_count == 0 {
             return None;
@@ -760,6 +773,7 @@ mod tests {
         let result = runtime.compact(CompactionConfig {
             preserve_recent_messages: 2,
             max_estimated_tokens: 1,
+            ..CompactionConfig::default()
         });
         assert!(result.summary.contains("Conversation summary"));
         assert_eq!(
