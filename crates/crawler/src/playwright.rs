@@ -678,11 +678,14 @@ impl fmt::Display for PlaywrightBridgeError {
                 timeout.as_secs()
             ),
             Self::ExtensionDisconnected => {
-                write!(f, "extension bridge disconnected — run /extension to reconnect")
+                write!(
+                    f,
+                    "Extension disconnected — run /extension to reconnect or /cloakbrowser to switch backends."
+                )
             }
             Self::ExtensionTimeout { timeout } => write!(
                 f,
-                "extension bridge did not respond within {} seconds",
+                "Extension did not respond within {} seconds. The browser may be busy.",
                 timeout.as_secs()
             ),
         }
