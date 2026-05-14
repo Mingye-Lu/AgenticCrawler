@@ -972,16 +972,16 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
     };
 
     let status_text = match &tab.status {
-        super::child_tabs::ChildTabStatus::Paused { reason } => format!("⏸ PAUSED: {reason}"),
+        super::child_tabs::ChildTabStatus::Paused { reason } => format!("PAUSED: {reason}"),
         super::child_tabs::ChildTabStatus::Running => {
             if let Some(ref tool) = tab.tool_in_progress {
-                format!("● running {tool} — step {}/{}", tab.step, tab.max_steps)
+                format!("running {tool} -- step {}/{}", tab.step, tab.max_steps)
             } else {
-                format!("● step {}/{}", tab.step, tab.max_steps)
+                format!("step {}/{}", tab.step, tab.max_steps)
             }
         }
         super::child_tabs::ChildTabStatus::Done => {
-            format!("✓ Done — {} items extracted", tab.items_extracted)
+            format!("✓ Done -- {} items extracted", tab.items_extracted)
         }
         super::child_tabs::ChildTabStatus::Error(e) => format!("✗ Error: {e}"),
     };
@@ -1162,17 +1162,42 @@ pub(super) fn draw_chat(
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
 
     if has_children {
-        let running_count = state
+        // Check for paused children first (higher priority indicator)
+        let paused_child = state
             .child_tab_panel
             .tabs
             .iter()
-            .filter(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Running))
-            .count();
-        let hint_text = format!("Ctrl+X view children ({running_count} running)");
-        let hint_line = Line::from(Span::styled(
-            hint_text,
-            Style::default().fg(Color::DarkGray),
-        ));
+            .find(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Paused { .. }));
+
+        let hint_line = if let Some(tab) = paused_child {
+            let reason = match &tab.status {
+                crate::tui::child_tabs::ChildTabStatus::Paused { reason } => reason.as_str(),
+                _ => "",
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!("PAUSED Child {}: {reason} ", tab.child_id),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "— Ctrl+X to view",
+                    Style::default().fg(Color::Yellow),
+                ),
+            ])
+        } else {
+            let running_count = state
+                .child_tab_panel
+                .tabs
+                .iter()
+                .filter(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Running))
+                .count();
+            Line::from(Span::styled(
+                format!("Ctrl+X view children ({running_count} running)"),
+                Style::default().fg(Color::DarkGray),
+            ))
+        };
         frame.render_widget(Paragraph::new(hint_line), hint_area);
     }
 
