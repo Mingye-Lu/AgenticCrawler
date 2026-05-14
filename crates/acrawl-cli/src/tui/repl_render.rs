@@ -5,7 +5,6 @@ use ansi_to_tui::IntoText;
 use crossterm::{event, execute};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::symbols::scrollbar;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, BorderType, Borders, Clear, HighlightSpacing, List, ListItem, ListState, Padding,
@@ -1059,24 +1058,6 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
             .highlight_spacing(HighlightSpacing::Never)
             .scroll_padding(2);
         frame.render_stateful_widget(list, main_inner, &mut tab.list_state);
-
-        if tab.last_wrapped_len > tab.last_view_height {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .symbols(scrollbar::VERTICAL)
-                .thumb_symbol("▐")
-                .style(
-                    ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(60, 90, 120)),
-                );
-            let mut scrollbar_state = ScrollbarState::new(max_offset).position(tab.list_state.offset());
-            frame.render_stateful_widget(
-                scrollbar,
-                main_inner.inner(ratatui::layout::Margin {
-                    vertical: 0,
-                    horizontal: 0,
-                }),
-                &mut scrollbar_state,
-            );
-        }
 
         tab.list_state.offset()
     };
