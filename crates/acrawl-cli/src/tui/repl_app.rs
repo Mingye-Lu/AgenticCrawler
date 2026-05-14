@@ -851,7 +851,7 @@ impl ReplTuiState {
     fn drain_events(&mut self, rx: &Receiver<ReplTuiEvent>) {
         while let Ok(ev) = rx.try_recv() {
             match ev {
-                ReplTuiEvent::StreamAnsi(s) => {
+                ReplTuiEvent::StreamText(s) => {
                     // Enqueue raw chars for typewriter reveal.
                     for c in s.chars() {
                         self.typewriter.chars.push_back(c);
