@@ -127,10 +127,7 @@ impl ApiClient for LlmRuntimeClient {
                             }
                         }
                         api::StreamEvent::ContentBlockStart(start) => {
-                            if matches!(
-                                start.content_block,
-                                api::OutputContentBlock::Reasoning
-                            ) {
+                            if matches!(start.content_block, api::OutputContentBlock::Reasoning) {
                                 pending_reasoning = Some(String::new());
                             } else {
                                 push_output_block(

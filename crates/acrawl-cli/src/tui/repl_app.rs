@@ -1314,12 +1314,7 @@ fn handle_slash_command_tui(
             #[cfg(not(target_os = "linux"))]
             let has_display = true;
 
-            if !has_display {
-                state.push_system_card(
-                    "Browser Mode",
-                    "Browser mode\n  Error            No display server found ($DISPLAY / $WAYLAND_DISPLAY not set).\n                   Run inside a desktop session or use `xvfb-run` to create a virtual display.",
-                );
-            } else {
+            if has_display {
                 std::env::set_var("HEADLESS", "false");
                 let _ = runtime::update_settings(|s| {
                     s.headless = Some(false);
@@ -1328,6 +1323,11 @@ fn handle_slash_command_tui(
                 state.push_system_card(
                     "Browser Mode",
                     "Browser mode\n  Result           switched to headed (visible)",
+                );
+            } else {
+                state.push_system_card(
+                    "Browser Mode",
+                    "Browser mode\n  Error            No display server found ($DISPLAY / $WAYLAND_DISPLAY not set).\n                   Run inside a desktop session or use `xvfb-run` to create a virtual display.",
                 );
             }
         }
