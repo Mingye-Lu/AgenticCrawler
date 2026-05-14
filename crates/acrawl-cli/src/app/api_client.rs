@@ -90,6 +90,7 @@ impl ApiClient for LlmRuntimeClient {
             tokio::runtime::Handle::current().block_on(async {
                 let mut events = Vec::new();
                 let mut pending_tool: Option<(String, String, String)> = None;
+                let mut pending_reasoning: Option<String> = None;
                 let mut saw_stop = false;
 
                 let mut stream = self
@@ -126,12 +127,19 @@ impl ApiClient for LlmRuntimeClient {
                             }
                         }
                         api::StreamEvent::ContentBlockStart(start) => {
-                            push_output_block(
+                            if matches!(
                                 start.content_block,
-                                &mut events,
-                                &mut pending_tool,
-                                true,
-                            );
+                                api::OutputContentBlock::Reasoning
+                            ) {
+                                pending_reasoning = Some(String::new());
+                            } else {
+                                push_output_block(
+                                    start.content_block,
+                                    &mut events,
+                                    &mut pending_tool,
+                                    true,
+                                );
+                            }
                         }
                         api::StreamEvent::ContentBlockDelta(delta) => match delta.delta {
                             ContentBlockDelta::TextDelta { text } => {
@@ -144,6 +152,11 @@ impl ApiClient for LlmRuntimeClient {
                                     input.push_str(&partial_json);
                                 }
                             }
+                            ContentBlockDelta::ThinkingDelta { thinking } => {
+                                if let Some(buf) = &mut pending_reasoning {
+                                    buf.push_str(&thinking);
+                                }
+                            }
                         },
                         api::StreamEvent::ContentBlockStop(_) => {
                             if let Some((id, name, input)) = pending_tool.take() {
@@ -153,6 +166,15 @@ impl ApiClient for LlmRuntimeClient {
                                     input
                                 };
                                 events.push(AssistantEvent::ToolUse { id, name, input });
+                            }
+                            if let Some(thinking) = pending_reasoning.take() {
+                                if !thinking.is_empty() {
+                                    let data = serde_json::json!({
+                                        "reasoning_content": thinking
+                                    })
+                                    .to_string();
+                                    events.push(AssistantEvent::Reasoning { data });
+                                }
                             }
                         }
                         api::StreamEvent::MessageDelta(delta) => {
@@ -224,6 +246,7 @@ pub(super) fn push_output_block(
             };
             *pending_tool = Some((id, name, initial_input));
         }
+        OutputContentBlock::Reasoning => {}
     }
 }
 
