@@ -149,6 +149,13 @@ if [ -n "$node_major" ] && [ "$node_major" -ge 20 ]; then
             echo "WARNING: CloakBrowser install failed. Run manually: npm install --prefix \"$CONFIG_HOME\" cloakbrowser"
         fi
     fi
+
+    echo "Ensuring browser binary is downloaded..."
+    if npx --prefix "$CONFIG_HOME" cloakbrowser install; then
+        echo "Browser binary ready."
+    else
+        echo "WARNING: Browser binary download failed. It will be downloaded on first use."
+    fi
 fi
 
 # --- 11. Success ---

@@ -162,6 +162,14 @@ if ($nodeAvailable) {
             Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" cloakbrowser"
         }
     }
+
+    Write-Host "Ensuring browser binary is downloaded..." -ForegroundColor Gray
+    try {
+        & npx --prefix $ConfigHome cloakbrowser install 2>&1 | Out-Null
+        Write-Host "  Browser binary ready." -ForegroundColor Green
+    } catch {
+        Write-Warning "Browser binary download failed. It will be downloaded on first use."
+    }
 }
 
 # --- 11. Cleanup temp files ---
