@@ -2292,7 +2292,14 @@ fn run_loop(
                     }
                 }
 
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('c')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    // Only honour Ctrl+C as a global cancel/exit when no modal
+                    // is open. Cancelling here while e.g. an AuthModal is mid
+                    // OAuth flow would orphan its callback thread; the modal
+                    // owns its own cancel path (Esc, or its cancel_tx).
                     if state.busy {
                         cancel_flag.request_cancel();
                         if let Some(registry) = &state.child_control_registry {
