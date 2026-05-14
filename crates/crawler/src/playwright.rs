@@ -49,17 +49,36 @@ async function bootstrap() {
   let launch;
   try {
     ({ launch } = await import('cloakbrowser'));
-  } catch (_error) {
-    process.stdout.write(JSON.stringify({
-      event: 'bridge_bootstrap',
-      ok: false,
-      error: {
-        kind: 'playwright_not_installed',
-        message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
-      }
-    }) + '\n');
-    process.exit(1);
-    return;
+  } catch (_firstError) {
+    // ESM import() does not respect NODE_PATH — manually resolve from it.
+    const path = require('node:path');
+    const fs = require('node:fs');
+    const url = require('node:url');
+    let resolved = false;
+    for (const dir of (process.env.NODE_PATH || '').split(path.delimiter)) {
+      if (!dir) continue;
+      const pkgJson = path.join(dir, 'cloakbrowser', 'package.json');
+      if (!fs.existsSync(pkgJson)) continue;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+        const entry = pkg.exports?.['.']?.import || pkg.module || pkg.main || 'index.js';
+        ({ launch } = await import(url.pathToFileURL(path.join(dir, 'cloakbrowser', entry)).href));
+        resolved = true;
+        break;
+      } catch (_) {}
+    }
+    if (!resolved) {
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_bootstrap',
+        ok: false,
+        error: {
+          kind: 'playwright_not_installed',
+          message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
+        }
+      }) + '\n');
+      process.exit(1);
+      return;
+    }
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
@@ -751,11 +770,7 @@ impl PlaywrightBridge {
 
     fn bridge_command(program: &str, args: &[String]) -> Command {
         let mut command = Command::new(program);
-        let config_home = config_home_dir();
-        // Ensure config home exists so we can set it as CWD — this lets
-        // Node.js ESM `import()` resolve packages from the local node_modules.
-        let _ = std::fs::create_dir_all(&config_home);
-        let acrawl_node_modules = config_home.join("node_modules");
+        let acrawl_node_modules = config_home_dir().join("node_modules");
         let node_path = match std::env::var_os("NODE_PATH") {
             Some(existing) => {
                 let mut paths = std::env::split_paths(&existing).collect::<Vec<_>>();
@@ -768,7 +783,6 @@ impl PlaywrightBridge {
         };
         command
             .args(args)
-            .current_dir(&config_home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -1299,21 +1313,6 @@ mod tests {
         assert!(
             paths.contains(&expected),
             "NODE_PATH should contain {expected:?}, got {paths:?}"
-        );
-    }
-
-    #[test]
-    fn bridge_command_sets_cwd_to_config_home() {
-        let args = vec!["-e".to_string(), "console.log('ok')".to_string()];
-        let command = PlaywrightBridge::bridge_command("node", &args);
-        let cwd = command
-            .as_std()
-            .get_current_dir()
-            .expect("current_dir should be set");
-        assert_eq!(
-            cwd,
-            config_home_dir(),
-            "bridge CWD should be config home so ESM import() resolves node_modules"
         );
     }
 
