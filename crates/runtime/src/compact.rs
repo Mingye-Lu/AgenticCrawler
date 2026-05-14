@@ -1,5 +1,14 @@
 use crate::session::{ContentBlock, ConversationMessage, MessageRole, Session};
 
+const COMPACT_CONTINUATION_PREAMBLE: &str =
+    "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n";
+const COMPACT_RECENT_MESSAGES_NOTE: &str = "Recent messages are preserved verbatim.";
+const COMPACT_DIRECT_RESUME_INSTRUCTION: &str =
+    "Continue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, and do not preface with continuation text.";
+
+const PRUNE_PROTECT_TOKENS: usize = 40_000;
+const PRUNE_MAX_OUTPUT_CHARS: usize = 2_000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompactionConfig {
     pub preserve_recent_messages: usize,
@@ -56,16 +65,18 @@ pub fn get_compact_continuation_message(
     recent_messages_preserved: bool,
 ) -> String {
     let mut base = format!(
-        "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n{}",
+        "{COMPACT_CONTINUATION_PREAMBLE}{}",
         format_compact_summary(summary)
     );
 
     if recent_messages_preserved {
-        base.push_str("\n\nRecent messages are preserved verbatim.");
+        base.push_str("\n\n");
+        base.push_str(COMPACT_RECENT_MESSAGES_NOTE);
     }
 
     if suppress_follow_up_questions {
-        base.push_str("\nContinue the conversation from where it left off without asking the user any further questions. Resume directly — do not acknowledge the summary, do not recap what was happening, and do not preface with continuation text.");
+        base.push('\n');
+        base.push_str(COMPACT_DIRECT_RESUME_INSTRUCTION);
     }
 
     base
@@ -82,20 +93,22 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
         };
     }
 
-    let mut keep_from = session
-        .messages
+    let mut working_messages = session.messages.clone();
+    prune_tool_outputs(&mut working_messages);
+
+    let mut keep_from = working_messages
         .len()
         .saturating_sub(config.preserve_recent_messages);
 
     // Never split a tool_use/tool_result pair. If the preserved window starts
     // with a Tool message (containing tool_result blocks), walk backwards to
     // include the preceding Assistant message that holds the matching tool_use.
-    while keep_from > 0 && session.messages[keep_from].role == MessageRole::Tool {
+    while keep_from > 0 && working_messages[keep_from].role == MessageRole::Tool {
         keep_from -= 1;
     }
 
-    let removed = &session.messages[..keep_from];
-    let preserved = session.messages[keep_from..].to_vec();
+    let removed = &working_messages[..keep_from];
+    let preserved = working_messages[keep_from..].to_vec();
     let summary = summarize_messages(removed);
     let formatted_summary = format_compact_summary(&summary);
     let continuation = get_compact_continuation_message(&summary, true, !preserved.is_empty());
@@ -388,11 +401,61 @@ fn collapse_blank_lines(content: &str) -> String {
     result
 }
 
+#[allow(dead_code)]
+fn extract_existing_compacted_summary(message: &ConversationMessage) -> Option<String> {
+    if message.role != MessageRole::System {
+        return None;
+    }
+
+    let text = first_text_block(message)?;
+    let summary = text.strip_prefix(COMPACT_CONTINUATION_PREAMBLE)?;
+    let summary = summary
+        .split_once(&format!("\n\n{COMPACT_RECENT_MESSAGES_NOTE}"))
+        .map_or(summary, |(value, _)| value);
+    let summary = summary
+        .split_once(&format!("\n{COMPACT_DIRECT_RESUME_INSTRUCTION}"))
+        .map_or(summary, |(value, _)| value);
+    Some(summary.trim().to_string())
+}
+
+#[allow(dead_code)]
+fn compacted_summary_prefix_len(session: &Session) -> usize {
+    usize::from(
+        session
+            .messages
+            .first()
+            .and_then(extract_existing_compacted_summary)
+            .is_some(),
+    )
+}
+
+fn prune_tool_outputs(messages: &mut [ConversationMessage]) {
+    let mut cumulative_tokens: usize = 0;
+    for msg in messages.iter_mut().rev() {
+        if cumulative_tokens >= PRUNE_PROTECT_TOKENS {
+            // Outside the protected window — truncate large ToolResult outputs
+            for block in &mut msg.blocks {
+                if let ContentBlock::ToolResult { output, .. } = block {
+                    let char_count = output.chars().count();
+                    if char_count > PRUNE_MAX_OUTPUT_CHARS {
+                        let truncated: String =
+                            output.chars().take(PRUNE_MAX_OUTPUT_CHARS).collect();
+                        *output = format!(
+                            "{truncated}\n\n[… output truncated from {char_count} chars]"
+                        );
+                    }
+                }
+            }
+        }
+        cumulative_tokens = cumulative_tokens.saturating_add(estimate_message_tokens(msg));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         collect_key_files, compact_session, estimate_session_tokens, format_compact_summary,
-        infer_pending_work, should_compact, CompactionConfig,
+        get_compact_continuation_message, infer_pending_work, should_compact, CompactionConfig,
     };
     use crate::session::{ContentBlock, ConversationMessage, MessageRole, Session};
 
@@ -599,5 +662,163 @@ mod tests {
         });
         assert_eq!(has_tool_use, has_tool_result,
             "tool_use and tool_result for call_1 must both be present or both absent");
+    }
+
+    #[test]
+    fn prefix_detection_finds_compacted_summary() {
+        let summary = "<summary>Scope: 5 messages compacted.</summary>";
+        let continuation = get_compact_continuation_message(summary, true, true);
+        let msg = ConversationMessage {
+            role: MessageRole::System,
+            blocks: vec![ContentBlock::Text { text: continuation }],
+            usage: None,
+        };
+        let result = super::extract_existing_compacted_summary(&msg);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("Scope:"));
+    }
+
+    #[test]
+    fn prefix_detection_returns_none_for_user_message() {
+        let msg = ConversationMessage::user_text("hello");
+        assert!(super::extract_existing_compacted_summary(&msg).is_none());
+    }
+
+    #[test]
+    fn prefix_detection_returns_none_for_empty_session() {
+        let session = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![],
+        };
+        assert_eq!(super::compacted_summary_prefix_len(&session), 0);
+    }
+
+    #[test]
+    fn prune_tool_outputs_truncates_large_old_outputs() {
+        let large_output = "x".repeat(10_000);
+        // Need enough content after the large output to push it outside the 40K token window.
+        // 40K tokens ≈ 160K chars. Use 42 messages of 4000 chars each (~42K tokens).
+        let padding = "p".repeat(4_000);
+        let mut messages = vec![
+            ConversationMessage::user_text("start"),
+            ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "navigate".to_string(),
+                input: "{}".to_string(),
+            }]),
+            ConversationMessage::tool_result("call_1", "navigate", &large_output, false),
+        ];
+        for _ in 0..42 {
+            messages.push(ConversationMessage::user_text(&padding));
+        }
+        messages.push(ConversationMessage::assistant(vec![ContentBlock::Text {
+            text: "done".to_string(),
+        }]));
+
+        super::prune_tool_outputs(&mut messages);
+
+        let block = &messages[2].blocks[0];
+        if let ContentBlock::ToolResult { output, .. } = block {
+            assert!(
+                output.contains("[… output truncated from 10000 chars]"),
+                "large old output should be truncated"
+            );
+            assert!(
+                output.chars().count() < 10_000,
+                "truncated output should be shorter than original"
+            );
+        } else {
+            panic!("Expected ToolResult block");
+        }
+    }
+
+    #[test]
+    fn prune_tool_outputs_small_outputs_unchanged() {
+        let small_output = "small content";
+        let mut messages = vec![
+            ConversationMessage::user_text("start"),
+            ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "navigate".to_string(),
+                input: "{}".to_string(),
+            }]),
+            ConversationMessage::tool_result("call_1", "navigate", small_output, false),
+        ];
+
+        super::prune_tool_outputs(&mut messages);
+
+        let block = &messages[2].blocks[0];
+        if let ContentBlock::ToolResult { output, .. } = block {
+            assert_eq!(output, small_output);
+        } else {
+            panic!("Expected ToolResult block");
+        }
+    }
+
+    #[test]
+    fn prune_tool_outputs_recent_outputs_protected() {
+        let large_output = "z".repeat(10_000);
+        let mut messages: Vec<ConversationMessage> = (0..200)
+            .map(|i| {
+                if i % 3 == 2 {
+                    ConversationMessage::tool_result(
+                        &format!("call_{i}"),
+                        "navigate",
+                        &large_output,
+                        false,
+                    )
+                } else if i % 3 == 1 {
+                    ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                        id: format!("call_{i}"),
+                        name: "navigate".to_string(),
+                        input: "{}".to_string(),
+                    }])
+                } else {
+                    ConversationMessage::user_text("go")
+                }
+            })
+            .collect();
+
+        super::prune_tool_outputs(&mut messages);
+
+        let last_tool_result = messages
+            .iter()
+            .rev()
+            .find(|m| {
+                m.blocks
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+            })
+            .unwrap();
+
+        let block = &last_tool_result.blocks[0];
+        if let ContentBlock::ToolResult { output, .. } = block {
+            assert!(
+                !output.contains("[… output truncated"),
+                "recent output should not be truncated"
+            );
+        }
+    }
+
+    #[test]
+    fn prune_tool_outputs_non_tool_result_blocks_unchanged() {
+        let large_text = "a".repeat(10_000);
+        let mut messages = vec![
+            ConversationMessage::user_text(&large_text),
+            ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: large_text.clone(),
+            }]),
+        ];
+
+        super::prune_tool_outputs(&mut messages);
+
+        if let ContentBlock::Text { text } = &messages[0].blocks[0] {
+            assert_eq!(text.chars().count(), 10_000);
+        }
+        if let ContentBlock::Text { text } = &messages[1].blocks[0] {
+            assert_eq!(text.chars().count(), 10_000);
+        }
     }
 }
