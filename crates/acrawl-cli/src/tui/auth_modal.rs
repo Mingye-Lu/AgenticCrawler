@@ -254,7 +254,30 @@ impl AuthModal {
                     }
                 }
             }
-            ProviderKind::Other | ProviderKind::Preset(_) => Ok(vec![]),
+            ProviderKind::Other => Ok(vec![]),
+            ProviderKind::Preset(p) => {
+                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                let models = runtime
+                    .block_on(api::models::list_models_dev(p.id))
+                    .unwrap_or_default();
+                if !models.is_empty() {
+                    return Ok(models
+                        .into_iter()
+                        .map(|m| crate::tui::model_list::ModelInfo {
+                            id: m.id,
+                            display_name: None,
+                        })
+                        .collect());
+                }
+                Ok(api::provider::catalog::builtin_models()
+                    .into_iter()
+                    .filter(|m| m.provider_id == p.id)
+                    .map(|m| crate::tui::model_list::ModelInfo {
+                        id: m.id,
+                        display_name: Some(m.display_name),
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -998,14 +1021,14 @@ impl Modal for AuthModal {
                     } else {
                         Self::save_api_key(*provider, base_url.clone(), key_buffer.clone());
                         match provider {
-                            ProviderKind::Anthropic | ProviderKind::OpenAi => {
-                                self.step = AuthModalStep::ModelFetchLoading {
-                                    provider: *provider,
+                            ProviderKind::Other => {
+                                self.step = AuthModalStep::Success {
+                                    message: format!("Authenticated as {}", provider.label()),
                                 };
                             }
                             _ => {
-                                self.step = AuthModalStep::Success {
-                                    message: format!("Authenticated as {}", provider.label()),
+                                self.step = AuthModalStep::ModelFetchLoading {
+                                    provider: *provider,
                                 };
                             }
                         }
