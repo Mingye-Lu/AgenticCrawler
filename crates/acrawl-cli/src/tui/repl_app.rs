@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
+use crate::auth::ProviderChoice;
 use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
 use crate::format::render_repl_help;
 use crate::markdown::{drain_safe_boundary, render_lines};
@@ -1334,12 +1335,16 @@ fn handle_slash_command_tui(
             }
             let parsed_provider = provider
                 .as_deref()
-                .and_then(|p| crate::app::parse_provider_arg(p).ok());
-            state.active_modal = Some(ActiveModal::Auth(AuthModal::new(
+                .and_then(|p| crate::auth::resolve_provider_arg(p).ok());
+            let is_anthropic_legacy = matches!(
+                parsed_provider,
+                Some(ProviderChoice::Legacy(crate::app::Provider::Anthropic))
+            );
+            state.active_modal = Some(ActiveModal::Auth(AuthModal::new_with_choice(
                 ui_tx.clone(),
                 parsed_provider,
             )));
-            if let Some(crate::app::Provider::Anthropic) = parsed_provider {
+            if is_anthropic_legacy {
                 spawn_anthropic_oauth_thread(ui_tx.clone(), &mut state.active_modal);
             }
         }
@@ -2310,8 +2315,13 @@ fn run_loop(
 
                 if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     let mut g = cli.lock().expect("cli lock");
-                    g.cycle_reasoning_effort();
+                    let new_effort = g.cycle_reasoning_effort();
                     state.cached_header = build_header_snapshot(&g);
+                    if let Some(effort) = new_effort {
+                        state.push_system(&format!("Reasoning effort → {}", effort));
+                    } else {
+                        state.push_system("Reasoning effort → off");
+                    }
                     continue;
                 }
 
