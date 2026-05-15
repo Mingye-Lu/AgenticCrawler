@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
 
+use crate::auth::ProviderChoice;
 use crate::display_width::{prefix_display_width, text_display_width};
 use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
 use crate::tui::ReplTuiEvent;
@@ -69,6 +70,7 @@ pub(crate) enum AuthModalStep {
         selected: usize,
     },
     BaseUrlInput {
+        provider: ProviderKind,
         input: String,
         cursor: usize,
         error: Option<String>,
@@ -147,27 +149,69 @@ impl AuthModal {
     }
 
     pub(crate) fn new(ui_tx: Sender<ReplTuiEvent>, provider: Option<crate::app::Provider>) -> Self {
-        let step = if let Some(p) = provider {
-            match p {
-                crate::app::Provider::OpenAi => AuthModalStep::ApiKeyInput {
-                    provider: ProviderKind::OpenAi,
-                    base_url: None,
-                    key_buffer: String::new(),
-                    cursor: 0,
-                    masked: true,
-                    error: None,
+        Self::new_with_choice(ui_tx, provider.map(ProviderChoice::Legacy))
+    }
+
+    pub(crate) fn new_with_choice(
+        ui_tx: Sender<ReplTuiEvent>,
+        choice: Option<ProviderChoice>,
+    ) -> Self {
+        let step = if let Some(c) = choice {
+            match c {
+                ProviderChoice::Legacy(p) => match p {
+                    crate::app::Provider::OpenAi => AuthModalStep::ApiKeyInput {
+                        provider: ProviderKind::OpenAi,
+                        base_url: None,
+                        key_buffer: String::new(),
+                        cursor: 0,
+                        masked: true,
+                        error: None,
+                    },
+                    crate::app::Provider::Anthropic => AuthModalStep::OAuthWaiting {
+                        provider: ProviderKind::Anthropic,
+                        status: "Preparing OAuth flow...".to_string(),
+                        cancel_tx: None,
+                        tick: 0,
+                    },
+                    crate::app::Provider::Other => AuthModalStep::BaseUrlInput {
+                        provider: ProviderKind::Other,
+                        input: String::new(),
+                        cursor: 0,
+                        error: None,
+                    },
                 },
-                crate::app::Provider::Anthropic => AuthModalStep::OAuthWaiting {
-                    provider: ProviderKind::Anthropic,
-                    status: "Preparing OAuth flow...".to_string(),
-                    cancel_tx: None,
-                    tick: 0,
-                },
-                crate::app::Provider::Other => AuthModalStep::BaseUrlInput {
-                    input: String::new(),
-                    cursor: 0,
-                    error: None,
-                },
+                ProviderChoice::Preset(preset) => {
+                    // Route preset providers with placeholder base URLs to the
+                    // BaseUrlInput step so the user can fill in required fields.
+                    // Copilot needs device-code OAuth, not an API key.
+                    if preset.id == "copilot" {
+                        AuthModalStep::OAuthWaiting {
+                            provider: ProviderKind::Preset(preset),
+                            status: "Preparing device code flow...".to_string(),
+                            cancel_tx: None,
+                            tick: 0,
+                        }
+                    } else if preset.base_url.contains('{') {
+                        AuthModalStep::BaseUrlInput {
+                            provider: ProviderKind::Preset(preset),
+                            input: preset.base_url.to_string(),
+                            cursor: preset.base_url.chars().count(),
+                            error: Some(
+                                "Replace {placeholders} with your values, then press Enter"
+                                    .to_string(),
+                            ),
+                        }
+                    } else {
+                        AuthModalStep::ApiKeyInput {
+                            provider: ProviderKind::Preset(preset),
+                            base_url: None,
+                            key_buffer: String::new(),
+                            cursor: 0,
+                            masked: true,
+                            error: None,
+                        }
+                    }
+                }
             }
         } else {
             AuthModalStep::ProviderSelect { selected: 0 }
@@ -536,12 +580,18 @@ impl Modal for AuthModal {
                 )
             }
             AuthModalStep::BaseUrlInput {
+                provider,
                 input,
                 cursor,
                 error,
             } => {
+                let header = if matches!(provider, ProviderKind::Other) {
+                    "Enter base URL for Other provider:"
+                } else {
+                    "Base URL (replace placeholders):"
+                };
                 let mut lines = vec![
-                    Line::from("Enter base URL for Other provider:"),
+                    Line::from(header),
                     Line::default(),
                     Line::from(format!("  > {input}")),
                     Line::default(),
@@ -567,23 +617,37 @@ impl Modal for AuthModal {
                 )
             }
             AuthModalStep::ApiKeyInput {
+                provider,
+                base_url,
                 key_buffer,
                 cursor,
                 masked,
                 error,
-                ..
             } => {
                 let display_key = if *masked {
                     "*".repeat(key_buffer.chars().count())
                 } else {
                     key_buffer.clone()
                 };
+                let preset_url = match provider {
+                    ProviderKind::Preset(p) => Some(p.base_url),
+                    _ => None,
+                };
+                let effective_url = base_url.as_deref().or(preset_url);
                 let mut lines = vec![
                     Line::from("Paste your API key:"),
                     Line::default(),
                     Line::from(format!("  [{display_key}]")),
                     Line::default(),
                 ];
+                if let Some(url) = effective_url {
+                    lines.push(Line::from(Span::styled(
+                        format!("  URL: {url}"),
+                        Style::default()
+                            .fg(Color::Rgb(130, 136, 145))
+                            .add_modifier(Modifier::DIM),
+                    )));
+                }
                 if let Some(message) = error {
                     lines.push(Line::from(Span::styled(
                         message.clone(),
@@ -831,6 +895,7 @@ impl Modal for AuthModal {
                             }
                             "other" => {
                                 self.step = AuthModalStep::BaseUrlInput {
+                                    provider: ProviderKind::Other,
                                     input: String::new(),
                                     cursor: 0,
                                     error: None,
@@ -920,6 +985,7 @@ impl Modal for AuthModal {
                 }
             }
             AuthModalStep::BaseUrlInput {
+                provider,
                 input,
                 cursor,
                 error,
@@ -958,7 +1024,7 @@ impl Modal for AuthModal {
                         *error = Some("Base URL cannot be empty".to_string());
                     } else {
                         self.step = AuthModalStep::ApiKeyInput {
-                            provider: ProviderKind::Other,
+                            provider: *provider,
                             base_url: Some(input.clone()),
                             key_buffer: String::new(),
                             cursor: 0,
@@ -969,11 +1035,19 @@ impl Modal for AuthModal {
                     ModalAction::Consumed
                 }
                 KeyCode::Esc => {
-                    let idx = flat_preset_list()
-                        .iter()
-                        .position(|p| p.id == "other")
-                        .unwrap_or(0);
-                    self.step = AuthModalStep::ProviderSelect { selected: idx };
+                    if let ProviderKind::Preset(p) = provider {
+                        let idx = flat_preset_list()
+                            .iter()
+                            .position(|pp| pp.id == p.id)
+                            .unwrap_or(0);
+                        self.step = AuthModalStep::ProviderSelect { selected: idx };
+                    } else {
+                        let idx = flat_preset_list()
+                            .iter()
+                            .position(|p| p.id == "other")
+                            .unwrap_or(0);
+                        self.step = AuthModalStep::ProviderSelect { selected: idx };
+                    }
                     ModalAction::Consumed
                 }
                 _ => ModalAction::Consumed,
@@ -1040,6 +1114,7 @@ impl Modal for AuthModal {
                         let previous = base_url.clone().unwrap_or_default();
                         let previous_len = Self::char_len(&previous);
                         self.step = AuthModalStep::BaseUrlInput {
+                            provider: ProviderKind::Other,
                             input: previous,
                             cursor: previous_len,
                             error: None,
