@@ -426,7 +426,7 @@ mod tests {
                 ConversationMessage::assistant(vec![ContentBlock::Text {
                     text: "b ".repeat(200),
                 }]),
-                ConversationMessage::tool_result("1", "bash", "ok ".repeat(200), false),
+                ConversationMessage::user_text("c ".repeat(200)),
                 ConversationMessage::assistant(vec![ContentBlock::Text {
                     text: "recent".to_string(),
                 }]),
@@ -439,6 +439,7 @@ mod tests {
             CompactionConfig {
                 preserve_recent_messages: 2,
                 max_estimated_tokens: 1,
+                ..CompactionConfig::default()
             },
         )
         .expect("slash command should be handled");
