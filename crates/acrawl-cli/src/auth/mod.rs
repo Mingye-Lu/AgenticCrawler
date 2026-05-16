@@ -501,12 +501,26 @@ pub(crate) fn wait_for_oauth_callback_cancellable(
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_mins(5);
+    // Emit a progress line every 30s so a slow network or IdP doesn't look
+    // like a hang. Track when we last printed instead of dividing remaining
+    // time, so the first message lands ~30s in rather than at startup.
+    let mut last_status = std::time::Instant::now();
+    let status_interval = std::time::Duration::from_secs(30);
     loop {
-        if std::time::Instant::now() >= deadline {
+        let now = std::time::Instant::now();
+        if now >= deadline {
             return Err(Box::new(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "OAuth callback timed out after 5 minutes",
             )));
+        }
+        if now.duration_since(last_status) >= status_interval {
+            let remaining = deadline.saturating_duration_since(now);
+            eprintln!(
+                "Waiting for OAuth callback ({}s remaining; press Ctrl+C to cancel)...",
+                remaining.as_secs()
+            );
+            last_status = now;
         }
         if cancel_rx.try_recv().is_ok() {
             return Err(Box::new(io::Error::new(
