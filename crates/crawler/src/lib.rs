@@ -17,7 +17,10 @@ mod tools;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
-pub use child_events::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
+pub use child_events::{
+    ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender, ChildLifecycle,
+    ChildSnapshot, ChildSnapshotRegistry,
+};
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
@@ -315,6 +318,22 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             instructions: Some("Returns a JSON object: {\"waited\": N, \"finished\": [...], \"still_running\": [...]}. Finished entries include items_extracted and success/error. Still-running entries can be polled again (via another wait_for_subagents) or cancelled (via cancel_subagent). Do NOT assume a timeout means the child failed."),
         },
         ToolSpec {
+            name: "subagent_status",
+            description: "Read-only poll: returns a JSON snapshot of each subagent's lifecycle, current step, last tool call, last text output, items extracted, and how long ago its last event was observed. Never joins or cancels — safe to call between any other actions.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "child_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional list of child IDs to inspect. Defaults to all tracked children."
+                    }
+                },
+                "additionalProperties": false
+            }),
+            instructions: Some("Returns {\"children\": [{child_id, sub_goal, state, step, max_steps, last_tool, last_text, items_extracted, last_event_secs_ago, error}, ...]}. State is one of: created, running, paused, completed, failed, cancelled. Use this to decide whether to wait, cancel, or fork more — without consuming the child."),
+        },
+        ToolSpec {
             name: "cancel_subagent",
             description: "Abort one or more running subagents immediately. Their in-flight work is discarded. Use this only when you have decided the child's result is no longer needed.",
             input_schema: json!({
@@ -373,17 +392,18 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_20_tools() {
+    fn mvp_tool_specs_contains_expected_21_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 20);
+        assert_eq!(specs.len(), 21);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 20, "tool names should be unique");
+        assert_eq!(names.len(), 21, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("save_file"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));
         assert!(names.contains("cancel_subagent"));
+        assert!(names.contains("subagent_status"));
     }
 
     #[test]

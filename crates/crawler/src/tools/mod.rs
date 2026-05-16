@@ -16,6 +16,7 @@ pub mod press_key;
 pub mod save_file;
 pub mod scroll;
 pub mod select_option;
+pub mod subagent_status;
 pub mod switch_tab;
 pub mod wait;
 pub mod wait_for_human;
