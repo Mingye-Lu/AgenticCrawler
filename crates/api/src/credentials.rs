@@ -145,13 +145,17 @@ pub fn save_credentials_to_path(
         std::fs::create_dir_all(parent).map_err(|e| CredentialError::Io(e.to_string()))?;
     }
 
-    // Serialize to JSON
-    let json = serde_json::to_string_pretty(store)
-        .map_err(|e| CredentialError::Json { msg: e.to_string() })?;
+    // Serialize to JSON. Wrap in `Zeroizing` so the in-memory buffer is wiped
+    // before this function returns — even on the error paths below — instead
+    // of being dropped with the secret bytes still resident in the allocator.
+    let json = zeroize::Zeroizing::new(
+        serde_json::to_string_pretty(store)
+            .map_err(|e| CredentialError::Json { msg: e.to_string() })?,
+    );
 
     // Write to temp file first
     let temp_path = path.with_extension("json.tmp");
-    std::fs::write(&temp_path, json).map_err(|e| CredentialError::Io(e.to_string()))?;
+    std::fs::write(&temp_path, json.as_bytes()).map_err(|e| CredentialError::Io(e.to_string()))?;
 
     // Restrict to owner-only before the atomic rename so the final file is never
     // world-readable, even momentarily, on Unix.

@@ -365,13 +365,25 @@ impl AuthModal {
                 "api_key".to_string()
             }
         };
-        // Move the inner String into the config. `key` (Zeroizing<String>) is
-        // dropped at function exit and wipes the local copy. The serialized
-        // JSON written to disk lives only inside save_credentials.
+        // Three heap copies of the API key are in play here:
+        //   1. `key` (Zeroizing<String>): the modal-owned buffer — wiped on
+        //      function exit by `Zeroizing`'s Drop impl.
+        //   2. `config.api_key`: the clone we hand to `set_provider_config`;
+        //      we wipe it via `Zeroize::zeroize` after the disk write so the
+        //      `store` doesn't outlive this function carrying the key bytes.
+        //   3. The serialized JSON inside `save_credentials_to_path`: wrapped
+        //      in `Zeroizing` over there so it's wiped before that function
+        //      returns.
         config.api_key = Some((*key).clone());
         config.base_url = base_url.or(preset_base_url);
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
+        if let Some(cfg) = store.providers.get_mut(provider_str) {
+            if let Some(saved_key) = cfg.api_key.as_mut() {
+                use zeroize::Zeroize;
+                saved_key.zeroize();
+            }
+        }
     }
 
     fn save_default_model(provider: ProviderKind, model_id: &str) {
