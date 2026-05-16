@@ -217,11 +217,11 @@ fn resolve_content(
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let params = parse_input(input)?;
 
-    let router = FetchRouter::new().map_err(|e| ToolError(e.to_string()))?;
+    let router = FetchRouter::new().map_err(|e| ToolError::new(e.to_string()))?;
     let page = router
         .fetch(&params.url, Some(browser))
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
 
     let title = page.title.clone().unwrap_or_default();
 
