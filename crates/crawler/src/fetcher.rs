@@ -21,9 +21,15 @@ pub struct FetchedPage {
 pub enum FetchError {
     Http(reqwest::Error),
     Browser(String),
-    StatusError { status: u16, url: String },
+    StatusError {
+        status: u16,
+        url: String,
+    },
     /// Response body exceeded the configured maximum size.
-    BodyTooLarge { url: String, limit: usize },
+    BodyTooLarge {
+        url: String,
+        limit: usize,
+    },
 }
 
 impl fmt::Display for FetchError {

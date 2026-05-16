@@ -454,7 +454,10 @@ mod tests {
         save_credentials_to_path(&store, &cred_path).unwrap();
 
         let mode = fs::metadata(&cred_path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "credentials file must be readable only by owner");
+        assert_eq!(
+            mode, 0o600,
+            "credentials file must be readable only by owner"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

@@ -20,9 +20,7 @@ pub(crate) fn load_credentials_or_warn() -> api::CredentialStore {
     match api::load_credentials() {
         Ok(store) => store,
         Err(err) => {
-            eprintln!(
-                "warning: failed to load credentials ({err}); starting from an empty store"
-            );
+            eprintln!("warning: failed to load credentials ({err}); starting from an empty store");
             api::CredentialStore::default()
         }
     }

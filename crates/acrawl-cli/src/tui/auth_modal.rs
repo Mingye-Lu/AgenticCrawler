@@ -2,11 +2,11 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use zeroize::Zeroizing;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
+use zeroize::Zeroizing;
 
 use crate::display_width::{prefix_display_width, text_display_width};
 use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
