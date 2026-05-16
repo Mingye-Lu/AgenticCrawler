@@ -48,7 +48,7 @@ pub fn run_uninstall(purge: bool) -> Result<(), Box<dyn std::error::Error>> {
         remove_dir_if_exists(&config_home.join("sessions"), "sessions")?;
     }
 
-    remove_binary(&current_exe)?;
+    remove_binary(&current_exe);
 
     #[cfg(target_os = "windows")]
     if let Some(bin_dir) = current_exe.parent() {
@@ -77,7 +77,7 @@ pub fn run_uninstall(purge: bool) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn remove_binary(current_exe: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn remove_binary(current_exe: &Path) {
     if cfg!(target_os = "windows") {
         let old_path = current_exe.with_extension("exe.old");
         if fs::rename(current_exe, &old_path).is_ok() {
@@ -105,7 +105,6 @@ fn remove_binary(current_exe: &Path) -> Result<(), Box<dyn std::error::Error>> {
             ),
         }
     }
-    Ok(())
 }
 
 fn remove_file_if_exists(path: &Path, label: &str) -> Result<(), Box<dyn std::error::Error>> {
