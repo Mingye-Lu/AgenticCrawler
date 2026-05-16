@@ -147,15 +147,15 @@ fi
 
 # --- 10. CloakBrowser install ---
 if [ -n "$node_major" ] && [ "$node_major" -ge 20 ]; then
-    if [ -d "${CONFIG_HOME}/node_modules/cloakbrowser" ]; then
+    if [ -d "${CONFIG_HOME}/node_modules/cloakbrowser" ] && [ -d "${CONFIG_HOME}/node_modules/playwright-core" ]; then
         echo "CloakBrowser already installed at ${CONFIG_HOME}/node_modules/cloakbrowser (skipping)"
     else
         echo "Installing CloakBrowser..."
         mkdir -p "$CONFIG_HOME"
-        if npm install --prefix "$CONFIG_HOME" cloakbrowser; then
+        if npm install --prefix "$CONFIG_HOME" cloakbrowser playwright-core; then
             echo "CloakBrowser installed."
         else
-            echo "WARNING: CloakBrowser install failed. Run manually: npm install --prefix \"$CONFIG_HOME\" cloakbrowser"
+            echo "WARNING: CloakBrowser install failed. Run manually: npm install --prefix \"$CONFIG_HOME\" cloakbrowser playwright-core"
         fi
     fi
 

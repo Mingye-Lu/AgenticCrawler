@@ -391,12 +391,31 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
         .first()
         .ok_or_else(|| "missing session path for --resume".to_string())
         .map(PathBuf::from)?;
-    let commands = args[1..].to_vec();
-    if commands
-        .iter()
-        .any(|command| !command.trim_start().starts_with('/'))
-    {
-        return Err("--resume trailing arguments must be slash commands".to_string());
+    let raw_args = &args[1..];
+    // Re-join arguments into slash commands, splitting on leading '/' tokens.
+    // This allows commands like `/clear --confirm` or `/config env`
+    // where arguments don't start with '/'.
+    let mut commands = Vec::new();
+    let mut current = String::new();
+    for arg in raw_args {
+        if arg.trim_start().starts_with('/') && !current.is_empty() {
+            commands.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(arg);
+    }
+    if !current.is_empty() {
+        commands.push(current);
+    }
+    if commands.is_empty() {
+        return Err("--resume requires at least one slash command".to_string());
+    }
+    if let Some(bad) = commands.iter().find(|c| !c.trim_start().starts_with('/')) {
+        return Err(format!(
+            "--resume trailing arguments must be slash commands (got '{bad}')"
+        ));
     }
     Ok(CliAction::ResumeSession {
         session_path,
@@ -795,6 +814,23 @@ mod tests {
                     "/compact".to_string(),
                     "/cost".to_string(),
                 ],
+            }
+        );
+    }
+
+    #[test]
+    fn parses_resume_flag_with_command_arguments() {
+        let args = vec![
+            "--resume".to_string(),
+            "session.json".to_string(),
+            "/clear".to_string(),
+            "--confirm".to_string(),
+        ];
+        assert_eq!(
+            parse_args(&args).expect("args should parse"),
+            CliAction::ResumeSession {
+                session_path: PathBuf::from("session.json"),
+                commands: vec!["/clear --confirm".to_string()],
             }
         );
     }
