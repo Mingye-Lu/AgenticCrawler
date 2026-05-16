@@ -366,7 +366,7 @@ impl Modal for ModelModal {
             .add_modifier(Modifier::DIM);
         let source_tag = Self::catalog_source_tag(self.catalog_source);
         let hint_text =
-            format!("↑↓ Navigate  Enter Select  Esc Cancel  Type to filter{source_tag}");
+            format!("↑↓ Navigate  Enter Select  Esc Cancel  Type to filter  (unconfigured → auth prompt){source_tag}");
         frame.render_widget(Paragraph::new(hint_text).style(hint_style), hint_area);
     }
 

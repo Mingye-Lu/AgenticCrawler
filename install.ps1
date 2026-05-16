@@ -158,16 +158,17 @@ try {
 # --- 10. CloakBrowser install ---
 if ($nodeAvailable) {
     $cloakbrowserDir = Join-Path $ConfigHome "node_modules\cloakbrowser"
-    if (Test-Path $cloakbrowserDir) {
+    $playwrightCoreDir = Join-Path $ConfigHome "node_modules\playwright-core"
+    if ((Test-Path $cloakbrowserDir) -and (Test-Path $playwrightCoreDir)) {
         Write-Host "  CloakBrowser already installed." -ForegroundColor Gray
     } else {
         Write-Host "Installing CloakBrowser..." -ForegroundColor Gray
         try {
-            & npm install --prefix $ConfigHome cloakbrowser 2>&1 | Out-Null
+            & npm install --prefix $ConfigHome cloakbrowser playwright-core 2>&1 | Out-Null
             Write-Host "  CloakBrowser installed." -ForegroundColor Green
         } catch {
             Write-Warning "CloakBrowser installation failed: $_"
-            Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" cloakbrowser"
+            Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" cloakbrowser playwright-core"
         }
     }
 

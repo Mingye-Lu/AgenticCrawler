@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-05-16
+
+### Added
+
+- **Cloudflare Turnstile bypass** — after navigation, the Playwright bridge detects Turnstile challenge pages and performs human-like mouse sweeps to satisfy the behavioural model, polling up to 8 s for clearance.
+
+### Fixed
+
+- **Resume parser accepts command arguments** — `--resume session.json /clear --confirm` no longer rejects non-slash trailing arguments; args are grouped with their preceding slash command.
+- **Preset provider auth routing** — selecting a preset provider (e.g. Groq, Mistral) in the TUI auth modal now correctly routes to the appropriate input step (placeholder URL editing, API key, or device-code OAuth) instead of falling through to the generic "Other" flow.
+- **Auth modal Esc navigation** — pressing Esc from the API key input for a preset that required URL editing now returns to the base-URL step (preserving provider context) instead of jumping to provider selection.
+- **Model modal hint** — added `(unconfigured → auth prompt)` hint to the model selector.
+- **Reasoning effort feedback** — toggling reasoning effort (Ctrl+T) now prints a system message confirming the new level.
+
+## [0.4.4] - 2026-05-15
+
+### Added
+
+- **Tool output pruning** — `compact_session()` now walks backward through messages before summarizing and truncates `ToolResult` outputs that fall outside a configurable protected window (`prune_protect_tokens`, default 40K tokens) to `prune_max_output_chars` (default 2K chars), appending a truncation marker. Dramatically reduces context consumed by large `navigate` results in long sessions.
+- **Token-budget tail** — the compaction window is now determined by a backward token-budget walk (`preserve_recent_tokens`, default 80K tokens) instead of a fixed message count. `preserve_recent_messages` is retained as a hard minimum floor; a new `preserve_recent_messages_floor` field (default 2) ensures at least N messages are always preserved regardless of budget.
+- **Summary merging across compactions** — on a second (or later) compaction, `merge_compact_summaries()` combines the existing compacted summary with the new one into **Previously compacted context** / **Newly compacted context** / **Key timeline** sections, preserving highlights from prior rounds instead of discarding them.
+- **Summary prefix detection** — `extract_existing_compacted_summary()` detects an existing compaction prefix and `compact_session()` skips it when slicing the removed-messages window, preventing the summary from summarizing itself.
+- **Priority-based summary compression** — new `summary_compression` module implements greedy line selection by priority tier (core detail lines → section headers → bullet items → other), with deduplication, whitespace normalization, per-line truncation, and an omission notice. Applied after merging to cap total summary size (`max_summary_chars`, default 1200 chars).
+- **LLM-powered summarization** (opt-in) — when `compaction_llm_summarization = true` in `settings.json`, `maybe_auto_compact()` attempts to replace the mechanical summary with a structured LLM summary (Goal / Progress / Key Decisions / Next Steps / Relevant Files). Falls back silently to the mechanical summary on any failure.
+- **Compaction settings** — six new fields in `settings.json`: `compaction_prune_protect_tokens`, `compaction_prune_max_output_chars`, `compaction_preserve_recent_tokens`, `compaction_preserve_recent_messages_floor`, `compaction_max_summary_chars`, `compaction_llm_summarization`. All are optional with backward-compatible defaults.
+
 ## [0.4.3] - 2026-05-14
 
 ### Changed
@@ -201,6 +227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.5
+[0.4.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.4
 [0.4.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.3
 [0.4.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.2
 [0.4.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.1
