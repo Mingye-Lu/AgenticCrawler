@@ -103,7 +103,10 @@ impl McpServerManager {
                         McpServerManagerError::InvalidResponse {
                             server_name: server_name.clone(),
                             method: "tools/list",
-                            details: "server process missing after initialization".to_string(),
+                            details:
+                                "MCP server process is gone — it likely crashed or was killed; \
+                                      check the server's stderr output above and retry"
+                                    .to_string(),
                         }
                     })?;
                     timeout(
@@ -243,8 +246,13 @@ impl McpServerManager {
     }
 
     fn take_request_id(&mut self) -> JsonRpcId {
+        // saturating_add would have pinned every subsequent request at
+        // u64::MAX once the counter reached the ceiling, repeatedly issuing
+        // the same id and breaking JSON-RPC correlation. Wrap to 1 instead;
+        // any in-flight requests will have resolved long before another
+        // 2^64 ids are minted, so reuse-after-wrap is benign.
         let id = self.next_request_id;
-        self.next_request_id = self.next_request_id.saturating_add(1);
+        self.next_request_id = self.next_request_id.checked_add(1).unwrap_or(1);
         JsonRpcId::Number(id)
     }
 
@@ -282,7 +290,10 @@ impl McpServerManager {
                     McpServerManagerError::InvalidResponse {
                         server_name: server_name.to_string(),
                         method: "initialize",
-                        details: "server process missing before initialize".to_string(),
+                        details: "MCP server process is gone before initialize — \
+                                  spawn appears to have failed silently; \
+                                  check the server's stderr output above and retry"
+                            .to_string(),
                     }
                 })?;
                 timeout(
@@ -319,7 +330,9 @@ impl McpServerManager {
                     McpServerManagerError::InvalidResponse {
                         server_name: server_name.to_string(),
                         method: "notifications/initialized",
-                        details: "server process missing before initialized notification"
+                        details: "MCP server process is gone after initialize but before \
+                                  the initialized notification — the server probably exited mid-handshake; \
+                                  check the server's stderr output above and retry"
                             .to_string(),
                     }
                 })?;

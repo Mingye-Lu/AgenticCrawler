@@ -25,7 +25,7 @@ fn parse_input(input: &Value) -> Result<WaitForHumanInput, crate::CrawlError> {
 
 pub fn execute(input: &Value, is_interactive: bool) -> Result<ToolEffect, ToolError> {
     if !is_interactive {
-        return Err(ToolError(
+        return Err(ToolError::new(
             "wait_for_human is only available in an interactive TUI session \
              (not in `prompt` or `--resume`)."
                 .to_string(),

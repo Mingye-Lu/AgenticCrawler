@@ -41,10 +41,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     let mut result = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError(e.to_string()))?
+        .map_err(|e| ToolError::new(e.to_string()))?
         .page_map()
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
 
     apply_page_map_caps(&mut result);
 

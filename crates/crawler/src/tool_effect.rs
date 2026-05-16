@@ -34,12 +34,50 @@ pub struct WaitSpec {
 }
 
 /// Error type for tool execution failures.
+///
+/// Most failures are `Message(_)`. The `RequiresAsync` variant is a sentinel
+/// emitted by the synchronous handler stub for any tool that actually needs
+/// the async path; the agent loop matches on it via [`ToolError::is_requires_async`]
+/// instead of substring-matching the error text — which used to misclassify
+/// any unrelated error whose message happened to contain the same phrase.
 #[derive(Debug)]
-pub struct ToolError(pub String);
+pub enum ToolError {
+    /// A plain, user-visible error message.
+    Message(String),
+    /// The named tool is registered as async-only and must go through
+    /// `execute_async`. Carries the tool name purely for diagnostics.
+    RequiresAsync { tool_name: String },
+}
+
+impl ToolError {
+    /// Construct a plain message error.
+    pub fn new<S: Into<String>>(message: S) -> Self {
+        Self::Message(message.into())
+    }
+
+    /// Construct the sentinel emitted by the registry stub for async-only tools.
+    pub fn requires_async<S: Into<String>>(tool_name: S) -> Self {
+        Self::RequiresAsync {
+            tool_name: tool_name.into(),
+        }
+    }
+
+    /// True iff this error is the `RequiresAsync` sentinel.
+    #[must_use]
+    pub const fn is_requires_async(&self) -> bool {
+        matches!(self, Self::RequiresAsync { .. })
+    }
+}
 
 impl std::fmt::Display for ToolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        match self {
+            Self::Message(s) => write!(f, "{s}"),
+            Self::RequiresAsync { tool_name } => write!(
+                f,
+                "tool `{tool_name}` requires async execution via execute_async"
+            ),
+        }
     }
 }
 
@@ -47,7 +85,7 @@ impl std::error::Error for ToolError {}
 
 impl From<crate::CrawlError> for ToolError {
     fn from(value: crate::CrawlError) -> Self {
-        Self(value.to_string())
+        Self::new(value.to_string())
     }
 }
 
@@ -81,8 +119,9 @@ mod tests {
 
     #[test]
     fn tool_error_display_message() {
-        let err = ToolError("something went wrong".to_string());
+        let err = ToolError::new("something went wrong");
         assert_eq!(err.to_string(), "something went wrong");
+        assert!(!err.is_requires_async());
     }
 
     #[test]
@@ -90,6 +129,33 @@ mod tests {
         let crawl_err = crate::CrawlError::new("crawl failure");
         let tool_err: ToolError = crawl_err.into();
         assert_eq!(tool_err.to_string(), "crawl failure");
+        assert!(!tool_err.is_requires_async());
+    }
+
+    #[test]
+    fn tool_error_requires_async_variant_is_recognised_by_predicate() {
+        let err = ToolError::requires_async("navigate");
+        assert!(err.is_requires_async());
+        // Display still includes the canonical phrasing so log readers stay
+        // oriented even though callers must not substring-match.
+        assert!(err
+            .to_string()
+            .contains("requires async execution via execute_async"));
+    }
+
+    #[test]
+    fn tool_error_message_containing_marker_phrase_is_not_misclassified() {
+        // Pre-refactor, `is_requires_async_error` was a substring-match on
+        // `error.to_string()`, which meant any error message that happened
+        // to mention the canonical phrase would be misclassified. With a
+        // dedicated variant, the predicate is identity-based, not text-based.
+        let err = ToolError::new(
+            "upstream said: tool `foo` requires async execution via execute_async (but it's a Message)",
+        );
+        assert!(
+            !err.is_requires_async(),
+            "Message variant must not be reported as RequiresAsync regardless of its text"
+        );
     }
 
     #[test]

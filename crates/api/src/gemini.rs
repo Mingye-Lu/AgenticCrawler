@@ -114,13 +114,13 @@ impl GeminiMessageStream {
             }
 
             if let Some(chunk) = self.response.chunk().await? {
-                for frame in self.parser.push_frames(&chunk) {
+                for frame in self.parser.push_frames(&chunk)? {
                     if let Some(response) = parse_gemini_frame(&frame)? {
                         self.pending.extend(self.state.process_response(&response));
                     }
                 }
             } else {
-                for frame in self.parser.finish_frames() {
+                for frame in self.parser.finish_frames()? {
                     if let Some(response) = parse_gemini_frame(&frame)? {
                         self.pending.extend(self.state.process_response(&response));
                     }

@@ -6,6 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap};
+use zeroize::Zeroizing;
 
 use crate::auth::ProviderChoice;
 use crate::display_width::{prefix_display_width, text_display_width};
@@ -78,7 +79,10 @@ pub(crate) enum AuthModalStep {
     ApiKeyInput {
         provider: ProviderKind,
         base_url: Option<String>,
-        key_buffer: String,
+        // Wrapped so the heap-allocated bytes are zeroed when the modal
+        // transitions out of this step (or is dropped), keeping the API key
+        // out of memory past the moment it's saved.
+        key_buffer: Zeroizing<String>,
         cursor: usize,
         masked: bool,
         error: Option<String>,
@@ -162,7 +166,7 @@ impl AuthModal {
                     crate::app::Provider::OpenAi => AuthModalStep::ApiKeyInput {
                         provider: ProviderKind::OpenAi,
                         base_url: None,
-                        key_buffer: String::new(),
+                        key_buffer: Zeroizing::new(String::new()),
                         cursor: 0,
                         masked: true,
                         error: None,
@@ -205,7 +209,7 @@ impl AuthModal {
                         AuthModalStep::ApiKeyInput {
                             provider: ProviderKind::Preset(preset),
                             base_url: None,
-                            key_buffer: String::new(),
+                            key_buffer: Zeroizing::new(String::new()),
                             cursor: 0,
                             masked: true,
                             error: None,
@@ -224,6 +228,7 @@ impl AuthModal {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn fetch_models_for_provider(
         provider: ProviderKind,
     ) -> Result<Vec<crate::tui::model_list::ModelInfo>, String> {
@@ -243,7 +248,9 @@ impl AuthModal {
         match provider {
             ProviderKind::Anthropic => {
                 let key = config.api_key.unwrap_or_default();
-                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                let runtime = crate::TOKIO_RUNTIME
+                    .get()
+                    .ok_or_else(|| "tokio runtime not initialised".to_string())?;
                 runtime
                     .block_on(api::models::list_anthropic_models(&key))
                     .map(|models| {
@@ -258,7 +265,9 @@ impl AuthModal {
                     .map_err(|e| e.to_string())
             }
             ProviderKind::OpenAi => {
-                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                let runtime = crate::TOKIO_RUNTIME
+                    .get()
+                    .ok_or_else(|| "tokio runtime not initialised".to_string())?;
                 if config.auth_method == "oauth" {
                     runtime
                         .block_on(api::models::list_models_dev("openai"))
@@ -300,7 +309,9 @@ impl AuthModal {
             }
             ProviderKind::Other => Ok(vec![]),
             ProviderKind::Preset(p) => {
-                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                let runtime = crate::TOKIO_RUNTIME
+                    .get()
+                    .ok_or_else(|| "tokio runtime not initialised".to_string())?;
                 let models = runtime
                     .block_on(api::models::list_models_dev(p.id))
                     .unwrap_or_default();
@@ -325,7 +336,10 @@ impl AuthModal {
         }
     }
 
-    fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: String) {
+    // Take `key` by value (not by reference) so its heap allocation is dropped
+    // — and zeroed — by the time this function returns.
+    #[allow(clippy::needless_pass_by_value)]
+    fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: Zeroizing<String>) {
         let (provider_str, preset_base_url): (&str, Option<String>) = match provider {
             ProviderKind::Anthropic => ("anthropic", None),
             ProviderKind::OpenAi => ("openai", None),
@@ -339,7 +353,7 @@ impl AuthModal {
                 (p.id, url)
             }
         };
-        let mut store = api::credentials::load_credentials().unwrap_or_default();
+        let mut store = crate::auth::load_credentials_or_warn();
         let mut config = store
             .providers
             .get(provider_str)
@@ -351,17 +365,32 @@ impl AuthModal {
                 "api_key".to_string()
             }
         };
-        config.api_key = Some(key);
+        // Three heap copies of the API key are in play here:
+        //   1. `key` (Zeroizing<String>): the modal-owned buffer — wiped on
+        //      function exit by `Zeroizing`'s Drop impl.
+        //   2. `config.api_key`: the clone we hand to `set_provider_config`;
+        //      we wipe it via `Zeroize::zeroize` after the disk write so the
+        //      `store` doesn't outlive this function carrying the key bytes.
+        //   3. The serialized JSON inside `save_credentials_to_path`: wrapped
+        //      in `Zeroizing` over there so it's wiped before that function
+        //      returns.
+        config.api_key = Some((*key).clone());
         config.base_url = base_url.or(preset_base_url);
         api::credentials::set_provider_config(&mut store, provider_str, config);
         let _ = api::credentials::save_credentials(&store);
+        if let Some(cfg) = store.providers.get_mut(provider_str) {
+            if let Some(saved_key) = cfg.api_key.as_mut() {
+                use zeroize::Zeroize;
+                saved_key.zeroize();
+            }
+        }
     }
 
     fn save_default_model(provider: ProviderKind, model_id: &str) {
         if model_id.trim().is_empty() {
             return;
         }
-        let mut store = api::credentials::load_credentials().unwrap_or_default();
+        let mut store = crate::auth::load_credentials_or_warn();
         let provider_str = match provider {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::OpenAi => "openai",
@@ -624,10 +653,10 @@ impl Modal for AuthModal {
                 masked,
                 error,
             } => {
-                let display_key = if *masked {
+                let display_key: String = if *masked {
                     "*".repeat(key_buffer.chars().count())
                 } else {
-                    key_buffer.clone()
+                    (**key_buffer).clone()
                 };
                 let preset_url = match provider {
                     ProviderKind::Preset(p) => Some(p.base_url),
@@ -914,7 +943,7 @@ impl Modal for AuthModal {
                                 self.step = AuthModalStep::ApiKeyInput {
                                     provider: ProviderKind::Preset(preset),
                                     base_url: None,
-                                    key_buffer: String::new(),
+                                    key_buffer: Zeroizing::new(String::new()),
                                     cursor: 0,
                                     masked: true,
                                     error: None,
@@ -956,7 +985,7 @@ impl Modal for AuthModal {
                             self.step = AuthModalStep::ApiKeyInput {
                                 provider: *provider,
                                 base_url: None,
-                                key_buffer: String::new(),
+                                key_buffer: Zeroizing::new(String::new()),
                                 cursor: 0,
                                 masked: true,
                                 error: None,
@@ -1035,7 +1064,7 @@ impl Modal for AuthModal {
                         self.step = AuthModalStep::ApiKeyInput {
                             provider: *provider,
                             base_url: Some(input.clone()),
-                            key_buffer: String::new(),
+                            key_buffer: Zeroizing::new(String::new()),
                             cursor: 0,
                             masked: true,
                             error: None,
@@ -1478,7 +1507,7 @@ mod tests {
             AuthModalStep::ApiKeyInput {
                 key_buffer, error, ..
             } => {
-                assert_eq!(key_buffer, "sk");
+                assert_eq!(key_buffer.as_str(), "sk");
                 assert_eq!(error, &None);
             }
             _ => panic!("expected api key input step"),
@@ -1497,7 +1526,9 @@ mod tests {
             ModalAction::Consumed
         );
         match &modal.step {
-            AuthModalStep::ApiKeyInput { key_buffer, .. } => assert_eq!(key_buffer, "s"),
+            AuthModalStep::ApiKeyInput { key_buffer, .. } => {
+                assert_eq!(key_buffer.as_str(), "s");
+            }
             _ => panic!("expected api key input step"),
         }
     }

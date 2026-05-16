@@ -425,6 +425,39 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
             "--resume trailing arguments must be slash commands (got '{bad}')"
         ));
     }
+    // Validate the head of each grouped command against the resume-safe
+    // command set. The previous parser only checked that each token started
+    // with '/', so `--resume session.json /not-a-command` would parse
+    // successfully and then fail at runtime with a confusing error.
+    let resume_supported: Vec<&'static str> = resume_supported_slash_commands()
+        .iter()
+        .map(|spec| spec.name)
+        .collect();
+    for command in &commands {
+        let head = command
+            .trim_start()
+            .trim_start_matches('/')
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        if head.is_empty() {
+            return Err(format!(
+                "--resume command is missing a name (got '{command}')"
+            ));
+        }
+        let head_lower = head.to_ascii_lowercase();
+        if !resume_supported.iter().any(|name| *name == head_lower) {
+            return Err(format!(
+                "--resume command '/{head}' is not a recognised resume-safe slash command \
+                 (supported: {})",
+                resume_supported
+                    .iter()
+                    .map(|n| format!("/{n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
     Ok(CliAction::ResumeSession {
         session_path,
         commands,
@@ -829,6 +862,40 @@ mod tests {
                     "/cost".to_string(),
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn rejects_resume_unknown_slash_command() {
+        // Previously, anything starting with `/` was accepted by the resume
+        // parser and the failure only surfaced at runtime with a confusing
+        // error. Validate eagerly against the resume-safe spec list.
+        let args = vec![
+            "--resume".to_string(),
+            "session.json".to_string(),
+            "/not-a-command".to_string(),
+        ];
+        let err = parse_args(&args).expect_err("unknown command must be rejected");
+        assert!(
+            err.contains("not a recognised resume-safe slash command"),
+            "{err}"
+        );
+        assert!(err.contains("/not-a-command"), "{err}");
+    }
+
+    #[test]
+    fn rejects_resume_command_known_but_not_resume_safe() {
+        // `/model` exists but is not in resume_supported_slash_commands(); it
+        // mutates session-level config in a way that's not safe at replay.
+        let args = vec![
+            "--resume".to_string(),
+            "session.json".to_string(),
+            "/auth".to_string(),
+        ];
+        let err = parse_args(&args).expect_err("non-resume-safe command must be rejected");
+        assert!(
+            err.contains("not a recognised resume-safe slash command"),
+            "{err}"
         );
     }
 

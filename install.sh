@@ -64,6 +64,15 @@ if [ -z "$version" ]; then
     exit 1
 fi
 
+# Defence in depth: the sed-based extraction above can quietly produce a
+# non-version string if the GitHub API response changes shape or is replaced
+# with attacker-controlled content via a misconfigured proxy. Reject anything
+# that isn't a recognisable semver tag before it flows into download URLs.
+if ! [[ "$version" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([-+.][A-Za-z0-9.-]+)?$ ]]; then
+    echo "Error: GitHub API returned an unexpected version string: '$version'" >&2
+    exit 1
+fi
+
 echo "Latest version: $version"
 
 # --- 3. Download binary ---

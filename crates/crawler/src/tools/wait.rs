@@ -75,10 +75,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         let found = browser
             .acquire_bridge()
             .await
-            .map_err(|e| ToolError(e.to_string()))?
+            .map_err(|e| ToolError::new(e.to_string()))?
             .wait_for_selector(selector, parsed.timeout_ms)
             .await
-            .map_err(|e| ToolError(e.to_string()))?;
+            .map_err(|e| ToolError::new(e.to_string()))?;
 
         Ok(ToolEffect::reply_json(&json!({
             "success": true,

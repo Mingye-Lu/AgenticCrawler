@@ -198,9 +198,18 @@ impl SlashCommand {
             "model" => Self::Model {
                 model: parts.next().map(ToOwned::to_owned),
             },
-            "clear" => Self::Clear {
-                confirm: parts.next() == Some("--confirm"),
-            },
+            "clear" => {
+                // Strict parse so `/clear --comfirm` (or any other trailing
+                // garbage) doesn't silently behave like `/clear` without
+                // confirmation and wipe the session.
+                let next = parts.next();
+                let extra = parts.next();
+                match (next, extra) {
+                    (None, _) => Self::Clear { confirm: false },
+                    (Some("--confirm"), None) => Self::Clear { confirm: true },
+                    _ => Self::Unknown(command_raw.to_string()),
+                }
+            }
             "cost" => Self::Cost,
             "config" => Self::Config {
                 section: parts.next().map(ToOwned::to_owned),
@@ -334,6 +343,16 @@ mod tests {
             SlashCommand::parse("/clear --confirm"),
             Some(SlashCommand::Clear { confirm: true })
         );
+        // Typo'd flag must not silently behave like `/clear` (no confirm).
+        assert_eq!(
+            SlashCommand::parse("/clear --comfirm"),
+            Some(SlashCommand::Unknown("clear".to_string()))
+        );
+        // Trailing garbage after a real confirm flag is also rejected.
+        assert_eq!(
+            SlashCommand::parse("/clear --confirm extra"),
+            Some(SlashCommand::Unknown("clear".to_string()))
+        );
         assert_eq!(SlashCommand::parse("/cost"), Some(SlashCommand::Cost));
         assert_eq!(
             SlashCommand::parse("/config"),
@@ -417,6 +436,10 @@ mod tests {
 
     #[test]
     fn compacts_sessions_via_slash_command() {
+        // Plain user/assistant turns only — the compactor walks the preserved
+        // window backwards across tool_use/tool_result pairs, so including a
+        // Tool message would change the removal count and obscure what this
+        // test is asserting (that /compact wires the count into the message).
         let session = Session {
             version: 1,
             model: None,

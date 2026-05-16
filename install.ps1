@@ -45,6 +45,14 @@ try {
     exit 1
 }
 
+# Defence in depth: reject anything that isn't a recognisable semver tag
+# before it flows into download URLs, in case GitHub's payload shape ever
+# changes or a misconfigured proxy returns something else.
+if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^\d+\.\d+\.\d+([-+.][A-Za-z0-9.-]+)?$') {
+    Write-Error "GitHub API returned an unexpected version string: '$version'"
+    exit 1
+}
+
 Write-Host "  Latest version: v$version" -ForegroundColor Green
 
 # --- 3. Download binary ---
