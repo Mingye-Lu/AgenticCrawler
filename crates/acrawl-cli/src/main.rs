@@ -433,7 +433,9 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
             .next()
             .unwrap_or("");
         if head.is_empty() {
-            return Err(format!("--resume command is missing a name (got '{command}')"));
+            return Err(format!(
+                "--resume command is missing a name (got '{command}')"
+            ));
         }
         let head_lower = head.to_ascii_lowercase();
         if !resume_supported.iter().any(|name| *name == head_lower) {
