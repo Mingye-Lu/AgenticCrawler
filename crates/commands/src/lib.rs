@@ -436,6 +436,10 @@ mod tests {
 
     #[test]
     fn compacts_sessions_via_slash_command() {
+        // Plain user/assistant turns only — the compactor walks the preserved
+        // window backwards across tool_use/tool_result pairs, so including a
+        // Tool message would change the removal count and obscure what this
+        // test is asserting (that /compact wires the count into the message).
         let session = Session {
             version: 1,
             model: None,
@@ -445,7 +449,7 @@ mod tests {
                 ConversationMessage::assistant(vec![ContentBlock::Text {
                     text: "b ".repeat(200),
                 }]),
-                ConversationMessage::tool_result("1", "bash", "ok ".repeat(200), false),
+                ConversationMessage::user_text("c ".repeat(200)),
                 ConversationMessage::assistant(vec![ContentBlock::Text {
                     text: "recent".to_string(),
                 }]),
