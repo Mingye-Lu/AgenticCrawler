@@ -94,6 +94,7 @@ pub struct CrawlerAgent {
     control_state: Option<Arc<ControlState>>,
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
     child_control_registry: Option<crate::child_events::ChildControlRegistry>,
+    pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
@@ -118,6 +119,7 @@ impl CrawlerAgent {
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
+            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -142,6 +144,7 @@ impl CrawlerAgent {
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
+            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -166,6 +169,7 @@ impl CrawlerAgent {
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
+            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -220,6 +224,15 @@ impl CrawlerAgent {
         self
     }
 
+    #[must_use]
+    pub fn with_child_snapshots(
+        mut self,
+        snapshots: crate::child_events::ChildSnapshotRegistry,
+    ) -> Self {
+        self.child_snapshots = snapshots;
+        self
+    }
+
     pub fn set_control_state(&mut self, state: Arc<ControlState>) {
         self.control_state = Some(state);
     }
@@ -250,14 +263,17 @@ impl CrawlerAgent {
             ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
                 .with_max_iterations(max_steps);
 
-        // Attach child event observer for streaming child output to TUI
+        // Attach child event observer for streaming child output to TUI and
+        // mirroring lifecycle/heartbeat data into the shared snapshot registry.
         if let Some(tx) = runtime.tool_executor_mut().child_event_tx.take() {
+            let snapshots = runtime.tool_executor_mut().child_snapshots.clone();
             let observer = crate::child_events::ChildEventSender::new(
                 runtime.tool_executor_mut().agent_id.clone(),
                 goal.to_string(),
                 tx,
                 max_steps,
-            );
+            )
+            .with_snapshots(snapshots);
             runtime = runtime.with_observer(Box::new(observer));
         }
 

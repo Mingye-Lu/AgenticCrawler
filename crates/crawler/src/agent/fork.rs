@@ -130,6 +130,12 @@ impl CrawlerAgent {
             }
         };
 
+        // Register a fresh snapshot for this child. Children inherit the
+        // parent's snapshot registry Arc so the parent can poll their
+        // progress without joining.
+        self.child_snapshots
+            .register(&child_id, &fork_spec.goal, child_max_steps);
+
         let mut child_agent = CrawlerAgent::new(
             BrowserContext::new_shared(shared_bridge.clone(), page_index),
             ToolRegistry::new_with_core_tools(),
@@ -137,6 +143,7 @@ impl CrawlerAgent {
         .with_max_steps(child_max_steps)
         .with_agent_id(child_id.clone())
         .with_agent_manager(self.agent_manager.clone())
+        .with_child_snapshots(self.child_snapshots.clone())
         .with_control_state({
             if let Some(registry) = &self.child_control_registry {
                 registry.register(&child_id)
@@ -244,6 +251,10 @@ impl CrawlerAgent {
                         &child_id, &sub_goal, true, item_count, None,
                     ));
                     self.emit_finished_event(&child_id, &sub_goal, true, item_count, None);
+                    self.child_snapshots.update_with(&child_id, |snapshot| {
+                        snapshot.state = crate::child_events::ChildLifecycle::Completed;
+                        snapshot.items_extracted = item_count;
+                    });
                     self.crawl_state.child_blocks.push(ChildBlock {
                         child_id: child_id.clone(),
                         sub_goal,
@@ -266,6 +277,12 @@ impl CrawlerAgent {
                         0,
                         Some("child failed".to_string()),
                     );
+                    self.child_snapshots.update_with(&child_id, |snapshot| {
+                        snapshot.state = crate::child_events::ChildLifecycle::Failed;
+                        snapshot
+                            .error
+                            .get_or_insert_with(|| "child failed".to_string());
+                    });
                     self.crawl_state.child_blocks.push(ChildBlock {
                         child_id: child_id.clone(),
                         sub_goal,
@@ -282,7 +299,11 @@ impl CrawlerAgent {
                         0,
                         Some(&message),
                     ));
-                    self.emit_finished_event(&child_id, &sub_goal, false, 0, Some(message));
+                    self.emit_finished_event(&child_id, &sub_goal, false, 0, Some(message.clone()));
+                    self.child_snapshots.update_with(&child_id, |snapshot| {
+                        snapshot.state = crate::child_events::ChildLifecycle::Failed;
+                        snapshot.error = Some(message);
+                    });
                     self.crawl_state.child_blocks.push(ChildBlock {
                         child_id: child_id.clone(),
                         sub_goal,
@@ -353,6 +374,7 @@ impl CrawlerAgent {
                         .clone()
                         .unwrap_or_else(|| "cancelled by parent".to_string());
                     self.emit_finished_event(&child_id, &sub_goal, false, 0, Some(reason.clone()));
+                    self.child_snapshots.mark_cancelled(&child_id, &reason);
                     self.crawl_state.child_blocks.push(ChildBlock {
                         child_id: child_id.clone(),
                         sub_goal: sub_goal.clone(),
@@ -381,26 +403,41 @@ impl CrawlerAgent {
         Ok(payload.to_string())
     }
 
-    /// Read-only status surface. Filled in by Step 2; for now reports the
-    /// presence of each requested child in `child_tasks` and a placeholder
-    /// state. Returning a stub here keeps `dispatch_tool_effect` exhaustive
-    /// without blocking Step 1 from shipping. Async signature is kept because
-    /// Step 2 will need to lock the snapshot registry.
+    /// Read-only status surface. Looks up the requested children (or all of
+    /// them) in the snapshot registry and returns a JSON array of progress
+    /// snapshots. Does NOT join, cancel, or otherwise mutate the running
+    /// children — safe to call between any steps.
     #[allow(clippy::unused_async)]
     pub(super) async fn handle_status_effect(
         &mut self,
         spec: StatusSpec,
     ) -> Result<String, ToolError> {
-        let child_ids = spec
-            .child_ids
-            .unwrap_or_else(|| self.child_tasks.keys().cloned().collect());
-        let entries: Vec<serde_json::Value> = child_ids
+        let snapshots: Vec<crate::child_events::ChildSnapshot> = match spec.child_ids {
+            Some(ids) => ids
+                .into_iter()
+                .filter_map(|id| self.child_snapshots.get(&id))
+                .collect(),
+            None => self.child_snapshots.list(),
+        };
+
+        let now = std::time::Instant::now();
+        let entries: Vec<serde_json::Value> = snapshots
             .into_iter()
-            .map(|child_id| {
-                let present = self.child_tasks.contains_key(&child_id);
+            .map(|snapshot| {
+                let last_event_secs_ago = now
+                    .saturating_duration_since(snapshot.last_event_at)
+                    .as_secs();
                 serde_json::json!({
-                    "child_id": child_id,
-                    "state": if present { "running" } else { "unknown" },
+                    "child_id": snapshot.child_id,
+                    "sub_goal": snapshot.sub_goal,
+                    "state": snapshot.state.as_str(),
+                    "step": snapshot.step,
+                    "max_steps": snapshot.max_steps,
+                    "last_tool": snapshot.last_tool,
+                    "last_text": snapshot.last_text,
+                    "items_extracted": snapshot.items_extracted,
+                    "last_event_secs_ago": last_event_secs_ago,
+                    "error": snapshot.error,
                 })
             })
             .collect();
@@ -881,6 +918,50 @@ mod tests {
                 error: Some(ref error),
             } if error == "user pressed stop"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_handle_status_effect_returns_snapshots() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        agent
+            .child_snapshots
+            .register("child-1", "search page 2", 15);
+        agent.child_snapshots.update_with("child-1", |snapshot| {
+            snapshot.state = crate::child_events::ChildLifecycle::Running;
+            snapshot.last_tool = Some("navigate".to_string());
+            snapshot.step = 3;
+        });
+
+        let result = agent
+            .handle_status_effect(crate::tool_effect::StatusSpec { child_ids: None })
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let children = parsed["children"].as_array().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0]["child_id"], "child-1");
+        assert_eq!(children[0]["state"], "running");
+        assert_eq!(children[0]["last_tool"], "navigate");
+        assert_eq!(children[0]["step"], 3);
+        assert_eq!(children[0]["max_steps"], 15);
+    }
+
+    #[tokio::test]
+    async fn test_handle_status_effect_filters_by_child_ids() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        agent.child_snapshots.register("child-1", "g1", 10);
+        agent.child_snapshots.register("child-2", "g2", 10);
+
+        let result = agent
+            .handle_status_effect(crate::tool_effect::StatusSpec {
+                child_ids: Some(vec!["child-2".to_string(), "unknown".to_string()]),
+            })
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let children = parsed["children"].as_array().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0]["child_id"], "child-2");
     }
 
     #[tokio::test]
