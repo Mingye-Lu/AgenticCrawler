@@ -1129,11 +1129,22 @@ impl Modal for AuthModal {
                             error: None,
                         };
                     } else if let ProviderKind::Preset(p) = provider {
-                        let idx = flat_preset_list()
-                            .iter()
-                            .position(|pp| pp.id == p.id)
-                            .unwrap_or(0);
-                        self.step = AuthModalStep::ProviderSelect { selected: idx };
+                        if base_url.is_some() {
+                            let previous = base_url.clone().unwrap_or_default();
+                            let previous_len = Self::char_len(&previous);
+                            self.step = AuthModalStep::BaseUrlInput {
+                                provider: ProviderKind::Preset(*p),
+                                input: previous,
+                                cursor: previous_len,
+                                error: None,
+                            };
+                        } else {
+                            let idx = flat_preset_list()
+                                .iter()
+                                .position(|pp| pp.id == p.id)
+                                .unwrap_or(0);
+                            self.step = AuthModalStep::ProviderSelect { selected: idx };
+                        }
                     } else {
                         self.step = AuthModalStep::AuthMethodSelect {
                             provider: *provider,
