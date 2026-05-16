@@ -28,10 +28,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError(e.to_string()))?
+        .map_err(|e| ToolError::new(e.to_string()))?
         .click(&params.selector)
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
 
     let page_state = super::feedback::post_action_page_state(browser).await;
 

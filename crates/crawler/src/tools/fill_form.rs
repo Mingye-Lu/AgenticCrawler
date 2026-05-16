@@ -58,10 +58,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         browser
             .acquire_bridge()
             .await
-            .map_err(|e| ToolError(e.to_string()))?
+            .map_err(|e| ToolError::new(e.to_string()))?
             .fill(selector, value)
             .await
-            .map_err(|e| ToolError(format!("failed to fill '{selector}': {e}")))?;
+            .map_err(|e| ToolError::new(format!("failed to fill '{selector}': {e}")))?;
     }
 
     if params.submit {
@@ -72,10 +72,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         browser
             .acquire_bridge()
             .await
-            .map_err(|e| ToolError(e.to_string()))?
+            .map_err(|e| ToolError::new(e.to_string()))?
             .evaluate(&js)
             .await
-            .map_err(|e| ToolError(format!("failed to submit form: {e}")))?;
+            .map_err(|e| ToolError::new(format!("failed to submit form: {e}")))?;
     }
 
     let page_state = super::feedback::post_action_page_state(browser).await;

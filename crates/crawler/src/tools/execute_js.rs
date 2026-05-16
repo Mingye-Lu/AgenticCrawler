@@ -17,10 +17,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     let result = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError(e.to_string()))?
+        .map_err(|e| ToolError::new(e.to_string()))?
         .evaluate(&script)
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
 
     let value = result.get("value").cloned().unwrap_or(Value::Null);
 
