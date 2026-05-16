@@ -299,7 +299,7 @@ impl AuthModal {
                 (p.id, url)
             }
         };
-        let mut store = api::credentials::load_credentials().unwrap_or_default();
+        let mut store = crate::auth::load_credentials_or_warn();
         let mut config = store
             .providers
             .get(provider_str)
@@ -324,7 +324,7 @@ impl AuthModal {
         if model_id.trim().is_empty() {
             return;
         }
-        let mut store = api::credentials::load_credentials().unwrap_or_default();
+        let mut store = crate::auth::load_credentials_or_warn();
         let provider_str = match provider {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::OpenAi => "openai",

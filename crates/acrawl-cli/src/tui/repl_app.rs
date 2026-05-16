@@ -950,8 +950,7 @@ impl ReplTuiState {
                                     }
                                 };
 
-                                let mut store =
-                                    api::credentials::load_credentials().unwrap_or_default();
+                                let mut store = crate::auth::load_credentials_or_warn();
                                 let provider_str = match provider_kind {
                                     crate::tui::auth_modal::ProviderKind::Anthropic => "anthropic",
                                     crate::tui::auth_modal::ProviderKind::OpenAi => "openai",
@@ -1529,7 +1528,7 @@ fn spawn_anthropic_oauth_thread(
             let token_set = rt
                 .block_on(client.exchange_oauth_code(&oauth, &exchange))
                 .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
-            let mut store = api::credentials::load_credentials().unwrap_or_default();
+            let mut store = crate::auth::load_credentials_or_warn();
             api::credentials::set_provider_config(
                 &mut store,
                 "anthropic",
@@ -1640,7 +1639,7 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
                 scopes: token_set.scopes,
                 account_id,
             };
-            let mut store = api::credentials::load_credentials().unwrap_or_default();
+            let mut store = crate::auth::load_credentials_or_warn();
             let mut cfg = store.providers.get("openai").cloned().unwrap_or_default();
             cfg.auth_method = "oauth".to_string();
             cfg.oauth = Some(oauth_tokens);
