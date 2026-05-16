@@ -30,6 +30,11 @@ pub struct SummaryCompressionResult {
     pub compressed_lines: usize,
     pub removed_duplicate_lines: usize,
     pub omitted_lines: usize,
+    /// `true` iff any content from the (trimmed) input was dropped or shortened
+    /// to fit the budget — including the degenerate cases where the input was
+    /// non-empty but the budget was zero, or normalization collapsed every line
+    /// to nothing. `false` iff the compressed output is equivalent to the
+    /// trimmed input.
     pub truncated: bool,
 }
 
@@ -126,7 +131,13 @@ fn normalize_lines(summary: &str, max_line_chars: usize) -> NormalizedSummary {
 }
 
 fn select_line_indexes(lines: &[String], budget: SummaryCompressionBudget) -> Vec<usize> {
+    // Maintain running totals matching `joined_char_count`'s semantic
+    // (sum of chars in selected lines plus `selected.len() - 1` newline
+    // joiners) so each candidate is an O(1) check instead of an O(N)
+    // rescan. Selection used to be O(P · N · S) which became visible once
+    // `max_summary_chars` was made configurable upward of the default.
     let mut selected = BTreeSet::<usize>::new();
+    let mut running_chars = 0usize;
 
     for priority in 0..=3 {
         for (index, line) in lines.iter().enumerate() {
@@ -134,21 +145,20 @@ fn select_line_indexes(lines: &[String], budget: SummaryCompressionBudget) -> Ve
                 continue;
             }
 
-            let candidate = selected
-                .iter()
-                .map(|selected_index| lines[*selected_index].as_str())
-                .chain(std::iter::once(line.as_str()))
-                .collect::<Vec<_>>();
-
-            if candidate.len() > budget.max_lines {
+            let prospective_count = selected.len() + 1;
+            if prospective_count > budget.max_lines {
                 continue;
             }
 
-            if joined_char_count(&candidate) > budget.max_chars {
+            let line_chars = line.chars().count();
+            let joiner = usize::from(!selected.is_empty());
+            let prospective_chars = running_chars + line_chars + joiner;
+            if prospective_chars > budget.max_chars {
                 continue;
             }
 
             selected.insert(index);
+            running_chars = prospective_chars;
         }
     }
 
