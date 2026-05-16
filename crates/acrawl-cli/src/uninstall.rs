@@ -16,8 +16,14 @@ pub fn run_uninstall(purge: bool) -> Result<(), Box<dyn std::error::Error>> {
         println!("  node_modules: {}", node_modules.display());
     }
     if purge {
-        println!("  Settings:     {}", config_home.join("settings.json").display());
-        println!("  Credentials:  {}", config_home.join("credentials.json").display());
+        println!(
+            "  Settings:     {}",
+            config_home.join("settings.json").display()
+        );
+        println!(
+            "  Credentials:  {}",
+            config_home.join("credentials.json").display()
+        );
         println!("  Sessions:     {}", config_home.join("sessions").display());
     }
     println!();
