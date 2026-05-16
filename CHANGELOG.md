@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-05-16
+
+### Added
+
+- **`acrawl uninstall` subcommand** — removes the binary, `node_modules` (browser automation), and the config home directory. Pass `--purge` to also delete `settings.json`, `credentials.json`, and `sessions/`. Always prompts for confirmation. On Windows the running binary is renamed to `.old` (deleted if possible) and the User PATH entry is removed automatically via PowerShell.
+
+### Fixed
+
+- **Installer missing `playwright-core`** — both `install.ps1` and `install.sh` now install `playwright-core` explicitly alongside `cloakbrowser`. Previously, npm skipped it as an optional peer dependency, causing the CloakBrowser bridge to fail at runtime with `ERR_MODULE_NOT_FOUND`. Re-running the installer on a broken install auto-repairs it.
+
 ## [0.4.5] - 2026-05-16
 
 ### Added
@@ -227,6 +237,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.6
 [0.4.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.5
 [0.4.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.4
 [0.4.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.3
