@@ -298,11 +298,7 @@ impl ToolExecutor for CrawlerAgent {
         let tool_effect = if let Some(handler) = self.registry.get(tool_name) {
             match handler(&input_value) {
                 Ok(effect) => effect,
-                Err(error)
-                    if error
-                        .to_string()
-                        .contains("requires async execution via execute_async") =>
-                {
+                Err(error) if crate::tool_registry::is_requires_async_error(&error) => {
                     if !Self::supports_async(tool_name) {
                         return Err(ToolError::new(error.to_string()));
                     }

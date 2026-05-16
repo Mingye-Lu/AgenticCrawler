@@ -7,6 +7,19 @@ use crate::{ToolEffect, ToolError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolError> + Send + Sync>;
 
+/// Sentinel embedded in the `ToolError` returned by the synchronous handler
+/// stub for any tool that actually needs the async path. Centralised here so
+/// callers don't have to grep for the literal string — see `is_requires_async`.
+const REQUIRES_ASYNC_MARKER: &str = "requires async execution via execute_async";
+
+/// Returns `true` when `error` is the sentinel emitted by a stub registered
+/// for an async-only tool. Use this instead of substring-matching on the error
+/// message at the call site.
+#[must_use]
+pub fn is_requires_async_error(error: &ToolError) -> bool {
+    error.to_string().contains(REQUIRES_ASYNC_MARKER)
+}
+
 const ASYNC_TOOLS: &[&str] = &[
     "navigate",
     "click",
@@ -53,7 +66,7 @@ impl ToolRegistry {
                 name,
                 Box::new(move |_| {
                     Err(ToolError(format!(
-                        "tool `{tool_name}` requires async execution via execute_async"
+                        "tool `{tool_name}` {REQUIRES_ASYNC_MARKER}"
                     )))
                 }),
             );
