@@ -8,9 +8,9 @@ mod markdown;
 mod output_sink;
 mod self_update;
 mod session_mgr;
-mod uninstall;
 mod tool_format;
 mod tui;
+mod uninstall;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -953,7 +953,8 @@ mod tests {
     #[test]
     fn parses_uninstall_with_purge_flag() {
         assert_eq!(
-            parse_args(&["uninstall".to_string(), "--purge".to_string()]).expect("uninstall --purge"),
+            parse_args(&["uninstall".to_string(), "--purge".to_string()])
+                .expect("uninstall --purge"),
             CliAction::Uninstall { purge: true }
         );
     }
