@@ -438,17 +438,16 @@ where
         }
 
         if config.llm_summarization {
-            let existing_prefix =
-                usize::from(self.session.messages.first().is_some_and(|message| {
-                    message.role == crate::session::MessageRole::System
-                        && message.blocks.iter().any(|block| matches!(
-                            block,
-                            ContentBlock::Text { text }
-                                if text.starts_with(
-                                    "This session is being continued from a previous conversation",
-                                )
-                        ))
-                }));
+            // Detect (and skip) a prior compaction's continuation message so
+            // the LLM summarizer doesn't re-summarize the previous summary.
+            // Detection lives in `compact::is_compact_continuation_message`
+            // so the preamble wording has a single source of truth.
+            let existing_prefix = usize::from(
+                self.session
+                    .messages
+                    .first()
+                    .is_some_and(crate::compact::is_compact_continuation_message),
+            );
             let removed_end =
                 (existing_prefix + result.removed_message_count).min(self.session.messages.len());
             let removed_messages = &self.session.messages[existing_prefix..removed_end];
