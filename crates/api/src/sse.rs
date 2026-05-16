@@ -15,7 +15,7 @@ impl SseParser {
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<StreamEvent>, ApiError> {
         let mut events = Vec::new();
 
-        for frame in self.push_frames(chunk) {
+        for frame in self.push_frames(chunk)? {
             if let Some(event) = parse_frame(&frame)? {
                 events.push(event);
             }
@@ -24,38 +24,41 @@ impl SseParser {
         Ok(events)
     }
 
-    #[must_use]
-    pub fn push_frames(&mut self, chunk: &[u8]) -> Vec<String> {
+    pub fn push_frames(&mut self, chunk: &[u8]) -> Result<Vec<String>, ApiError> {
         self.buffer.extend_from_slice(chunk);
         let mut frames = Vec::new();
 
-        while let Some(frame) = self.next_frame() {
+        while let Some(frame) = self.next_frame()? {
             frames.push(frame);
         }
 
-        frames
+        Ok(frames)
     }
 
     pub fn finish(&mut self) -> Result<Vec<StreamEvent>, ApiError> {
-        self.finish_frames()
+        self.finish_frames()?
             .into_iter()
             .map(|frame| parse_frame(&frame))
             .collect::<Result<Vec<_>, _>>()
             .map(|events| events.into_iter().flatten().collect())
     }
 
-    #[must_use]
-    pub fn finish_frames(&mut self) -> Vec<String> {
+    pub fn finish_frames(&mut self) -> Result<Vec<String>, ApiError> {
         if self.buffer.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let trailing = std::mem::take(&mut self.buffer);
-        vec![String::from_utf8_lossy(&trailing).into_owned()]
+        // Reject invalid UTF-8 instead of silently substituting U+FFFD so
+        // malformed transport bytes can't quietly corrupt the JSON payload
+        // passed downstream (where deserialisation would then succeed-but-wrong).
+        let frame = String::from_utf8(trailing)
+            .map_err(|_| ApiError::InvalidSseFrame("trailing buffer contained invalid utf-8"))?;
+        Ok(vec![frame])
     }
 
-    fn next_frame(&mut self) -> Option<String> {
-        let separator = self
+    fn next_frame(&mut self) -> Result<Option<String>, ApiError> {
+        let Some((position, separator_len)) = self
             .buffer
             .windows(2)
             .position(|window| window == b"\n\n")
@@ -65,15 +68,19 @@ impl SseParser {
                     .windows(4)
                     .position(|window| window == b"\r\n\r\n")
                     .map(|position| (position, 4))
-            })?;
+            })
+        else {
+            return Ok(None);
+        };
 
-        let (position, separator_len) = separator;
         let frame = self
             .buffer
             .drain(..position + separator_len)
             .collect::<Vec<_>>();
         let frame_len = frame.len().saturating_sub(separator_len);
-        Some(String::from_utf8_lossy(&frame[..frame_len]).into_owned())
+        let text = String::from_utf8(frame[..frame_len].to_vec())
+            .map_err(|_| ApiError::InvalidSseFrame("frame contained invalid utf-8"))?;
+        Ok(Some(text))
     }
 }
 
@@ -210,6 +217,33 @@ mod tests {
         let frame = "event: ping\n\n";
         let event = parse_frame(frame).expect("frame without data should be ignored");
         assert_eq!(event, None);
+    }
+
+    #[test]
+    fn invalid_utf8_in_frame_errors_instead_of_silently_lossy() {
+        let mut parser = SseParser::new();
+        // Lone continuation byte 0x80 mid-frame: invalid UTF-8.
+        let chunk = b"event: x\n\xFFdata: {}\n\n";
+
+        let err = parser
+            .push(chunk)
+            .expect_err("invalid utf-8 must produce an error");
+        assert!(
+            matches!(err, crate::error::ApiError::InvalidSseFrame(_)),
+            "expected InvalidSseFrame, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_in_trailing_buffer_errors() {
+        let mut parser = SseParser::new();
+        // No frame separator → bytes land in the trailing buffer; that
+        // trailing flush must also reject invalid UTF-8.
+        assert!(parser.push(b"event: x\ndata: \xFF").unwrap().is_empty());
+        let err = parser
+            .finish()
+            .expect_err("trailing invalid utf-8 must error");
+        assert!(matches!(err, crate::error::ApiError::InvalidSseFrame(_)));
     }
 
     #[test]
