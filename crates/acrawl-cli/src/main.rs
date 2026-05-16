@@ -412,6 +412,11 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
     if commands.is_empty() {
         return Err("--resume requires at least one slash command".to_string());
     }
+    if let Some(bad) = commands.iter().find(|c| !c.trim_start().starts_with('/')) {
+        return Err(format!(
+            "--resume trailing arguments must be slash commands (got '{bad}')"
+        ));
+    }
     Ok(CliAction::ResumeSession {
         session_path,
         commands,
