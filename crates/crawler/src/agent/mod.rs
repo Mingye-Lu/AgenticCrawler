@@ -86,6 +86,10 @@ pub struct CrawlerAgent {
     pub(super) shared_bridge: Option<SharedBridge>,
     pub(super) crawl_state: CrawlState,
     pub(crate) child_tasks: ChildTaskMap,
+    /// Monotonically increasing counter feeding `next_child_id`. Using a
+    /// per-agent counter (rather than `child_tasks.len()`) prevents IDs from
+    /// being reused after children are drained/waited on.
+    pub(super) child_id_counter: std::sync::atomic::AtomicU64,
     pub(super) api_client_arc: Option<SharedApiClient>,
     control_state: Option<Arc<ControlState>>,
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
@@ -109,6 +113,7 @@ impl CrawlerAgent {
                 ..CrawlState::default()
             },
             child_tasks: HashMap::new(),
+            child_id_counter: std::sync::atomic::AtomicU64::new(0),
             api_client_arc: None,
             control_state: None,
             child_event_tx: None,
@@ -132,6 +137,7 @@ impl CrawlerAgent {
                 ..CrawlState::default()
             },
             child_tasks: HashMap::new(),
+            child_id_counter: std::sync::atomic::AtomicU64::new(0),
             api_client_arc: None,
             control_state: None,
             child_event_tx: None,
@@ -155,6 +161,7 @@ impl CrawlerAgent {
                 ..CrawlState::default()
             },
             child_tasks: HashMap::new(),
+            child_id_counter: std::sync::atomic::AtomicU64::new(0),
             api_client_arc: None,
             control_state: None,
             child_event_tx: None,
