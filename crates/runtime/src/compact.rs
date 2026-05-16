@@ -542,10 +542,12 @@ mod tests {
             for block in &message.blocks {
                 if let ContentBlock::ToolResult { tool_use_id, .. } = block {
                     let has_matching_use = preserved.iter().any(|m| {
-                        m.blocks.iter().any(|b| matches!(
-                            b,
-                            ContentBlock::ToolUse { id, .. } if id == tool_use_id
-                        ))
+                        m.blocks.iter().any(|b| {
+                            matches!(
+                                b,
+                                ContentBlock::ToolUse { id, .. } if id == tool_use_id
+                            )
+                        })
                     });
                     assert!(
                         has_matching_use,
@@ -585,19 +587,28 @@ mod tests {
         );
 
         let preserved = &result.compacted_session.messages;
-        assert_ne!(preserved[1].role, MessageRole::Tool,
-            "preserved window must not start with a Tool message");
+        assert_ne!(
+            preserved[1].role,
+            MessageRole::Tool,
+            "preserved window must not start with a Tool message"
+        );
 
         let has_tool_use = preserved.iter().any(|m| {
-            m.blocks.iter().any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "call_1"))
+            m.blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { id, .. } if id == "call_1"))
         });
         let has_tool_result = preserved.iter().any(|m| {
-            m.blocks.iter().any(|b| matches!(
-                b,
-                ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "call_1"
-            ))
+            m.blocks.iter().any(|b| {
+                matches!(
+                    b,
+                    ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "call_1"
+                )
+            })
         });
-        assert_eq!(has_tool_use, has_tool_result,
-            "tool_use and tool_result for call_1 must both be present or both absent");
+        assert_eq!(
+            has_tool_use, has_tool_result,
+            "tool_use and tool_result for call_1 must both be present or both absent"
+        );
     }
 }

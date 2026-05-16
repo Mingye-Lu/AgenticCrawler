@@ -103,9 +103,10 @@ impl McpServerManager {
                         McpServerManagerError::InvalidResponse {
                             server_name: server_name.clone(),
                             method: "tools/list",
-                            details: "MCP server process is gone — it likely crashed or was killed; \
+                            details:
+                                "MCP server process is gone — it likely crashed or was killed; \
                                       check the server's stderr output above and retry"
-                                .to_string(),
+                                    .to_string(),
                         }
                     })?;
                     timeout(
