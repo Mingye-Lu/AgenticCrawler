@@ -243,8 +243,13 @@ impl McpServerManager {
     }
 
     fn take_request_id(&mut self) -> JsonRpcId {
+        // saturating_add would have pinned every subsequent request at
+        // u64::MAX once the counter reached the ceiling, repeatedly issuing
+        // the same id and breaking JSON-RPC correlation. Wrap to 1 instead;
+        // any in-flight requests will have resolved long before another
+        // 2^64 ids are minted, so reuse-after-wrap is benign.
         let id = self.next_request_id;
-        self.next_request_id = self.next_request_id.saturating_add(1);
+        self.next_request_id = self.next_request_id.checked_add(1).unwrap_or(1);
         JsonRpcId::Number(id)
     }
 
