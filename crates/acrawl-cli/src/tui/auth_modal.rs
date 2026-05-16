@@ -648,6 +648,15 @@ impl Modal for AuthModal {
                             .add_modifier(Modifier::DIM),
                     )));
                 }
+                let key_len = key_buffer.chars().count();
+                if key_len > 0 {
+                    lines.push(Line::from(Span::styled(
+                        format!("  {key_len} characters"),
+                        Style::default()
+                            .fg(Color::Rgb(130, 136, 145))
+                            .add_modifier(Modifier::DIM),
+                    )));
+                }
                 if let Some(message) = error {
                     lines.push(Line::from(Span::styled(
                         message.clone(),
@@ -657,7 +666,7 @@ impl Modal for AuthModal {
                 (
                     Color::Yellow,
                     lines,
-                    Some(hint_line("←/→ move  Enter confirm  Esc back")),
+                    Some(hint_line("←/→ move  Ctrl+V paste  Enter confirm  Esc back")),
                     Some((
                         3u16,
                         u16::try_from(
