@@ -203,7 +203,9 @@ impl AuthModal {
         match provider {
             ProviderKind::Anthropic => {
                 let key = config.api_key.unwrap_or_default();
-                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                let runtime = crate::TOKIO_RUNTIME
+                    .get()
+                    .ok_or_else(|| "tokio runtime not initialised".to_string())?;
                 runtime
                     .block_on(api::models::list_anthropic_models(&key))
                     .map(|models| {
@@ -218,7 +220,9 @@ impl AuthModal {
                     .map_err(|e| e.to_string())
             }
             ProviderKind::OpenAi => {
-                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                let runtime = crate::TOKIO_RUNTIME
+                    .get()
+                    .ok_or_else(|| "tokio runtime not initialised".to_string())?;
                 if config.auth_method == "oauth" {
                     runtime
                         .block_on(api::models::list_models_dev("openai"))
@@ -260,7 +264,9 @@ impl AuthModal {
             }
             ProviderKind::Other => Ok(vec![]),
             ProviderKind::Preset(p) => {
-                let runtime = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+                let runtime = crate::TOKIO_RUNTIME
+                    .get()
+                    .ok_or_else(|| "tokio runtime not initialised".to_string())?;
                 let models = runtime
                     .block_on(api::models::list_models_dev(p.id))
                     .unwrap_or_default();
