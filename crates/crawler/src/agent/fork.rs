@@ -4,7 +4,44 @@ use runtime::ToolError;
 
 use super::CrawlerAgent;
 use crate::state::ChildBlock;
-use crate::{tool_effect::ForkSpec, tool_effect::WaitSpec, BrowserContext, ToolRegistry};
+use crate::{
+    tool_effect::{CancelSpec, ForkSpec, StatusSpec, WaitSpec},
+    BrowserContext, ToolRegistry,
+};
+
+fn empty_wait_snapshot() -> String {
+    serde_json::json!({
+        "waited": 0,
+        "finished": [],
+        "still_running": [],
+    })
+    .to_string()
+}
+
+fn running_snapshot(child_id: &str, sub_goal: &str) -> serde_json::Value {
+    serde_json::json!({
+        "child_id": child_id,
+        "sub_goal": sub_goal,
+        "status": "running",
+    })
+}
+
+fn finished_snapshot(
+    child_id: &str,
+    sub_goal: &str,
+    success: bool,
+    items_extracted: usize,
+    error: Option<&str>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "child_id": child_id,
+        "sub_goal": sub_goal,
+        "status": if success { "completed" } else { "failed" },
+        "success": success,
+        "items_extracted": items_extracted,
+        "error": error,
+    })
+}
 
 pub(crate) struct ForkSupervisor<'a> {
     agent: &'a mut CrawlerAgent,
@@ -150,7 +187,11 @@ impl CrawlerAgent {
             .await
     }
 
-    // Sequential child wait loop — extracting helpers would obscure the timeout/cancel logic.
+    // Wait collects results from finished children and reports back a typed
+    // snapshot for children that haven't finished by the deadline. The wait
+    // **never** aborts or cancels children: the deadline only controls how
+    // long the parent blocks before returning. Cancellation is an explicit
+    // action, surfaced via `cancel_subagent`.
     #[allow(clippy::too_many_lines)]
     async fn handle_wait_effect_with_timeout(
         &mut self,
@@ -161,7 +202,7 @@ impl CrawlerAgent {
             .child_ids
             .unwrap_or_else(|| self.child_tasks.keys().cloned().collect());
         if child_ids.is_empty() {
-            return Ok("No active subagents".to_string());
+            return Ok(empty_wait_snapshot());
         }
 
         let deadline = Instant::now() + wait_timeout;
@@ -175,102 +216,223 @@ impl CrawlerAgent {
             .collect::<Vec<_>>();
 
         if tasks.is_empty() {
-            return Ok("No active subagents".to_string());
+            return Ok(empty_wait_snapshot());
         }
 
         let task_count = tasks.len();
-        let mut total_items = 0_usize;
+        let mut finished_entries: Vec<serde_json::Value> = Vec::new();
+        let mut still_running_entries: Vec<serde_json::Value> = Vec::new();
 
         for (child_id, sub_goal, mut handle) in tasks {
             let remaining = deadline
                 .checked_duration_since(Instant::now())
                 .unwrap_or_default();
-            let (items, finished_event) = if remaining.is_zero() {
-                if let Some(registry) = &self.child_control_registry {
-                    if let Some(state) = registry.get(&child_id) {
-                        state.request_cancel();
-                    }
-                }
-                handle.abort();
-                (
-                    Vec::new(),
-                    crate::child_events::ChildEventKind::Finished {
-                        success: false,
-                        items_extracted: 0,
-                        error: Some("timed out".to_string()),
-                    },
-                )
-            } else {
-                match tokio::time::timeout(remaining, &mut handle).await {
-                    Ok(Ok(Some(items))) => {
-                        let item_count = items.len();
-                        (
-                            items,
-                            crate::child_events::ChildEventKind::Finished {
-                                success: true,
-                                items_extracted: item_count,
-                                error: None,
-                            },
-                        )
-                    }
-                    Ok(Ok(None)) => (
-                        Vec::new(),
-                        crate::child_events::ChildEventKind::Finished {
-                            success: false,
-                            items_extracted: 0,
-                            error: Some("child failed".to_string()),
-                        },
-                    ),
-                    Ok(Err(error)) => (
-                        Vec::new(),
-                        crate::child_events::ChildEventKind::Finished {
-                            success: false,
-                            items_extracted: 0,
-                            error: Some(error.to_string()),
-                        },
-                    ),
-                    Err(_) => {
-                        if let Some(registry) = &self.child_control_registry {
-                            if let Some(state) = registry.get(&child_id) {
-                                state.request_cancel();
-                            }
-                        }
-                        handle.abort();
-                        (
-                            Vec::new(),
-                            crate::child_events::ChildEventKind::Finished {
-                                success: false,
-                                items_extracted: 0,
-                                error: Some("timed out".to_string()),
-                            },
-                        )
-                    }
-                }
-            };
 
-            total_items += items.len();
-            if let Some(ref tx) = self.child_event_tx {
-                let _ = tx.send(crate::child_events::ChildEvent {
-                    child_id: child_id.clone(),
-                    sub_goal: sub_goal.clone(),
-                    event: finished_event,
-                });
+            // Zero remaining is identical to "timed out": never abort, just
+            // re-insert the handle so a future wait/cancel can still target
+            // it, and report the child as still running.
+            if remaining.is_zero() {
+                still_running_entries.push(running_snapshot(&child_id, &sub_goal));
+                self.child_tasks.insert(child_id, (sub_goal, handle));
+                continue;
             }
-            self.crawl_state.child_blocks.push(ChildBlock {
-                child_id: child_id.clone(),
-                sub_goal,
-                items,
-            });
-            if let Some(registry) = &self.child_control_registry {
-                registry.remove(&child_id);
+
+            match tokio::time::timeout(remaining, &mut handle).await {
+                Ok(Ok(Some(items))) => {
+                    let item_count = items.len();
+                    finished_entries.push(finished_snapshot(
+                        &child_id, &sub_goal, true, item_count, None,
+                    ));
+                    self.emit_finished_event(&child_id, &sub_goal, true, item_count, None);
+                    self.crawl_state.child_blocks.push(ChildBlock {
+                        child_id: child_id.clone(),
+                        sub_goal,
+                        items,
+                    });
+                    self.cleanup_finished(&child_id).await;
+                }
+                Ok(Ok(None)) => {
+                    finished_entries.push(finished_snapshot(
+                        &child_id,
+                        &sub_goal,
+                        false,
+                        0,
+                        Some("child failed"),
+                    ));
+                    self.emit_finished_event(
+                        &child_id,
+                        &sub_goal,
+                        false,
+                        0,
+                        Some("child failed".to_string()),
+                    );
+                    self.crawl_state.child_blocks.push(ChildBlock {
+                        child_id: child_id.clone(),
+                        sub_goal,
+                        items: Vec::new(),
+                    });
+                    self.cleanup_finished(&child_id).await;
+                }
+                Ok(Err(error)) => {
+                    let message = error.to_string();
+                    finished_entries.push(finished_snapshot(
+                        &child_id,
+                        &sub_goal,
+                        false,
+                        0,
+                        Some(&message),
+                    ));
+                    self.emit_finished_event(&child_id, &sub_goal, false, 0, Some(message));
+                    self.crawl_state.child_blocks.push(ChildBlock {
+                        child_id: child_id.clone(),
+                        sub_goal,
+                        items: Vec::new(),
+                    });
+                    self.cleanup_finished(&child_id).await;
+                }
+                Err(_) => {
+                    // Deadline elapsed mid-await. The child is still running;
+                    // re-insert the handle and surface a "running" snapshot.
+                    // No cancellation is performed.
+                    still_running_entries.push(running_snapshot(&child_id, &sub_goal));
+                    self.child_tasks.insert(child_id, (sub_goal, handle));
+                }
             }
-            self.agent_manager.lock().await.mark_done(&child_id);
         }
 
+        let finished_count = finished_entries.len();
+        let still_running_count = still_running_entries.len();
+        let total_items: u64 = finished_entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("items_extracted")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+            })
+            .sum();
+
+        let payload = serde_json::json!({
+            "waited": task_count,
+            "finished": finished_entries,
+            "still_running": still_running_entries,
+        });
+
+        let message = format!(
+            "Waited on {task_count} subagent(s): {finished_count} finished, {still_running_count} still running. Collected {total_items} item(s)."
+        );
+        self.crawl_state.action_history.push(message);
+
+        Ok(payload.to_string())
+    }
+
+    /// Cancel running sub-agents abortively. Each requested child's control
+    /// state has `request_cancel()` called (so a cooperatively-yielding child
+    /// observes cancellation between turns) and its `JoinHandle` is aborted
+    /// immediately. The user-facing contract is "cancel = abort": discarded
+    /// in-flight work is not collected.
+    pub(super) async fn handle_cancel_effect(
+        &mut self,
+        spec: CancelSpec,
+    ) -> Result<String, ToolError> {
+        let mut cancelled: Vec<serde_json::Value> = Vec::new();
+        let mut not_found: Vec<String> = Vec::new();
+
+        for child_id in spec.child_ids {
+            if let Some(registry) = &self.child_control_registry {
+                if let Some(state) = registry.get(&child_id) {
+                    state.request_cancel();
+                }
+            }
+
+            match self.child_tasks.remove(&child_id) {
+                Some((sub_goal, handle)) => {
+                    handle.abort();
+                    let reason = spec
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "cancelled by parent".to_string());
+                    self.emit_finished_event(&child_id, &sub_goal, false, 0, Some(reason.clone()));
+                    self.crawl_state.child_blocks.push(ChildBlock {
+                        child_id: child_id.clone(),
+                        sub_goal: sub_goal.clone(),
+                        items: Vec::new(),
+                    });
+                    cancelled.push(serde_json::json!({
+                        "child_id": child_id,
+                        "sub_goal": sub_goal,
+                        "reason": reason,
+                    }));
+                    self.cleanup_finished(&child_id).await;
+                }
+                None => not_found.push(child_id),
+            }
+        }
+
+        let cancelled_count = cancelled.len();
+        let not_found_count = not_found.len();
+        let payload = serde_json::json!({
+            "cancelled": cancelled,
+            "not_found": not_found,
+        });
         let message =
-            format!("Waited for {task_count} subagent(s). Collected {total_items} item(s).");
-        self.crawl_state.action_history.push(message.clone());
-        Ok(message)
+            format!("Cancelled {cancelled_count} subagent(s); {not_found_count} not found.");
+        self.crawl_state.action_history.push(message);
+        Ok(payload.to_string())
+    }
+
+    /// Read-only status surface. Filled in by Step 2; for now reports the
+    /// presence of each requested child in `child_tasks` and a placeholder
+    /// state. Returning a stub here keeps `dispatch_tool_effect` exhaustive
+    /// without blocking Step 1 from shipping. Async signature is kept because
+    /// Step 2 will need to lock the snapshot registry.
+    #[allow(clippy::unused_async)]
+    pub(super) async fn handle_status_effect(
+        &mut self,
+        spec: StatusSpec,
+    ) -> Result<String, ToolError> {
+        let child_ids = spec
+            .child_ids
+            .unwrap_or_else(|| self.child_tasks.keys().cloned().collect());
+        let entries: Vec<serde_json::Value> = child_ids
+            .into_iter()
+            .map(|child_id| {
+                let present = self.child_tasks.contains_key(&child_id);
+                serde_json::json!({
+                    "child_id": child_id,
+                    "state": if present { "running" } else { "unknown" },
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "children": entries }).to_string())
+    }
+
+    fn emit_finished_event(
+        &self,
+        child_id: &str,
+        sub_goal: &str,
+        success: bool,
+        items_extracted: usize,
+        error: Option<String>,
+    ) {
+        if let Some(ref tx) = self.child_event_tx {
+            let _ = tx.send(crate::child_events::ChildEvent {
+                child_id: child_id.to_string(),
+                sub_goal: sub_goal.to_string(),
+                event: crate::child_events::ChildEventKind::Finished {
+                    success,
+                    items_extracted,
+                    error,
+                },
+            });
+        }
+    }
+
+    async fn cleanup_finished(&self, child_id: &str) {
+        if let Some(registry) = &self.child_control_registry {
+            registry.remove(child_id);
+        }
+        self.agent_manager.lock().await.mark_done(child_id);
     }
 
     async fn create_child_page(
@@ -451,10 +613,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wait_no_children_returns_immediately() {
+    async fn test_wait_no_children_returns_empty_snapshot() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-        let result = agent.handle_wait_effect(WaitSpec { child_ids: None }).await;
-        assert_eq!(result.unwrap(), "No active subagents");
+        let result = agent
+            .handle_wait_effect(WaitSpec { child_ids: None })
+            .await
+            .expect("wait with no children should succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 0);
+        assert!(parsed["finished"].as_array().unwrap().is_empty());
+        assert!(parsed["still_running"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -469,8 +637,13 @@ mod tests {
             .insert("child-1".to_string(), ("search".to_string(), handle));
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
-        assert_eq!(result, "Waited for 1 subagent(s). Collected 0 item(s).");
-        assert_eq!(agent.crawl_state.action_history[0], result);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 1);
+        // child returned None → counted as finished/failed, not still_running
+        assert_eq!(parsed["finished"].as_array().unwrap().len(), 1);
+        assert!(parsed["still_running"].as_array().unwrap().is_empty());
+        assert_eq!(agent.crawl_state.action_history.len(), 1);
+        assert!(agent.crawl_state.action_history[0].contains("Waited on 1 subagent(s)"));
     }
 
     #[tokio::test]
@@ -497,7 +670,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.contains("Waited for 1 subagent(s)"));
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 1);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
         assert_eq!(agent.crawl_state.child_blocks[0].child_id, "child-1");
         assert!(agent.child_tasks.contains_key("child-2"));
@@ -507,7 +681,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wait_with_nonexistent_ids_returns_no_active() {
+    async fn test_wait_with_nonexistent_ids_returns_empty_snapshot() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
         let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
             tokio::spawn(async { Some(vec![serde_json::json!({"data": 1})]) });
@@ -522,7 +696,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result, "No active subagents");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 0);
         assert!(agent.child_tasks.contains_key("real-child"));
         for (_, (_, handle)) in agent.child_tasks.drain() {
             handle.abort();
@@ -555,8 +730,16 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.contains("Waited for 2 subagent(s)"));
-        assert!(result.contains("Collected 3 item(s)"));
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 2);
+        assert_eq!(parsed["finished"].as_array().unwrap().len(), 2);
+        let total: u64 = parsed["finished"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["items_extracted"].as_u64().unwrap())
+            .sum();
+        assert_eq!(total, 3);
         assert_eq!(agent.crawl_state.child_blocks.len(), 2);
         assert!(agent.child_tasks.is_empty());
     }
@@ -583,7 +766,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.contains("Collected 1 item(s)"));
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["finished"][0]["items_extracted"], 1);
         let event = rx.try_recv().expect("finished event should be emitted");
         assert_eq!(event.child_id, "child-1");
         assert_eq!(event.sub_goal, "goal-1");
@@ -598,7 +782,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wait_emits_finished_event_on_timeout() {
+    async fn test_wait_returns_snapshot_on_timeout_without_aborting() {
         let manager = super::super::default_agent_manager();
         manager.lock().await.register_root("test-agent");
 
@@ -627,9 +811,67 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.contains("Collected 0 item(s)"));
+        // The child is still running, so the snapshot must report it under
+        // `still_running` and NOT abort or cancel it.
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 1);
+        assert!(parsed["finished"].as_array().unwrap().is_empty());
+        let still_running = parsed["still_running"].as_array().unwrap();
+        assert_eq!(still_running.len(), 1);
+        assert_eq!(still_running[0]["child_id"], "child-1");
+        assert_eq!(still_running[0]["status"], "running");
+
+        // No cancel was requested and no Finished event was emitted.
+        assert!(!child_state.is_cancelled());
+        assert!(
+            rx.try_recv().is_err(),
+            "no Finished event should be emitted on timeout"
+        );
+
+        // The handle is re-inserted so a future wait/cancel can still target it.
+        assert!(agent.child_tasks.contains_key("child-1"));
+        for (_, (_, handle)) in agent.child_tasks.drain() {
+            handle.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cancel_subagent_aborts_handle_and_emits_finished_event() {
+        let manager = super::super::default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let registry = crate::ChildControlRegistry::default();
+        let child_state = registry.register("child-1");
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry())
+            .with_agent_manager(manager)
+            .with_child_event_sender(tx)
+            .with_child_control_registry(registry.clone());
+        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            Some(Vec::new())
+        });
+        agent
+            .child_tasks
+            .insert("child-1".to_string(), ("goal-1".to_string(), handle));
+
+        let result = agent
+            .handle_cancel_effect(crate::tool_effect::CancelSpec {
+                child_ids: vec!["child-1".to_string()],
+                reason: Some("user pressed stop".to_string()),
+            })
+            .await
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["cancelled"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["cancelled"][0]["child_id"], "child-1");
+        assert_eq!(parsed["cancelled"][0]["reason"], "user pressed stop");
+        assert!(parsed["not_found"].as_array().unwrap().is_empty());
+
         assert!(child_state.is_cancelled());
-        let event = rx.try_recv().expect("timeout event should be emitted");
+        assert!(!agent.child_tasks.contains_key("child-1"));
+        let event = rx.try_recv().expect("Finished event should be emitted");
         assert_eq!(event.child_id, "child-1");
         assert!(matches!(
             event.event,
@@ -637,8 +879,25 @@ mod tests {
                 success: false,
                 items_extracted: 0,
                 error: Some(ref error),
-            } if error == "timed out"
+            } if error == "user pressed stop"
         ));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_subagent_reports_unknown_child_ids() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        let result = agent
+            .handle_cancel_effect(crate::tool_effect::CancelSpec {
+                child_ids: vec!["ghost".to_string()],
+                reason: None,
+            })
+            .await
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["cancelled"].as_array().unwrap().is_empty());
+        assert_eq!(parsed["not_found"].as_array().unwrap().len(), 1);
+        assert_eq!(parsed["not_found"][0], "ghost");
     }
 
     #[test]

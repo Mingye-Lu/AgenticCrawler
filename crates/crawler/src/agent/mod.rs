@@ -341,6 +341,8 @@ impl CrawlerAgent {
             ToolEffect::Reply(output) => Ok(output),
             ToolEffect::Spawn(spec) => self.handle_spawn(spec).await,
             ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
+            ToolEffect::Cancel(spec) => self.handle_cancel_effect(spec).await,
+            ToolEffect::Status(spec) => self.handle_status_effect(spec).await,
             ToolEffect::Pause { reason } => self.handle_pause(reason).await,
         }
     }
@@ -664,7 +666,9 @@ mod tests {
             .await
             .expect("wait effect should collect child results");
 
-        assert_eq!(result, "Waited for 1 subagent(s). Collected 1 item(s).");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 1);
+        assert_eq!(parsed["finished"][0]["items_extracted"], 1);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
     }
 
@@ -933,14 +937,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_wait_no_children_returns_immediately() {
+    async fn test_wait_no_children_returns_empty_snapshot() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
         let result = agent
             .handle_wait_effect(crate::WaitSpec { child_ids: None })
-            .await;
+            .await
+            .expect("wait with no children should succeed");
 
-        assert_eq!(result.unwrap(), "No active subagents");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 0);
+        assert!(parsed["finished"].as_array().unwrap().is_empty());
+        assert!(parsed["still_running"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -956,9 +964,11 @@ mod tests {
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
 
-        assert_eq!(result, "Waited for 1 subagent(s). Collected 0 item(s).");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 1);
+        assert_eq!(parsed["finished"].as_array().unwrap().len(), 1);
         assert_eq!(agent.crawl_state.action_history.len(), 1);
-        assert_eq!(agent.crawl_state.action_history[0], result);
+        assert!(agent.crawl_state.action_history[0].contains("Waited on 1 subagent(s)"));
     }
 
     #[tokio::test]
@@ -980,7 +990,8 @@ mod tests {
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
 
-        assert!(result.contains("Collected 1"));
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["finished"][0]["items_extracted"], 1);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
         assert_eq!(agent.crawl_state.child_blocks[0].child_id, "child-1");
         assert_eq!(agent.crawl_state.child_blocks[0].sub_goal, "search");
@@ -1037,7 +1048,8 @@ mod tests {
             .insert("child-1".to_string(), ("search page 2".to_string(), handle));
 
         let wait_result = parent.execute("wait_for_subagents", "{}").await.unwrap();
-        assert!(wait_result.contains("Collected 2"));
+        let parsed: serde_json::Value = serde_json::from_str(&wait_result).unwrap();
+        assert_eq!(parsed["finished"][0]["items_extracted"], 2);
 
         let all = parent.crawl_state.all_data();
         assert_eq!(all.len(), 3);

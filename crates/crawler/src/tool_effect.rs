@@ -9,6 +9,13 @@ pub enum ToolEffect {
     Spawn(ForkSpec),
     /// Tool requests waiting for sub-agents to finish.
     Wait(WaitSpec),
+    /// Tool requests cancelling running sub-agents. Cancellation is abortive:
+    /// the children are torn down immediately and their in-flight work is
+    /// discarded.
+    Cancel(CancelSpec),
+    /// Tool requests a read-only snapshot of running sub-agents. Never joins
+    /// or cancels — safe to call between steps.
+    Status(StatusSpec),
     /// Tool requests pausing execution for human intervention.
     Pause { reason: String },
 }
@@ -30,6 +37,19 @@ pub struct ForkSpec {
 /// Parameters for waiting on sub-agents.
 #[derive(Debug, Clone)]
 pub struct WaitSpec {
+    pub child_ids: Option<Vec<String>>,
+}
+
+/// Parameters for explicitly cancelling sub-agents.
+#[derive(Debug, Clone)]
+pub struct CancelSpec {
+    pub child_ids: Vec<String>,
+    pub reason: Option<String>,
+}
+
+/// Parameters for polling sub-agent status without joining them.
+#[derive(Debug, Clone)]
+pub struct StatusSpec {
     pub child_ids: Option<Vec<String>>,
 }
 
