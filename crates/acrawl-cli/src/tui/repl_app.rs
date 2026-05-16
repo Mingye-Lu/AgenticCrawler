@@ -2318,7 +2318,7 @@ fn run_loop(
                     let new_effort = g.cycle_reasoning_effort();
                     state.cached_header = build_header_snapshot(&g);
                     if let Some(effort) = new_effort {
-                        state.push_system(&format!("Reasoning effort → {}", effort));
+                        state.push_system(&format!("Reasoning effort → {effort}"));
                     } else {
                         state.push_system("Reasoning effort → off");
                     }
