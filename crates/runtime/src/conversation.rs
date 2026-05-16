@@ -438,17 +438,16 @@ where
         }
 
         if config.llm_summarization {
-            let existing_prefix =
-                usize::from(self.session.messages.first().is_some_and(|message| {
-                    message.role == crate::session::MessageRole::System
-                        && message.blocks.iter().any(|block| matches!(
-                            block,
-                            ContentBlock::Text { text }
-                                if text.starts_with(
-                                    "This session is being continued from a previous conversation",
-                                )
-                        ))
-                }));
+            // Detect (and skip) a prior compaction's continuation message so
+            // the LLM summarizer doesn't re-summarize the previous summary.
+            // Detection lives in `compact::is_compact_continuation_message`
+            // so the preamble wording has a single source of truth.
+            let existing_prefix = usize::from(
+                self.session
+                    .messages
+                    .first()
+                    .is_some_and(crate::compact::is_compact_continuation_message),
+            );
             let removed_end =
                 (existing_prefix + result.removed_message_count).min(self.session.messages.len());
             let removed_messages = &self.session.messages[existing_prefix..removed_end];
@@ -484,7 +483,6 @@ fn try_llm_summarize<C: ApiClient>(
     model: Option<&str>,
 ) -> Option<String> {
     const MAX_SUMMARIZER_TOKENS: usize = 100_000;
-    const MAX_SUMMARY_CHARS: usize = 1_200;
     const SUMMARY_TEMPLATE: &str = "Summarize this conversation segment concisely.\n\
 Output EXACTLY this structure with no other text:\n\
 ## Goal\n\
@@ -542,12 +540,18 @@ Output EXACTLY this structure with no other text:\n\
         |model| format!("You are summarizing a conversation with model {model}."),
     );
 
-    let events = api_client
-        .stream(ApiRequest {
-            system_prompt: vec![system_hint],
-            messages: vec![ConversationMessage::user_text(user_content)],
-        })
-        .ok()?;
+    let events = match api_client.stream(ApiRequest {
+        system_prompt: vec![system_hint],
+        messages: vec![ConversationMessage::user_text(user_content)],
+    }) {
+        Ok(events) => events,
+        Err(err) => {
+            eprintln!(
+                "warning: LLM summarization failed ({err}); falling back to mechanical summary"
+            );
+            return None;
+        }
+    };
 
     let llm_summary: String = events
         .iter()
@@ -561,12 +565,24 @@ Output EXACTLY this structure with no other text:\n\
         .collect();
 
     let llm_summary = llm_summary.trim();
-    if llm_summary.is_empty() || llm_summary.len() > MAX_SUMMARY_CHARS {
+    if llm_summary.is_empty() {
+        eprintln!(
+            "warning: LLM summarization returned empty response; falling back to mechanical summary"
+        );
         return None;
     }
 
+    // Always compress: `compress_summary_text` enforces the default budget
+    // (max_chars / max_lines / max_line_chars) and gracefully truncates
+    // oversized output instead of throwing it away. Earlier the function
+    // hard-rejected anything over a byte ceiling, which silently dropped
+    // useful summaries that were just a little long — and used byte length
+    // for a char-counted budget on top of that.
     let compressed = crate::summary_compression::compress_summary_text(llm_summary);
     if compressed.is_empty() {
+        eprintln!(
+            "warning: LLM summary was empty after compression; falling back to mechanical summary"
+        );
         return None;
     }
 
@@ -958,6 +974,32 @@ mod tests {
         assert!(
             summary.contains("Goal") || summary.contains("goal"),
             "should contain structured output"
+        );
+    }
+
+    #[test]
+    fn try_llm_summarize_compresses_oversized_response() {
+        // Previously, a response over the byte ceiling was hard-rejected with
+        // no diagnostic, silently dropping a usable summary on the floor.
+        // It should now flow through summary compression instead.
+        let removed = vec![crate::session::ConversationMessage::user_text("hello")];
+        let oversized = "## Goal\n".to_string() + &"word ".repeat(1_000); // >> 1_200 chars
+        let mut client = MockApiClientWithText(oversized);
+
+        let result = super::try_llm_summarize(&removed, &mut client, None);
+
+        let summary = result.expect("oversized response must be compressed, not dropped");
+        assert!(summary.starts_with("<summary>"));
+        assert!(summary.ends_with("</summary>"));
+        // The inner payload must respect the compression budget (1_200 chars
+        // by default), not silently overflow.
+        let inner = summary
+            .trim_start_matches("<summary>")
+            .trim_end_matches("</summary>");
+        assert!(
+            inner.chars().count() <= 1_200,
+            "compressed inner length must respect default budget; got {}",
+            inner.chars().count()
         );
     }
 

@@ -51,11 +51,7 @@ impl ToolRegistry {
             let tool_name = name.to_string();
             registry.register(
                 name,
-                Box::new(move |_| {
-                    Err(ToolError(format!(
-                        "tool `{tool_name}` requires async execution via execute_async"
-                    )))
-                }),
+                Box::new(move |_| Err(ToolError::requires_async(tool_name.clone()))),
             );
         }
         registry.register("fork", Box::new(crate::tools::fork::execute));
@@ -126,7 +122,7 @@ impl ToolRegistry {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
                 } else {
-                    Err(ToolError(format!("unknown tool: `{name}`")))
+                    Err(ToolError::new(format!("unknown tool: `{name}`")))
                 }
             }
         }

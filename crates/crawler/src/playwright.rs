@@ -126,10 +126,12 @@ async function bootstrap() {
     if (command.action === 'navigate') {
       try {
         await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        let html = await bypassTurnstileIfPresent(page);
-
+        // `bypassTurnstileIfPresent` already calls `page.content()` after
+        // any nudge it performs, so reuse that html instead of fetching
+        // again — the earlier `html = await page.content()` overwrite was
+        // dead and just doubled the wire-format round-trip.
+        const html = await bypassTurnstileIfPresent(page);
         const title = await page.title();
-        html = await page.content();
         process.stdout.write(JSON.stringify({
           event: 'bridge_response',
           ok: true,

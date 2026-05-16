@@ -99,10 +99,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     let saved_path = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError(e.to_string()))?
+        .map_err(|e| ToolError::new(e.to_string()))?
         .save_file(&parsed.url, &path_str)
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
 
     Ok(ToolEffect::reply_json(&json!({
         "success": true,

@@ -76,7 +76,7 @@ impl ActiveModal {
         }
     }
 
-    pub fn as_model(&self) -> Option<&ModelModal> {
+    pub fn as_model_mut(&mut self) -> Option<&mut ModelModal> {
         match self {
             Self::Model(modal) => Some(modal),
             _ => None,

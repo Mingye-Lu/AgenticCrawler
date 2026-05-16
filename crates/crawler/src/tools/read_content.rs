@@ -38,11 +38,11 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     let mut bridge = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
     let result = bridge
         .read_content(heading.as_deref(), selector.as_deref(), offset, max_chars)
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
     Ok(ToolEffect::reply_json(&result))
 }
 

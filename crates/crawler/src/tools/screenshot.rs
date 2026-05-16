@@ -9,10 +9,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     let (screenshot_base64, size_bytes) = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError(e.to_string()))?
+        .map_err(|e| ToolError::new(e.to_string()))?
         .screenshot()
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "screenshot_base64": screenshot_base64,
