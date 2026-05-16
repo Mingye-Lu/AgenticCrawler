@@ -5,7 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.7] - 2026-05-16
+
+A security, correctness, and resilience pass covering 22 review-flagged issues across the Rust crates, the install scripts, and CI, plus five review-follow-up fixes layered on top.
+
+### Security
+
+- **Credentials file is owner-only** — `~/.acrawl/credentials.json` is `chmod 0600` before the atomic rename so API keys and OAuth tokens are never world-readable on shared hosts.
+- **`navigate` rejects non-http(s) URLs** — `file://`, `javascript:`, `data:`, etc. are refused at the tool boundary, closing a local-file-disclosure / SSRF primitive.
+- **API key bytes are zeroed end-to-end** — the auth modal's input buffer, the credential store's in-memory copy after save, and the serialized JSON buffer inside `save_credentials_to_path` are all wiped via the `zeroize` crate.
+- **Install scripts validate the GitHub release tag** — `install.sh` and `install.ps1` reject anything that isn't a recognisable semver string before it flows into download URLs.
+- **Release workflow passes the tag literally to awk** — `awk -v ver=...` instead of regex interpolation so a tag containing metacharacters can't break or broaden the changelog extraction.
+
+### Fixed
+
+- **`Usage::total_tokens` includes cache fields** — was previously undercounting `cache_creation_input_tokens` and `cache_read_input_tokens` (and therefore reported cost) when prompt caching was on.
+- **HTTP body cap (32 MiB)** — `fetcher` streams chunk-by-chunk and refuses oversize bodies via a new `FetchError::BodyTooLarge`; a lying `Content-Length` header can no longer OOM the host.
+- **MCP frame cap (64 MiB)** — `mcp/process` rejects oversized `Content-Length` headers before allocating the receive buffer.
+- **TUI render loop can't be starved** — `drain_events` is capped at 256 events per frame and the typewriter backlog flushes wholesale rather than growing the `VecDeque` unbounded.
+- **`/clear` strict-parses its flag** — `/clear --comfirm` is now `Unknown` instead of silently wiping the session.
+- **Ctrl+C is suppressed while a modal is open** — no longer cancels the in-flight agent or orphans an OAuth thread; the modal owns its own cancel (Esc / `cancel_tx`).
+- **Model modal can't double-fire** — selecting a model and pressing Enter twice rapidly used to apply the change twice; outcome is now consumed via `take_outcome`.
+- **Fork child IDs are monotonic** — using `child_tasks.len()+1` recycled IDs after `wait_for_subagents` drained the map, making downstream lookups ambiguous between generations.
+- **MCP request id wraps to 1 instead of pinning** — `take_request_id` used `saturating_add`, which would have pinned every subsequent id at `u64::MAX` and broken JSON-RPC correlation.
+- **SSE parser errors on invalid UTF-8** — previously substituted `U+FFFD` silently, letting malformed bytes succeed-but-wrong through downstream JSON parsing; Gemini stream caller updated.
+- **Resume parser validates command names at arg-parse time** — `acrawl --resume session.json /not-a-command` (or any command not in the resume-safe set) is rejected up front with a specific error instead of failing deep in the dispatcher.
+- **Auth flows reuse the process tokio runtime** — `anthropic` / `openai` / TUI model fetch no longer spin up a fresh `Runtime` per call (which leaked threads on retries).
+- **Wait-for-OAuth-callback progress messages** — emits a remaining-time line every 30 s so a slow IdP doesn't look like a hang.
+- **Poisoned `pending_title` mutex is recovered** — session save no longer silently drops the auto-generated title if the title thread panicked.
+- **MCP error diagnostics** — replaced cryptic "server process missing after initialization" with actionable text pointing at the server's stderr.
+- **Credential-load failures surface** — `load_credentials_or_warn` warns to stderr on a corrupt credentials file before defaulting, instead of silently presenting a fresh re-auth prompt.
+- **Non-JSON tool input is logged** — when the model returns invalid JSON for a tool call, the parse error + tool name + use-id are logged before the input is wrapped in `{"raw": ...}`.
+- **LLM-summarization fallback is no longer silent** — `eprintln` warnings on the API-error / empty-response / empty-after-compression branches so falling back to the mechanical summary stops being invisible. Oversized responses now flow through `compress_summary_text` (which already enforces the char budget) instead of being hard-rejected on a byte-length check.
+- **Playwright Turnstile bypass no longer double-fetches** — the navigate handler was overwriting `bypassTurnstileIfPresent`'s return value with a redundant `page.content()` call, doubling the bridge round-trip per navigate.
+
+### Changed
+
+- **`ToolError` is now a typed enum** — `Message(String)` and `RequiresAsync { tool_name }`. The agent loop identifies async-only tools via `error.is_requires_async()` instead of substring-matching the error text, eliminating a misclassification path where any error message that happened to mention the canonical phrase could be mistaken for the sentinel. ~40 `ToolError(s)` tuple-struct call sites swept to `ToolError::new(s)`.
+- **Summary line selection is O(N)** — `select_line_indexes` uses running char/line counters; the previous version recomputed the joined-char count per candidate, which was O(P · N · S) per priority pass.
+- **`compact` continuation-prefix detection has a single source of truth** — `is_compact_continuation_message` in `compact.rs` replaces a literal-substring probe that lived in `conversation.rs`.
+
+## [0.4.6] - 2026-05-16
+
+### Added
+
+- **`acrawl uninstall` subcommand** — removes the binary, `node_modules` (browser automation), and the config home directory. Pass `--purge` to also delete `settings.json`, `credentials.json`, and `sessions/`. Always prompts for confirmation. On Windows the running binary is renamed to `.old` (deleted if possible) and the User PATH entry is removed automatically via PowerShell.
+
+### Fixed
+
+- **Installer missing `playwright-core`** — both `install.ps1` and `install.sh` now install `playwright-core` explicitly alongside `cloakbrowser`. Previously, npm skipped it as an optional peer dependency, causing the CloakBrowser bridge to fail at runtime with `ERR_MODULE_NOT_FOUND`. Re-running the installer on a broken install auto-repairs it.
+
+## [0.4.5] - 2026-05-16
+
+### Added
+
+- **Cloudflare Turnstile bypass** — after navigation, the Playwright bridge detects Turnstile challenge pages and performs human-like mouse sweeps to satisfy the behavioural model, polling up to 8 s for clearance.
+
+### Fixed
+
+- **Resume parser accepts command arguments** — `--resume session.json /clear --confirm` no longer rejects non-slash trailing arguments; args are grouped with their preceding slash command.
+- **Preset provider auth routing** — selecting a preset provider (e.g. Groq, Mistral) in the TUI auth modal now correctly routes to the appropriate input step (placeholder URL editing, API key, or device-code OAuth) instead of falling through to the generic "Other" flow.
+- **Auth modal Esc navigation** — pressing Esc from the API key input for a preset that required URL editing now returns to the base-URL step (preserving provider context) instead of jumping to provider selection.
+- **Model modal hint** — added `(unconfigured → auth prompt)` hint to the model selector.
+- **Reasoning effort feedback** — toggling reasoning effort (Ctrl+T) now prints a system message confirming the new level.
+
+## [0.4.4] - 2026-05-15
+
+### Added
+
+- **Tool output pruning** — `compact_session()` now walks backward through messages before summarizing and truncates `ToolResult` outputs that fall outside a configurable protected window (`prune_protect_tokens`, default 40K tokens) to `prune_max_output_chars` (default 2K chars), appending a truncation marker. Dramatically reduces context consumed by large `navigate` results in long sessions.
+- **Token-budget tail** — the compaction window is now determined by a backward token-budget walk (`preserve_recent_tokens`, default 80K tokens) instead of a fixed message count. `preserve_recent_messages` is retained as a hard minimum floor; a new `preserve_recent_messages_floor` field (default 2) ensures at least N messages are always preserved regardless of budget.
+- **Summary merging across compactions** — on a second (or later) compaction, `merge_compact_summaries()` combines the existing compacted summary with the new one into **Previously compacted context** / **Newly compacted context** / **Key timeline** sections, preserving highlights from prior rounds instead of discarding them.
+- **Summary prefix detection** — `extract_existing_compacted_summary()` detects an existing compaction prefix and `compact_session()` skips it when slicing the removed-messages window, preventing the summary from summarizing itself.
+- **Priority-based summary compression** — new `summary_compression` module implements greedy line selection by priority tier (core detail lines → section headers → bullet items → other), with deduplication, whitespace normalization, per-line truncation, and an omission notice. Applied after merging to cap total summary size (`max_summary_chars`, default 1200 chars).
+- **LLM-powered summarization** (opt-in) — when `compaction_llm_summarization = true` in `settings.json`, `maybe_auto_compact()` attempts to replace the mechanical summary with a structured LLM summary (Goal / Progress / Key Decisions / Next Steps / Relevant Files). Falls back silently to the mechanical summary on any failure.
+- **Compaction settings** — six new fields in `settings.json`: `compaction_prune_protect_tokens`, `compaction_prune_max_output_chars`, `compaction_preserve_recent_tokens`, `compaction_preserve_recent_messages_floor`, `compaction_max_summary_chars`, `compaction_llm_summarization`. All are optional with backward-compatible defaults.
 
 ## [0.4.3] - 2026-05-14
 
@@ -201,6 +275,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.7
+[0.4.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.6
+[0.4.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.5
+[0.4.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.4
 [0.4.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.3
 [0.4.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.2
 [0.4.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.1

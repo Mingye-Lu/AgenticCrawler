@@ -9,14 +9,14 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
             value
                 .as_array()
                 .ok_or_else(|| {
-                    ToolError("wait_for_subagents child_ids must be an array".to_string())
+                    ToolError::new("wait_for_subagents child_ids must be an array".to_string())
                 })
                 .and_then(|values| {
                     values
                         .iter()
                         .map(|value| {
                             value.as_str().map(str::to_owned).ok_or_else(|| {
-                                ToolError(
+                                ToolError::new(
                                     "wait_for_subagents child_ids entries must be strings"
                                         .to_string(),
                                 )

@@ -282,11 +282,20 @@ pub(super) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMes
                         InputContentBlock::Text { text: text.clone() }
                     }
                     runtime::ContentBlock::ToolUse { id, name, input } => {
+                        // If the model handed us non-JSON tool input we still
+                        // forward it (wrapped in {"raw": ...}) so the request
+                        // continues, but log to stderr so the parse failure
+                        // doesn't disappear into the void.
+                        let parsed_input = serde_json::from_str(input).unwrap_or_else(|err| {
+                            eprintln!(
+                                "warning: tool-use input for `{name}` (id `{id}`) was not valid JSON ({err}); forwarding as {{\"raw\": ...}}"
+                            );
+                            json!({ "raw": input })
+                        });
                         InputContentBlock::ToolUse {
                             id: id.clone(),
                             name: name.clone(),
-                            input: serde_json::from_str(input)
-                                .unwrap_or_else(|_| json!({ "raw": input })),
+                            input: parsed_input,
                         }
                     }
                     runtime::ContentBlock::ToolResult {

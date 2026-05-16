@@ -34,6 +34,17 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         return Err(CrawlError::new("url must not be empty"));
     }
 
+    // Allowlist http/https only. Without this, the agent could be steered into
+    // file://, javascript:, data:, or other schemes that bypass network
+    // boundaries (local-file disclosure, SSRF helpers, etc.).
+    let scheme_end = url
+        .find(':')
+        .ok_or_else(|| CrawlError::new("url must include a scheme (http:// or https://)"))?;
+    let scheme = &url[..scheme_end];
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return Err(CrawlError::new("url scheme must be http or https"));
+    }
+
     let format = input
         .get("format")
         .and_then(Value::as_str)
@@ -206,11 +217,11 @@ fn resolve_content(
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
     let params = parse_input(input)?;
 
-    let router = FetchRouter::new().map_err(|e| ToolError(e.to_string()))?;
+    let router = FetchRouter::new().map_err(|e| ToolError::new(e.to_string()))?;
     let page = router
         .fetch(&params.url, Some(browser))
         .await
-        .map_err(|e| ToolError(e.to_string()))?;
+        .map_err(|e| ToolError::new(e.to_string()))?;
 
     let title = page.title.clone().unwrap_or_default();
 
@@ -329,6 +340,33 @@ mod tests {
             let input = json!({"url": "https://x.com", "content_depth": val});
             let result = parse_input(&input).unwrap();
             assert_eq!(result.content_depth, expected);
+        }
+    }
+
+    #[test]
+    fn navigate_parse_rejects_non_http_schemes() {
+        for url in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,<h1>x</h1>",
+            "ftp://example.com/foo",
+            "noscheme",
+        ] {
+            let input = json!({"url": url});
+            let err = parse_input(&input).expect_err(&format!("expected error for {url}"));
+            let msg = err.to_string();
+            assert!(
+                msg.contains("scheme") || msg.contains("http"),
+                "unexpected error for {url}: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn navigate_parse_accepts_http_and_https_case_insensitively() {
+        for url in ["http://example.com", "HTTPS://Example.com/path"] {
+            let input = json!({"url": url});
+            parse_input(&input).unwrap_or_else(|e| panic!("rejected {url}: {e}"));
         }
     }
 

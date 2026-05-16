@@ -45,6 +45,14 @@ try {
     exit 1
 }
 
+# Defence in depth: reject anything that isn't a recognisable semver tag
+# before it flows into download URLs, in case GitHub's payload shape ever
+# changes or a misconfigured proxy returns something else.
+if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^\d+\.\d+\.\d+([-+.][A-Za-z0-9.-]+)?$') {
+    Write-Error "GitHub API returned an unexpected version string: '$version'"
+    exit 1
+}
+
 Write-Host "  Latest version: v$version" -ForegroundColor Green
 
 # --- 3. Download binary ---
@@ -150,16 +158,17 @@ try {
 # --- 10. CloakBrowser install ---
 if ($nodeAvailable) {
     $cloakbrowserDir = Join-Path $ConfigHome "node_modules\cloakbrowser"
-    if (Test-Path $cloakbrowserDir) {
+    $playwrightCoreDir = Join-Path $ConfigHome "node_modules\playwright-core"
+    if ((Test-Path $cloakbrowserDir) -and (Test-Path $playwrightCoreDir)) {
         Write-Host "  CloakBrowser already installed." -ForegroundColor Gray
     } else {
         Write-Host "Installing CloakBrowser..." -ForegroundColor Gray
         try {
-            & npm install --prefix $ConfigHome cloakbrowser 2>&1 | Out-Null
+            & npm install --prefix $ConfigHome cloakbrowser playwright-core 2>&1 | Out-Null
             Write-Host "  CloakBrowser installed." -ForegroundColor Green
         } catch {
             Write-Warning "CloakBrowser installation failed: $_"
-            Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" cloakbrowser"
+            Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" cloakbrowser playwright-core"
         }
     }
 

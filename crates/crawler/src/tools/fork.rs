@@ -9,7 +9,9 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
         .map_or("", str::trim)
         .to_string();
     if goal.is_empty() {
-        return Err(ToolError("fork requires non-empty sub_goal".to_string()));
+        return Err(ToolError::new(
+            "fork requires non-empty sub_goal".to_string(),
+        ));
     }
 
     Ok(ToolEffect::Spawn(ForkSpec {
