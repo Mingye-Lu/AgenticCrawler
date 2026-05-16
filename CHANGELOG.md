@@ -5,7 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.7] - 2026-05-16
+
+A security, correctness, and resilience pass covering 22 review-flagged issues across the Rust crates, the install scripts, and CI, plus five review-follow-up fixes layered on top.
+
+### Security
+
+- **Credentials file is owner-only** — `~/.acrawl/credentials.json` is `chmod 0600` before the atomic rename so API keys and OAuth tokens are never world-readable on shared hosts.
+- **`navigate` rejects non-http(s) URLs** — `file://`, `javascript:`, `data:`, etc. are refused at the tool boundary, closing a local-file-disclosure / SSRF primitive.
+- **API key bytes are zeroed end-to-end** — the auth modal's input buffer, the credential store's in-memory copy after save, and the serialized JSON buffer inside `save_credentials_to_path` are all wiped via the `zeroize` crate.
+- **Install scripts validate the GitHub release tag** — `install.sh` and `install.ps1` reject anything that isn't a recognisable semver string before it flows into download URLs.
+- **Release workflow passes the tag literally to awk** — `awk -v ver=...` instead of regex interpolation so a tag containing metacharacters can't break or broaden the changelog extraction.
+
+### Fixed
+
+- **`Usage::total_tokens` includes cache fields** — was previously undercounting `cache_creation_input_tokens` and `cache_read_input_tokens` (and therefore reported cost) when prompt caching was on.
+- **HTTP body cap (32 MiB)** — `fetcher` streams chunk-by-chunk and refuses oversize bodies via a new `FetchError::BodyTooLarge`; a lying `Content-Length` header can no longer OOM the host.
+- **MCP frame cap (64 MiB)** — `mcp/process` rejects oversized `Content-Length` headers before allocating the receive buffer.
+- **TUI render loop can't be starved** — `drain_events` is capped at 256 events per frame and the typewriter backlog flushes wholesale rather than growing the `VecDeque` unbounded.
+- **`/clear` strict-parses its flag** — `/clear --comfirm` is now `Unknown` instead of silently wiping the session.
+- **Ctrl+C is suppressed while a modal is open** — no longer cancels the in-flight agent or orphans an OAuth thread; the modal owns its own cancel (Esc / `cancel_tx`).
+- **Model modal can't double-fire** — selecting a model and pressing Enter twice rapidly used to apply the change twice; outcome is now consumed via `take_outcome`.
+- **Fork child IDs are monotonic** — using `child_tasks.len()+1` recycled IDs after `wait_for_subagents` drained the map, making downstream lookups ambiguous between generations.
+- **MCP request id wraps to 1 instead of pinning** — `take_request_id` used `saturating_add`, which would have pinned every subsequent id at `u64::MAX` and broken JSON-RPC correlation.
+- **SSE parser errors on invalid UTF-8** — previously substituted `U+FFFD` silently, letting malformed bytes succeed-but-wrong through downstream JSON parsing; Gemini stream caller updated.
+- **Resume parser validates command names at arg-parse time** — `acrawl --resume session.json /not-a-command` (or any command not in the resume-safe set) is rejected up front with a specific error instead of failing deep in the dispatcher.
+- **Auth flows reuse the process tokio runtime** — `anthropic` / `openai` / TUI model fetch no longer spin up a fresh `Runtime` per call (which leaked threads on retries).
+- **Wait-for-OAuth-callback progress messages** — emits a remaining-time line every 30 s so a slow IdP doesn't look like a hang.
+- **Poisoned `pending_title` mutex is recovered** — session save no longer silently drops the auto-generated title if the title thread panicked.
+- **MCP error diagnostics** — replaced cryptic "server process missing after initialization" with actionable text pointing at the server's stderr.
+- **Credential-load failures surface** — `load_credentials_or_warn` warns to stderr on a corrupt credentials file before defaulting, instead of silently presenting a fresh re-auth prompt.
+- **Non-JSON tool input is logged** — when the model returns invalid JSON for a tool call, the parse error + tool name + use-id are logged before the input is wrapped in `{"raw": ...}`.
+- **LLM-summarization fallback is no longer silent** — `eprintln` warnings on the API-error / empty-response / empty-after-compression branches so falling back to the mechanical summary stops being invisible. Oversized responses now flow through `compress_summary_text` (which already enforces the char budget) instead of being hard-rejected on a byte-length check.
+- **Playwright Turnstile bypass no longer double-fetches** — the navigate handler was overwriting `bypassTurnstileIfPresent`'s return value with a redundant `page.content()` call, doubling the bridge round-trip per navigate.
+
+### Changed
+
+- **`ToolError` is now a typed enum** — `Message(String)` and `RequiresAsync { tool_name }`. The agent loop identifies async-only tools via `error.is_requires_async()` instead of substring-matching the error text, eliminating a misclassification path where any error message that happened to mention the canonical phrase could be mistaken for the sentinel. ~40 `ToolError(s)` tuple-struct call sites swept to `ToolError::new(s)`.
+- **Summary line selection is O(N)** — `select_line_indexes` uses running char/line counters; the previous version recomputed the joined-char count per candidate, which was O(P · N · S) per priority pass.
+- **`compact` continuation-prefix detection has a single source of truth** — `is_compact_continuation_message` in `compact.rs` replaces a literal-substring probe that lived in `conversation.rs`.
 
 ## [0.4.6] - 2026-05-16
 
@@ -237,6 +275,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.7
 [0.4.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.6
 [0.4.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.5
 [0.4.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.4
