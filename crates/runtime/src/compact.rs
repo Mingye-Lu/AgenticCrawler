@@ -501,6 +501,17 @@ fn collapse_blank_lines(content: &str) -> String {
     result
 }
 
+/// Returns `true` when `message` is the synthetic system message produced by
+/// a prior compaction (i.e. starts with [`COMPACT_CONTINUATION_PREAMBLE`]).
+///
+/// Callers that need to skip the prior compaction prefix when slicing the
+/// removed range should go through this helper instead of substring-matching
+/// the preamble themselves — that keeps the wording in one place.
+#[must_use]
+pub fn is_compact_continuation_message(message: &ConversationMessage) -> bool {
+    extract_existing_compacted_summary(message).is_some()
+}
+
 fn extract_existing_compacted_summary(message: &ConversationMessage) -> Option<String> {
     if message.role != MessageRole::System {
         return None;
