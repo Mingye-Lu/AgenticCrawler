@@ -10,6 +10,7 @@ mod self_update;
 mod session_mgr;
 mod tool_format;
 mod tui;
+mod uninstall;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -101,6 +102,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let rt = TOKIO_RUNTIME.get().expect("tokio runtime not initialized");
             rt.block_on(self_update::run_self_update())?;
         }
+        CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
         CliAction::Repl {
             model,
             allowed_tools,
@@ -137,6 +139,9 @@ enum CliAction {
     },
     Init,
     Update,
+    Uninstall {
+        purge: bool,
+    },
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
@@ -287,6 +292,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         }
         "init" => Ok(CliAction::Init),
         "update" => Ok(CliAction::Update),
+        "uninstall" => Ok(CliAction::Uninstall {
+            purge: rest.iter().any(|a| a == "--purge"),
+        }),
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {
@@ -512,6 +520,12 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "      Configure credentials for a provider interactively"
     )?;
     writeln!(out, "  acrawl init")?;
+    writeln!(out, "  acrawl update")?;
+    writeln!(out, "  acrawl uninstall [--purge]")?;
+    writeln!(
+        out,
+        "      Remove acrawl. --purge also deletes settings, credentials, and sessions"
+    )?;
     writeln!(out)?;
     writeln!(out, "Flags:")?;
     writeln!(
@@ -926,5 +940,31 @@ mod tests {
                 provider: Some("openai".to_string())
             }
         );
+    }
+
+    #[test]
+    fn parses_uninstall_subcommand() {
+        assert_eq!(
+            parse_args(&["uninstall".to_string()]).expect("uninstall"),
+            CliAction::Uninstall { purge: false }
+        );
+    }
+
+    #[test]
+    fn parses_uninstall_with_purge_flag() {
+        assert_eq!(
+            parse_args(&["uninstall".to_string(), "--purge".to_string()])
+                .expect("uninstall --purge"),
+            CliAction::Uninstall { purge: true }
+        );
+    }
+
+    #[test]
+    fn uninstall_help_mentions_purge() {
+        let mut help = Vec::new();
+        print_help_to(&mut help).expect("help should render");
+        let help = String::from_utf8(help).expect("help should be utf8");
+        assert!(help.contains("acrawl uninstall"));
+        assert!(help.contains("--purge"));
     }
 }
