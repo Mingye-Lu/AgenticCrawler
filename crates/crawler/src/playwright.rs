@@ -51,17 +51,36 @@ async function bootstrap() {
   let launch;
   try {
     ({ launch } = await import('cloakbrowser'));
-  } catch (_error) {
-    process.stdout.write(JSON.stringify({
-      event: 'bridge_bootstrap',
-      ok: false,
-      error: {
-        kind: 'playwright_not_installed',
-        message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
-      }
-    }) + '\n');
-    process.exit(1);
-    return;
+  } catch (_firstError) {
+    // ESM import() does not respect NODE_PATH — manually resolve from it.
+    const path = require('node:path');
+    const fs = require('node:fs');
+    const url = require('node:url');
+    let resolved = false;
+    for (const dir of (process.env.NODE_PATH || '').split(path.delimiter)) {
+      if (!dir) continue;
+      const pkgJson = path.join(dir, 'cloakbrowser', 'package.json');
+      if (!fs.existsSync(pkgJson)) continue;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+        const entry = pkg.exports?.['.']?.import || pkg.module || pkg.main || 'index.js';
+        ({ launch } = await import(url.pathToFileURL(path.join(dir, 'cloakbrowser', entry)).href));
+        resolved = true;
+        break;
+      } catch (_) {}
+    }
+    if (!resolved) {
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_bootstrap',
+        ok: false,
+        error: {
+          kind: 'playwright_not_installed',
+          message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
+        }
+      }) + '\n');
+      process.exit(1);
+      return;
+    }
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
@@ -74,6 +93,23 @@ async function bootstrap() {
     }
   });
   process.stdout.write(JSON.stringify({ event: 'bridge_bootstrap', ok: true }) + '\n');
+
+  async function bypassTurnstileIfPresent(pg) {
+    let html = await pg.content();
+    if (!html.includes('Checking your browser') && !html.includes('challenge-platform')) {
+      return html;
+    }
+    await pg.mouse.move(120 + Math.random() * 200, 180 + Math.random() * 150);
+    await new Promise(r => setTimeout(r, 500 + Math.random() * 800));
+    await pg.mouse.move(350 + Math.random() * 250, 280 + Math.random() * 180);
+    await new Promise(r => setTimeout(r, 400 + Math.random() * 600));
+    for (let i = 0; i < 16; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      html = await pg.content();
+      if (!html.includes('Checking your browser')) break;
+    }
+    return html;
+  }
 
   const wire = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of wire) {
@@ -92,8 +128,12 @@ async function bootstrap() {
     if (command.action === 'navigate') {
       try {
         await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        // `bypassTurnstileIfPresent` already calls `page.content()` after
+        // any nudge it performs, so reuse that html instead of fetching
+        // again — the earlier `html = await page.content()` overwrite was
+        // dead and just doubled the wire-format round-trip.
+        const html = await bypassTurnstileIfPresent(page);
         const title = await page.title();
-        const html = await page.content();
         process.stdout.write(JSON.stringify({
           event: 'bridge_response',
           ok: true,
@@ -128,6 +168,7 @@ async function bootstrap() {
         if (command.url) {
           await newPage.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
           currentUrl = newPage.url();
+          await bypassTurnstileIfPresent(newPage);
         }
         await newPage.bringToFront();
         process.stdout.write(JSON.stringify({

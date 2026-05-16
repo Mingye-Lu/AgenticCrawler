@@ -646,10 +646,14 @@ impl LiveCli {
 
     pub(crate) fn persist_session(&mut self) -> Result<(), CliError> {
         if self.runtime.session().title.is_none() {
-            if let Ok(mut guard) = self.pending_title.lock() {
-                if let Some(title) = guard.take() {
-                    self.runtime.session_mut().title = Some(title);
-                }
+            // Recover from a poisoned mutex (e.g. title-generation thread
+            // panicked) instead of silently dropping the pending title.
+            let mut guard = self
+                .pending_title
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(title) = guard.take() {
+                self.runtime.session_mut().title = Some(title);
             }
         }
         self.runtime.session().save_to_path(&self.session.path)?;

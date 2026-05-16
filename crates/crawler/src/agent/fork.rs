@@ -16,11 +16,16 @@ impl<'a> ForkSupervisor<'a> {
     }
 
     fn next_child_id(&self) -> String {
-        format!(
-            "{}-child-{}",
-            self.agent.agent_id,
-            self.agent.child_tasks.len() + 1
-        )
+        // Monotonic per-agent counter: using `child_tasks.len() + 1` reused IDs
+        // once children were drained by `wait_for_subagents`, which then made
+        // every downstream lookup (control registry, manager, child_tasks)
+        // ambiguous between current and prior generations.
+        let n = self
+            .agent
+            .child_id_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        format!("{}-child-{n}", self.agent.agent_id)
     }
 
     async fn claim_child_slot(&mut self, child_id: &str) -> Result<(), ToolError> {
@@ -635,5 +640,28 @@ mod tests {
                 error: Some(ref error),
             } if error == "timed out"
         ));
+    }
+
+    #[test]
+    fn next_child_id_is_monotonic_across_drains() {
+        // Even after the child_tasks map has been drained (which used to
+        // reset the count to 0), subsequent IDs must keep increasing so that
+        // every child gets a globally unique handle across the agent's life.
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new());
+
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..3 {
+            ids.insert(ForkSupervisor::new(&mut agent).next_child_id());
+        }
+        // Simulate `wait_for_subagents` having drained completed children.
+        agent.child_tasks.clear();
+        for _ in 0..3 {
+            ids.insert(ForkSupervisor::new(&mut agent).next_child_id());
+        }
+        assert_eq!(
+            ids.len(),
+            6,
+            "next_child_id must produce unique IDs even after drains: {ids:?}"
+        );
     }
 }

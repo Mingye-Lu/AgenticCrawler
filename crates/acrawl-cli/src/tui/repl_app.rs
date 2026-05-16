@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
+use crate::auth::ProviderChoice;
 use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
 use crate::format::render_repl_help;
 use crate::markdown::{drain_safe_boundary, render_lines};
@@ -37,6 +38,13 @@ use ratatui::DefaultTerminal;
 use runtime::ControlState;
 
 const MAX_INPUT_LINES: usize = 5;
+/// Cap on events processed in a single `drain_events` call so a producer that
+/// emits faster than the typewriter reveals can't starve the render loop.
+const MAX_EVENTS_PER_FRAME: usize = 256;
+/// Cap on the typewriter backlog. If the producer overruns this, flush the
+/// queue straight to the transcript (skipping the slow per-char reveal) so the
+/// `VecDeque` can't grow unbounded.
+const MAX_TYPEWRITER_BACKLOG: usize = 64 * 1024;
 pub(super) const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
 pub(super) const WELCOME_BOX_MAX_WIDTH: u16 = 82;
 pub(super) const WELCOME_BOX_MIN_WIDTH: u16 = 30;
@@ -849,12 +857,19 @@ impl ReplTuiState {
 
     #[allow(clippy::too_many_lines)]
     fn drain_events(&mut self, rx: &Receiver<ReplTuiEvent>) {
-        while let Ok(ev) = rx.try_recv() {
+        for _ in 0..MAX_EVENTS_PER_FRAME {
+            let Ok(ev) = rx.try_recv() else { break };
             match ev {
                 ReplTuiEvent::StreamText(s) => {
                     // Enqueue raw chars for typewriter reveal.
                     for c in s.chars() {
                         self.typewriter.chars.push_back(c);
+                    }
+                    // If the producer is faster than the reveal can keep up,
+                    // bypass the slow per-char reveal so the queue doesn't
+                    // grow unbounded.
+                    if self.typewriter.chars.len() > MAX_TYPEWRITER_BACKLOG {
+                        self.flush_typewriter();
                     }
                 }
                 ReplTuiEvent::TurnStarting => {
@@ -936,8 +951,7 @@ impl ReplTuiState {
                                     }
                                 };
 
-                                let mut store =
-                                    api::credentials::load_credentials().unwrap_or_default();
+                                let mut store = crate::auth::load_credentials_or_warn();
                                 let provider_str = match provider_kind {
                                     crate::tui::auth_modal::ProviderKind::Anthropic => "anthropic",
                                     crate::tui::auth_modal::ProviderKind::OpenAi => "openai",
@@ -1341,12 +1355,16 @@ fn handle_slash_command_tui(
             }
             let parsed_provider = provider
                 .as_deref()
-                .and_then(|p| crate::app::parse_provider_arg(p).ok());
-            state.active_modal = Some(ActiveModal::Auth(AuthModal::new(
+                .and_then(|p| crate::auth::resolve_provider_arg(p).ok());
+            let is_anthropic_legacy = matches!(
+                parsed_provider,
+                Some(ProviderChoice::Legacy(crate::app::Provider::Anthropic))
+            );
+            state.active_modal = Some(ActiveModal::Auth(AuthModal::new_with_choice(
                 ui_tx.clone(),
                 parsed_provider,
             )));
-            if let Some(crate::app::Provider::Anthropic) = parsed_provider {
+            if is_anthropic_legacy {
                 spawn_anthropic_oauth_thread(ui_tx.clone(), &mut state.active_modal);
             }
         }
@@ -1522,7 +1540,7 @@ fn spawn_anthropic_oauth_thread(
             let token_set = rt
                 .block_on(client.exchange_oauth_code(&oauth, &exchange))
                 .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
-            let mut store = api::credentials::load_credentials().unwrap_or_default();
+            let mut store = crate::auth::load_credentials_or_warn();
             api::credentials::set_provider_config(
                 &mut store,
                 "anthropic",
@@ -1633,7 +1651,7 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
                 scopes: token_set.scopes,
                 account_id,
             };
-            let mut store = api::credentials::load_credentials().unwrap_or_default();
+            let mut store = crate::auth::load_credentials_or_warn();
             let mut cfg = store.providers.get("openai").cloned().unwrap_or_default();
             cfg.auth_method = "oauth".to_string();
             cfg.oauth = Some(oauth_tokens);
@@ -2139,8 +2157,14 @@ fn run_loop(
                         } => Some(*provider),
                         _ => None,
                     });
-                    if let Some(m) = modal.as_model() {
-                        model_outcome = Some(m.outcome().clone());
+                    if let Some(m) = modal.as_model_mut() {
+                        // `take_outcome` swaps the modal's outcome back to
+                        // `None`, so a single Enter press can't be observed
+                        // (and applied) twice on the next key event.
+                        let taken = m.take_outcome();
+                        if !matches!(taken, crate::tui::model_modal::ModelModalOutcome::None) {
+                            model_outcome = Some(taken);
+                        }
                     }
                     if let Some(m) = modal.as_session_mut() {
                         let taken = m.take_outcome();
@@ -2279,7 +2303,14 @@ fn run_loop(
                     }
                 }
 
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('c')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    // Only honour Ctrl+C as a global cancel/exit when no modal
+                    // is open. Cancelling here while e.g. an AuthModal is mid
+                    // OAuth flow would orphan its callback thread; the modal
+                    // owns its own cancel path (Esc, or its cancel_tx).
                     if state.busy {
                         cancel_flag.request_cancel();
                         if let Some(registry) = &state.child_control_registry {
@@ -2317,8 +2348,13 @@ fn run_loop(
 
                 if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     let mut g = cli.lock().expect("cli lock");
-                    g.cycle_reasoning_effort();
+                    let new_effort = g.cycle_reasoning_effort();
                     state.cached_header = build_header_snapshot(&g);
+                    if let Some(effort) = new_effort {
+                        state.push_system(&format!("Reasoning effort → {effort}"));
+                    } else {
+                        state.push_system("Reasoning effort → off");
+                    }
                     continue;
                 }
 

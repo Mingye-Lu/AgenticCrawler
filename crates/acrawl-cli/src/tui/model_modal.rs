@@ -162,8 +162,11 @@ impl ModelModal {
         }
     }
 
-    pub fn outcome(&self) -> &ModelModalOutcome {
-        &self.outcome
+    /// Consume the pending outcome, replacing it with `None`, so a single
+    /// Enter press can't be observed twice (and applied twice) by callers
+    /// that re-inspect the modal on the next event.
+    pub fn take_outcome(&mut self) -> ModelModalOutcome {
+        std::mem::replace(&mut self.outcome, ModelModalOutcome::None)
     }
 
     fn visible_rows(&self) -> (Vec<RowKind<'_>>, usize, usize) {
@@ -363,7 +366,7 @@ impl Modal for ModelModal {
             .add_modifier(Modifier::DIM);
         let source_tag = Self::catalog_source_tag(self.catalog_source);
         let hint_text =
-            format!("↑↓ Navigate  Enter Select  Esc Cancel  Type to filter{source_tag}");
+            format!("↑↓ Navigate  Enter Select  Esc Cancel  Type to filter  (unconfigured → auth prompt){source_tag}");
         frame.render_widget(Paragraph::new(hint_text).style(hint_style), hint_area);
     }
 

@@ -16,6 +16,13 @@ use super::types::{
     McpToolCallParams, McpToolCallResult,
 };
 
+/// Hard cap on a single MCP JSON-RPC frame. A malicious or buggy MCP server can
+/// advertise an arbitrary `Content-Length`; without a ceiling, the subsequent
+/// `vec![0; content_length]` allocation lets it trigger OOM in the host.
+/// 64 MiB is well above any real MCP payload and small enough to refuse with a
+/// clear error before allocating.
+const MAX_MCP_FRAME_BYTES: usize = 64 * 1024 * 1024;
+
 #[derive(Debug)]
 pub struct McpStdioProcess {
     child: Child,
@@ -115,6 +122,14 @@ impl McpStdioProcess {
         let content_length = content_length.ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length header")
         })?;
+        if content_length > MAX_MCP_FRAME_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "MCP frame too large: {content_length} bytes (limit {MAX_MCP_FRAME_BYTES})"
+                ),
+            ));
+        }
         let mut payload = vec![0_u8; content_length];
         self.stdout.read_exact(&mut payload).await?;
         Ok(payload)
@@ -488,6 +503,26 @@ while True:
         script_path
     }
 
+    fn write_huge_content_length_script() -> PathBuf {
+        let root = temp_dir();
+        fs::create_dir_all(&root).expect("temp dir");
+        let script_path = root.join("huge-content-length.py");
+        let script = [
+            "#!/usr/bin/env python3",
+            "import sys",
+            // Advertise ~10 GiB; we never get a chance to write that much.
+            "sys.stdout.buffer.write(b'Content-Length: 10737418240\\r\\n\\r\\n')",
+            "sys.stdout.buffer.flush()",
+            "",
+        ]
+        .join("\n");
+        fs::write(&script_path, script).expect("write script");
+        let mut permissions = fs::metadata(&script_path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("chmod");
+        script_path
+    }
+
     fn write_missing_header_script() -> PathBuf {
         let root = temp_dir();
         fs::create_dir_all(&root).expect("temp dir");
@@ -853,6 +888,33 @@ while True:
             let status = process.wait().await.expect("wait for exit");
             assert!(status.success());
 
+            cleanup_script(&script_path);
+        });
+    }
+
+    #[test]
+    fn rejects_oversized_content_length() {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let script_path = write_huge_content_length_script();
+            let transport = script_transport(&script_path);
+            let mut process =
+                McpStdioProcess::spawn(&transport).expect("spawn oversized-length server");
+
+            let error = process
+                .read_frame()
+                .await
+                .expect_err("oversized Content-Length should error before allocation");
+            assert_eq!(error.kind(), ErrorKind::InvalidData);
+            assert!(
+                error.to_string().contains("MCP frame too large"),
+                "unexpected error: {error}"
+            );
+
+            let _ = process.wait().await;
             cleanup_script(&script_path);
         });
     }

@@ -10,6 +10,7 @@ mod self_update;
 mod session_mgr;
 mod tool_format;
 mod tui;
+mod uninstall;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -101,6 +102,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let rt = TOKIO_RUNTIME.get().expect("tokio runtime not initialized");
             rt.block_on(self_update::run_self_update())?;
         }
+        CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
         CliAction::Repl {
             model,
             allowed_tools,
@@ -137,6 +139,9 @@ enum CliAction {
     },
     Init,
     Update,
+    Uninstall {
+        purge: bool,
+    },
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
@@ -287,6 +292,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         }
         "init" => Ok(CliAction::Init),
         "update" => Ok(CliAction::Update),
+        "uninstall" => Ok(CliAction::Uninstall {
+            purge: rest.iter().any(|a| a == "--purge"),
+        }),
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {
@@ -391,12 +399,64 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
         .first()
         .ok_or_else(|| "missing session path for --resume".to_string())
         .map(PathBuf::from)?;
-    let commands = args[1..].to_vec();
-    if commands
+    let raw_args = &args[1..];
+    // Re-join arguments into slash commands, splitting on leading '/' tokens.
+    // This allows commands like `/clear --confirm` or `/config env`
+    // where arguments don't start with '/'.
+    let mut commands = Vec::new();
+    let mut current = String::new();
+    for arg in raw_args {
+        if arg.trim_start().starts_with('/') && !current.is_empty() {
+            commands.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(arg);
+    }
+    if !current.is_empty() {
+        commands.push(current);
+    }
+    if commands.is_empty() {
+        return Err("--resume requires at least one slash command".to_string());
+    }
+    if let Some(bad) = commands.iter().find(|c| !c.trim_start().starts_with('/')) {
+        return Err(format!(
+            "--resume trailing arguments must be slash commands (got '{bad}')"
+        ));
+    }
+    // Validate the head of each grouped command against the resume-safe
+    // command set. The previous parser only checked that each token started
+    // with '/', so `--resume session.json /not-a-command` would parse
+    // successfully and then fail at runtime with a confusing error.
+    let resume_supported: Vec<&'static str> = resume_supported_slash_commands()
         .iter()
-        .any(|command| !command.trim_start().starts_with('/'))
-    {
-        return Err("--resume trailing arguments must be slash commands".to_string());
+        .map(|spec| spec.name)
+        .collect();
+    for command in &commands {
+        let head = command
+            .trim_start()
+            .trim_start_matches('/')
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        if head.is_empty() {
+            return Err(format!(
+                "--resume command is missing a name (got '{command}')"
+            ));
+        }
+        let head_lower = head.to_ascii_lowercase();
+        if !resume_supported.iter().any(|name| *name == head_lower) {
+            return Err(format!(
+                "--resume command '/{head}' is not a recognised resume-safe slash command \
+                 (supported: {})",
+                resume_supported
+                    .iter()
+                    .map(|n| format!("/{n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
     }
     Ok(CliAction::ResumeSession {
         session_path,
@@ -493,6 +553,12 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "      Configure credentials for a provider interactively"
     )?;
     writeln!(out, "  acrawl init")?;
+    writeln!(out, "  acrawl update")?;
+    writeln!(out, "  acrawl uninstall [--purge]")?;
+    writeln!(
+        out,
+        "      Remove acrawl. --purge also deletes settings, credentials, and sessions"
+    )?;
     writeln!(out)?;
     writeln!(out, "Flags:")?;
     writeln!(
@@ -800,6 +866,57 @@ mod tests {
     }
 
     #[test]
+    fn rejects_resume_unknown_slash_command() {
+        // Previously, anything starting with `/` was accepted by the resume
+        // parser and the failure only surfaced at runtime with a confusing
+        // error. Validate eagerly against the resume-safe spec list.
+        let args = vec![
+            "--resume".to_string(),
+            "session.json".to_string(),
+            "/not-a-command".to_string(),
+        ];
+        let err = parse_args(&args).expect_err("unknown command must be rejected");
+        assert!(
+            err.contains("not a recognised resume-safe slash command"),
+            "{err}"
+        );
+        assert!(err.contains("/not-a-command"), "{err}");
+    }
+
+    #[test]
+    fn rejects_resume_command_known_but_not_resume_safe() {
+        // `/model` exists but is not in resume_supported_slash_commands(); it
+        // mutates session-level config in a way that's not safe at replay.
+        let args = vec![
+            "--resume".to_string(),
+            "session.json".to_string(),
+            "/auth".to_string(),
+        ];
+        let err = parse_args(&args).expect_err("non-resume-safe command must be rejected");
+        assert!(
+            err.contains("not a recognised resume-safe slash command"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn parses_resume_flag_with_command_arguments() {
+        let args = vec![
+            "--resume".to_string(),
+            "session.json".to_string(),
+            "/clear".to_string(),
+            "--confirm".to_string(),
+        ];
+        assert_eq!(
+            parse_args(&args).expect("args should parse"),
+            CliAction::ResumeSession {
+                session_path: PathBuf::from("session.json"),
+                commands: vec!["/clear --confirm".to_string()],
+            }
+        );
+    }
+
+    #[test]
     fn shared_help_uses_resume_annotation_copy() {
         let help = commands::render_slash_command_help();
         assert!(help.contains("Slash commands"));
@@ -890,5 +1007,31 @@ mod tests {
                 provider: Some("openai".to_string())
             }
         );
+    }
+
+    #[test]
+    fn parses_uninstall_subcommand() {
+        assert_eq!(
+            parse_args(&["uninstall".to_string()]).expect("uninstall"),
+            CliAction::Uninstall { purge: false }
+        );
+    }
+
+    #[test]
+    fn parses_uninstall_with_purge_flag() {
+        assert_eq!(
+            parse_args(&["uninstall".to_string(), "--purge".to_string()])
+                .expect("uninstall --purge"),
+            CliAction::Uninstall { purge: true }
+        );
+    }
+
+    #[test]
+    fn uninstall_help_mentions_purge() {
+        let mut help = Vec::new();
+        print_help_to(&mut help).expect("help should render");
+        let help = String::from_utf8(help).expect("help should be utf8");
+        assert!(help.contains("acrawl uninstall"));
+        assert!(help.contains("--purge"));
     }
 }
