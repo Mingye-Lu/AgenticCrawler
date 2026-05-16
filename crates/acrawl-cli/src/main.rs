@@ -398,10 +398,8 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
     let mut commands = Vec::new();
     let mut current = String::new();
     for arg in raw_args {
-        if arg.trim_start().starts_with('/') {
-            if !current.is_empty() {
-                commands.push(std::mem::take(&mut current));
-            }
+        if arg.trim_start().starts_with('/') && !current.is_empty() {
+            commands.push(std::mem::take(&mut current));
         }
         if !current.is_empty() {
             current.push(' ');
