@@ -184,6 +184,7 @@ impl AuthModal {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn fetch_models_for_provider(
         provider: ProviderKind,
     ) -> Result<Vec<crate::tui::model_list::ModelInfo>, String> {
@@ -291,6 +292,9 @@ impl AuthModal {
         }
     }
 
+    // Take `key` by value (not by reference) so its heap allocation is dropped
+    // — and zeroed — by the time this function returns.
+    #[allow(clippy::needless_pass_by_value)]
     fn save_api_key(provider: ProviderKind, base_url: Option<String>, key: Zeroizing<String>) {
         let (provider_str, preset_base_url): (&str, Option<String>) = match provider {
             ProviderKind::Anthropic => ("anthropic", None),

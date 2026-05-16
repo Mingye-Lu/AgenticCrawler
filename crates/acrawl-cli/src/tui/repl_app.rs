@@ -42,7 +42,7 @@ const MAX_INPUT_LINES: usize = 5;
 const MAX_EVENTS_PER_FRAME: usize = 256;
 /// Cap on the typewriter backlog. If the producer overruns this, flush the
 /// queue straight to the transcript (skipping the slow per-char reveal) so the
-/// VecDeque can't grow unbounded.
+/// `VecDeque` can't grow unbounded.
 const MAX_TYPEWRITER_BACKLOG: usize = 64 * 1024;
 pub(super) const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
 pub(super) const WELCOME_BOX_MAX_WIDTH: u16 = 82;
