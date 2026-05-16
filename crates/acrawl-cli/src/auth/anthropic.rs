@@ -102,8 +102,12 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     let client = AnthropicClient::from_auth(AuthSource::None);
     let exchange_request =
         OAuthTokenExchangeRequest::from_config(oauth, code, state, pkce.verifier, redirect_uri);
-    let rt = tokio::runtime::Runtime::new()?;
-    let token_set = rt.block_on(client.exchange_oauth_code(oauth, &exchange_request))?;
+    // Reuse the process-wide tokio runtime instead of spinning up a fresh
+    // one per OAuth attempt (which leaks threads on repeated retries).
+    let runtime = crate::TOKIO_RUNTIME
+        .get()
+        .ok_or_else(|| io::Error::other("tokio runtime not initialised"))?;
+    let token_set = runtime.block_on(client.exchange_oauth_code(oauth, &exchange_request))?;
     save_oauth_credentials(&runtime::OAuthTokenSet {
         access_token: token_set.access_token,
         refresh_token: token_set.refresh_token,

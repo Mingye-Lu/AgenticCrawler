@@ -73,9 +73,13 @@ pub(super) fn run_openai_login() -> Result<(), Box<dyn std::error::Error>> {
         login_req.pkce.verifier,
         login_req.redirect_uri,
     );
-    let rt = tokio::runtime::Runtime::new()?;
+    // Reuse the process-wide tokio runtime instead of spinning up a fresh
+    // one per OAuth attempt (which leaks threads on repeated retries).
+    let runtime = crate::TOKIO_RUNTIME
+        .get()
+        .ok_or_else(|| std::io::Error::other("tokio runtime not initialised"))?;
     let token_set =
-        rt.block_on(client.exchange_oauth_code(&login_req.config, &exchange_request))?;
+        runtime.block_on(client.exchange_oauth_code(&login_req.config, &exchange_request))?;
     persist_provider_credentials(
         Provider::OpenAi,
         api::StoredProviderConfig {
