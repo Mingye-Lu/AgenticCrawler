@@ -103,7 +103,9 @@ impl McpServerManager {
                         McpServerManagerError::InvalidResponse {
                             server_name: server_name.clone(),
                             method: "tools/list",
-                            details: "server process missing after initialization".to_string(),
+                            details: "MCP server process is gone — it likely crashed or was killed; \
+                                      check the server's stderr output above and retry"
+                                .to_string(),
                         }
                     })?;
                     timeout(
@@ -287,7 +289,10 @@ impl McpServerManager {
                     McpServerManagerError::InvalidResponse {
                         server_name: server_name.to_string(),
                         method: "initialize",
-                        details: "server process missing before initialize".to_string(),
+                        details: "MCP server process is gone before initialize — \
+                                  spawn appears to have failed silently; \
+                                  check the server's stderr output above and retry"
+                            .to_string(),
                     }
                 })?;
                 timeout(
@@ -324,7 +329,9 @@ impl McpServerManager {
                     McpServerManagerError::InvalidResponse {
                         server_name: server_name.to_string(),
                         method: "notifications/initialized",
-                        details: "server process missing before initialized notification"
+                        details: "MCP server process is gone after initialize but before \
+                                  the initialized notification — the server probably exited mid-handshake; \
+                                  check the server's stderr output above and retry"
                             .to_string(),
                     }
                 })?;
