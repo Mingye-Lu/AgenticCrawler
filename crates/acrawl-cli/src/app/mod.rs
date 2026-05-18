@@ -116,6 +116,8 @@ pub(crate) struct LiveCli {
     pending_title: Arc<Mutex<Option<String>>>,
     title_dispatched: bool,
     ws_bridge_server: Option<crawler::WsBridgeServer>,
+    pending_extension_state: Option<crawler::BrowserState>,
+    extension_bridge_initialized: bool,
 }
 
 #[derive(Clone)]
@@ -201,6 +203,8 @@ impl LiveCli {
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
             ws_bridge_server: None,
+            pending_extension_state: None,
+            extension_bridge_initialized: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -257,6 +261,8 @@ impl LiveCli {
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
             ws_bridge_server: None,
+            pending_extension_state: None,
+            extension_bridge_initialized: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -508,95 +514,31 @@ impl LiveCli {
                 println!("Browser mode\n  Result           switched to headless");
                 false
             }
-            SlashCommand::Extension => {
-                use crawler::ws_server::generate_bridge_token;
-                use crawler::{BrowserBackend, ExtensionBridge, WsBridgeServer};
+            SlashCommand::Extension { stop } => {
+                if stop {
+                    println!("{}", self.stop_extension_server());
+                    return Ok(false);
+                }
+                if self.ws_bridge_server.is_some() {
+                    if let Some(status) = self.extension_bridge_status() {
+                        println!("{status}");
+                    }
+                    return Ok(false);
+                }
 
-                let saved_state = block_on_runtime_future(async {
-                    Ok::<Option<crawler::BrowserState>, RuntimeError>(
-                        self.runtime
-                            .tool_executor_mut()
-                            .export_current_state()
-                            .await,
-                    )
-                })
-                .unwrap_or(None);
-
-                let settings = runtime::load_settings();
-                let token = settings
-                    .extension_bridge_token
-                    .unwrap_or_else(generate_bridge_token);
-
-                let _ = runtime::update_settings(|s| {
-                    s.extension_bridge_token = Some(token.clone());
-                });
-
-                let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
-
-                let server_result = block_on_runtime_future(async {
-                    WsBridgeServer::start(port, token.clone())
-                        .await
-                        .map_err(|e| RuntimeError::new(e.to_string()))
-                });
-
-                match server_result {
+                match self.start_extension_server() {
                     Err(e) => {
-                        eprintln!("Failed to start extension bridge server: {e}");
+                        eprintln!("{e}");
                         false
                     }
-                    Ok(mut server) => {
+                    Ok((token, port)) => {
                         println!(
                             "Extension mode\n  \
-                             Waiting for connection (port {port})...\n  \
-                             Token: {token}\n  \
-                             Paste token into the acrawl Bridge extension options page."
+                             Status           server running (port {port})\n  \
+                             Token            {token}\n  \
+                             Action           open the extension popup or options page and click Save"
                         );
-
-                        let connected = block_on_runtime_future(async {
-                            Ok::<bool, RuntimeError>(
-                                server
-                                    .wait_for_connection(std::time::Duration::from_secs(30))
-                                    .await,
-                            )
-                        })
-                        .unwrap_or(false);
-
-                        if connected {
-                            let sender = server.command_sender();
-                            let bridge = ExtensionBridge::new(sender);
-                            let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
-                                Box::new(bridge) as Box<dyn BrowserBackend + Send>,
-                            ));
-                            self.runtime
-                                .tool_executor_mut()
-                                .set_extension_bridge(shared);
-
-                            if let Some(state) = saved_state.as_ref() {
-                                let _ = block_on_runtime_future(async {
-                                    self.runtime
-                                        .tool_executor_mut()
-                                        .restore_state_to_bridge(state)
-                                        .await;
-                                    Ok::<(), RuntimeError>(())
-                                });
-                            }
-
-                            self.ws_bridge_server = Some(server);
-                            println!(
-                                "  Result           extension connected \
-                                 — browser commands routed to Chrome, state preserved"
-                            );
-                            false
-                        } else {
-                            eprintln!(
-                                "Extension not connected after 30s.\n  \
-                                 Install the acrawl Bridge extension from the Chrome Web Store.\n  \
-                                 Open extension options and configure:\n    \
-                                 Port: 19876\n    \
-                                 Token: <the-token>"
-                            );
-                            false
-                        }
+                        false
                     }
                 }
             }
@@ -612,6 +554,8 @@ impl LiveCli {
                 .unwrap_or(None);
 
                 self.ws_bridge_server = None;
+                self.pending_extension_state = None;
+                self.extension_bridge_initialized = false;
                 self.reset_browser();
 
                 let _ = block_on_runtime_future(async {
@@ -688,37 +632,41 @@ impl LiveCli {
         self.runtime.tool_executor_mut().reset_browser();
     }
 
-    pub(crate) fn finalize_extension_connection(
+    pub(crate) fn prepare_extension_bridge_activation(
         &mut self,
-        server: crawler::WsBridgeServer,
-        saved_state: Option<&crawler::BrowserState>,
-    ) {
+    ) -> Result<(crawler::SharedBridge, Option<crawler::BrowserState>), String> {
+        if self.extension_bridge_initialized {
+            return Err("extension bridge is already initialized".to_string());
+        }
+
+        let Some(server) = self.ws_bridge_server.as_ref() else {
+            return Err("extension bridge server is not running".to_string());
+        };
+
         let sender = server.command_sender();
         let bridge = crawler::ExtensionBridge::new(sender);
         let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
             Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>,
         ));
 
-        // Create the initial tab so page_index 0 exists in the extension
-        let _ = block_on_runtime_future(async {
-            shared.lock().await.new_page(None).await.map_err(|e| RuntimeError::new(e.to_string()))
-        });
+        Ok((shared, self.pending_extension_state.take()))
+    }
 
+    pub(crate) fn activate_extension_bridge(&mut self, shared: crawler::SharedBridge) {
         self.runtime
             .tool_executor_mut()
             .set_extension_bridge(shared);
 
-        if let Some(state) = saved_state {
-            let _ = block_on_runtime_future(async {
-                self.runtime
-                    .tool_executor_mut()
-                    .restore_state_to_bridge(state)
-                    .await;
-                Ok::<(), RuntimeError>(())
-            });
-        }
+        self.extension_bridge_initialized = true;
+    }
 
-        self.ws_bridge_server = Some(server);
+    pub(crate) fn restore_pending_extension_state(
+        &mut self,
+        state: Option<crawler::BrowserState>,
+    ) {
+        if self.pending_extension_state.is_none() {
+            self.pending_extension_state = state;
+        }
     }
 
     pub(crate) fn switch_to_cloakbrowser(&mut self) -> String {
@@ -733,6 +681,8 @@ impl LiveCli {
         .unwrap_or(None);
 
         self.ws_bridge_server = None;
+        self.pending_extension_state = None;
+        self.extension_bridge_initialized = false;
         self.reset_browser();
 
         let _ = runtime::update_settings(|s| {
@@ -761,21 +711,53 @@ impl LiveCli {
             .to_string()
     }
 
+    pub(crate) fn stop_extension_server(&mut self) -> String {
+        if self.ws_bridge_server.is_none() {
+            return "Extension mode\n  Result           bridge server already stopped".to_string();
+        }
+
+        self.ws_bridge_server = None;
+        self.pending_extension_state = None;
+        self.extension_bridge_initialized = false;
+        self.runtime.tool_executor_mut().clear_extension_bridge();
+
+        let _ = runtime::update_settings(|s| {
+            if s.browser_backend.as_deref() == Some("extension") {
+                s.browser_backend = None;
+            }
+        });
+
+        "Extension mode\n  Result           bridge server stopped".to_string()
+    }
+
     pub(crate) fn extension_bridge_status(&self) -> Option<String> {
         let server = self.ws_bridge_server.as_ref()?;
         let settings = runtime::load_settings();
         let token = settings.extension_bridge_token.unwrap_or_default();
         let port = server.port();
+        let status = if server.is_client_connected() && !self.extension_bridge_initialized {
+            "browser connected; initializing"
+        } else if server.is_client_connected() {
+            "connected"
+        } else {
+            "waiting for browser"
+        };
         Some(format!(
             "Extension mode\n  \
-             Status           running (port {port})\n  \
+             Status           {status} (port {port})\n  \
              Token            {token}"
         ))
     }
 
+    pub(crate) fn extension_connection_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.ws_bridge_server
+            .as_ref()
+            .map(crawler::WsBridgeServer::connection_watcher)
+    }
+
     pub(crate) fn start_extension_server(
         &mut self,
-    ) -> Result<(crawler::WsBridgeServer, String, u16, Option<crawler::BrowserState>), String> {
+    ) -> Result<(String, u16), String> {
         use crawler::ws_server::generate_bridge_token;
 
         // Shut down any existing extension bridge to free the port and prevent
@@ -784,6 +766,8 @@ impl LiveCli {
             self.ws_bridge_server = None;
             self.runtime.tool_executor_mut().clear_extension_bridge();
         }
+        self.pending_extension_state = None;
+        self.extension_bridge_initialized = false;
 
         let saved_state = block_on_runtime_future(async {
             Ok::<Option<crawler::BrowserState>, RuntimeError>(
@@ -802,7 +786,6 @@ impl LiveCli {
 
         let _ = runtime::update_settings(|s| {
             s.extension_bridge_token = Some(token.clone());
-            s.browser_backend = Some("extension".to_string());
         });
 
         let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
@@ -814,7 +797,10 @@ impl LiveCli {
         })
                 .map_err(|e| format!("Extension mode\n  Error            {e}"))?;
 
-        Ok((server, token, port, saved_state))
+        self.pending_extension_state = saved_state;
+        self.ws_bridge_server = Some(server);
+
+        Ok((token, port))
     }
 
     pub(crate) fn status_report(&self) -> Result<String, CliError> {

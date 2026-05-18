@@ -136,6 +136,16 @@ impl WsBridgeServer {
         self.command_tx.clone()
     }
 
+    #[must_use]
+    pub fn is_client_connected(&self) -> bool {
+        *self.client_connected_rx.borrow()
+    }
+
+    #[must_use]
+    pub fn connection_watcher(&self) -> watch::Receiver<bool> {
+        self.client_connected_rx.clone()
+    }
+
     /// Shut down the server and remove bridge.json.
     pub fn shutdown(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
@@ -302,10 +312,10 @@ fn validate_ws_upgrade(
             .expect("valid response"));
     }
 
-    // Origin: if present must be chrome-extension://
+    // Origin: if present must come from a trusted extension page.
     if let Some(origin) = req.headers().get("origin") {
         let origin_str = origin.to_str().unwrap_or("");
-        if !origin_str.starts_with("chrome-extension://") {
+        if !is_allowed_extension_origin(origin_str) {
             return Err(ws_http::Response::builder()
                 .status(StatusCode::FORBIDDEN)
                 .body(Some("Forbidden: invalid origin".into()))
@@ -423,6 +433,10 @@ async fn send_raw_http_error(mut stream: TcpStream, status: u16, message: &str) 
         message
     );
     let _ = stream.write_all(resp.as_bytes()).await;
+}
+
+fn is_allowed_extension_origin(origin: &str) -> bool {
+    origin.starts_with("chrome-extension://") || origin.starts_with("edge-extension://")
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +602,18 @@ mod tests {
         let req = ws_http::Request::builder()
             .uri("http://localhost/bridge?token=secret")
             .header("origin", "chrome-extension://abcdef123456")
+            .body(())
+            .unwrap();
+        let resp = ws_http::Response::builder().body(()).unwrap();
+        let result = validate_ws_upgrade("secret", &req, resp);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_ws_upgrade_accepts_edge_extension_origin() {
+        let req = ws_http::Request::builder()
+            .uri("http://localhost/bridge?token=secret")
+            .header("origin", "edge-extension://abcdef123456")
             .body(())
             .unwrap();
         let resp = ws_http::Response::builder().body(()).unwrap();

@@ -27,7 +27,8 @@ use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
+    KeyModifiers, MouseButton, MouseEventKind,
 };
 use crossterm::execute;
 use ratatui::layout::Rect;
@@ -136,6 +137,7 @@ pub(super) struct MouseCaptureGuard;
 impl Drop for MouseCaptureGuard {
     fn drop(&mut self) {
         let _ = execute!(io::stdout(), event::DisableMouseCapture);
+        let _ = execute!(io::stdout(), DisableBracketedPaste);
     }
 }
 
@@ -156,6 +158,7 @@ pub(super) struct SelectionState {
     pub(super) end: Option<(u16, usize)>,
     pub(super) pending_copy: Option<bool>,
     pub(super) mouse_drag_occurred: bool,
+    pub(super) suppress_paste_until: Option<Instant>,
 }
 
 pub(super) struct TypewriterState {
@@ -367,6 +370,15 @@ impl ReplTuiState {
         let idx = self.input_char_to_byte(self.input.cursor);
         self.input.text.insert(idx, ch);
         self.input.cursor = self.input.cursor.saturating_add(1);
+        self.input.preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn insert_input_str(&mut self, text: &str) {
+        self.clamp_input_cursor();
+        let idx = self.input_char_to_byte(self.input.cursor);
+        self.input.text.insert_str(idx, text);
+        self.input.cursor = self.input.cursor.saturating_add(text.chars().count());
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
@@ -1345,9 +1357,15 @@ fn handle_slash_command_tui(
                 "Browser mode\n  Result           switched to headless",
             );
         }
-        cmd @ (SlashCommand::Extension | SlashCommand::CloakBrowser) => {
+        cmd @ (SlashCommand::Extension { .. } | SlashCommand::CloakBrowser) => {
             match cmd {
-                SlashCommand::Extension => {
+                SlashCommand::Extension { stop } => {
+                    if stop {
+                        let mut g = cli.lock().expect("cli lock");
+                        let msg = g.stop_extension_server();
+                        state.push_system_card("Extension", &msg);
+                        return Ok(());
+                    }
                     let mut g = cli.lock().expect("cli lock");
                     if let Some(status) = g.extension_bridge_status() {
                         state.push_system_card("Extension", &status);
@@ -1357,55 +1375,73 @@ fn handle_slash_command_tui(
                         Err(e) => {
                             state.push_system_card("Extension", &e);
                         }
-                        Ok((server, token, port, saved_state)) => {
+                        Ok((token, port)) => {
                             state.push_system_card(
                                 "Extension",
                                 &format!(
                                     "Extension mode\n  \
-                                     Status           Waiting for connection (port {port})...\n  \
+                                     Status           server running (port {port})\n  \
                                      Token            {token}\n  \
-                                     Action           Paste token into the extension options page"
+                                     Action           open the extension popup or options page and click Save"
                                 ),
                             );
-                            drop(g);
-                            let cli_clone = cli.clone();
-                            let ui_tx_clone = ui_tx.clone();
-                            std::thread::spawn(move || {
-                                let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
-                                let mut server = server;
-                                let connected = rt.block_on(async {
-                                    server
-                                        .wait_for_connection(std::time::Duration::from_secs(30))
-                                        .await
+                            if let Some(mut connection_watch) = g.extension_connection_watch() {
+                                drop(g);
+                                let cli_clone = cli.clone();
+                                let ui_tx_clone = ui_tx.clone();
+                                std::thread::spawn(move || {
+                                    let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
+                                    let connected = rt.block_on(async {
+                                        if *connection_watch.borrow() {
+                                            true
+                                        } else {
+                                            connection_watch.changed().await.is_ok()
+                                                && *connection_watch.borrow()
+                                        }
+                                    });
+                                    if connected {
+                                        let setup = {
+                                            let mut g = cli_clone.lock().expect("cli lock");
+                                            g.prepare_extension_bridge_activation()
+                                        };
+                                        let result = match setup {
+                                            Ok((shared, saved_state)) => {
+                                                let init_result = rt.block_on(async {
+                                                    prime_extension_bridge(&shared, saved_state.as_ref())
+                                                        .await
+                                                });
+                                                match init_result {
+                                                    Ok(()) => {
+                                                        let mut g = cli_clone.lock().expect("cli lock");
+                                                        g.activate_extension_bridge(shared);
+                                                        Ok(())
+                                                    }
+                                                    Err(error) => {
+                                                        let mut g = cli_clone.lock().expect("cli lock");
+                                                        g.restore_pending_extension_state(saved_state);
+                                                        Err(error)
+                                                    }
+                                                }
+                                            }
+                                            Err(error) => Err(error),
+                                        };
+                                        let _ =
+                                            ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
+                                                success: result.is_ok(),
+                                                message: match result {
+                                                    Ok(()) => "Extension mode\n  \
+                                                              Result           connected - browser commands \
+                                                              routed to Chrome, state preserved"
+                                                        .to_string(),
+                                                    Err(error) => format!(
+                                                        "Extension mode\n  \
+                                                         Error            {error}"
+                                                    ),
+                                                },
+                                            });
+                                    }
                                 });
-                                if connected {
-                                    let mut g = cli_clone.lock().expect("cli lock");
-                                    g.finalize_extension_connection(
-                                        server,
-                                        saved_state.as_ref(),
-                                    );
-                                    let _ =
-                                        ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
-                                            success: true,
-                                            message:
-                                                "Extension mode\n  \
-                                                 Result           connected - browser commands \
-                                                 routed to Chrome, state preserved"
-                                                    .to_string(),
-                                        });
-                                } else {
-                                    let _ =
-                                        ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
-                                            success: false,
-                                            message:
-                                                "Extension mode\n  \
-                                                 Error            not connected after 30s\n  \
-                                                 Action           install the acrawl Bridge \
-                                                 extension and configure port/token"
-                                                    .to_string(),
-                                        });
-                                }
-                            });
+                            }
                         }
                     }
                 }
@@ -1466,6 +1502,37 @@ fn extract_openai_account_id(jwt: &str) -> Option<String> {
                 .and_then(|v| v.as_str())
         })
         .map(String::from)
+}
+
+async fn prime_extension_bridge(
+    shared: &crawler::SharedBridge,
+    saved_state: Option<&crawler::BrowserState>,
+) -> Result<(), String> {
+    let mut bridge = shared.lock().await;
+    if let Some(state) = saved_state {
+        bridge
+            .new_page(None)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        bridge
+            .import_cookies_only(state)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        if !state.url.is_empty() && state.url != "about:blank" {
+            bridge
+                .navigate(&state.url)
+                .await
+                .map_err(|error| error.to_string())?;
+            bridge
+                .import_local_storage(state)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+    }
+
+    Ok(())
 }
 
 fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
@@ -1784,6 +1851,7 @@ fn run_loop(
     cancel_flag: &Arc<ControlState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute!(io::stdout(), event::EnableMouseCapture);
+    let _ = execute!(io::stdout(), EnableBracketedPaste);
     let _ = execute!(io::stdout(), SetCursorStyle::SteadyBar);
     let _mouse_guard = MouseCaptureGuard;
 
@@ -1796,60 +1864,7 @@ fn run_loop(
         state.child_control_registry = g.take_child_control_registry();
     }
 
-    // Auto-launch extension bridge if persisted in settings
-    {
-        let settings = runtime::load_settings();
-        if settings.browser_backend.as_deref() == Some("extension") {
-            let mut g = cli.lock().expect("cli lock");
-            match g.start_extension_server() {
-                Ok((server, token, port, saved_state)) => {
-                    state.push_system_card(
-                        "Extension",
-                        &format!(
-                            "Extension mode\n  \
-                             Status           auto-started (port {port})\n  \
-                             Token            {token}\n  \
-                             Action           waiting for extension to connect"
-                        ),
-                    );
-                    drop(g);
-                    let cli_clone = Arc::clone(cli);
-                    let ui_tx_clone = ui_tx.clone();
-                    std::thread::spawn(move || {
-                        let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
-                        let mut server = server;
-                        let connected = rt.block_on(async {
-                            server
-                                .wait_for_connection(std::time::Duration::from_secs(30))
-                                .await
-                        });
-                        if connected {
-                            let mut g = cli_clone.lock().expect("cli lock");
-                            g.finalize_extension_connection(server, saved_state.as_ref());
-                            let _ = ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
-                                success: true,
-                                message: "Extension mode\n  \
-                                          Result           connected - browser commands \
-                                          routed to Chrome, state preserved"
-                                    .to_string(),
-                            });
-                        } else {
-                            let _ = ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
-                                success: false,
-                                message: "Extension mode\n  \
-                                          Error            not connected after 30s\n  \
-                                          Action           type /extension to retry"
-                                    .to_string(),
-                            });
-                        }
-                    });
-                }
-                Err(e) => {
-                    state.push_system_card("Extension", &e);
-                }
-            }
-        }
-    }
+    // Extension bridge is started explicitly via /extension.
 
     let (update_tx, update_rx) =
         tokio::sync::oneshot::channel::<Option<runtime::update_check::UpdateInfo>>();
@@ -2069,6 +2084,8 @@ fn run_loop(
                             if state.selection.anchor.is_some() =>
                         {
                             state.selection.pending_copy = Some(true);
+                            state.selection.suppress_paste_until =
+                                Some(Instant::now() + Duration::from_millis(300));
                         }
                         _ => {}
                     }
@@ -2131,6 +2148,8 @@ fn run_loop(
                             if state.selection.anchor.is_some() =>
                         {
                             state.selection.pending_copy = Some(true);
+                            state.selection.suppress_paste_until =
+                                Some(Instant::now() + Duration::from_millis(300));
                         }
                         _ => {}
                     }
@@ -2147,6 +2166,21 @@ fn run_loop(
                         _ => {}
                     }
                 }
+            }
+            Event::Paste(text) => {
+                let suppress = state
+                    .selection
+                    .suppress_paste_until
+                    .is_some_and(|deadline| Instant::now() <= deadline);
+                state.selection.suppress_paste_until = None;
+
+                if suppress || state.active_modal.is_some() {
+                    continue;
+                }
+
+                state.insert_input_str(&text);
+                state.wake_input_caret();
+                state.refresh_slash_overlay();
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {

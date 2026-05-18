@@ -153,8 +153,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         name: "extension",
-        summary: "Switch to Chrome extension browser backend",
-        argument_hint: None,
+        summary: "Start/show the extension bridge, or stop it",
+        argument_hint: Some("[stop]"),
         resume_supported: false,
     },
     SlashCommandSpec {
@@ -187,7 +187,7 @@ pub enum SlashCommand {
     Auth { provider: Option<String> },
     Headed,
     Headless,
-    Extension,
+    Extension { stop: bool },
     CloakBrowser,
     Unknown(String),
 }
@@ -238,7 +238,15 @@ impl SlashCommand {
             },
             "headed" => Self::Headed,
             "headless" => Self::Headless,
-            "extension" => Self::Extension,
+            "extension" => {
+                let next = parts.next();
+                let extra = parts.next();
+                match (next, extra) {
+                    (None, _) => Self::Extension { stop: false },
+                    (Some("stop"), None) => Self::Extension { stop: true },
+                    _ => Self::Unknown(command_raw.to_string()),
+                }
+            }
             "cloakbrowser" => Self::CloakBrowser,
             other => Self::Unknown(other.to_string()),
         })
@@ -323,7 +331,7 @@ pub fn handle_slash_command(
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed
         | SlashCommand::Headless
-        | SlashCommand::Extension
+        | SlashCommand::Extension { .. }
         | SlashCommand::CloakBrowser
         | SlashCommand::Unknown(_) => None,
     }
@@ -410,7 +418,11 @@ mod tests {
         );
         assert_eq!(
             SlashCommand::parse("/extension"),
-            Some(SlashCommand::Extension)
+            Some(SlashCommand::Extension { stop: false })
+        );
+        assert_eq!(
+            SlashCommand::parse("/extension stop"),
+            Some(SlashCommand::Extension { stop: true })
         );
         assert_eq!(
             SlashCommand::parse("/cloakbrowser"),
@@ -455,7 +467,7 @@ mod tests {
         assert!(help.contains("/auth [anthropic|openai|other]"));
         assert!(help.contains("/headed"));
         assert!(help.contains("/headless"));
-        assert!(help.contains("/extension"));
+        assert!(help.contains("/extension [stop]"));
         assert!(help.contains("/cloakbrowser"));
         assert!(!help.contains("/resume"));
         assert_eq!(slash_command_specs().len(), 17);
@@ -540,6 +552,10 @@ mod tests {
         assert!(handle_slash_command("/headless", &session, CompactionConfig::default()).is_none());
         assert!(
             handle_slash_command("/extension", &session, CompactionConfig::default()).is_none()
+        );
+        assert!(
+            handle_slash_command("/extension stop", &session, CompactionConfig::default())
+                .is_none()
         );
         assert!(
             handle_slash_command("/cloakbrowser", &session, CompactionConfig::default()).is_none()

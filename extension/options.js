@@ -27,25 +27,34 @@ saveButton.addEventListener('click', () => {
   }
 
   chrome.storage.local.set({ port, token }, () => {
-    statusSpan.textContent = 'Settings saved';
-    statusSpan.className = 'connected';
-    setTimeout(() => updateStatusDisplay(), 1500);
+    statusSpan.textContent = 'Connecting...';
+    statusSpan.className = 'testing';
+    saveButton.disabled = true;
+    testButton.disabled = true;
+    chrome.runtime.sendMessage({ type: 'reconnect' }, (response) => {
+      saveButton.disabled = false;
+      testButton.disabled = false;
+      if (chrome.runtime.lastError) {
+        statusSpan.textContent = 'Connection failed';
+        statusSpan.className = 'disconnected';
+        return;
+      }
+      if (response && response.connected) {
+        statusSpan.textContent = 'Connected ✓';
+        statusSpan.className = 'connected';
+      } else {
+        statusSpan.textContent = 'Connection failed';
+        statusSpan.className = 'disconnected';
+      }
+    });
   });
 });
 
 // Test connection
 testButton.addEventListener('click', () => {
   const port = parseInt(portInput.value, 10);
-  const token = tokenInput.value.trim();
-
   if (isNaN(port) || port < 1 || port > 65535) {
     statusSpan.textContent = 'Invalid port number';
-    statusSpan.className = 'disconnected';
-    return;
-  }
-
-  if (!token) {
-    statusSpan.textContent = 'Token required';
     statusSpan.className = 'disconnected';
     return;
   }
@@ -54,56 +63,41 @@ testButton.addEventListener('click', () => {
   statusSpan.className = 'testing';
   testButton.disabled = true;
 
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/bridge?token=${encodeURIComponent(token)}`);
-  const timeout = setTimeout(() => {
-    ws.close();
-    statusSpan.textContent = 'Connection timeout';
-    statusSpan.className = 'disconnected';
-    testButton.disabled = false;
-  }, 5000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
 
-  ws.onopen = () => {
-    clearTimeout(timeout);
-    ws.send(JSON.stringify({ type: 'ping' }));
-  };
-
-  ws.onmessage = (event) => {
-    clearTimeout(timeout);
-    try {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'pong') {
-        statusSpan.textContent = 'Connected ✓';
-        statusSpan.className = 'connected';
+  fetch(`http://127.0.0.1:${port}/health`, { signal: controller.signal })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
-    } catch (e) {
-      // ignore
-    }
-    ws.close();
-    testButton.disabled = false;
-  };
-
-  ws.onerror = () => {
-    clearTimeout(timeout);
-    statusSpan.textContent = 'Connection failed';
-    statusSpan.className = 'disconnected';
-    testButton.disabled = false;
-  };
-
-  ws.onclose = () => {
-    clearTimeout(timeout);
-    if (statusSpan.className !== 'connected') {
-      statusSpan.textContent = 'Disconnected';
+      statusSpan.textContent = 'Server reachable ✓';
+      statusSpan.className = 'connected';
+    })
+    .catch(() => {
+      statusSpan.textContent = 'Server not reachable';
       statusSpan.className = 'disconnected';
-    }
-    testButton.disabled = false;
-  };
+    })
+    .finally(() => {
+      clearTimeout(timeout);
+      testButton.disabled = false;
+    });
 });
 
 function updateStatusDisplay() {
   chrome.runtime.sendMessage({ type: 'getConnectionStatus' }, (response) => {
-    if (response && response.connected) {
+    if (chrome.runtime.lastError || !response) {
+      statusSpan.textContent = 'Disconnected';
+      statusSpan.className = 'disconnected';
+    } else if (response.connected) {
       statusSpan.textContent = 'Connected ✓';
       statusSpan.className = 'connected';
+    } else if (response.connecting) {
+      statusSpan.textContent = 'Connecting...';
+      statusSpan.className = 'testing';
+    } else if (!response.configured) {
+      statusSpan.textContent = 'Not configured';
+      statusSpan.className = 'disconnected';
     } else {
       statusSpan.textContent = 'Disconnected';
       statusSpan.className = 'disconnected';

@@ -47,52 +47,112 @@ async function getSettings() {
   });
 }
 
-async function connect() {
+async function getConnectionStatus() {
+  const { token } = await getSettings();
+  return {
+    connected: wsConnected,
+    connecting: Boolean(ws && ws.readyState === WebSocket.CONNECTING),
+    configured: Boolean(token),
+  };
+}
+
+async function connect(timeoutMs = 0) {
   const { port, token } = await getSettings();
   if (!token) {
-    setBadge('?', '#888888');
-    return;
+    disconnect({ suppressReconnect: true, unconfigured: true });
+    return false;
   }
 
-  try {
-    ws = new WebSocket(`ws://127.0.0.1:${port}/bridge?token=${encodeURIComponent(token)}`);
+  clearReconnectTimer();
+  stopKeepalive();
 
-    ws.onopen = () => {
-      wsConnected = true;
-      reconnectDelay = 1000;
-      setBadge('', '#00aa00'); // green
-      startKeepalive();
+  if (ws) {
+    disconnect({ suppressReconnect: true, preserveBadge: true });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId = null;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/bridge?token=${encodeURIComponent(token)}`);
+    ws = socket;
+    wsConnected = false;
+    setBadge('...', '#888888');
+
+    const finish = (connected) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      resolve(connected);
     };
 
-    ws.onmessage = (event) => {
+    if (timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        if (ws === socket) {
+          disconnect({ suppressReconnect: true });
+        }
+        finish(false);
+      }, timeoutMs);
+    }
+
+    socket.onopen = () => {
+      if (ws !== socket) {
+        socket.acrawlManualClose = true;
+        socket.close();
+        finish(false);
+        return;
+      }
+      wsConnected = true;
+      reconnectDelay = 1000;
+      setBadge('', '#00aa00');
+      startKeepalive();
+      finish(true);
+    };
+
+    socket.onmessage = (event) => {
       handleMessage(event.data);
     };
 
-    ws.onclose = () => {
-      wsConnected = false;
-      ws = null;
-      setBadge('', '#cc0000'); // red
-      stopKeepalive();
-      scheduleReconnect();
+    socket.onclose = () => {
+      const isCurrentSocket = ws === socket;
+      const wasManualClose = socket.acrawlManualClose === true;
+      if (isCurrentSocket) {
+        ws = null;
+        wsConnected = false;
+        stopKeepalive();
+        setBadge('', '#cc0000');
+        if (!wasManualClose) {
+          scheduleReconnect();
+        }
+      }
+      finish(false);
     };
 
-    ws.onerror = () => {
+    socket.onerror = () => {
       // onclose will fire after onerror
     };
-  } catch (e) {
-    scheduleReconnect();
-  }
+  });
 }
 
-function disconnect() {
-  if (ws) {
-    ws.close();
-    ws = null;
-  }
+function disconnect(options = {}) {
+  const { suppressReconnect = true, preserveBadge = false, unconfigured = false } = options;
+  const socket = ws;
+  ws = null;
+  wsConnected = false;
   clearReconnectTimer();
   stopKeepalive();
-  wsConnected = false;
-  setBadge('', '#cc0000');
+  if (socket) {
+    socket.acrawlManualClose = suppressReconnect;
+    socket.close();
+  }
+  if (unconfigured) {
+    setBadge('?', '#888888');
+  } else if (!preserveBadge) {
+    setBadge('', '#cc0000');
+  }
 }
 
 function scheduleReconnect() {
@@ -108,6 +168,10 @@ function clearReconnectTimer() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
+}
+
+async function reconnect() {
+  return connect(5000);
 }
 
 function startKeepalive() {
@@ -132,6 +196,26 @@ function setBadge(text, color) {
   chrome.action.setBadgeText({ text });
   chrome.action.setBadgeBackgroundColor({ color });
 }
+
+// ----------- Extension messages -----------
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message && message.type === 'getConnectionStatus') {
+    getConnectionStatus()
+      .then(sendResponse)
+      .catch(() => sendResponse({ connected: false, connecting: false, configured: false }));
+    return true;
+  }
+
+  if (message && message.type === 'reconnect') {
+    reconnect()
+      .then((connected) => sendResponse({ ok: connected, connected }))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : String(error) }));
+    return true;
+  }
+
+  return false;
+});
 
 // ----------- Message handler -----------
 

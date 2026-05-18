@@ -40,20 +40,23 @@ impl BrowserContext {
             _ => false,
         };
 
+        let page_idx = i64::try_from(self.page_index).unwrap_or(0);
+        let mut guard = self.bridge.lock().await;
+
+        if guard.switch_tab(page_idx).await.is_err() {
+            let new_page_index = guard.new_page(None).await?;
+            self.page_index = new_page_index;
+            let new_page_idx = i64::try_from(new_page_index).unwrap_or(0);
+            guard.switch_tab(new_page_idx).await?;
+        }
+
         if needs_navigate {
             if let Some(url) = self.current_url.clone() {
-                let page_idx = i64::try_from(self.page_index).unwrap_or(0);
-                let mut guard = self.bridge.lock().await;
-                guard.switch_tab(page_idx).await?;
                 guard.navigate(&url).await?;
-                drop(guard);
                 self.browser_has_url = Some(url);
             }
         }
 
-        let page_idx = i64::try_from(self.page_index).unwrap_or(0);
-        let mut guard = self.bridge.lock().await;
-        guard.switch_tab(page_idx).await?;
         Ok(guard)
     }
 
