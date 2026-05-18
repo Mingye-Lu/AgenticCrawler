@@ -24,6 +24,7 @@ textwrap = "0.16"
 pulldown-cmark = "0.13"
 unicode-width = "0.2"
 zeroize = "1"
+arboard = "3"
 
 [lints]
 workspace = true
