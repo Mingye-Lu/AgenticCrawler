@@ -700,7 +700,7 @@ impl fmt::Display for PlaywrightBridgeError {
                 "CloakBrowser bridge launch exceeded {} seconds",
                 timeout.as_secs()
             ),
-            Self::Protocol(message) => write!(f, "CloakBrowser bridge protocol error: {message}"),
+            Self::Protocol(message) => write!(f, "Browser bridge protocol error: {message}"),
             Self::PlaywrightNotInstalled(message) => write!(
                 f,
                 "CloakBrowser is not installed: {message}. Install with `npm install cloakbrowser`"
