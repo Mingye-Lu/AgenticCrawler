@@ -54,6 +54,16 @@ pub(super) const SLASH_OVERLAY_VISIBLE_ITEMS: usize = 7;
 pub(super) const SLASH_OVERLAY_HINT_TEXT: &str =
     "Up/Down move  Enter accept  Tab complete  Esc close";
 
+fn normalize_pasted_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn read_clipboard_text() -> Option<String> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let text = clipboard.get_text().ok()?;
+    Some(normalize_pasted_text(&text))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AppUiState {
     WelcomeMode,
@@ -2085,7 +2095,7 @@ fn run_loop(
                         {
                             state.selection.pending_copy = Some(true);
                             state.selection.suppress_paste_until =
-                                Some(Instant::now() + Duration::from_millis(300));
+                                Some(Instant::now() + Duration::from_millis(800));
                         }
                         _ => {}
                     }
@@ -2149,7 +2159,7 @@ fn run_loop(
                         {
                             state.selection.pending_copy = Some(true);
                             state.selection.suppress_paste_until =
-                                Some(Instant::now() + Duration::from_millis(300));
+                                Some(Instant::now() + Duration::from_millis(800));
                         }
                         _ => {}
                     }
@@ -2178,14 +2188,49 @@ fn run_loop(
                     continue;
                 }
 
-                state.insert_input_str(&text);
+                state.insert_input_str(&normalize_pasted_text(&text));
                 state.wake_input_caret();
                 state.refresh_slash_overlay();
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                let suppress_paste_key = state
+                    .selection
+                    .suppress_paste_until
+                    .is_some_and(|deadline| Instant::now() <= deadline)
+                    && matches!(
+                        key.code,
+                        KeyCode::Char(_) | KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace
+                    );
+                if suppress_paste_key {
+                    state.selection.suppress_paste_until =
+                        Some(Instant::now() + Duration::from_millis(150));
+                    continue;
+                }
+                if state
+                    .selection
+                    .suppress_paste_until
+                    .is_some_and(|deadline| Instant::now() > deadline)
+                {
+                    state.selection.suppress_paste_until = None;
+                }
+
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
                     state.selection.anchor = None;
                     state.selection.end = None;
+                }
+
+                if state.active_modal.is_none()
+                    && ((key.code == KeyCode::Char('v')
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                        || (key.code == KeyCode::Insert
+                            && key.modifiers.contains(KeyModifiers::SHIFT)))
+                {
+                    if let Some(text) = read_clipboard_text() {
+                        state.insert_input_str(&text);
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
+                    continue;
                 }
 
                 if let ViewMode::Child(child_id) = state.view_mode.clone() {
