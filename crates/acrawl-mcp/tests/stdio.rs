@@ -112,6 +112,16 @@ fn builtin_tool_names(response: &Value) -> Vec<&str> {
         .collect()
 }
 
+fn assert_jsonrpc_error(response: &Value, id: i64, code: i64, message_fragment: &str) {
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], id);
+    assert_eq!(response["error"]["code"], code);
+    assert!(response["error"]["message"]
+        .as_str()
+        .expect("error message")
+        .contains(message_fragment));
+}
+
 #[test]
 fn stdio_server_handles_initialize_list_and_tool_call() {
     let mut server = TestServer::spawn();
@@ -163,6 +173,59 @@ fn stdio_server_handles_initialize_list_and_tool_call() {
     let builtin_names = builtin_tool_names(&tool_call);
     assert!(builtin_names.contains(&"navigate"));
     assert!(builtin_names.contains(&"wait_for_human"));
+
+    server.shutdown();
+}
+
+#[test]
+fn stdio_server_returns_jsonrpc_error_for_unknown_method() {
+    let mut server = TestServer::spawn();
+
+    server.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "bogus/method"
+    }));
+    let response = server.read_response();
+    assert_jsonrpc_error(&response, 10, -32601, "method not found");
+
+    server.shutdown();
+}
+
+#[test]
+fn stdio_server_returns_jsonrpc_error_for_unknown_tool() {
+    let mut server = TestServer::spawn();
+
+    server.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {
+            "name": "bogus_tool",
+            "arguments": {}
+        }
+    }));
+    let response = server.read_response();
+    assert_jsonrpc_error(&response, 11, -32601, "unknown tool");
+
+    server.shutdown();
+}
+
+#[test]
+fn stdio_server_returns_jsonrpc_error_when_run_goal_is_missing_goal() {
+    let mut server = TestServer::spawn();
+
+    server.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 12,
+        "method": "tools/call",
+        "params": {
+            "name": "run_goal",
+            "arguments": {}
+        }
+    }));
+    let response = server.read_response();
+    assert_jsonrpc_error(&response, 12, -32602, "missing required parameter: goal");
 
     server.shutdown();
 }
