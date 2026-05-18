@@ -252,6 +252,11 @@ impl CrawlerAgent {
         self.control_state = Some(state);
     }
 
+    #[must_use]
+    pub fn crawl_state(&self) -> &CrawlState {
+        &self.crawl_state
+    }
+
     pub async fn run(
         mut self,
         goal: &str,

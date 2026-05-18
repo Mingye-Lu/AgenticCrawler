@@ -24,6 +24,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "acrawl-mcp"
+version = "0.4.7"
+dependencies = [
+ "api",
+ "crawler",
+ "runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
