@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
-use std::io::{self, BufRead, Write};
+use std::env;
+use std::io::{self, BufReader, Write};
 use std::sync::Mutex;
 
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
@@ -9,6 +10,7 @@ use api::{
 };
 use api::{ImageSource, OutputContentBlock, ToolChoice, ToolDefinition};
 use crawler::{mvp_tool_specs, CrawlerAgent, ToolRegistry};
+use runtime::{encode_mcp_frame, read_mcp_frame};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage};
 use runtime::{MessageRole, RuntimeError, TokenUsage};
 use serde::{Deserialize, Serialize};
@@ -47,14 +49,19 @@ struct JsonRpcError {
     message: String,
 }
 
-fn send_response(response: &JsonRpcResponse) {
-    let json = serde_json::to_string(response).unwrap_or_else(|_| {
-        r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal serialization error"}}"#
-            .to_string()
-    });
+fn write_frame_to_stdout(payload: &[u8]) {
+    let framed = encode_mcp_frame(payload);
     let mut stdout = io::stdout().lock();
-    let _ = writeln!(stdout, "{json}");
+    let _ = stdout.write_all(&framed);
     let _ = stdout.flush();
+}
+
+fn send_response(response: &JsonRpcResponse) {
+    let json = serde_json::to_vec(response).unwrap_or_else(|_| {
+        br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal serialization error"}}"#
+            .to_vec()
+    });
+    write_frame_to_stdout(&json);
 }
 
 fn send_error(id: Option<Value>, code: i32, message: String) {
@@ -593,18 +600,38 @@ fn handle_tools_call(id: Option<Value>, params: Option<Value>) {
 }
 
 fn main() {
+    let settings = runtime::load_settings();
+    env::set_var(
+        "WORKSPACE_DIR",
+        runtime::settings_get_workspace_dir(&settings),
+    );
+    if env::var("HEADLESS").is_err() {
+        env::set_var(
+            "HEADLESS",
+            if runtime::settings_get_headless(&settings) {
+                "true"
+            } else {
+                "false"
+            },
+        );
+    }
+
     let stdin = io::stdin().lock();
-    let reader = io::BufReader::new(stdin);
+    let mut reader = BufReader::new(stdin);
 
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
+    loop {
+        let payload = match read_mcp_frame(&mut reader) {
+            Ok(p) => p,
+            Err(e) => {
+                if e.kind() == io::ErrorKind::UnexpectedEof {
+                    break;
+                }
+                eprintln!("frame read error: {e}");
+                break;
+            }
+        };
 
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let request: JsonRpcRequest = match serde_json::from_str(trimmed) {
+        let request: JsonRpcRequest = match serde_json::from_slice(&payload) {
             Ok(r) => r,
             Err(e) => {
                 send_error(None, -32700, format!("parse error: {e}"));
@@ -636,6 +663,114 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
+    fn framed_request(body: &str) -> Vec<u8> {
+        encode_mcp_frame(body.as_bytes())
+    }
+
+    fn read_framed_response(data: &[u8]) -> Vec<u8> {
+        let mut cursor = Cursor::new(data);
+        read_mcp_frame(&mut cursor).expect("valid frame")
+    }
+
+    // --- framing parse tests ---
+
+    #[test]
+    fn parse_standard_content_length_frame() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let framed = framed_request(body);
+        let parsed = read_framed_response(&framed);
+        assert_eq!(parsed, body.as_bytes());
+    }
+
+    #[test]
+    fn parse_empty_body_frame() {
+        let framed = framed_request("");
+        let parsed = read_framed_response(&framed);
+        assert_eq!(parsed, b"");
+    }
+
+    #[test]
+    fn parse_missing_content_length_header() {
+        let data = b"no-header-here\r\n\r\nbody";
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_mcp_frame(&mut cursor).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("missing Content-Length"));
+    }
+
+    #[test]
+    fn parse_oversized_frame_rejected() {
+        let header = b"Content-Length: 99999999\r\n\r\n";
+        let mut data = header.to_vec();
+        data.extend(vec![0u8; 100]);
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_mcp_frame(&mut cursor).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn parse_eof_during_headers_errors() {
+        let data = b"Content-Length: 10";
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_mcp_frame(&mut cursor).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn parse_eof_during_body_errors() {
+        let header = b"Content-Length: 10\r\n\r\n";
+        let mut data = header.to_vec();
+        data.extend(b"short");
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_mcp_frame(&mut cursor).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn two_consecutive_framed_requests_parse_independently() {
+        let body1 = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let body2 = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_builtin_tools"}}"#;
+        let mut combined = framed_request(body1);
+        combined.extend(framed_request(body2));
+
+        let mut cursor = Cursor::new(&combined[..]);
+        let parsed1 = read_mcp_frame(&mut cursor).expect("first frame");
+        let parsed2 = read_mcp_frame(&mut cursor).expect("second frame");
+        assert_eq!(parsed1, body1.as_bytes());
+        assert_eq!(parsed2, body2.as_bytes());
+    }
+
+    // --- framing output tests ---
+
+    #[test]
+    fn encode_frame_produces_content_length_header() {
+        let payload = br#"{"key":"value"}"#;
+        let framed = encode_mcp_frame(payload);
+        let framed_str = String::from_utf8(framed).expect("valid utf8");
+        assert!(framed_str.starts_with(&format!("Content-Length: {}\r\n\r\n", payload.len())));
+        assert!(framed_str.ends_with(r#"{"key":"value"}"#));
+    }
+
+    #[test]
+    fn encode_decode_round_trip() {
+        let payloads: Vec<&[u8]> = vec![
+            br#"{"hello":"world"}"#,
+            b"",
+            b"simple text without json",
+            &[0u8; 100],
+        ];
+        for payload in payloads {
+            let framed = encode_mcp_frame(payload);
+            let mut cursor = Cursor::new(&framed[..]);
+            let decoded = read_mcp_frame(&mut cursor).expect("decode success");
+            assert_eq!(decoded, payload, "round-trip failed");
+        }
+    }
+
+    // --- behavior tests (no external deps) ---
 
     #[test]
     fn validate_tool_names_accepts_valid_names() {
@@ -715,6 +850,97 @@ mod tests {
                 err.contains(expected),
                 "error should list `{expected}` in valid tools: {err}"
             );
+        }
+    }
+
+    // --- env init tests ---
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn headless_env_is_set_from_settings_when_not_present() {
+        let _guard = env_lock();
+        let temp_dir = std::env::temp_dir().join(format!("acrawl-mcp-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let saved_home = env::var_os("ACRAWL_CONFIG_HOME");
+        let saved_headless = env::var("HEADLESS").ok();
+        env::remove_var("HEADLESS");
+        env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+        runtime::update_settings(|s| {
+            s.headless = Some(true);
+        })
+        .expect("update settings");
+
+        let settings = runtime::load_settings();
+        if env::var("HEADLESS").is_err() {
+            env::set_var(
+                "HEADLESS",
+                if runtime::settings_get_headless(&settings) {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        }
+        assert_eq!(env::var("HEADLESS").unwrap(), "true");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        if let Some(h) = saved_home {
+            env::set_var("ACRAWL_CONFIG_HOME", h);
+        } else {
+            env::remove_var("ACRAWL_CONFIG_HOME");
+        }
+        if let Some(h) = saved_headless {
+            env::set_var("HEADLESS", h);
+        } else {
+            env::remove_var("HEADLESS");
+        }
+    }
+
+    #[test]
+    fn headless_env_not_overwritten_when_already_set() {
+        let _guard = env_lock();
+        let temp_dir =
+            std::env::temp_dir().join(format!("acrawl-mcp-overwrite-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let saved_home = env::var_os("ACRAWL_CONFIG_HOME");
+        let saved_headless = env::var("HEADLESS").ok();
+
+        env::set_var("HEADLESS", "overridden-by-parent");
+        env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+        runtime::update_settings(|s| {
+            s.headless = Some(true);
+        })
+        .expect("update settings");
+
+        let settings = runtime::load_settings();
+        if env::var("HEADLESS").is_err() {
+            env::set_var(
+                "HEADLESS",
+                if runtime::settings_get_headless(&settings) {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+        }
+        assert_eq!(env::var("HEADLESS").unwrap(), "overridden-by-parent");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        if let Some(h) = saved_home {
+            env::set_var("ACRAWL_CONFIG_HOME", h);
+        } else {
+            env::remove_var("ACRAWL_CONFIG_HOME");
+        }
+        if let Some(h) = saved_headless {
+            env::set_var("HEADLESS", h);
+        } else {
+            env::remove_var("HEADLESS");
         }
     }
 }
