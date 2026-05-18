@@ -698,6 +698,12 @@ impl LiveCli {
         let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
             Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>,
         ));
+
+        // Create the initial tab so page_index 0 exists in the extension
+        let _ = block_on_runtime_future(async {
+            shared.lock().await.new_page(None).await.map_err(|e| RuntimeError::new(e.to_string()))
+        });
+
         self.runtime
             .tool_executor_mut()
             .set_extension_bridge(shared);
