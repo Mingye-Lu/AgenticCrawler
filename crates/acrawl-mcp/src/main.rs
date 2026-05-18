@@ -21,6 +21,7 @@ static JOB_MUTEX: Mutex<()> = Mutex::new(());
 const SERVER_NAME: &str = "acrawl-mcp-server";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
+const DEFAULT_DATE: &str = "2026-03-31";
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -48,6 +49,35 @@ struct JsonRpcError {
     code: i32,
     message: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunGoalRequest {
+    goal: String,
+    model: String,
+    allowed_tools: Vec<String>,
+    max_steps: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RunGoalExecutionError {
+    Internal(String),
+    Crawl(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum RunGoalOutcome {
+    ToolResult(Value),
+    JsonRpcError { code: i32, message: String },
+}
+
+trait GoalExecutor {
+    fn execute(
+        &self,
+        request: &RunGoalRequest,
+    ) -> Result<crawler::CrawlResult, RunGoalExecutionError>;
+}
+
+struct RealGoalExecutor;
 
 fn write_frame_to_stdout(payload: &[u8]) {
     let framed = encode_mcp_frame(payload);
@@ -109,7 +139,7 @@ fn tools_list_response(id: Option<Value>) {
                     "allowed_tools": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Restrict which built-in tools the agent can use (optional; validated but runtime filtering is not yet enforced)"
+                        "description": "Restrict which built-in tools the agent can use (optional; validated and enforced at prompt, model, and runtime layers)"
                     },
                     "max_steps": {
                         "type": "integer",
@@ -169,7 +199,7 @@ fn build_provider(model: &str) -> Result<ProviderClient, String> {
 fn validate_tool_names(names: &[String]) -> Result<(), String> {
     let valid: BTreeSet<&str> = mvp_tool_specs().iter().map(|s| s.name).collect();
     for name in names {
-        let normalized = name.replace('-', "_").to_lowercase();
+        let normalized = normalize_tool_name(name);
         if !valid.contains(normalized.as_str()) {
             let mut sorted: Vec<&str> = valid.iter().copied().collect();
             sorted.sort_unstable();
@@ -180,6 +210,150 @@ fn validate_tool_names(names: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn normalize_tool_name(name: &str) -> String {
+    name.replace('-', "_").to_lowercase()
+}
+
+fn normalize_tool_names(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| normalize_tool_name(name))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<crawler::ToolSpec> {
+    let allowed: BTreeSet<&str> = allowed_tools.iter().map(String::as_str).collect();
+    mvp_tool_specs()
+        .into_iter()
+        .filter(|spec| allowed.is_empty() || allowed.contains(spec.name))
+        .collect()
+}
+
+fn build_run_goal_system_prompt(allowed_tools: &[String]) -> Result<Vec<String>, String> {
+    let mut sections = crawler::build_system_prompt(&filtered_tool_specs(allowed_tools));
+    sections.extend(
+        runtime::load_system_prompt(
+            env::current_dir().map_err(|error| error.to_string())?,
+            DEFAULT_DATE,
+            env::consts::OS,
+            "unknown",
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    Ok(sections)
+}
+
+fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOutcome> {
+    let Some(goal) = arguments.get("goal").and_then(Value::as_str) else {
+        return Err(RunGoalOutcome::JsonRpcError {
+            code: -32602,
+            message: "missing required parameter: goal".to_string(),
+        });
+    };
+
+    let model = resolve_model(arguments.get("model").and_then(Value::as_str)).map_err(|error| {
+        RunGoalOutcome::JsonRpcError {
+            code: -32602,
+            message: error,
+        }
+    })?;
+
+    let raw_allowed_tools: Vec<String> = arguments
+        .get("allowed_tools")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    validate_tool_names(&raw_allowed_tools).map_err(|error| RunGoalOutcome::JsonRpcError {
+        code: -32602,
+        message: error,
+    })?;
+    let allowed_tools = normalize_tool_names(&raw_allowed_tools);
+
+    let max_steps = arguments
+        .get("max_steps")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    if let Some(max_steps) = max_steps {
+        if !(1..=200).contains(&max_steps) {
+            return Err(RunGoalOutcome::JsonRpcError {
+                code: -32602,
+                message: format!("max_steps must be between 1 and 200, got {max_steps}"),
+            });
+        }
+    }
+
+    Ok(RunGoalRequest {
+        goal: goal.to_string(),
+        model,
+        allowed_tools,
+        max_steps,
+    })
+}
+
+fn build_run_goal_success_response(
+    request: &RunGoalRequest,
+    result: crawler::CrawlResult,
+) -> Value {
+    json!({
+        "content": [
+            {
+                "type": "text",
+                "text": format!(
+                    "Crawl completed in {} steps.\n\n{}",
+                    result.steps_executed,
+                    result.summary
+                )
+            }
+        ],
+        "structuredContent": {
+            "summary": result.summary,
+            "extracted_data": result.extracted_data,
+            "steps_executed": result.steps_executed,
+            "model_used": request.model,
+            "allowed_tools": request.allowed_tools,
+            "goal": request.goal,
+        },
+        "isError": false,
+    })
+}
+
+fn build_run_goal_failure_response(message: &str) -> Value {
+    json!({
+        "content": [
+            {
+                "type": "text",
+                "text": format!("Crawl failed: {message}")
+            }
+        ],
+        "isError": true,
+    })
+}
+
+fn execute_run_goal<E: GoalExecutor>(executor: &E, arguments: &Value) -> RunGoalOutcome {
+    let request = match parse_run_goal_request(arguments) {
+        Ok(request) => request,
+        Err(outcome) => return outcome,
+    };
+
+    match executor.execute(&request) {
+        Ok(result) => RunGoalOutcome::ToolResult(build_run_goal_success_response(&request, result)),
+        Err(RunGoalExecutionError::Internal(message)) => RunGoalOutcome::JsonRpcError {
+            code: -32603,
+            message,
+        },
+        Err(RunGoalExecutionError::Crawl(message)) => {
+            RunGoalOutcome::ToolResult(build_run_goal_failure_response(&message))
+        }
+    }
 }
 
 struct CrawlApiClient {
@@ -402,137 +576,58 @@ impl ApiClient for CrawlApiClient {
     }
 }
 
+impl GoalExecutor for RealGoalExecutor {
+    fn execute(
+        &self,
+        request: &RunGoalRequest,
+    ) -> Result<crawler::CrawlResult, RunGoalExecutionError> {
+        let provider = build_provider(&request.model).map_err(RunGoalExecutionError::Internal)?;
+        let api_client =
+            CrawlApiClient::new(provider, &request.model, request.allowed_tools.clone());
+        let system_prompt = build_run_goal_system_prompt(&request.allowed_tools)
+            .map_err(RunGoalExecutionError::Internal)?;
+
+        let registry = ToolRegistry::new_with_options(false);
+        let mut agent = CrawlerAgent::new_lazy(registry);
+        if !request.allowed_tools.is_empty() {
+            agent = agent.with_allowed_tools(request.allowed_tools.iter().cloned().collect());
+        }
+        if let Some(max_steps) = request.max_steps {
+            agent = agent.with_max_steps(max_steps);
+        }
+
+        let _guard = match JOB_MUTEX.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| {
+                RunGoalExecutionError::Internal(format!("failed to create tokio runtime: {error}"))
+            })?;
+
+        runtime
+            .block_on(agent.run_with_system_prompt(&request.goal, api_client, system_prompt))
+            .map_err(|error| RunGoalExecutionError::Crawl(error.to_string()))
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     clippy::needless_pass_by_value,
     clippy::cast_possible_truncation
 )]
 fn handle_run_goal(id: Option<Value>, arguments: Value) {
-    let Some(goal) = arguments.get("goal").and_then(Value::as_str) else {
-        send_error(id, -32602, "missing required parameter: goal".to_string());
-        return;
-    };
-
-    let model = match resolve_model(arguments.get("model").and_then(Value::as_str)) {
-        Ok(m) => m,
-        Err(e) => {
-            send_error(id, -32602, e);
-            return;
-        }
-    };
-
-    let allowed_tools: Vec<String> = arguments
-        .get("allowed_tools")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(ToString::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    if !allowed_tools.is_empty() {
-        if let Err(e) = validate_tool_names(&allowed_tools) {
-            send_error(id, -32602, e);
-            return;
-        }
-    }
-
-    let max_steps = arguments
-        .get("max_steps")
-        .and_then(Value::as_u64)
-        .map(|n| n as usize);
-
-    if let Some(ms) = max_steps {
-        if !(1..=200).contains(&ms) {
-            send_error(
-                id,
-                -32602,
-                format!("max_steps must be between 1 and 200, got {ms}"),
-            );
-            return;
-        }
-    }
-
-    let provider = match build_provider(&model) {
-        Ok(p) => p,
-        Err(e) => {
-            send_error(id, -32603, e);
-            return;
-        }
-    };
-
-    let api_client = CrawlApiClient::new(provider, &model, allowed_tools.clone());
-
-    let registry = ToolRegistry::new_with_options(false);
-    let mut agent = CrawlerAgent::new_lazy(registry);
-    if let Some(ms) = max_steps {
-        agent = agent.with_max_steps(ms);
-    }
-
-    let _guard = match JOB_MUTEX.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-
-    let rt = match tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(e) => {
-            send_error(id, -32603, format!("failed to create tokio runtime: {e}"));
-            return;
-        }
-    };
-
-    match rt.block_on(agent.run(goal, api_client)) {
-        Ok(result) => {
-            let response = json!({
-                "content": [
-                    {
-                        "type": "text",
-                        "text": format!(
-                            "Crawl completed in {} steps.\n\n{}",
-                            result.steps_executed,
-                            result.summary
-                        )
-                    }
-                ],
-                "structuredContent": {
-                    "summary": result.summary,
-                    "extracted_data": result.extracted_data,
-                    "steps_executed": result.steps_executed,
-                    "model_used": model,
-                    "allowed_tools": allowed_tools,
-                    "goal": goal,
-                },
-                "isError": false,
-            });
-            send_response(&JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id,
-                result: Some(response),
-                error: None,
-            });
-        }
-        Err(e) => {
-            let response = json!({
-                "content": [
-                    {
-                        "type": "text",
-                        "text": format!("Crawl failed: {e}")
-                    }
-                ],
-                "isError": true,
-            });
-            send_response(&JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id,
-                result: Some(response),
-                error: None,
-            });
-        }
+    match execute_run_goal(&RealGoalExecutor, &arguments) {
+        RunGoalOutcome::ToolResult(response) => send_response(&JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(response),
+            error: None,
+        }),
+        RunGoalOutcome::JsonRpcError { code, message } => send_error(id, code, message),
     }
 }
 
@@ -664,6 +759,20 @@ fn main() {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[derive(Debug, Clone)]
+    struct FakeGoalExecutor {
+        result: Result<crawler::CrawlResult, RunGoalExecutionError>,
+    }
+
+    impl GoalExecutor for FakeGoalExecutor {
+        fn execute(
+            &self,
+            _request: &RunGoalRequest,
+        ) -> Result<crawler::CrawlResult, RunGoalExecutionError> {
+            self.result.clone()
+        }
+    }
 
     fn framed_request(body: &str) -> Vec<u8> {
         encode_mcp_frame(body.as_bytes())
@@ -851,6 +960,121 @@ mod tests {
                 "error should list `{expected}` in valid tools: {err}"
             );
         }
+    }
+
+    #[test]
+    fn parse_run_goal_request_normalizes_allowed_tools() {
+        let request = parse_run_goal_request(&json!({
+            "goal": "Collect product titles",
+            "model": "anthropic/claude-sonnet-4-6",
+            "allowed_tools": ["read-content", "navigate", "read_content"],
+            "max_steps": 7
+        }))
+        .expect("request should parse");
+
+        assert_eq!(request.goal, "Collect product titles");
+        assert_eq!(request.model, "anthropic/claude-sonnet-4-6");
+        assert_eq!(request.allowed_tools, vec!["navigate", "read_content"]);
+        assert_eq!(request.max_steps, Some(7));
+    }
+
+    #[test]
+    fn execute_run_goal_success_returns_structured_content() {
+        let executor = FakeGoalExecutor {
+            result: Ok(crawler::CrawlResult {
+                summary: "Finished crawl".to_string(),
+                extracted_data: vec![json!({"title": "Example"})],
+                steps_executed: 3,
+            }),
+        };
+
+        let outcome = execute_run_goal(
+            &executor,
+            &json!({
+                "goal": "Collect titles",
+                "model": "anthropic/claude-sonnet-4-6",
+                "allowed_tools": ["navigate", "read-content"],
+                "max_steps": 5
+            }),
+        );
+
+        let RunGoalOutcome::ToolResult(result) = outcome else {
+            panic!("expected tool result");
+        };
+        assert_eq!(result["isError"], false);
+        assert_eq!(result["structuredContent"]["summary"], "Finished crawl");
+        assert_eq!(result["structuredContent"]["steps_executed"], 3);
+        assert_eq!(result["structuredContent"]["goal"], "Collect titles");
+        assert_eq!(
+            result["structuredContent"]["allowed_tools"],
+            json!(["navigate", "read_content"])
+        );
+    }
+
+    #[test]
+    fn execute_run_goal_internal_error_returns_jsonrpc_error() {
+        let executor = FakeGoalExecutor {
+            result: Err(RunGoalExecutionError::Internal(
+                "provider setup failed".to_string(),
+            )),
+        };
+
+        let outcome = execute_run_goal(
+            &executor,
+            &json!({
+                "goal": "Collect titles",
+                "model": "anthropic/claude-sonnet-4-6"
+            }),
+        );
+
+        assert_eq!(
+            outcome,
+            RunGoalOutcome::JsonRpcError {
+                code: -32603,
+                message: "provider setup failed".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn execute_run_goal_crawl_error_returns_tool_error_result() {
+        let executor = FakeGoalExecutor {
+            result: Err(RunGoalExecutionError::Crawl(
+                "blocked by login wall".to_string(),
+            )),
+        };
+
+        let outcome = execute_run_goal(
+            &executor,
+            &json!({
+                "goal": "Collect titles",
+                "model": "anthropic/claude-sonnet-4-6"
+            }),
+        );
+
+        let RunGoalOutcome::ToolResult(result) = outcome else {
+            panic!("expected tool error result");
+        };
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .expect("error text")
+            .contains("blocked by login wall"));
+    }
+
+    #[test]
+    fn build_run_goal_system_prompt_includes_runtime_sections() {
+        let prompt = build_run_goal_system_prompt(&["navigate".to_string()])
+            .expect("system prompt should build");
+        assert!(prompt
+            .iter()
+            .any(|section| section.contains("Working directory:")));
+        assert!(prompt
+            .iter()
+            .any(|section| section.contains(runtime::SYSTEM_PROMPT_DYNAMIC_BOUNDARY)));
+        let first_section = prompt.first().expect("prompt should have first section");
+        assert!(first_section.contains("**navigate**"));
+        assert!(!first_section.contains("**click**"));
     }
 
     // --- env init tests ---
