@@ -729,6 +729,10 @@ impl LiveCli {
         self.ws_bridge_server = None;
         self.reset_browser();
 
+        let _ = runtime::update_settings(|s| {
+            s.browser_backend = None;
+        });
+
         let _ = block_on_runtime_future(async {
             self.runtime
                 .tool_executor_mut()
@@ -749,6 +753,18 @@ impl LiveCli {
 
         "Browser mode\n  Result           switched back to CloakBrowser (headless), state preserved"
             .to_string()
+    }
+
+    pub(crate) fn extension_bridge_status(&self) -> Option<String> {
+        let server = self.ws_bridge_server.as_ref()?;
+        let settings = runtime::load_settings();
+        let token = settings.extension_bridge_token.unwrap_or_default();
+        let port = server.port();
+        Some(format!(
+            "Extension mode\n  \
+             Status           running (port {port})\n  \
+             Token            {token}"
+        ))
     }
 
     pub(crate) fn start_extension_server(
@@ -780,6 +796,7 @@ impl LiveCli {
 
         let _ = runtime::update_settings(|s| {
             s.extension_bridge_token = Some(token.clone());
+            s.browser_backend = Some("extension".to_string());
         });
 
         let port: u16 = settings.extension_bridge_port.unwrap_or(19876);

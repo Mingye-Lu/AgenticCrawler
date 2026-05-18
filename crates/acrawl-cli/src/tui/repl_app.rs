@@ -1349,6 +1349,10 @@ fn handle_slash_command_tui(
             match cmd {
                 SlashCommand::Extension => {
                     let mut g = cli.lock().expect("cli lock");
+                    if let Some(status) = g.extension_bridge_status() {
+                        state.push_system_card("Extension", &status);
+                        return Ok(());
+                    }
                     match g.start_extension_server() {
                         Err(e) => {
                             state.push_system_card("Extension", &e);
@@ -1790,6 +1794,61 @@ fn run_loop(
         let mut g = cli.lock().expect("cli lock");
         state.child_event_rx = g.take_child_event_rx();
         state.child_control_registry = g.take_child_control_registry();
+    }
+
+    // Auto-launch extension bridge if persisted in settings
+    {
+        let settings = runtime::load_settings();
+        if settings.browser_backend.as_deref() == Some("extension") {
+            let mut g = cli.lock().expect("cli lock");
+            match g.start_extension_server() {
+                Ok((server, token, port, saved_state)) => {
+                    state.push_system_card(
+                        "Extension",
+                        &format!(
+                            "Extension mode\n  \
+                             Status           auto-started (port {port})\n  \
+                             Token            {token}\n  \
+                             Action           waiting for extension to connect"
+                        ),
+                    );
+                    drop(g);
+                    let cli_clone = Arc::clone(cli);
+                    let ui_tx_clone = ui_tx.clone();
+                    std::thread::spawn(move || {
+                        let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
+                        let mut server = server;
+                        let connected = rt.block_on(async {
+                            server
+                                .wait_for_connection(std::time::Duration::from_secs(30))
+                                .await
+                        });
+                        if connected {
+                            let mut g = cli_clone.lock().expect("cli lock");
+                            g.finalize_extension_connection(server, saved_state.as_ref());
+                            let _ = ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
+                                success: true,
+                                message: "Extension mode\n  \
+                                          Result           connected - browser commands \
+                                          routed to Chrome, state preserved"
+                                    .to_string(),
+                            });
+                        } else {
+                            let _ = ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
+                                success: false,
+                                message: "Extension mode\n  \
+                                          Error            not connected after 30s\n  \
+                                          Action           type /extension to retry"
+                                    .to_string(),
+                            });
+                        }
+                    });
+                }
+                Err(e) => {
+                    state.push_system_card("Extension", &e);
+                }
+            }
+        }
     }
 
     let (update_tx, update_rx) =
