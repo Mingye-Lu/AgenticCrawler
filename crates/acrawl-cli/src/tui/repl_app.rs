@@ -1020,6 +1020,10 @@ impl ReplTuiState {
                     self.status_line = "Thinking...".to_string();
                 }
                 ReplTuiEvent::ChildEvent(_) => {}
+                ReplTuiEvent::ExtensionBridgeResult { success, message } => {
+                    let title = if success { "Extension" } else { "Extension Error" };
+                    self.push_system_card(title, &message);
+                }
             }
         }
 
@@ -1342,11 +1346,69 @@ fn handle_slash_command_tui(
             );
         }
         cmd @ (SlashCommand::Extension | SlashCommand::CloakBrowser) => {
-            suspend_for_stdout(terminal, || {
-                let mut g = cli.lock().expect("cli lock");
-                let _ = g.handle_repl_command(cmd);
-            })?;
-            state.push_system("(extension bridge command output printed to stdout)");
+            match cmd {
+                SlashCommand::Extension => {
+                    let mut g = cli.lock().expect("cli lock");
+                    match g.start_extension_server() {
+                        Err(e) => {
+                            state.push_system_card("Extension", &e);
+                        }
+                        Ok((server, token, port, saved_state)) => {
+                            state.push_system_card(
+                                "Extension",
+                                &format!(
+                                    "Extension mode\n  \
+                                     Waiting for connection (port {port})...\n  \
+                                     Token: {token}\n  \
+                                     Paste token into the acrawl Bridge extension options page."
+                                ),
+                            );
+                            drop(g);
+                            let cli_clone = cli.clone();
+                            let ui_tx_clone = ui_tx.clone();
+                            std::thread::spawn(move || {
+                                let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
+                                let mut server = server;
+                                let connected = rt.block_on(async {
+                                    server
+                                        .wait_for_connection(std::time::Duration::from_secs(30))
+                                        .await
+                                });
+                                if connected {
+                                    let mut g = cli_clone.lock().expect("cli lock");
+                                    g.finalize_extension_connection(
+                                        server,
+                                        saved_state.as_ref(),
+                                    );
+                                    let _ =
+                                        ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
+                                            success: true,
+                                            message: "Extension connected — browser commands \
+                                                      routed to Chrome, state preserved"
+                                                .to_string(),
+                                        });
+                                } else {
+                                    let _ =
+                                        ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
+                                            success: false,
+                                            message:
+                                                "Extension not connected after 30s.\n  \
+                                                 Install the acrawl Bridge extension.\n  \
+                                                 Open extension options and configure port/token."
+                                                    .to_string(),
+                                        });
+                                }
+                            });
+                        }
+                    }
+                }
+                SlashCommand::CloakBrowser => {
+                    let mut g = cli.lock().expect("cli lock");
+                    let msg = g.switch_to_cloakbrowser();
+                    state.push_system_card("Browser Mode", &msg);
+                }
+                _ => unreachable!(),
+            }
         }
         SlashCommand::Auth { provider } => {
             if state.busy {
