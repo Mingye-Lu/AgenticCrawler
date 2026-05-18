@@ -1358,9 +1358,9 @@ fn handle_slash_command_tui(
                                 "Extension",
                                 &format!(
                                     "Extension mode\n  \
-                                     Waiting for connection (port {port})...\n  \
-                                     Token: {token}\n  \
-                                     Paste token into the acrawl Bridge extension options page."
+                                     Status           Waiting for connection (port {port})...\n  \
+                                     Token            {token}\n  \
+                                     Action           Paste token into the extension options page"
                                 ),
                             );
                             drop(g);
@@ -1383,18 +1383,21 @@ fn handle_slash_command_tui(
                                     let _ =
                                         ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
                                             success: true,
-                                            message: "Extension connected — browser commands \
-                                                      routed to Chrome, state preserved"
-                                                .to_string(),
+                                            message:
+                                                "Extension mode\n  \
+                                                 Result           connected - browser commands \
+                                                 routed to Chrome, state preserved"
+                                                    .to_string(),
                                         });
                                 } else {
                                     let _ =
                                         ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
                                             success: false,
                                             message:
-                                                "Extension not connected after 30s.\n  \
-                                                 Install the acrawl Bridge extension.\n  \
-                                                 Open extension options and configure port/token."
+                                                "Extension mode\n  \
+                                                 Error            not connected after 30s\n  \
+                                                 Action           install the acrawl Bridge \
+                                                 extension and configure port/token"
                                                     .to_string(),
                                         });
                                 }
