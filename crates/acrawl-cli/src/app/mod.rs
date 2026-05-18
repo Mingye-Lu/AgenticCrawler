@@ -756,6 +756,13 @@ impl LiveCli {
     ) -> Result<(crawler::WsBridgeServer, String, u16, Option<crawler::BrowserState>), String> {
         use crawler::ws_server::generate_bridge_token;
 
+        // Shut down any existing extension bridge to free the port and prevent
+        // export_current_state from hanging on a dead WebSocket channel.
+        if self.ws_bridge_server.is_some() {
+            self.ws_bridge_server = None;
+            self.runtime.tool_executor_mut().clear_extension_bridge();
+        }
+
         let saved_state = block_on_runtime_future(async {
             Ok::<Option<crawler::BrowserState>, RuntimeError>(
                 self.runtime
@@ -782,7 +789,7 @@ impl LiveCli {
                 .await
                 .map_err(|e| RuntimeError::new(e.to_string()))
         })
-        .map_err(|e| format!("Failed to start extension bridge server: {e}"))?;
+                .map_err(|e| format!("Extension mode\n  Error            {e}"))?;
 
         Ok((server, token, port, saved_state))
     }
