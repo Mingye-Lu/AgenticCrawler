@@ -688,6 +688,105 @@ impl LiveCli {
         self.runtime.tool_executor_mut().reset_browser();
     }
 
+    pub(crate) fn finalize_extension_connection(
+        &mut self,
+        server: crawler::WsBridgeServer,
+        saved_state: Option<&crawler::BrowserState>,
+    ) {
+        let sender = server.command_sender();
+        let bridge = crawler::ExtensionBridge::new(sender);
+        let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
+            Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>,
+        ));
+        self.runtime
+            .tool_executor_mut()
+            .set_extension_bridge(shared);
+
+        if let Some(state) = saved_state {
+            let _ = block_on_runtime_future(async {
+                self.runtime
+                    .tool_executor_mut()
+                    .restore_state_to_bridge(state)
+                    .await;
+                Ok::<(), RuntimeError>(())
+            });
+        }
+
+        self.ws_bridge_server = Some(server);
+    }
+
+    pub(crate) fn switch_to_cloakbrowser(&mut self) -> String {
+        let saved_state = block_on_runtime_future(async {
+            Ok::<Option<crawler::BrowserState>, RuntimeError>(
+                self.runtime
+                    .tool_executor_mut()
+                    .export_current_state()
+                    .await,
+            )
+        })
+        .unwrap_or(None);
+
+        self.ws_bridge_server = None;
+        self.reset_browser();
+
+        let _ = block_on_runtime_future(async {
+            self.runtime
+                .tool_executor_mut()
+                .ensure_browser()
+                .await
+                .map_err(|error| RuntimeError::new(error.to_string()))
+        });
+
+        if let Some(state) = saved_state.as_ref() {
+            let _ = block_on_runtime_future(async {
+                self.runtime
+                    .tool_executor_mut()
+                    .restore_state_to_bridge(state)
+                    .await;
+                Ok::<(), RuntimeError>(())
+            });
+        }
+
+        "Browser mode\n  Result           switched back to CloakBrowser (headless), state preserved"
+            .to_string()
+    }
+
+    pub(crate) fn start_extension_server(
+        &mut self,
+    ) -> Result<(crawler::WsBridgeServer, String, u16, Option<crawler::BrowserState>), String> {
+        use crawler::ws_server::generate_bridge_token;
+
+        let saved_state = block_on_runtime_future(async {
+            Ok::<Option<crawler::BrowserState>, RuntimeError>(
+                self.runtime
+                    .tool_executor_mut()
+                    .export_current_state()
+                    .await,
+            )
+        })
+        .unwrap_or(None);
+
+        let settings = runtime::load_settings();
+        let token = settings
+            .extension_bridge_token
+            .unwrap_or_else(generate_bridge_token);
+
+        let _ = runtime::update_settings(|s| {
+            s.extension_bridge_token = Some(token.clone());
+        });
+
+        let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
+
+        let server = block_on_runtime_future(async {
+            crawler::WsBridgeServer::start(port, token.clone())
+                .await
+                .map_err(|e| RuntimeError::new(e.to_string()))
+        })
+        .map_err(|e| format!("Failed to start extension bridge server: {e}"))?;
+
+        Ok((server, token, port, saved_state))
+    }
+
     pub(crate) fn status_report(&self) -> Result<String, CliError> {
         let cumulative = self.runtime.usage().cumulative_usage();
         let latest = self.runtime.usage().current_turn_usage();
