@@ -95,12 +95,14 @@ function updateStatusDisplay() {
     } else if (response.connecting) {
       statusSpan.textContent = 'Connecting...';
       statusSpan.className = 'testing';
+      setTimeout(updateStatusDisplay, 1000);
     } else if (!response.configured) {
       statusSpan.textContent = 'Not configured';
       statusSpan.className = 'disconnected';
     } else {
       statusSpan.textContent = 'Disconnected';
       statusSpan.className = 'disconnected';
+      setTimeout(updateStatusDisplay, 1500);
     }
   });
 }
