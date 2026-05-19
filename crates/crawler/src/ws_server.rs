@@ -22,6 +22,71 @@ use tokio_tungstenite::tungstenite::Message;
 
 use tokio_tungstenite::tungstenite::http::{self as ws_http};
 
+fn bind_with_reuse(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    #[cfg(not(target_os = "windows"))]
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(128)?;
+    TcpListener::from_std(socket.into())
+}
+
+fn try_bind_with_retry(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    match bind_with_reuse(addr) {
+        Ok(listener) => Ok(listener),
+        Err(e) if is_port_conflict(&e) => {
+            if kill_stale_bridge_process(addr.port()) {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                bind_with_reuse(addr)
+            } else {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn is_port_conflict(e: &std::io::Error) -> bool {
+    matches!(
+        e.raw_os_error(),
+        Some(10048) | Some(10013) | Some(98) | Some(48)
+    )
+}
+
+fn kill_stale_bridge_process(expected_port: u16) -> bool {
+    let bridge_file = config_home_dir().join("bridge.json");
+    let Ok(content) = std::fs::read_to_string(&bridge_file) else {
+        return false;
+    };
+    let Ok(info) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let Some(port) = info["port"].as_u64() else {
+        return false;
+    };
+    if port != u64::from(expected_port) {
+        return false;
+    }
+    let Some(pid) = info["pid"].as_u64() else {
+        return false;
+    };
+    let output = if cfg!(target_os = "windows") {
+        std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output()
+    } else {
+        std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output()
+    };
+    output.is_ok_and(|o| o.status.success())
+}
+
 /// A command sent from the crawler to the Chrome extension via WebSocket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeCommand {
@@ -82,7 +147,7 @@ impl WsBridgeServer {
     /// `WsBridgeError::BridgeFileWrite` if the discovery file cannot be written.
     pub async fn start(port: u16, token: String) -> Result<Self, WsBridgeError> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        let listener = TcpListener::bind(addr).await.map_err(WsBridgeError::Bind)?;
+        let listener = try_bind_with_retry(addr).map_err(WsBridgeError::Bind)?;
         let actual_port = listener.local_addr().map_err(WsBridgeError::Bind)?.port();
 
         let bridge_file_path = config_home_dir().join("bridge.json");
