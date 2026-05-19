@@ -52,21 +52,29 @@ impl std::fmt::Display for ForkLimitError {
 impl std::error::Error for ForkLimitError {}
 
 /// Manages a hierarchical agent tree and enforces fork limits.
+///
+/// Also holds the [`crate::UrlClaimRegistry`] used to dispatch
+/// non-overlapping crawl scope to sibling sub-agents. The registry is shared
+/// (via `Arc`) across the parent agent and all of its descendants so that
+/// claim conflicts are visible everywhere in the tree.
 pub struct AgentManager {
     pub max_concurrent_per_parent: usize,
     pub max_depth: usize,
     pub max_total: usize,
+    pub url_claims: crate::UrlClaimRegistry,
     agents: HashMap<String, AgentInfo>,
 }
 
 impl AgentManager {
-    /// Create a new manager with the given limits.
+    /// Create a new manager with the given limits and a fresh
+    /// [`crate::UrlClaimRegistry`].
     #[must_use]
     pub fn new(max_concurrent_per_parent: usize, max_depth: usize, max_total: usize) -> Self {
         Self {
             max_concurrent_per_parent,
             max_depth,
             max_total,
+            url_claims: crate::UrlClaimRegistry::new(),
             agents: HashMap::new(),
         }
     }

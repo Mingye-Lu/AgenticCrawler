@@ -14,6 +14,7 @@ mod state;
 pub mod tool_effect;
 mod tool_registry;
 mod tools;
+mod url_claim;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
@@ -30,8 +31,11 @@ pub use playwright::{
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
-pub use tool_effect::{CancelSpec, ForkSpec, StatusSpec, ToolEffect, ToolError, WaitSpec};
+pub use tool_effect::{
+    CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, ToolError, WaitSpec,
+};
 pub use tool_registry::{ToolHandler, ToolRegistry};
+pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};
 
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {
@@ -287,18 +291,38 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "fork",
-            description: "Spawn a parallel subagent on a new browser tab to explore a URL or complete a sub-goal independently. Results are merged when the subagent completes.",
+            description: "Spawn a parallel subagent on a new browser tab with a typed work packet. The packet declares an `objective` (what to do) and a `scope` (which URLs the child is allowed to claim). Sibling forks CANNOT claim overlapping URLs/patterns — the call errors atomically with the conflicting owner.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "sub_goal": { "type": "string" },
-                    "url": { "type": "string" }
+                    "objective": {
+                        "type": "string",
+                        "description": "Human-readable goal for the subagent (e.g., 'extract all product titles')."
+                    },
+                    "scope": {
+                        "type": "object",
+                        "description": "Declared work boundary. Exactly one of single_page, url_list, or url_pattern.",
+                        "properties": {
+                            "type": { "type": "string", "enum": ["single_page", "url_list", "url_pattern"] },
+                            "url": { "type": "string", "description": "Required when type=single_page." },
+                            "urls": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "minItems": 1,
+                                "description": "Required when type=url_list."
+                            },
+                            "regex": { "type": "string", "description": "Required when type=url_pattern. Must compile." }
+                        },
+                        "required": ["type"]
+                    },
+                    "success_criteria": { "type": "string", "description": "Optional definition of done." },
+                    "max_steps": { "type": "integer", "minimum": 1, "description": "Override the child's step budget." }
                 },
-                "required": ["sub_goal"],
+                "required": ["objective", "scope"],
                 "additionalProperties": false
             }),
 
-            instructions: Some("Use fork when you need to visit multiple pages in parallel — e.g., scraping pagination, exploring search results, or comparing products. Each subagent has a step budget and works independently. Fork multiple subagents before waiting for any of them."),
+            instructions: Some("Use fork to parallelize crawls — e.g., scraping pagination, exploring search results, comparing products. Each subagent gets its own browser tab and step budget. Scope is mandatory: choose single_page for one URL, url_list for a small set, url_pattern (regex) for a navigable subdomain. Siblings CANNOT overlap — if two forks would touch the same URL, the second errors with the conflicting child's id. Plan scope upfront to avoid duplicate work. Fork multiple subagents in a row, then poll with subagent_status or wait_for_subagents."),
         },
         ToolSpec {
             name: "wait_for_subagents",
