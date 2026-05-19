@@ -11,18 +11,22 @@ pub(crate) struct BrowserSession {
 }
 
 impl BrowserSession {
-    async fn initialize(shared_bridge: Option<SharedBridge>) -> Result<Self, ToolError> {
-        let shared_bridge = if let Some(shared_bridge) = shared_bridge {
-            shared_bridge
-        } else {
-            let bridge = crate::PlaywrightBridge::new()
-                .await
-                .map_err(|error| ToolError::new(error.to_string()))?;
-            std::sync::Arc::new(Mutex::new(
-                Box::new(bridge) as Box<dyn BrowserBackend + Send>
-            ))
-        };
+    /// Initialize with a pre-existing bridge (extension or shared).
+    fn from_bridge(shared_bridge: SharedBridge) -> Self {
+        Self {
+            browser: BrowserContext::new(shared_bridge.clone()),
+            shared_bridge,
+        }
+    }
 
+    /// Launch a fresh CloakBrowser (PlaywrightBridge).
+    async fn launch_cloakbrowser() -> Result<Self, ToolError> {
+        let bridge = crate::PlaywrightBridge::new()
+            .await
+            .map_err(|error| ToolError::new(error.to_string()))?;
+        let shared_bridge: SharedBridge = std::sync::Arc::new(Mutex::new(
+            Box::new(bridge) as Box<dyn BrowserBackend + Send>
+        ));
         Ok(Self {
             browser: BrowserContext::new(shared_bridge.clone()),
             shared_bridge,
@@ -40,6 +44,7 @@ impl CrawlerAgent {
     }
 
     pub fn set_shared_bridge(&mut self, bridge: SharedBridge) {
+        eprintln!("[acrawl] set_shared_bridge: clearing browser, setting extension bridge");
         self.browser = None;
         self.shared_bridge = Some(bridge);
     }
@@ -49,7 +54,11 @@ impl CrawlerAgent {
     }
 
     pub fn set_extension_mode(&mut self, active: bool) {
+        eprintln!("[acrawl] set_extension_mode({active}), clearing browser context");
         self.extension_mode = active;
+        if active {
+            self.browser = None;
+        }
     }
 
     pub async fn ensure_browser(&mut self) -> Result<(), ToolError> {
@@ -57,20 +66,40 @@ impl CrawlerAgent {
             return Ok(());
         }
 
-        if self.extension_mode && self.shared_bridge.is_none() {
-            return Err(ToolError::new(
-                "Extension mode active but browser extension not connected yet. \
-                 Run /extension and wait for the browser to connect.",
-            ));
+        if self.extension_mode {
+            let bridge = self.shared_bridge.clone().ok_or_else(|| {
+                ToolError::new(
+                    "Extension mode active but browser extension not connected yet. \
+                     Run /extension and wait for the browser to connect.",
+                )
+            })?;
+            eprintln!("[acrawl] ensure_browser: extension mode — using extension bridge");
+            let session = BrowserSession::from_bridge(bridge);
+            self.browser = Some(session.browser);
+            self.shared_bridge = Some(session.shared_bridge);
+            return Ok(());
         }
 
-        let session = BrowserSession::initialize(self.shared_bridge.clone()).await?;
+        if let Some(bridge) = self.shared_bridge.clone() {
+            eprintln!("[acrawl] ensure_browser: using pre-set shared bridge");
+            let session = BrowserSession::from_bridge(bridge);
+            self.browser = Some(session.browser);
+            self.shared_bridge = Some(session.shared_bridge);
+            return Ok(());
+        }
+
+        eprintln!("[acrawl] ensure_browser: launching CloakBrowser");
+        let session = BrowserSession::launch_cloakbrowser().await?;
         self.browser = Some(session.browser);
         self.shared_bridge = Some(session.shared_bridge);
         Ok(())
     }
 
     pub async fn pause_browser_switch(&mut self) -> Result<(), ToolError> {
+        if self.extension_mode {
+            return Ok(());
+        }
+
         let active_children = {
             let manager = self.agent_manager.lock().await;
             if manager.contains(&self.agent_id) {
@@ -478,11 +507,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_browser_session_initialize_reuses_bridge() {
+    async fn test_browser_session_reuses_bridge() {
         let shared_bridge = test_bridge().await;
-        let session = BrowserSession::initialize(Some(shared_bridge.clone()))
-            .await
-            .expect("should initialize with existing bridge");
+        let session = BrowserSession::from_bridge(shared_bridge.clone());
 
         assert!(Arc::ptr_eq(&session.shared_bridge, &shared_bridge));
         assert_eq!(session.browser.page_index(), 0);
