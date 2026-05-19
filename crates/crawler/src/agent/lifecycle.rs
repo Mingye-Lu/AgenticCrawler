@@ -48,9 +48,20 @@ impl CrawlerAgent {
         self.shared_bridge = None;
     }
 
+    pub fn set_extension_mode(&mut self, active: bool) {
+        self.extension_mode = active;
+    }
+
     pub async fn ensure_browser(&mut self) -> Result<(), ToolError> {
         if self.browser.is_some() {
             return Ok(());
+        }
+
+        if self.extension_mode && self.shared_bridge.is_none() {
+            return Err(ToolError::new(
+                "Extension mode active but browser extension not connected yet. \
+                 Run /extension and wait for the browser to connect.",
+            ));
         }
 
         let session = BrowserSession::initialize(self.shared_bridge.clone()).await?;
@@ -475,5 +486,20 @@ mod tests {
 
         assert!(Arc::ptr_eq(&session.shared_bridge, &shared_bridge));
         assert_eq!(session.browser.page_index(), 0);
+    }
+
+    #[tokio::test]
+    async fn extension_mode_errors_immediately_without_bridge() {
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new());
+        agent.set_extension_mode(true);
+
+        let err = agent
+            .ensure_browser()
+            .await
+            .expect_err("should fail immediately in extension mode without bridge");
+        assert!(
+            err.to_string().contains("Extension mode active"),
+            "unexpected error: {err}"
+        );
     }
 }

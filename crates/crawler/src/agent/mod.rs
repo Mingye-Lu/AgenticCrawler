@@ -97,6 +97,7 @@ pub struct CrawlerAgent {
     control_state: Option<Arc<ControlState>>,
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
     child_control_registry: Option<crate::child_events::ChildControlRegistry>,
+    extension_mode: bool,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
@@ -121,6 +122,7 @@ impl CrawlerAgent {
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
+            extension_mode: false,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -145,6 +147,7 @@ impl CrawlerAgent {
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
+            extension_mode: false,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -169,6 +172,7 @@ impl CrawlerAgent {
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
+            extension_mode: false,
             #[cfg(test)]
             fork_page_index_override: None,
         }

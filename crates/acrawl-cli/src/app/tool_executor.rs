@@ -48,6 +48,10 @@ impl CliToolExecutor {
         self.agent.set_shared_bridge(bridge);
     }
 
+    pub(crate) fn set_extension_mode(&mut self, active: bool) {
+        self.agent.set_extension_mode(active);
+    }
+
     pub(crate) async fn export_current_state(&mut self) -> Option<crawler::BrowserState> {
         self.agent.export_browser_state_any().await
     }
