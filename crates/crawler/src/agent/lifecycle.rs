@@ -300,6 +300,173 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ensure_browser_routes_through_extension_bridge_not_playwright() {
+        // Create an ExtensionBridge backed by a channel — no CloakBrowser subprocess.
+        let (command_tx, _command_rx) = tokio::sync::mpsc::channel(10);
+        let bridge = crate::ExtensionBridge::new(command_tx);
+        let shared: SharedBridge = Arc::new(Mutex::new(
+            Box::new(bridge) as Box<dyn BrowserBackend + Send>
+        ));
+
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new())
+            .with_agent_id("ext-test".to_string());
+        agent.set_shared_bridge(shared.clone());
+
+        // ensure_browser should reuse the extension bridge, not spawn PlaywrightBridge.
+        agent
+            .ensure_browser()
+            .await
+            .expect("should initialize with extension bridge");
+
+        let browser = agent
+            .browser
+            .as_ref()
+            .expect("browser should be initialized");
+        assert!(
+            Arc::ptr_eq(browser.bridge(), &shared),
+            "browser should use the extension bridge, not spawn a new PlaywrightBridge"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_execution_routes_commands_through_extension_bridge() {
+        use crate::ws_server::BridgeResponse;
+        use runtime::ToolExecutor;
+        use serde_json::json;
+
+        // Create ExtensionBridge with a channel so we can observe commands.
+        let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(10);
+        let bridge = crate::ExtensionBridge::new(command_tx);
+        let shared: SharedBridge = Arc::new(Mutex::new(
+            Box::new(bridge) as Box<dyn BrowserBackend + Send>
+        ));
+
+        let registry = crate::tool_registry::ToolRegistry::new_with_core_tools();
+        let mut agent =
+            CrawlerAgent::new_for_testing(registry).with_agent_id("ext-tool-test".to_string());
+        agent.set_shared_bridge(shared);
+
+        // Execute click — routes entirely through extension bridge, never CloakBrowser.
+        let handle =
+            tokio::spawn(
+                async move { agent.execute("click", r##"{"selector": "#submit"}"##).await },
+            );
+
+        // acquire_bridge() calls switch_tab first
+        let (cmd, resp_tx) = command_rx
+            .recv()
+            .await
+            .expect("extension should receive switch_tab");
+        assert_eq!(cmd.action, "switch_tab");
+        resp_tx
+            .send(BridgeResponse {
+                id: cmd.id,
+                ok: true,
+                result: Some(json!({"url": "about:blank", "title": ""})),
+                error: None,
+            })
+            .unwrap();
+
+        // Then click
+        let (cmd, resp_tx) = command_rx
+            .recv()
+            .await
+            .expect("extension should receive click");
+        assert_eq!(cmd.action, "click");
+        resp_tx
+            .send(BridgeResponse {
+                id: cmd.id,
+                ok: true,
+                result: None,
+                error: None,
+            })
+            .unwrap();
+
+        // post_action_page_state: acquire_bridge (switch_tab) + page_map
+        let (cmd, resp_tx) = command_rx
+            .recv()
+            .await
+            .expect("extension should receive second switch_tab");
+        assert_eq!(cmd.action, "switch_tab");
+        resp_tx
+            .send(BridgeResponse {
+                id: cmd.id,
+                ok: true,
+                result: Some(json!({"url": "about:blank", "title": ""})),
+                error: None,
+            })
+            .unwrap();
+
+        let (cmd, resp_tx) = command_rx
+            .recv()
+            .await
+            .expect("extension should receive page_map");
+        assert_eq!(cmd.action, "page_map");
+        resp_tx
+            .send(BridgeResponse {
+                id: cmd.id,
+                ok: true,
+                result: Some(json!({
+                    "headings": [],
+                    "landmarks": [],
+                    "forms": [],
+                    "links": [],
+                    "interactive": {},
+                    "meta": {"url": "https://test.com", "title": "Test Page", "description": ""}
+                })),
+                error: None,
+            })
+            .unwrap();
+
+        let result = handle.await.expect("task should complete");
+        let output = result.expect("click should succeed through extension bridge");
+        assert!(
+            output.contains("Clicked element: #submit"),
+            "unexpected output: {output}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_shared_bridge_overrides_existing_playwright_browser() {
+        // Simulate: tool fires before extension connects → creates PlaywrightBridge.
+        // Then extension connects → set_shared_bridge should override.
+        let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new())
+            .with_agent_id("race-test".to_string());
+        agent.shared_bridge = Some(test_bridge().await);
+        agent
+            .ensure_browser()
+            .await
+            .expect("initial browser with PlaywrightBridge");
+
+        let old_bridge = agent.shared_bridge.clone().unwrap();
+
+        // Extension connects → set_shared_bridge clears browser, sets new bridge.
+        let (command_tx, _command_rx) = tokio::sync::mpsc::channel(10);
+        let ext_bridge = crate::ExtensionBridge::new(command_tx);
+        let ext_shared: SharedBridge = Arc::new(Mutex::new(
+            Box::new(ext_bridge) as Box<dyn BrowserBackend + Send>
+        ));
+        agent.set_shared_bridge(ext_shared.clone());
+
+        assert!(
+            agent.browser.is_none(),
+            "set_shared_bridge should clear browser"
+        );
+        assert!(!Arc::ptr_eq(&old_bridge, &ext_shared));
+
+        // Next ensure_browser should use extension, not the old PlaywrightBridge.
+        agent
+            .ensure_browser()
+            .await
+            .expect("should reinitialize with extension bridge");
+        let browser = agent.browser.as_ref().unwrap();
+        assert!(
+            Arc::ptr_eq(browser.bridge(), &ext_shared),
+            "after set_shared_bridge, browser should use extension bridge"
+        );
+    }
+
+    #[tokio::test]
     async fn test_browser_session_initialize_reuses_bridge() {
         let shared_bridge = test_bridge().await;
         let session = BrowserSession::initialize(Some(shared_bridge.clone()))

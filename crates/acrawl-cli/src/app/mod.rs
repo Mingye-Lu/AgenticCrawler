@@ -118,6 +118,7 @@ pub(crate) struct LiveCli {
     ws_bridge_server: Option<crawler::WsBridgeServer>,
     pending_extension_state: Option<crawler::BrowserState>,
     extension_bridge_initialized: bool,
+    extension_shared_bridge: Option<crawler::SharedBridge>,
 }
 
 #[derive(Clone)]
@@ -205,6 +206,7 @@ impl LiveCli {
             ws_bridge_server: None,
             pending_extension_state: None,
             extension_bridge_initialized: false,
+            extension_shared_bridge: None,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -263,6 +265,7 @@ impl LiveCli {
             ws_bridge_server: None,
             pending_extension_state: None,
             extension_bridge_initialized: false,
+            extension_shared_bridge: None,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -639,31 +642,19 @@ impl LiveCli {
             return Err("extension bridge is already initialized".to_string());
         }
 
-        let Some(server) = self.ws_bridge_server.as_ref() else {
-            return Err("extension bridge server is not running".to_string());
-        };
-
-        let sender = server.command_sender();
-        let bridge = crawler::ExtensionBridge::new(sender);
-        let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
-            Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>,
-        ));
+        let shared = self
+            .extension_shared_bridge
+            .clone()
+            .ok_or_else(|| "extension bridge not created yet".to_string())?;
 
         Ok((shared, self.pending_extension_state.take()))
     }
 
-    pub(crate) fn activate_extension_bridge(&mut self, shared: crawler::SharedBridge) {
-        self.runtime
-            .tool_executor_mut()
-            .set_extension_bridge(shared);
-
+    pub(crate) fn activate_extension_bridge(&mut self, _shared: crawler::SharedBridge) {
         self.extension_bridge_initialized = true;
     }
 
-    pub(crate) fn restore_pending_extension_state(
-        &mut self,
-        state: Option<crawler::BrowserState>,
-    ) {
+    pub(crate) fn restore_pending_extension_state(&mut self, state: Option<crawler::BrowserState>) {
         if self.pending_extension_state.is_none() {
             self.pending_extension_state = state;
         }
@@ -683,6 +674,7 @@ impl LiveCli {
         self.ws_bridge_server = None;
         self.pending_extension_state = None;
         self.extension_bridge_initialized = false;
+        self.extension_shared_bridge = None;
         self.reset_browser();
 
         let _ = runtime::update_settings(|s| {
@@ -719,6 +711,7 @@ impl LiveCli {
         self.ws_bridge_server = None;
         self.pending_extension_state = None;
         self.extension_bridge_initialized = false;
+        self.extension_shared_bridge = None;
         self.runtime.tool_executor_mut().clear_extension_bridge();
 
         let _ = runtime::update_settings(|s| {
@@ -755,15 +748,14 @@ impl LiveCli {
             .map(crawler::WsBridgeServer::connection_watcher)
     }
 
-    pub(crate) fn start_extension_server(
-        &mut self,
-    ) -> Result<(String, u16), String> {
+    pub(crate) fn start_extension_server(&mut self) -> Result<(String, u16), String> {
         use crawler::ws_server::generate_bridge_token;
 
         // Shut down any existing extension bridge to free the port and prevent
         // export_current_state from hanging on a dead WebSocket channel.
         if self.ws_bridge_server.is_some() {
             self.ws_bridge_server = None;
+            self.extension_shared_bridge = None;
             self.runtime.tool_executor_mut().clear_extension_bridge();
         }
         self.pending_extension_state = None;
@@ -795,10 +787,24 @@ impl LiveCli {
                 .await
                 .map_err(|e| RuntimeError::new(e.to_string()))
         })
-                .map_err(|e| format!("Extension mode\n  Error            {e}"))?;
+        .map_err(|e| format!("Extension mode\n  Error            {e}"))?;
 
         self.pending_extension_state = saved_state;
         self.ws_bridge_server = Some(server);
+
+        let sender = self
+            .ws_bridge_server
+            .as_ref()
+            .expect("just created")
+            .command_sender();
+        let bridge = crawler::ExtensionBridge::new(sender);
+        let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
+            Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>
+        ));
+        self.runtime
+            .tool_executor_mut()
+            .set_extension_bridge(shared.clone());
+        self.extension_shared_bridge = Some(shared);
 
         Ok((token, port))
     }
