@@ -7,8 +7,10 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
 
-async fn start_server_and_connect(
-) -> (WsBridgeServer, tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>) {
+async fn start_server_and_connect() -> (
+    WsBridgeServer,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+) {
     let token = "test-token-abc".to_string();
     let server = WsBridgeServer::start(0, token.clone())
         .await
@@ -24,11 +26,17 @@ async fn start_server_and_connect(
 }
 
 async fn respond_to_command(
-    ws: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    ws: &mut tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >,
     expected_action: &str,
     result: Option<Value>,
 ) {
-    let msg = ws.next().await.expect("should receive message").expect("msg ok");
+    let msg = ws
+        .next()
+        .await
+        .expect("should receive message")
+        .expect("msg ok");
     let text = msg.into_text().expect("should be text");
     let cmd: Value = serde_json::from_str(&text).expect("should parse command");
     assert_eq!(
@@ -38,9 +46,11 @@ async fn respond_to_command(
     );
     let id = cmd["id"].as_u64().unwrap();
     let response = json!({ "id": id, "ok": true, "result": result });
-    ws.send(Message::Text(serde_json::to_string(&response).unwrap().into()))
-        .await
-        .expect("should send response");
+    ws.send(Message::Text(
+        serde_json::to_string(&response).unwrap().into(),
+    ))
+    .await
+    .expect("should send response");
 }
 
 #[tokio::test]
@@ -54,8 +64,9 @@ async fn extension_bridge_e2e_tool_routes_through_websocket() {
     // Create ExtensionBridge from the server's command sender
     let sender = server.command_sender();
     let bridge = ExtensionBridge::new(sender);
-    let shared: SharedBridge =
-        Arc::new(Mutex::new(Box::new(bridge) as Box<dyn BrowserBackend + Send>));
+    let shared: SharedBridge = Arc::new(Mutex::new(
+        Box::new(bridge) as Box<dyn BrowserBackend + Send>
+    ));
 
     // Set up a CrawlerAgent with extension bridge
     let registry = crawler::ToolRegistry::new_with_core_tools();
@@ -63,11 +74,8 @@ async fn extension_bridge_e2e_tool_routes_through_websocket() {
     agent.set_shared_bridge(shared);
 
     // Execute click tool — should route through the WebSocket to our fake extension
-    let handle = tokio::spawn(async move {
-        agent
-            .execute("click", r##"{"selector": "#btn"}"##)
-            .await
-    });
+    let handle =
+        tokio::spawn(async move { agent.execute("click", r##"{"selector": "#btn"}"##).await });
 
     // Respond to commands as the fake extension
     respond_to_command(&mut ws, "switch_tab", Some(json!({"url": "", "title": ""}))).await;
