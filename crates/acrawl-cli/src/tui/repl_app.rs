@@ -1393,14 +1393,29 @@ fn handle_slash_command_tui(
                     state.push_system_card("Extension", &msg);
                     return Ok(());
                 }
-                let g = cli.lock().expect("cli lock");
+                let mut g = cli.lock().expect("cli lock");
                 if let Some(status) = g.extension_bridge_status() {
                     state.push_system_card("Extension", &status);
                 } else {
-                    state.push_system_card(
-                        "Extension",
-                        "Extension bridge\n  Status           server not running (startup failed?)",
-                    );
+                    match g.start_extension_server() {
+                        Ok((token, port)) => {
+                            state.push_system_card(
+                                "Extension",
+                                &format!(
+                                    "Extension bridge\n  \
+                                     Status           server started (port {port})\n  \
+                                     Token            {token}"
+                                ),
+                            );
+                            if let Some(watch) = g.extension_connection_watch() {
+                                drop(g);
+                                spawn_extension_connection_watch_from_receiver(watch, cli, ui_tx);
+                            }
+                        }
+                        Err(e) => {
+                            state.push_system_card("Extension", &e);
+                        }
+                    }
                 }
             }
             SlashCommand::CloakBrowser => {
@@ -1466,9 +1481,17 @@ fn spawn_extension_connection_watch(cli: &Arc<Mutex<LiveCli>>, ui_tx: &mpsc::Sen
         let g = cli.lock().expect("cli lock");
         g.extension_connection_watch()
     };
-    let Some(mut connection_watch) = connection_watch else {
+    let Some(watch) = connection_watch else {
         return;
     };
+    spawn_extension_connection_watch_from_receiver(watch, cli, ui_tx);
+}
+
+fn spawn_extension_connection_watch_from_receiver(
+    mut connection_watch: tokio::sync::watch::Receiver<bool>,
+    cli: &Arc<Mutex<LiveCli>>,
+    ui_tx: &mpsc::Sender<ReplTuiEvent>,
+) {
     let cli_clone = cli.clone();
     let ui_tx_clone = ui_tx.clone();
     std::thread::spawn(move || {
