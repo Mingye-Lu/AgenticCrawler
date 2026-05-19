@@ -819,14 +819,11 @@ impl LiveCli {
         if self.ws_bridge_server.is_some() {
             return;
         }
-        let settings = runtime::load_settings();
         if let Err(e) = self.start_extension_server() {
             eprintln!("[acrawl] bridge server auto-start failed: {e}");
             return;
         }
-        if settings.browser_backend.as_deref() == Some("extension") {
-            self.runtime.tool_executor_mut().set_extension_mode(true);
-        }
+        self.runtime.tool_executor_mut().set_extension_mode(true);
     }
 
     pub(crate) fn status_report(&self) -> Result<String, CliError> {
