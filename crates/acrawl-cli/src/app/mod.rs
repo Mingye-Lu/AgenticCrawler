@@ -213,6 +213,7 @@ impl LiveCli {
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
+        cli.boot_bridge_server_if_needed();
         Ok(cli)
     }
 
@@ -272,6 +273,7 @@ impl LiveCli {
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
+        cli.boot_bridge_server_if_needed();
         Ok(cli)
     }
 
@@ -530,28 +532,12 @@ impl LiveCli {
                     println!("{}", self.stop_extension_server());
                     return Ok(false);
                 }
-                if self.ws_bridge_server.is_some() {
-                    if let Some(status) = self.extension_bridge_status() {
-                        println!("{status}");
-                    }
-                    return Ok(false);
+                if let Some(status) = self.extension_bridge_status() {
+                    println!("{status}");
+                } else {
+                    println!("Extension bridge\n  Status           server not running");
                 }
-
-                match self.start_extension_server() {
-                    Err(e) => {
-                        eprintln!("{e}");
-                        false
-                    }
-                    Ok((token, port)) => {
-                        println!(
-                            "Extension mode\n  \
-                             Status           server running (port {port})\n  \
-                             Token            {token}\n  \
-                             Action           open the extension popup or options page and click Save"
-                        );
-                        false
-                    }
-                }
+                false
             }
             SlashCommand::CloakBrowser => {
                 let saved_state = block_on_runtime_future(async {
@@ -671,6 +657,7 @@ impl LiveCli {
         self.runtime
             .tool_executor_mut()
             .set_extension_bridge(shared.clone());
+        self.runtime.tool_executor_mut().set_extension_mode(true);
         self.extension_shared_bridge = Some(shared);
         self.extension_bridge_initialized = true;
     }
@@ -774,8 +761,6 @@ impl LiveCli {
     pub(crate) fn start_extension_server(&mut self) -> Result<(String, u16), String> {
         use crawler::ws_server::generate_bridge_token;
 
-        // Shut down any existing extension bridge to free the port and prevent
-        // export_current_state from hanging on a dead WebSocket channel.
         if self.ws_bridge_server.is_some() {
             self.ws_bridge_server = None;
             self.extension_shared_bridge = None;
@@ -810,14 +795,21 @@ impl LiveCli {
                 .await
                 .map_err(|e| RuntimeError::new(e.to_string()))
         })
-        .map_err(|e| format!("Extension mode\n  Error            {e}"))?;
+        .map_err(|e| format!("Extension bridge server\n  Error            {e}"))?;
 
         self.pending_extension_state = saved_state;
         self.ws_bridge_server = Some(server);
 
-        self.runtime.tool_executor_mut().set_extension_mode(true);
-
         Ok((token, port))
+    }
+
+    pub(crate) fn boot_bridge_server_if_needed(&mut self) {
+        if self.ws_bridge_server.is_some() {
+            return;
+        }
+        if let Err(e) = self.start_extension_server() {
+            eprintln!("[acrawl] bridge server auto-start failed: {e}");
+        }
     }
 
     pub(crate) fn status_report(&self) -> Result<String, CliError> {
