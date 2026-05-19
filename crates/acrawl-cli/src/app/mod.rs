@@ -500,6 +500,10 @@ impl LiveCli {
                 false
             }
             SlashCommand::Headed => {
+                if self.extension_bridge_initialized {
+                    println!("Browser mode\n  Ignored          extension mode is active (browser is already visible)");
+                    return Ok(false);
+                }
                 env::set_var("HEADLESS", "false");
                 let _ = runtime::update_settings(|s| {
                     s.headless = Some(false);
@@ -509,6 +513,10 @@ impl LiveCli {
                 false
             }
             SlashCommand::Headless => {
+                if self.extension_bridge_initialized {
+                    println!("Browser mode\n  Ignored          extension mode is active (browser is already visible)");
+                    return Ok(false);
+                }
                 env::set_var("HEADLESS", "true");
                 let _ = runtime::update_settings(|s| {
                     s.headless = Some(true);
@@ -633,6 +641,10 @@ impl LiveCli {
 
     pub(crate) fn reset_browser(&mut self) {
         self.runtime.tool_executor_mut().reset_browser();
+    }
+
+    pub(crate) fn is_extension_mode_active(&self) -> bool {
+        self.extension_bridge_initialized || self.ws_bridge_server.is_some()
     }
 
     pub(crate) fn prepare_extension_bridge_activation(

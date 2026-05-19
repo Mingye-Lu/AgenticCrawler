@@ -1337,39 +1337,53 @@ fn handle_slash_command_tui(
             ));
         }
         SlashCommand::Headed => {
-            #[cfg(target_os = "linux")]
-            let has_display = std::env::var_os("DISPLAY").is_some()
-                || std::env::var_os("WAYLAND_DISPLAY").is_some();
-            #[cfg(not(target_os = "linux"))]
-            let has_display = true;
+            if cli.lock().expect("cli lock").is_extension_mode_active() {
+                state.push_system_card(
+                    "Browser Mode",
+                    "Browser mode\n  Ignored          extension mode is active (browser is already visible)",
+                );
+            } else {
+                #[cfg(target_os = "linux")]
+                let has_display = std::env::var_os("DISPLAY").is_some()
+                    || std::env::var_os("WAYLAND_DISPLAY").is_some();
+                #[cfg(not(target_os = "linux"))]
+                let has_display = true;
 
-            if has_display {
-                std::env::set_var("HEADLESS", "false");
+                if has_display {
+                    std::env::set_var("HEADLESS", "false");
+                    let _ = runtime::update_settings(|s| {
+                        s.headless = Some(false);
+                    });
+                    cli.lock().expect("cli lock").reset_browser();
+                    state.push_system_card(
+                        "Browser Mode",
+                        "Browser mode\n  Result           switched to headed (visible)",
+                    );
+                } else {
+                    state.push_system_card(
+                        "Browser Mode",
+                        "Browser mode\n  Error            No display server found ($DISPLAY / $WAYLAND_DISPLAY not set).\n                   Run inside a desktop session or use `xvfb-run` to create a virtual display.",
+                    );
+                }
+            }
+        }
+        SlashCommand::Headless => {
+            if cli.lock().expect("cli lock").is_extension_mode_active() {
+                state.push_system_card(
+                    "Browser Mode",
+                    "Browser mode\n  Ignored          extension mode is active (browser is already visible)",
+                );
+            } else {
+                std::env::set_var("HEADLESS", "true");
                 let _ = runtime::update_settings(|s| {
-                    s.headless = Some(false);
+                    s.headless = Some(true);
                 });
                 cli.lock().expect("cli lock").reset_browser();
                 state.push_system_card(
                     "Browser Mode",
-                    "Browser mode\n  Result           switched to headed (visible)",
-                );
-            } else {
-                state.push_system_card(
-                    "Browser Mode",
-                    "Browser mode\n  Error            No display server found ($DISPLAY / $WAYLAND_DISPLAY not set).\n                   Run inside a desktop session or use `xvfb-run` to create a virtual display.",
+                    "Browser mode\n  Result           switched to headless",
                 );
             }
-        }
-        SlashCommand::Headless => {
-            std::env::set_var("HEADLESS", "true");
-            let _ = runtime::update_settings(|s| {
-                s.headless = Some(true);
-            });
-            cli.lock().expect("cli lock").reset_browser();
-            state.push_system_card(
-                "Browser Mode",
-                "Browser mode\n  Result           switched to headless",
-            );
         }
         cmd @ (SlashCommand::Extension { .. } | SlashCommand::CloakBrowser) => match cmd {
             SlashCommand::Extension { stop } => {
