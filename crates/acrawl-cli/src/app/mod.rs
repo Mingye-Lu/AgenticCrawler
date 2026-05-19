@@ -535,7 +535,16 @@ impl LiveCli {
                 if let Some(status) = self.extension_bridge_status() {
                     println!("{status}");
                 } else {
-                    println!("Extension bridge\n  Status           server not running");
+                    match self.start_extension_server() {
+                        Ok((token, port)) => {
+                            println!(
+                                "Extension bridge\n  \
+                                 Status           server started (port {port})\n  \
+                                 Token            {token}"
+                            );
+                        }
+                        Err(e) => eprintln!("{e}"),
+                    }
                 }
                 false
             }
@@ -660,6 +669,9 @@ impl LiveCli {
         self.runtime.tool_executor_mut().set_extension_mode(true);
         self.extension_shared_bridge = Some(shared);
         self.extension_bridge_initialized = true;
+        let _ = runtime::update_settings(|s| {
+            s.browser_backend = Some("extension".to_string());
+        });
     }
 
     pub(crate) fn restore_pending_extension_state(&mut self, state: Option<crawler::BrowserState>) {
@@ -807,8 +819,13 @@ impl LiveCli {
         if self.ws_bridge_server.is_some() {
             return;
         }
+        let settings = runtime::load_settings();
         if let Err(e) = self.start_extension_server() {
             eprintln!("[acrawl] bridge server auto-start failed: {e}");
+            return;
+        }
+        if settings.browser_backend.as_deref() == Some("extension") {
+            self.runtime.tool_executor_mut().set_extension_mode(true);
         }
     }
 
