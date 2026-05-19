@@ -27,8 +27,8 @@ use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
-    KeyModifiers, MouseButton, MouseEventKind,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
 };
 use crossterm::execute;
 use ratatui::layout::Rect;
@@ -1043,7 +1043,11 @@ impl ReplTuiState {
                 }
                 ReplTuiEvent::ChildEvent(_) => {}
                 ReplTuiEvent::ExtensionBridgeResult { success, message } => {
-                    let title = if success { "Extension" } else { "Extension Error" };
+                    let title = if success {
+                        "Extension"
+                    } else {
+                        "Extension Error"
+                    };
                     self.push_system_card(title, &message);
                 }
             }
@@ -1367,26 +1371,25 @@ fn handle_slash_command_tui(
                 "Browser mode\n  Result           switched to headless",
             );
         }
-        cmd @ (SlashCommand::Extension { .. } | SlashCommand::CloakBrowser) => {
-            match cmd {
-                SlashCommand::Extension { stop } => {
-                    if stop {
-                        let mut g = cli.lock().expect("cli lock");
-                        let msg = g.stop_extension_server();
-                        state.push_system_card("Extension", &msg);
-                        return Ok(());
-                    }
+        cmd @ (SlashCommand::Extension { .. } | SlashCommand::CloakBrowser) => match cmd {
+            SlashCommand::Extension { stop } => {
+                if stop {
                     let mut g = cli.lock().expect("cli lock");
-                    if let Some(status) = g.extension_bridge_status() {
-                        state.push_system_card("Extension", &status);
-                        return Ok(());
+                    let msg = g.stop_extension_server();
+                    state.push_system_card("Extension", &msg);
+                    return Ok(());
+                }
+                let mut g = cli.lock().expect("cli lock");
+                if let Some(status) = g.extension_bridge_status() {
+                    state.push_system_card("Extension", &status);
+                    return Ok(());
+                }
+                match g.start_extension_server() {
+                    Err(e) => {
+                        state.push_system_card("Extension", &e);
                     }
-                    match g.start_extension_server() {
-                        Err(e) => {
-                            state.push_system_card("Extension", &e);
-                        }
-                        Ok((token, port)) => {
-                            state.push_system_card(
+                    Ok((token, port)) => {
+                        state.push_system_card(
                                 "Extension",
                                 &format!(
                                     "Extension mode\n  \
@@ -1395,47 +1398,50 @@ fn handle_slash_command_tui(
                                      Action           open the extension popup or options page and click Save"
                                 ),
                             );
-                            if let Some(mut connection_watch) = g.extension_connection_watch() {
-                                drop(g);
-                                let cli_clone = cli.clone();
-                                let ui_tx_clone = ui_tx.clone();
-                                std::thread::spawn(move || {
-                                    let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
-                                    let connected = rt.block_on(async {
-                                        if *connection_watch.borrow() {
-                                            true
-                                        } else {
-                                            connection_watch.changed().await.is_ok()
-                                                && *connection_watch.borrow()
-                                        }
-                                    });
-                                    if connected {
-                                        let setup = {
-                                            let mut g = cli_clone.lock().expect("cli lock");
-                                            g.prepare_extension_bridge_activation()
-                                        };
-                                        let result = match setup {
-                                            Ok((shared, saved_state)) => {
-                                                let init_result = rt.block_on(async {
-                                                    prime_extension_bridge(&shared, saved_state.as_ref())
-                                                        .await
-                                                });
-                                                match init_result {
-                                                    Ok(()) => {
-                                                        let mut g = cli_clone.lock().expect("cli lock");
-                                                        g.activate_extension_bridge(shared);
-                                                        Ok(())
-                                                    }
-                                                    Err(error) => {
-                                                        let mut g = cli_clone.lock().expect("cli lock");
-                                                        g.restore_pending_extension_state(saved_state);
-                                                        Err(error)
-                                                    }
+                        if let Some(mut connection_watch) = g.extension_connection_watch() {
+                            drop(g);
+                            let cli_clone = cli.clone();
+                            let ui_tx_clone = ui_tx.clone();
+                            std::thread::spawn(move || {
+                                let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
+                                let connected = rt.block_on(async {
+                                    if *connection_watch.borrow() {
+                                        true
+                                    } else {
+                                        connection_watch.changed().await.is_ok()
+                                            && *connection_watch.borrow()
+                                    }
+                                });
+                                if connected {
+                                    let setup = {
+                                        let mut g = cli_clone.lock().expect("cli lock");
+                                        g.prepare_extension_bridge_activation()
+                                    };
+                                    let result = match setup {
+                                        Ok((shared, saved_state)) => {
+                                            let init_result = rt.block_on(async {
+                                                prime_extension_bridge(
+                                                    &shared,
+                                                    saved_state.as_ref(),
+                                                )
+                                                .await
+                                            });
+                                            match init_result {
+                                                Ok(()) => {
+                                                    let mut g = cli_clone.lock().expect("cli lock");
+                                                    g.activate_extension_bridge(shared);
+                                                    Ok(())
+                                                }
+                                                Err(error) => {
+                                                    let mut g = cli_clone.lock().expect("cli lock");
+                                                    g.restore_pending_extension_state(saved_state);
+                                                    Err(error)
                                                 }
                                             }
-                                            Err(error) => Err(error),
-                                        };
-                                        let _ =
+                                        }
+                                        Err(error) => Err(error),
+                                    };
+                                    let _ =
                                             ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
                                                 success: result.is_ok(),
                                                 message: match result {
@@ -1449,20 +1455,19 @@ fn handle_slash_command_tui(
                                                     ),
                                                 },
                                             });
-                                    }
-                                });
-                            }
+                                }
+                            });
                         }
                     }
                 }
-                SlashCommand::CloakBrowser => {
-                    let mut g = cli.lock().expect("cli lock");
-                    let msg = g.switch_to_cloakbrowser();
-                    state.push_system_card("Browser Mode", &msg);
-                }
-                _ => unreachable!(),
             }
-        }
+            SlashCommand::CloakBrowser => {
+                let mut g = cli.lock().expect("cli lock");
+                let msg = g.switch_to_cloakbrowser();
+                state.push_system_card("Browser Mode", &msg);
+            }
+            _ => unreachable!(),
+        },
         SlashCommand::Auth { provider } => {
             if state.busy {
                 state.push_system("Please wait for the current task to finish.");
