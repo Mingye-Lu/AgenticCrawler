@@ -304,7 +304,7 @@ async fn handle_incoming(
     let preview = String::from_utf8_lossy(&buf[..n]);
 
     if preview.starts_with("GET /health") && !preview.contains("Upgrade:") {
-        serve_health(stream, state.port).await;
+        serve_health(stream, state.port, &state.token).await;
         return;
     }
 
@@ -335,6 +335,7 @@ async fn handle_incoming(
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
+        eprintln!("[acrawl:ws] rejected {peer_addr}: another client already connected");
         send_raw_http_error(stream, 409, "Conflict: another client is already connected").await;
         return;
     }
@@ -350,9 +351,15 @@ async fn handle_incoming(
     .await;
 
     if let Ok(ws) = ws_result {
+        eprintln!("[acrawl:ws] client connected from {peer_addr}");
         let _ = state.client_connected_tx.send(true);
         run_ws_session(ws, command_rx).await;
+        eprintln!("[acrawl:ws] client disconnected");
     } else {
+        eprintln!(
+            "[acrawl:ws] WebSocket upgrade failed from {peer_addr}: {:?}",
+            ws_result.err()
+        );
         let client_ip = peer_addr.ip();
         let mut limiter = state.rate_limiter.lock().await;
         if let Some(entry) = limiter.get_mut(&client_ip) {
@@ -401,10 +408,18 @@ fn validate_ws_upgrade(
 
     match provided_token {
         Some(t) if constant_time_eq(t.as_bytes(), token.as_bytes()) => Ok(resp),
-        Some(_) => Err(ws_http::Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Some("Unauthorized: invalid token".into()))
-            .expect("valid response")),
+        Some(t) => {
+            eprintln!(
+                "[acrawl:ws] token mismatch: got {:?} (len {}), expected len {}",
+                &t[..t.len().min(8)],
+                t.len(),
+                token.len()
+            );
+            Err(ws_http::Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Some("Unauthorized: invalid token".into()))
+                .expect("valid response"))
+        }
         None => Err(ws_http::Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .body(Some("Unauthorized: missing token".into()))
@@ -469,7 +484,7 @@ async fn handle_text_frame(
 // Raw HTTP helpers (no framework)
 // ---------------------------------------------------------------------------
 
-async fn serve_health(mut stream: TcpStream, port: u16) {
+async fn serve_health(mut stream: TcpStream, port: u16, token: &str) {
     let mut drain = vec![0u8; 4096];
     let _ = stream.read(&mut drain).await;
 
@@ -477,6 +492,7 @@ async fn serve_health(mut stream: TcpStream, port: u16) {
         "service": "acrawl",
         "version": env!("CARGO_PKG_VERSION"),
         "port": port,
+        "token": token,
     })
     .to_string();
 
