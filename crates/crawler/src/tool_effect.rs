@@ -5,8 +5,8 @@ use serde_json::Value;
 pub enum ToolEffect {
     /// Tool produced a plain string reply (the most common case).
     Reply(String),
-    /// Tool requests spawning a sub-agent with the given spec.
-    Spawn(ForkSpec),
+    /// Tool requests spawning a sub-agent with the given typed work packet.
+    Spawn(CrawlTask),
     /// Tool requests waiting for sub-agents to finish.
     Wait(WaitSpec),
     /// Tool requests cancelling running sub-agents. Cancellation is abortive:
@@ -27,11 +27,35 @@ impl ToolEffect {
     }
 }
 
-/// Parameters for spawning a sub-agent.
+/// A typed, validated work packet for a forked sub-agent. The `scope`
+/// declares which URLs the child is allowed to claim; siblings cannot fork
+/// onto overlapping scope. This is the atomic dispatch primitive that
+/// replaces the free-form `{ sub_goal: String }` of older versions.
 #[derive(Debug, Clone)]
-pub struct ForkSpec {
-    pub goal: String,
+pub struct CrawlTask {
+    pub objective: String,
+    pub scope: CrawlScope,
+    pub success_criteria: Option<String>,
+    pub max_steps: Option<usize>,
+    pub deadline_secs: Option<u64>,
+    /// Set by the fork supervisor once a page is allocated; never provided
+    /// by the LLM.
     pub page_index: Option<usize>,
+}
+
+/// Declared work boundary for a sub-agent. The fork supervisor refuses to
+/// dispatch overlapping scopes (same URL, overlapping pattern) so siblings
+/// don't redo each other's work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrawlScope {
+    /// Crawl one specific URL.
+    SinglePage { url: String },
+    /// Crawl an explicit list of URLs (≥ 1).
+    UrlList { urls: Vec<String> },
+    /// Crawl any URL matching this regex. The pattern source string is used
+    /// as the conflict key — siblings cannot request the same pattern, and
+    /// the pattern cannot overlap with already-claimed exact URLs.
+    UrlPattern { regex: String },
 }
 
 /// Parameters for waiting on sub-agents.
