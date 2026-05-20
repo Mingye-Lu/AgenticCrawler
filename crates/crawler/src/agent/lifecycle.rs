@@ -19,7 +19,7 @@ impl BrowserSession {
         }
     }
 
-    /// Launch a fresh CloakBrowser (PlaywrightBridge).
+    /// Launch a fresh `CloakBrowser` (`PlaywrightBridge`).
     async fn launch_cloakbrowser() -> Result<Self, ToolError> {
         let bridge = crate::PlaywrightBridge::new()
             .await
