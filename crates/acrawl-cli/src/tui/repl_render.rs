@@ -404,6 +404,9 @@ pub(super) fn build_wrapped_list(
     let user_prefix_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
+    let parent_prefix_style = Style::default()
+        .fg(Color::Green)
+        .add_modifier(Modifier::BOLD);
 
     for entry in entries {
         match entry {
@@ -431,6 +434,26 @@ pub(super) fn build_wrapped_list(
                     };
                     text_out.push(line_to_plain_text(&line));
                     out.push(ListItem::new(line).bg(user_bg));
+                }
+            }
+            TranscriptEntry::Parent(text) => {
+                let prefixed = format!("  Parent {text}");
+                let rows = wrap_plain_text(&prefixed, width);
+                let parent_bg = Color::Rgb(30, 45, 35);
+                for (idx, row) in rows.into_iter().enumerate() {
+                    let line = if idx == 0 && row.trim_start().starts_with("Parent ") {
+                        let trimmed = row.trim_start();
+                        let rest = trimmed.get(7..).unwrap_or("").to_string();
+                        Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled("Parent ", parent_prefix_style),
+                            Span::raw(rest),
+                        ])
+                    } else {
+                        Line::from(Span::raw(row))
+                    };
+                    text_out.push(line_to_plain_text(&line));
+                    out.push(ListItem::new(line).bg(parent_bg));
                 }
             }
             TranscriptEntry::Status(text) => {
@@ -535,9 +558,11 @@ pub(super) fn build_wrapped_list(
             }
         }
 
-        // Add a blank separator line ONLY after User messages or Cards to separate blocks
+        // Add a blank separator line after User/Parent messages or Cards to separate blocks
         match entry {
-            TranscriptEntry::User(_) | TranscriptEntry::SystemCard { .. } => {
+            TranscriptEntry::User(_)
+            | TranscriptEntry::Parent(_)
+            | TranscriptEntry::SystemCard { .. } => {
                 out.push(ListItem::new(Line::from(" ")));
                 text_out.push(" ".to_string());
             }
@@ -984,7 +1009,6 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
                 .fg(ratatui::style::Color::Cyan)
                 .add_modifier(ratatui::style::Modifier::BOLD),
         ),
-        ratatui::text::Span::raw(format!("  {} ", tab.sub_goal)),
         ratatui::text::Span::styled(
             format!("  {status_text} "),
             ratatui::style::Style::default().fg(status_color),

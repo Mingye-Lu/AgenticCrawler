@@ -38,6 +38,7 @@ mod repl_app {
         System(String),
         Status(String),
         User(String),
+        Parent(String),
         Stream(ratatui::text::Line<'static>),
         SystemCard {
             title: String,
