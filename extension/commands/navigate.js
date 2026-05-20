@@ -10,7 +10,12 @@ async function handleNavigate(tabId, payload) {
   await enablePageEvents(tabId);
 
   const loadPromise = waitForLoad(tabId, 30000);
-  await cdp(tabId, 'Page.navigate', { url });
+  const navResult = await cdp(tabId, 'Page.navigate', { url });
+
+  if (navResult.errorText) {
+    throw new Error(`Navigation failed: ${navResult.errorText}`);
+  }
+
   await loadPromise.catch(() => {});
 
   return getPageContent(tabId);

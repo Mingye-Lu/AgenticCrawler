@@ -35,11 +35,12 @@ function waitForLoad(tabId, timeoutMs = 30000) {
       reject(new Error('Navigation timeout'));
     }, timeoutMs);
 
-    function listener(source, method) {
+    function listener(source, method, params) {
       if (source.tabId !== tabId) {
         return;
       }
-      if (method === 'Page.loadEventFired' || method === 'Page.lifecycleEvent') {
+      if (method === 'Page.loadEventFired' ||
+          (method === 'Page.lifecycleEvent' && params && params.name === 'load')) {
         clearTimeout(timer);
         chrome.debugger.onEvent.removeListener(listener);
         resolve();
