@@ -44,18 +44,10 @@ pub(super) fn validate_ws_upgrade(
 
     match provided_token {
         Some(ref t) if constant_time_eq(t.as_bytes(), token.as_bytes()) => Ok(resp),
-        Some(ref t) => {
-            eprintln!(
-                "[acrawl:ws] token mismatch: got {:?} (len {}), expected len {}",
-                &t[..t.len().min(8)],
-                t.len(),
-                token.len()
-            );
-            Err(ws_http::Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(Some("Unauthorized: invalid token".into()))
-                .expect("valid response"))
-        }
+        Some(_) => Err(ws_http::Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Some("Unauthorized: invalid token".into()))
+            .expect("valid response")),
         None => Err(ws_http::Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .body(Some("Unauthorized: missing token".into()))
