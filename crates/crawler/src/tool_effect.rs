@@ -5,10 +5,17 @@ use serde_json::Value;
 pub enum ToolEffect {
     /// Tool produced a plain string reply (the most common case).
     Reply(String),
-    /// Tool requests spawning a sub-agent with the given spec.
-    Spawn(ForkSpec),
+    /// Tool requests spawning a sub-agent with the given typed work packet.
+    Spawn(CrawlTask),
     /// Tool requests waiting for sub-agents to finish.
     Wait(WaitSpec),
+    /// Tool requests cancelling running sub-agents. Cancellation is abortive:
+    /// the children are torn down immediately and their in-flight work is
+    /// discarded.
+    Cancel(CancelSpec),
+    /// Tool requests a read-only snapshot of running sub-agents. Never joins
+    /// or cancels — safe to call between steps.
+    Status(StatusSpec),
     /// Tool requests pausing execution for human intervention.
     Pause { reason: String },
 }
@@ -20,16 +27,51 @@ impl ToolEffect {
     }
 }
 
-/// Parameters for spawning a sub-agent.
+/// A typed, validated work packet for a forked sub-agent. The `scope`
+/// declares which URLs the child is allowed to claim; siblings cannot fork
+/// onto overlapping scope. This is the atomic dispatch primitive that
+/// replaces the free-form `{ sub_goal: String }` of older versions.
 #[derive(Debug, Clone)]
-pub struct ForkSpec {
-    pub goal: String,
+pub struct CrawlTask {
+    pub objective: String,
+    pub scope: CrawlScope,
+    pub max_steps: Option<usize>,
+    /// Set by the fork supervisor once a page is allocated; never provided
+    /// by the LLM.
     pub page_index: Option<usize>,
+}
+
+/// Declared work boundary for a sub-agent. The fork supervisor refuses to
+/// dispatch overlapping scopes (same URL, overlapping pattern) so siblings
+/// don't redo each other's work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrawlScope {
+    /// Crawl one specific URL.
+    SinglePage { url: String },
+    /// Crawl an explicit list of URLs (≥ 1).
+    UrlList { urls: Vec<String> },
+    /// Crawl any URL matching this regex. The pattern source string is used
+    /// as the conflict key — siblings cannot request the same pattern, and
+    /// the pattern cannot overlap with already-claimed exact URLs.
+    UrlPattern { regex: String },
 }
 
 /// Parameters for waiting on sub-agents.
 #[derive(Debug, Clone)]
 pub struct WaitSpec {
+    pub child_ids: Option<Vec<String>>,
+}
+
+/// Parameters for explicitly cancelling sub-agents.
+#[derive(Debug, Clone)]
+pub struct CancelSpec {
+    pub child_ids: Vec<String>,
+    pub reason: Option<String>,
+}
+
+/// Parameters for polling sub-agent status without joining them.
+#[derive(Debug, Clone)]
+pub struct StatusSpec {
     pub child_ids: Option<Vec<String>>,
 }
 
