@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.8] - 2026-05-20
+
+### Added
+
+- **`acrawl install-browser` subcommand** — installs CloakBrowser and downloads the browser binary independently of the main installer. Checks for Node.js 20+, runs `npm install cloakbrowser playwright-core`, installs Linux system dependencies via `playwright-core install-deps chromium`, and pre-downloads the stealth Chromium binary. Idempotent: skips the npm step if packages are already present.
+
+### Fixed
+
+- **Missing Linux system libraries crash Chromium on launch** — `acrawl install-browser` and `install.sh` now run `npx playwright-core install-deps chromium` (Linux only) after the npm install step, installing the OS packages (`libatk`, `libcups`, `libgbm`, `libasound`, etc.) that Chromium requires but minimal Linux installs omit. Without this, the browser binary would exit immediately with a missing `.so` error even though all npm packages installed successfully.
+
 ## [0.4.7] - 2026-05-16
 
 A security, correctness, and resilience pass covering 22 review-flagged issues across the Rust crates, the install scripts, and CI, plus five review-follow-up fixes layered on top.
@@ -275,6 +285,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.8]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.8
 [0.4.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.7
 [0.4.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.6
 [0.4.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.5
