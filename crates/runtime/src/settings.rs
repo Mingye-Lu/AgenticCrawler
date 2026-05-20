@@ -551,7 +551,7 @@ mod tests {
         assert_eq!(settings.max_concurrent_per_parent, Some(5));
         assert_eq!(settings.max_fork_depth, Some(3));
         assert_eq!(settings.max_total_agents, Some(10));
-        assert_eq!(settings.fork_child_max_steps, Some(15));
+        assert_eq!(settings.fork_child_max_steps, Some(100));
         assert_eq!(settings.fork_wait_timeout_secs, Some(60));
     }
 
@@ -644,7 +644,7 @@ mod tests {
         assert_eq!(settings_get_max_concurrent_per_parent(&settings), 5);
         assert_eq!(settings_get_max_fork_depth(&settings), 3);
         assert_eq!(settings_get_max_total_agents(&settings), 10);
-        assert_eq!(settings_get_fork_child_max_steps(&settings), 15);
+        assert_eq!(settings_get_fork_child_max_steps(&settings), 100);
         assert_eq!(settings_get_fork_wait_timeout_secs(&settings), 60);
     }
 
