@@ -543,9 +543,7 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
             return Err("Node.js not found".into());
         }
         Some(major) if major < 20 => {
-            eprintln!(
-                "Error: Node.js 20+ required for browser automation (found v{major}.x)."
-            );
+            eprintln!("Error: Node.js 20+ required for browser automation (found v{major}.x).");
             eprintln!("Install from https://nodejs.org/");
             return Err(format!("Node.js {major} is too old").into());
         }
@@ -556,7 +554,10 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&config_home)?;
 
     // npm install cloakbrowser playwright-core
-    let already_installed = config_home.join("node_modules").join("cloakbrowser").exists()
+    let already_installed = config_home
+        .join("node_modules")
+        .join("cloakbrowser")
+        .exists()
         && config_home
             .join("node_modules")
             .join("playwright-core")
@@ -565,7 +566,10 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
     if already_installed {
         println!(
             "CloakBrowser already installed at {} (skipping npm install)",
-            config_home.join("node_modules").join("cloakbrowser").display()
+            config_home
+                .join("node_modules")
+                .join("cloakbrowser")
+                .display()
         );
     } else {
         println!("Installing CloakBrowser...");
@@ -616,7 +620,12 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
     // Download the browser binary
     println!("Ensuring browser binary is downloaded...");
     let status = Command::new("npx")
-        .args(["--prefix", &config_home.to_string_lossy(), "cloakbrowser", "install"])
+        .args([
+            "--prefix",
+            &config_home.to_string_lossy(),
+            "cloakbrowser",
+            "install",
+        ])
         .status()?;
     if !status.success() {
         eprintln!("WARNING: Browser binary download failed. It will be downloaded on first use.");
