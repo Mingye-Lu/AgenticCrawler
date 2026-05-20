@@ -354,6 +354,7 @@ async fn handle_incoming(
         eprintln!("[acrawl:ws] client connected from {peer_addr}");
         let _ = state.client_connected_tx.send(true);
         run_ws_session(ws, command_rx).await;
+        let _ = state.client_connected_tx.send(false);
         eprintln!("[acrawl:ws] client disconnected");
     } else {
         eprintln!(
