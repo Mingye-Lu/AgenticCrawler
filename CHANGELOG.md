@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.9] - 2026-05-20
+
+### Added
+
+- **`cancel_subagent` tool** — parent agent can abortively cancel one or more named children by id. Each child's `ControlState` receives a cooperative cancel signal and its `JoinHandle` is aborted immediately; the URL scope is released so another sibling can claim it. Returns a JSON snapshot of cancelled and not-found ids.
+- **`subagent_status` tool** — read-only poll of per-child progress snapshots. Returns step, max\_steps, last tool called, last text delta, lifecycle state, and seconds since the last event. Safe to call between any steps — does not join, cancel, or mutate children.
+- **Atomic `UrlClaimRegistry`** — sibling sub-agents cannot crawl overlapping URLs. Before a child is spawned, the fork supervisor claims its scope (`single_page`, `url_list`, or `url_pattern`) under a mutex; the claim is released via a RAII `ClaimGuard` when the child exits, is cancelled, or setup fails. Conflict details (exact URL, pattern, or pattern-vs-exact match) are surfaced to the LLM so it can adjust scope.
+- **Typed `CrawlTask`** — the `fork` tool now carries a structured, validated work packet instead of a free-form string. Includes `objective`, `scope`, and an optional `max_steps` override.
+
+### Fixed
+
+- **`wait_for_subagents` no longer aborts children on timeout** — previously called `handle.abort()` when the deadline elapsed. Now re-inserts the handle and reports the child as `still_running`; cancellation is an explicit action via `cancel_subagent`.
+- **Fork child IDs are globally monotonic** — a per-agent atomic counter replaces `child_tasks.len() + 1`, which recycled IDs after `wait_for_subagents` drained the map and made downstream lookups ambiguous between generations.
+- **`UrlList` intra-list duplicate URLs are deduplicated** — submitting the same URL twice in a `url_list` scope previously inflated the registry count and caused spurious conflicts; duplicates are now silently deduplicated before insertion.
+
+### Changed
+
+- **Fork child step budget default raised from 15 → 100** — the previous default was too tight for real-world multi-step crawls.
+- **`subagent_status` visibility is direct-children only** — the snapshot registry Arc is inherited one level deep; grandchildren populate their own parent's registry, not the root's. Documented explicitly.
+
+### Removed
+
+- **`deadline_secs` and `success_criteria` removed from `fork` tool** — these fields were parsed and stored but never consumed. Advertising them in the schema invited the LLM to send values it believed had effect; they have been removed from the struct, parser, and JSON schema.
+
 ## [0.4.8] - 2026-05-20
 
 ### Added
@@ -285,6 +309,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.4.9]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.9
 [0.4.8]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.8
 [0.4.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.7
 [0.4.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.6
