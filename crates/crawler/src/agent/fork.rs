@@ -12,7 +12,8 @@ use crate::{
 /// The initial URL the child should land on, derived from the task's
 /// [`CrawlScope`]. `UrlPattern` scopes do not specify a starting page; the
 /// parent's current URL is reused, and the LLM is expected to navigate
-/// within the pattern.
+/// within the pattern. For `UrlList`, only the first URL is used as the
+/// landing page; the child's objective string must guide it to the rest.
 fn scope_initial_url<'a>(scope: &'a CrawlScope, parent_url: Option<&'a str>) -> Option<&'a str> {
     match scope {
         CrawlScope::SinglePage { url } => Some(url.as_str()),
@@ -164,9 +165,10 @@ impl CrawlerAgent {
             }
         };
 
-        // Register a fresh snapshot for this child. Children inherit the
-        // parent's snapshot registry Arc so the parent can poll their
-        // progress without joining.
+        // Register a fresh snapshot for this child. Direct children inherit
+        // the parent's snapshot registry Arc, giving the parent one-level-deep
+        // visibility. Grandchildren populate their own parent's registry, not
+        // the root's — so subagent_status only sees direct children.
         self.child_snapshots
             .register(&child_id, &task.objective, child_max_steps);
 
@@ -445,6 +447,7 @@ impl CrawlerAgent {
     /// them) in the snapshot registry and returns a JSON array of progress
     /// snapshots. Does NOT join, cancel, or otherwise mutate the running
     /// children — safe to call between any steps.
+    // async is required to match the dispatch signature in dispatch_tool_effect.
     #[allow(clippy::unused_async)]
     pub(super) async fn handle_status_effect(
         &mut self,

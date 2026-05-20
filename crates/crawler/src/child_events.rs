@@ -118,6 +118,12 @@ impl ChildSnapshot {
 /// Concurrent map of `ChildSnapshot`s keyed by child id. Cloning is cheap
 /// (Arc); the same registry instance is shared between parent and child
 /// agents.
+///
+/// The registry does not self-prune: completed, failed, and cancelled
+/// entries remain visible via [`Self::list`] and [`Self::get`] until
+/// [`Self::remove`] is called explicitly (the wait/cancel paths do this via
+/// `cleanup_finished`). In long-running sessions with many forks, callers
+/// are responsible for timely cleanup.
 #[derive(Clone, Default)]
 pub struct ChildSnapshotRegistry {
     inner: Arc<Mutex<HashMap<String, ChildSnapshot>>>,
