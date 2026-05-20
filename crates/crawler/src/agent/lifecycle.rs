@@ -343,7 +343,8 @@ mod tests {
     async fn ensure_browser_routes_through_extension_bridge_not_playwright() {
         // Create an ExtensionBridge backed by a channel — no CloakBrowser subprocess.
         let (command_tx, _command_rx) = tokio::sync::mpsc::channel(10);
-        let bridge = crate::ExtensionBridge::new(command_tx);
+        let (_watch_tx, connected) = tokio::sync::watch::channel(true);
+        let bridge = crate::ExtensionBridge::new(command_tx, connected);
         let shared: SharedBridge = Arc::new(Mutex::new(
             Box::new(bridge) as Box<dyn BrowserBackend + Send>
         ));
@@ -376,7 +377,8 @@ mod tests {
 
         // Create ExtensionBridge with a channel so we can observe commands.
         let (command_tx, mut command_rx) = tokio::sync::mpsc::channel(10);
-        let bridge = crate::ExtensionBridge::new(command_tx);
+        let (_watch_tx, connected) = tokio::sync::watch::channel(true);
+        let bridge = crate::ExtensionBridge::new(command_tx, connected);
         let shared: SharedBridge = Arc::new(Mutex::new(
             Box::new(bridge) as Box<dyn BrowserBackend + Send>
         ));
@@ -482,7 +484,8 @@ mod tests {
 
         // Extension connects → set_shared_bridge clears browser, sets new bridge.
         let (command_tx, _command_rx) = tokio::sync::mpsc::channel(10);
-        let ext_bridge = crate::ExtensionBridge::new(command_tx);
+        let (_watch_tx, connected) = tokio::sync::watch::channel(true);
+        let ext_bridge = crate::ExtensionBridge::new(command_tx, connected);
         let ext_shared: SharedBridge = Arc::new(Mutex::new(
             Box::new(ext_bridge) as Box<dyn BrowserBackend + Send>
         ));
