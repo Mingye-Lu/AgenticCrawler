@@ -12,8 +12,8 @@ async fn start_server_and_connect() -> (
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 ) {
     let token = "test-token-abc".to_string();
-    let server = WsBridgeServer::start(0, token.clone())
-        .expect("server should start on ephemeral port");
+    let server =
+        WsBridgeServer::start(0, token.clone()).expect("server should start on ephemeral port");
     let port = server.port();
 
     let url = format!("ws://127.0.0.1:{port}/bridge?token={token}");

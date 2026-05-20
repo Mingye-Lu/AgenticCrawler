@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::ws_server::{BridgeCommand, BridgeResponse};
-use crate::{BrowserBackend, BrowserState, PageInfo, BridgeError};
+use crate::{BridgeError, BrowserBackend, BrowserState, PageInfo};
 
 #[cfg(not(test))]
 const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
@@ -78,28 +78,19 @@ impl ExtensionBridge {
         if response.ok {
             Ok(response)
         } else {
-            Err(BridgeError::Protocol(
-                response.error.unwrap_or_default(),
-            ))
+            Err(BridgeError::Protocol(response.error.unwrap_or_default()))
         }
     }
 
-    fn require_result(
-        response: BridgeResponse,
-        action: &str,
-    ) -> Result<Value, BridgeError> {
+    fn require_result(response: BridgeResponse, action: &str) -> Result<Value, BridgeError> {
         Self::require_ok(response)?
             .result
             .ok_or_else(|| BridgeError::Protocol(format!("{action} missing result")))
     }
 
-    fn parse_result<T: DeserializeOwned>(
-        result: Value,
-        action: &str,
-    ) -> Result<T, BridgeError> {
-        serde_json::from_value(result).map_err(|error| {
-            BridgeError::Protocol(format!("{action} result parse error: {error}"))
-        })
+    fn parse_result<T: DeserializeOwned>(result: Value, action: &str) -> Result<T, BridgeError> {
+        serde_json::from_value(result)
+            .map_err(|error| BridgeError::Protocol(format!("{action} result parse error: {error}")))
     }
 
     async fn expect_unit(&self, action: &str, payload: Value) -> Result<(), BridgeError> {
@@ -130,9 +121,7 @@ impl BrowserBackend for ExtensionBridge {
         let page_index = result
             .get("pageIndex")
             .and_then(Value::as_u64)
-            .ok_or_else(|| {
-                BridgeError::Protocol("new_page missing pageIndex".to_string())
-            })?;
+            .ok_or_else(|| BridgeError::Protocol("new_page missing pageIndex".to_string()))?;
         usize::try_from(page_index).map_err(|_| {
             BridgeError::Protocol(format!(
                 "new_page returned out-of-range pageIndex {page_index}"
@@ -203,11 +192,7 @@ impl BrowserBackend for ExtensionBridge {
             .unwrap_or(false))
     }
 
-    async fn select_option(
-        &mut self,
-        selector: &str,
-        value: &str,
-    ) -> Result<(), BridgeError> {
+    async fn select_option(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         self.expect_unit(
             "select_option",
             json!({
@@ -230,11 +215,7 @@ impl BrowserBackend for ExtensionBridge {
             .await
     }
 
-    async fn press_key(
-        &mut self,
-        key: &str,
-        selector: Option<&str>,
-    ) -> Result<(), BridgeError> {
+    async fn press_key(&mut self, key: &str, selector: Option<&str>) -> Result<(), BridgeError> {
         let mut payload = json!({ "key": key });
         if let Some(selector) = selector {
             payload["selector"] = Value::String(selector.to_string());
@@ -263,10 +244,7 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn import_cookies_only(
-        &mut self,
-        state: &BrowserState,
-    ) -> Result<(), BridgeError> {
+    async fn import_cookies_only(&mut self, state: &BrowserState) -> Result<(), BridgeError> {
         self.expect_unit(
             "import_cookies_only",
             json!({ "state": serde_json::to_value(state)? }),
@@ -274,10 +252,7 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn import_local_storage(
-        &mut self,
-        state: &BrowserState,
-    ) -> Result<(), BridgeError> {
+    async fn import_local_storage(&mut self, state: &BrowserState) -> Result<(), BridgeError> {
         self.expect_unit(
             "import_local_storage",
             json!({ "state": serde_json::to_value(state)? }),
@@ -311,9 +286,7 @@ impl BrowserBackend for ExtensionBridge {
         let data_base64 = result
             .get("data_base64")
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                BridgeError::Protocol("save_file missing data_base64".into())
-            })?;
+            .ok_or_else(|| BridgeError::Protocol("save_file missing data_base64".into()))?;
 
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data_base64)
@@ -466,10 +439,7 @@ mod tests {
         drop(command_rx);
 
         let error = bridge.click("#submit").await.expect_err("send should fail");
-        assert!(matches!(
-            error,
-            BridgeError::ExtensionDisconnected
-        ));
+        assert!(matches!(error, BridgeError::ExtensionDisconnected));
     }
 
     #[tokio::test]
