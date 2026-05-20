@@ -376,18 +376,18 @@ fn validate_ws_upgrade(
 
     // Token from ?token=<value> query param
     let query = req.uri().query().unwrap_or("");
-    let provided_token: Option<&str> = query.split('&').find_map(|pair: &str| {
+    let provided_token: Option<String> = query.split('&').find_map(|pair: &str| {
         let (key, value) = pair.split_once('=')?;
         if key == "token" {
-            Some(value)
+            Some(percent_decode(value))
         } else {
             None
         }
     });
 
     match provided_token {
-        Some(t) if constant_time_eq(t.as_bytes(), token.as_bytes()) => Ok(resp),
-        Some(t) => {
+        Some(ref t) if constant_time_eq(t.as_bytes(), token.as_bytes()) => Ok(resp),
+        Some(ref t) => {
             eprintln!(
                 "[acrawl:ws] token mismatch: got {:?} (len {}), expected len {}",
                 &t[..t.len().min(8)],
@@ -519,6 +519,33 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         acc |= x ^ y;
     }
     acc == 0
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
+}
+
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------

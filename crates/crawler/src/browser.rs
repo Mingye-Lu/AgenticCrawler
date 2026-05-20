@@ -40,13 +40,17 @@ impl BrowserContext {
             _ => false,
         };
 
-        let page_idx = i64::try_from(self.page_index).unwrap_or(0);
+        let page_idx = i64::try_from(self.page_index).map_err(|_| {
+            BridgeError::Protocol(format!("page index {} out of range", self.page_index))
+        })?;
         let mut guard = self.bridge.lock().await;
 
         if guard.switch_tab(page_idx).await.is_err() {
             let new_page_index = guard.new_page(None).await?;
             self.page_index = new_page_index;
-            let new_page_idx = i64::try_from(new_page_index).unwrap_or(0);
+            let new_page_idx = i64::try_from(new_page_index).map_err(|_| {
+                BridgeError::Protocol(format!("page index {new_page_index} out of range"))
+            })?;
             guard.switch_tab(new_page_idx).await?;
         }
 

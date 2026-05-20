@@ -35,10 +35,6 @@ const managedTabs = {};
 let nextPageIndex = 0;
 let activePageIndex = 0;
 
-// Pending commands: requestId -> {resolve, reject, timeoutId}
-const pendingRequests = {};
-let nextRequestId = 1;
-
 // ----------- Connection management -----------
 
 async function getSettings() {
