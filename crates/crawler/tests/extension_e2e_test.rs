@@ -13,7 +13,6 @@ async fn start_server_and_connect() -> (
 ) {
     let token = "test-token-abc".to_string();
     let server = WsBridgeServer::start(0, token.clone())
-        .await
         .expect("server should start on ephemeral port");
     let port = server.port();
 

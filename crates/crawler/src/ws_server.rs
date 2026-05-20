@@ -54,7 +54,7 @@ fn try_bind_with_retry(addr: SocketAddr) -> std::io::Result<TcpListener> {
 fn is_port_conflict(e: &std::io::Error) -> bool {
     matches!(
         e.raw_os_error(),
-        Some(10048) | Some(10013) | Some(98) | Some(48)
+        Some(10048 | 10013 | 98 | 48)
     )
 }
 
@@ -145,7 +145,7 @@ impl WsBridgeServer {
     ///
     /// Returns `WsBridgeError::Bind` if the TCP listener cannot bind, or
     /// `WsBridgeError::BridgeFileWrite` if the discovery file cannot be written.
-    pub async fn start(port: u16, token: String) -> Result<Self, WsBridgeError> {
+    pub fn start(port: u16, token: String) -> Result<Self, WsBridgeError> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let listener = try_bind_with_retry(addr).map_err(WsBridgeError::Bind)?;
         let actual_port = listener.local_addr().map_err(WsBridgeError::Bind)?.port();
