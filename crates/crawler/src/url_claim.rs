@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn url_list_deduplicates_intra_list_duplicate_urls() {
         let registry = UrlClaimRegistry::new();
-        let _g = registry
+        let guard = registry
             .try_claim(
                 &CrawlScope::UrlList {
                     urls: vec![
@@ -478,7 +478,7 @@ mod tests {
 
         // The deduplicated URL is still claimable by another child after the
         // guard drops (this verifies len() tracked correctly).
-        drop(_g);
+        drop(guard);
         assert_eq!(registry.len(), 0);
     }
 
