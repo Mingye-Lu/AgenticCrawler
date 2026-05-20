@@ -443,7 +443,7 @@ pub(super) fn build_wrapped_list(
                 for (idx, row) in rows.into_iter().enumerate() {
                     let line = if idx == 0 && row.trim_start().starts_with("Parent ") {
                         let trimmed = row.trim_start();
-                        let rest = trimmed.get(7..).unwrap_or("").to_string();
+                        let rest = trimmed.get("Parent ".len()..).unwrap_or("").to_string();
                         Line::from(vec![
                             Span::raw("  "),
                             Span::styled("Parent ", parent_prefix_style),
