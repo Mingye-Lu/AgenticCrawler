@@ -256,7 +256,6 @@ async fn handle_incoming(
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
-        eprintln!("[acrawl:ws] rejected {peer_addr}: another client already connected");
         send_raw_http_error(stream, 409, "Conflict: another client is already connected").await;
         return;
     }
@@ -271,16 +270,10 @@ async fn handle_incoming(
     .await;
 
     if let Ok(ws) = ws_result {
-        eprintln!("[acrawl:ws] client connected from {peer_addr}");
         let _ = state.client_connected_tx.send(true);
         run_ws_session(ws, command_rx).await;
         let _ = state.client_connected_tx.send(false);
-        eprintln!("[acrawl:ws] client disconnected");
     } else {
-        eprintln!(
-            "[acrawl:ws] WebSocket upgrade failed from {peer_addr}: {:?}",
-            ws_result.err()
-        );
         let client_ip = peer_addr.ip();
         let mut limiter = state.rate_limiter.lock().await;
         if let Some(entry) = limiter.get_mut(&client_ip) {
