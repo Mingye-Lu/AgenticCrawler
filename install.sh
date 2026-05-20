@@ -159,6 +159,21 @@ if [ -n "$node_major" ] && [ "$node_major" -ge 20 ]; then
         fi
     fi
 
+    # Install OS-level libraries required by Chromium (Linux only).
+    # playwright-core ships an install-deps command that handles this per-distro.
+    case "$(uname -s)" in
+        Linux)
+            echo "Installing system dependencies for Chromium..."
+            if npx --prefix "$CONFIG_HOME" playwright-core install-deps chromium; then
+                echo "System dependencies installed."
+            else
+                echo "WARNING: Could not install system dependencies (may need sudo)."
+                echo "If the browser fails to launch, run:"
+                echo "  sudo npx --prefix \"$CONFIG_HOME\" playwright-core install-deps chromium"
+            fi
+            ;;
+    esac
+
     echo "Ensuring browser binary is downloaded..."
     if npx --prefix "$CONFIG_HOME" cloakbrowser install; then
         echo "Browser binary ready."
