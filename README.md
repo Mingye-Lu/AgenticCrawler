@@ -346,6 +346,8 @@ Options:
 | `/auth [provider]` | Configure credentials | No |
 | `/headed` | Switch to visible browser | No |
 | `/headless` | Switch to headless browser | No |
+| `/extension` | Start extension bridge server, show token | No |
+| `/cloakbrowser` | Switch back to CloakBrowser mode | No |
 | `/debug` | Toggle raw tool output | No |
 | `/version` | Version and build info | Yes |
 | `/exit` | Exit and save session | No |
@@ -385,6 +387,8 @@ Created with defaults on first run. Edit directly or via `acrawl init`.
 | `max_total_agents` | `10` | Global cap on total agents |
 | `fork_child_max_steps` | `15` | Step budget for each child agent |
 | `fork_wait_timeout_secs` | `60` | Timeout for `wait_for_subagents` |
+| `browser_backend` | `null` | Active browser backend: `"extension"` or `null` (CloakBrowser) |
+| `extension_bridge_port` | `19876` | Port for Chrome extension bridge WebSocket server |
 
 ### Environment Variables
 
@@ -409,7 +413,7 @@ flowchart LR
 1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/crawler/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
 2. Each turn, it picks from its 19 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
-4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright.
+4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
 5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` or `done` merges results.
 6. When context grows large, auto-compaction summarizes older messages while preserving recent turns, tool usage, pending work, and file references.
 7. The agent calls `done` when the goal is met, or stops when the step limit is reached.
@@ -421,7 +425,7 @@ crates/
   acrawl-cli/   CLI binary, TUI REPL, arg parsing, session management
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   commands/     16 slash commands with resume-safety annotations
-  crawler/      19 tools, agent loop, FetchRouter, PlaywrightBridge, sub-agent fork/join
+  crawler/      19 tools, agent loop, FetchRouter, PlaywrightBridge, ExtensionBridge, sub-agent fork/join
   runtime/      ConversationRuntime, permissions, config, sessions, MCP server manager, OAuth PKCE
 ```
 
