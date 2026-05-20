@@ -16,7 +16,6 @@ pub enum ChildTabStatus {
 #[derive(Clone)]
 pub struct ChildTabState {
     pub(super) child_id: String,
-    pub(super) sub_goal: String,
     pub(super) status: ChildTabStatus,
     pub(super) step: usize,
     pub(super) max_steps: usize,
@@ -32,16 +31,16 @@ pub struct ChildTabState {
 
 impl ChildTabState {
     pub fn new(child_id: String, sub_goal: String) -> Self {
+        let entries = vec![TranscriptEntry::Parent(sub_goal)];
         Self {
             child_id,
-            sub_goal,
             status: ChildTabStatus::Running,
             step: 0,
             max_steps: 0,
             tool_in_progress: None,
             items_extracted: 0,
             follow_bottom: true,
-            entries: Vec::new(),
+            entries,
             list_state: ListState::default(),
             last_wrapped_len: 0,
             last_view_height: 0,
@@ -171,8 +170,6 @@ impl ChildTabPanel {
                 let tab = &mut self.tabs[idx];
                 tab.step = *step;
                 tab.max_steps = *max_steps;
-                tab.entries
-                    .push(TranscriptEntry::Status(format!("Step {step}/{max_steps}")));
             }
             crawler::ChildEventKind::PauseRequested { reason } => {
                 self.tabs[idx].status = ChildTabStatus::Paused {
@@ -364,8 +361,9 @@ mod tests {
             },
         );
         let tab = &panel.tabs[0];
-        assert_eq!(tab.entries.len(), 1);
-        match &tab.entries[0] {
+        // entries[0] is the initial Parent entry; entries[1] is the ToolCall
+        assert_eq!(tab.entries.len(), 2);
+        match &tab.entries[1] {
             TranscriptEntry::ToolCall { name, status, .. } => {
                 assert_eq!(name, "navigate");
                 assert!(matches!(status, ToolCallStatus::Running));
@@ -395,7 +393,8 @@ mod tests {
             },
         );
         let tab = &panel.tabs[0];
-        match &tab.entries[0] {
+        // entries[0] is the initial Parent entry; entries[1] is the ToolCall
+        match &tab.entries[1] {
             TranscriptEntry::ToolCall { status, .. } => {
                 assert!(matches!(status, ToolCallStatus::Success { .. }));
             }
@@ -424,7 +423,8 @@ mod tests {
             },
         );
         let tab = &panel.tabs[0];
-        match &tab.entries[0] {
+        // entries[0] is the initial Parent entry; entries[1] is the ToolCall
+        match &tab.entries[1] {
             TranscriptEntry::ToolCall { status, .. } => {
                 assert!(matches!(status, ToolCallStatus::Error(_)));
             }
@@ -489,15 +489,12 @@ mod tests {
     #[test]
     fn test_bounded_storage_cap() {
         let mut panel = ChildTabPanel::default();
-        // Push more than 1000 entries via StepStarted events
+        // Push more than 1000 entries via TextDelta events (one line each)
         for i in 0..1100u32 {
             panel.apply_event(
                 "child-1",
                 "goal",
-                &crawler::ChildEventKind::StepStarted {
-                    step: i as usize,
-                    max_steps: 1100,
-                },
+                &crawler::ChildEventKind::TextDelta(format!("line {i}\n")),
             );
         }
         let tab = &panel.tabs[0];
