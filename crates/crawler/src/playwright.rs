@@ -661,7 +661,7 @@ pub struct BrowserState {
 }
 
 #[derive(Debug)]
-pub enum PlaywrightBridgeError {
+pub enum BridgeError {
     ProcessSpawn {
         command: String,
         source: io::Error,
@@ -688,7 +688,7 @@ pub enum PlaywrightBridgeError {
     },
 }
 
-impl fmt::Display for PlaywrightBridgeError {
+impl fmt::Display for BridgeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ProcessSpawn { command, source } => write!(
@@ -733,7 +733,7 @@ impl fmt::Display for PlaywrightBridgeError {
     }
 }
 
-impl std::error::Error for PlaywrightBridgeError {
+impl std::error::Error for BridgeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::ProcessSpawn { source, .. } => Some(source),
@@ -751,13 +751,13 @@ impl std::error::Error for PlaywrightBridgeError {
     }
 }
 
-impl From<io::Error> for PlaywrightBridgeError {
+impl From<io::Error> for BridgeError {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
     }
 }
 
-impl From<serde_json::Error> for PlaywrightBridgeError {
+impl From<serde_json::Error> for BridgeError {
     fn from(value: serde_json::Error) -> Self {
         Self::Json(value)
     }
@@ -773,7 +773,7 @@ pub struct PlaywrightBridge {
 pub type SharedBridge = Arc<Mutex<Box<dyn BrowserBackend + Send>>>;
 
 impl PlaywrightBridge {
-    pub async fn new() -> Result<Self, PlaywrightBridgeError> {
+    pub async fn new() -> Result<Self, BridgeError> {
         Self::new_with_invocation(
             "node",
             vec!["-e".to_string(), PLAYWRIGHT_BRIDGE_NODE_SCRIPT.to_string()],
@@ -786,21 +786,21 @@ impl PlaywrightBridge {
         program: &str,
         args: Vec<String>,
         launch_timeout: Duration,
-    ) -> Result<Self, PlaywrightBridgeError> {
+    ) -> Result<Self, BridgeError> {
         let mut command = Self::bridge_command(program, &args);
 
         let mut child = command
             .spawn()
-            .map_err(|source| PlaywrightBridgeError::ProcessSpawn {
+            .map_err(|source| BridgeError::ProcessSpawn {
                 command: format!("{program} {}", args.join(" ")),
                 source,
             })?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
-            PlaywrightBridgeError::Protocol("bridge process missing stdin pipe".to_string())
+            BridgeError::Protocol("bridge process missing stdin pipe".to_string())
         })?;
         let stdout = child.stdout.take().ok_or_else(|| {
-            PlaywrightBridgeError::Protocol("bridge process missing stdout pipe".to_string())
+            BridgeError::Protocol("bridge process missing stdout pipe".to_string())
         })?;
         let mut bridge = Self {
             child,
@@ -812,7 +812,7 @@ impl PlaywrightBridge {
             result?;
         } else {
             bridge.force_kill_child().await?;
-            return Err(PlaywrightBridgeError::LaunchTimeout {
+            return Err(BridgeError::LaunchTimeout {
                 timeout: launch_timeout,
             });
         }
@@ -843,7 +843,7 @@ impl PlaywrightBridge {
         command
     }
 
-    pub async fn navigate(&mut self, url: &str) -> Result<PageInfo, PlaywrightBridgeError> {
+    pub async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         let response = self
             .send_bridge_command(BridgeCommandEnvelope {
                 action: "navigate",
@@ -853,22 +853,22 @@ impl PlaywrightBridge {
 
         if response.ok {
             return response.result.ok_or_else(|| {
-                PlaywrightBridgeError::Protocol(
+                BridgeError::Protocol(
                     "navigate response missing page result payload".to_string(),
                 )
             });
         }
 
         let error = response.error.ok_or_else(|| {
-            PlaywrightBridgeError::Protocol("navigate response missing error payload".to_string())
+            BridgeError::Protocol("navigate response missing error payload".to_string())
         })?;
-        Err(PlaywrightBridgeError::Protocol(format!(
+        Err(BridgeError::Protocol(format!(
             "{}: {}",
             error.kind, error.message
         )))
     }
 
-    pub async fn close(mut self) -> Result<(), PlaywrightBridgeError> {
+    pub async fn close(mut self) -> Result<(), BridgeError> {
         let _ = self
             .send_bridge_command_with_timeout(
                 BridgeCommandEnvelope {
@@ -884,13 +884,13 @@ impl PlaywrightBridge {
             Ok(())
         } else {
             self.force_kill_child().await?;
-            Err(PlaywrightBridgeError::ShutdownTimeout {
+            Err(BridgeError::ShutdownTimeout {
                 timeout: DEFAULT_SHUTDOWN_TIMEOUT,
             })
         }
     }
 
-    pub async fn new_page(&mut self, url: Option<&str>) -> Result<usize, PlaywrightBridgeError> {
+    pub async fn new_page(&mut self, url: Option<&str>) -> Result<usize, BridgeError> {
         let mut cmd = serde_json::json!({ "action": "new_page" });
         if let Some(url) = url {
             cmd["url"] = serde_json::Value::String(url.to_string());
@@ -900,16 +900,16 @@ impl PlaywrightBridge {
             .get("pageIndex")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| {
-                PlaywrightBridgeError::Protocol("new_page response missing pageIndex".to_string())
+                BridgeError::Protocol("new_page response missing pageIndex".to_string())
             })?;
         usize::try_from(page_index).map_err(|_| {
-            PlaywrightBridgeError::Protocol(format!(
+            BridgeError::Protocol(format!(
                 "new_page returned out-of-range pageIndex {page_index}"
             ))
         })
     }
 
-    pub async fn close_page(&mut self, page_index: usize) -> Result<(), PlaywrightBridgeError> {
+    pub async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "close_page",
             "pageIndex": page_index,
@@ -921,7 +921,7 @@ impl PlaywrightBridge {
     pub async fn send_raw_command(
         &mut self,
         command: &serde_json::Value,
-    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    ) -> Result<serde_json::Value, BridgeError> {
         let payload = serde_json::to_string(command)?;
         self.stdin.write_all(payload.as_bytes()).await?;
         self.stdin.write_all(b"\n").await?;
@@ -929,12 +929,12 @@ impl PlaywrightBridge {
 
         let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
             .await
-            .map_err(|_| PlaywrightBridgeError::CommandTimeout {
+            .map_err(|_| BridgeError::CommandTimeout {
                 timeout: DEFAULT_COMMAND_TIMEOUT,
             })??;
         let response: GenericBridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {
-            return Err(PlaywrightBridgeError::Protocol(format!(
+            return Err(BridgeError::Protocol(format!(
                 "expected bridge_response event, got {}",
                 response.event
             )));
@@ -943,9 +943,9 @@ impl PlaywrightBridge {
             return Ok(response.result.unwrap_or(serde_json::Value::Null));
         }
         let error = response.error.ok_or_else(|| {
-            PlaywrightBridgeError::Protocol("response missing error payload".to_string())
+            BridgeError::Protocol("response missing error payload".to_string())
         })?;
-        Err(PlaywrightBridgeError::Protocol(format!(
+        Err(BridgeError::Protocol(format!(
             "{}: {}",
             error.kind, error.message
         )))
@@ -955,7 +955,7 @@ impl PlaywrightBridge {
         &mut self,
         direction: &str,
         pixels: i64,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "scroll",
             "direction": direction,
@@ -965,7 +965,7 @@ impl PlaywrightBridge {
         Ok(())
     }
 
-    pub async fn page_map(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    pub async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({ "action": "page_map" });
         self.send_raw_command(&cmd).await
     }
@@ -976,7 +976,7 @@ impl PlaywrightBridge {
         selector: Option<&str>,
         offset: usize,
         max_chars: usize,
-    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    ) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({
             "action": "read_content",
             "heading": heading,
@@ -991,7 +991,7 @@ impl PlaywrightBridge {
         &mut self,
         selector: &str,
         timeout_ms: u64,
-    ) -> Result<bool, PlaywrightBridgeError> {
+    ) -> Result<bool, BridgeError> {
         let cmd = serde_json::json!({
             "action": "wait_for_selector",
             "selector": selector,
@@ -1008,7 +1008,7 @@ impl PlaywrightBridge {
         &mut self,
         selector: &str,
         value: &str,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "select_option",
             "selector": selector,
@@ -1021,7 +1021,7 @@ impl PlaywrightBridge {
     pub async fn evaluate(
         &mut self,
         script: &str,
-    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    ) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({
             "action": "evaluate",
             "script": script,
@@ -1029,7 +1029,7 @@ impl PlaywrightBridge {
         self.send_raw_command(&cmd).await
     }
 
-    pub async fn hover(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+    pub async fn hover(&mut self, selector: &str) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "hover",
             "selector": selector,
@@ -1042,7 +1042,7 @@ impl PlaywrightBridge {
         &mut self,
         key: &str,
         selector: Option<&str>,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         let mut cmd = serde_json::json!({
             "action": "press_key",
             "key": key,
@@ -1057,7 +1057,7 @@ impl PlaywrightBridge {
     pub async fn switch_tab(
         &mut self,
         index: i64,
-    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    ) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({
             "action": "switch_tab",
             "index": index,
@@ -1065,11 +1065,11 @@ impl PlaywrightBridge {
         self.send_raw_command(&cmd).await
     }
 
-    pub async fn export_cookies(&mut self) -> Result<BrowserState, PlaywrightBridgeError> {
+    pub async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         let cmd = serde_json::json!({ "action": "export_cookies" });
         let result = self.send_raw_command(&cmd).await?;
         let state = serde_json::from_value::<BrowserState>(result).map_err(|e| {
-            PlaywrightBridgeError::Protocol(format!("failed to parse BrowserState: {e}"))
+            BridgeError::Protocol(format!("failed to parse BrowserState: {e}"))
         })?;
         Ok(state)
     }
@@ -1077,7 +1077,7 @@ impl PlaywrightBridge {
     pub async fn import_cookies(
         &mut self,
         state: &BrowserState,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "import_cookies",
             "cookies": state.cookies,
@@ -1090,7 +1090,7 @@ impl PlaywrightBridge {
     pub async fn import_cookies_only(
         &mut self,
         state: &BrowserState,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "import_cookies",
             "cookies": state.cookies,
@@ -1102,7 +1102,7 @@ impl PlaywrightBridge {
     pub async fn import_local_storage(
         &mut self,
         state: &BrowserState,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "import_cookies",
             "local_storage": state.local_storage,
@@ -1111,7 +1111,7 @@ impl PlaywrightBridge {
         Ok(())
     }
 
-    pub async fn list_resources(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    pub async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({ "action": "list_resources" });
         self.send_raw_command(&cmd).await
     }
@@ -1120,7 +1120,7 @@ impl PlaywrightBridge {
         &mut self,
         url: &str,
         path: &str,
-    ) -> Result<String, PlaywrightBridgeError> {
+    ) -> Result<String, BridgeError> {
         let cmd = serde_json::json!({
             "action": "save_file",
             "url": url,
@@ -1134,7 +1134,7 @@ impl PlaywrightBridge {
             .to_string())
     }
 
-    pub async fn click(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+    pub async fn click(&mut self, selector: &str) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "click",
             "selector": selector,
@@ -1143,7 +1143,7 @@ impl PlaywrightBridge {
         Ok(())
     }
 
-    pub async fn fill(&mut self, selector: &str, value: &str) -> Result<(), PlaywrightBridgeError> {
+    pub async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "fill",
             "selector": selector,
@@ -1153,14 +1153,14 @@ impl PlaywrightBridge {
         Ok(())
     }
 
-    pub async fn screenshot(&mut self) -> Result<(String, usize), PlaywrightBridgeError> {
+    pub async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
         let cmd = serde_json::json!({ "action": "screenshot" });
         let result = self.send_raw_command(&cmd).await?;
         let base64_data = result
             .get("screenshot_base64")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| {
-                PlaywrightBridgeError::Protocol(
+                BridgeError::Protocol(
                     "screenshot response missing base64 data".to_string(),
                 )
             })?
@@ -1173,7 +1173,7 @@ impl PlaywrightBridge {
         Ok((base64_data, size_bytes))
     }
 
-    pub async fn go_back(&mut self) -> Result<String, PlaywrightBridgeError> {
+    pub async fn go_back(&mut self) -> Result<String, BridgeError> {
         let cmd = serde_json::json!({ "action": "go_back" });
         let result = self.send_raw_command(&cmd).await?;
         let url = result
@@ -1184,12 +1184,12 @@ impl PlaywrightBridge {
         Ok(url)
     }
 
-    async fn read_bootstrap_message(&mut self) -> Result<(), PlaywrightBridgeError> {
+    async fn read_bootstrap_message(&mut self) -> Result<(), BridgeError> {
         let line = self.read_bridge_line().await?;
         let message: BridgeBootstrapMessage = serde_json::from_str(&line)?;
 
         if message.event != "bridge_bootstrap" {
-            return Err(PlaywrightBridgeError::Protocol(format!(
+            return Err(BridgeError::Protocol(format!(
                 "expected bridge_bootstrap event, got {}",
                 message.event
             )));
@@ -1200,14 +1200,14 @@ impl PlaywrightBridge {
         }
 
         let error = message.error.ok_or_else(|| {
-            PlaywrightBridgeError::Protocol("bootstrap failure missing error payload".to_string())
+            BridgeError::Protocol("bootstrap failure missing error payload".to_string())
         })?;
 
         if error.kind == "playwright_not_installed" {
-            return Err(PlaywrightBridgeError::PlaywrightNotInstalled(error.message));
+            return Err(BridgeError::PlaywrightNotInstalled(error.message));
         }
 
-        Err(PlaywrightBridgeError::Protocol(format!(
+        Err(BridgeError::Protocol(format!(
             "bootstrap failed: {} ({})",
             error.message, error.kind
         )))
@@ -1216,7 +1216,7 @@ impl PlaywrightBridge {
     async fn send_bridge_command(
         &mut self,
         command: BridgeCommandEnvelope<'_>,
-    ) -> Result<BridgeResponseMessage, PlaywrightBridgeError> {
+    ) -> Result<BridgeResponseMessage, BridgeError> {
         self.send_bridge_command_with_timeout(command, DEFAULT_COMMAND_TIMEOUT)
             .await
     }
@@ -1225,7 +1225,7 @@ impl PlaywrightBridge {
         &mut self,
         command: BridgeCommandEnvelope<'_>,
         command_timeout: Duration,
-    ) -> Result<BridgeResponseMessage, PlaywrightBridgeError> {
+    ) -> Result<BridgeResponseMessage, BridgeError> {
         let payload = serde_json::to_string(&command)?;
         self.stdin.write_all(payload.as_bytes()).await?;
         self.stdin.write_all(b"\n").await?;
@@ -1233,12 +1233,12 @@ impl PlaywrightBridge {
 
         let line = timeout(command_timeout, self.read_bridge_line())
             .await
-            .map_err(|_| PlaywrightBridgeError::CommandTimeout {
+            .map_err(|_| BridgeError::CommandTimeout {
                 timeout: command_timeout,
             })??;
         let response: BridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {
-            return Err(PlaywrightBridgeError::Protocol(format!(
+            return Err(BridgeError::Protocol(format!(
                 "expected bridge_response event, got {}",
                 response.event
             )));
@@ -1246,16 +1246,16 @@ impl PlaywrightBridge {
         Ok(response)
     }
 
-    async fn read_bridge_line(&mut self) -> Result<String, PlaywrightBridgeError> {
+    async fn read_bridge_line(&mut self) -> Result<String, BridgeError> {
         let mut line = String::new();
         let bytes_read = self.stdout.read_line(&mut line).await?;
         if bytes_read == 0 {
-            return Err(PlaywrightBridgeError::ChildClosed);
+            return Err(BridgeError::ChildClosed);
         }
         Ok(line)
     }
 
-    async fn force_kill_child(&mut self) -> Result<(), PlaywrightBridgeError> {
+    async fn force_kill_child(&mut self) -> Result<(), BridgeError> {
         if self.child.try_wait()?.is_none() {
             self.child.kill().await?;
         }
@@ -1266,23 +1266,23 @@ impl PlaywrightBridge {
 
 #[async_trait::async_trait]
 impl BrowserBackend for PlaywrightBridge {
-    async fn navigate(&mut self, url: &str) -> Result<PageInfo, PlaywrightBridgeError> {
+    async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         PlaywrightBridge::navigate(self, url).await
     }
 
-    async fn new_page(&mut self, url: Option<&str>) -> Result<usize, PlaywrightBridgeError> {
+    async fn new_page(&mut self, url: Option<&str>) -> Result<usize, BridgeError> {
         PlaywrightBridge::new_page(self, url).await
     }
 
-    async fn close_page(&mut self, page_index: usize) -> Result<(), PlaywrightBridgeError> {
+    async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError> {
         PlaywrightBridge::close_page(self, page_index).await
     }
 
-    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), PlaywrightBridgeError> {
+    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError> {
         PlaywrightBridge::scroll(self, direction, pixels).await
     }
 
-    async fn page_map(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError> {
         PlaywrightBridge::page_map(self).await
     }
 
@@ -1292,7 +1292,7 @@ impl BrowserBackend for PlaywrightBridge {
         selector: Option<&str>,
         offset: usize,
         max_chars: usize,
-    ) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    ) -> Result<serde_json::Value, BridgeError> {
         PlaywrightBridge::read_content(self, heading, selector, offset, max_chars).await
     }
 
@@ -1300,7 +1300,7 @@ impl BrowserBackend for PlaywrightBridge {
         &mut self,
         selector: &str,
         timeout_ms: u64,
-    ) -> Result<bool, PlaywrightBridgeError> {
+    ) -> Result<bool, BridgeError> {
         PlaywrightBridge::wait_for_selector(self, selector, timeout_ms).await
     }
 
@@ -1308,15 +1308,15 @@ impl BrowserBackend for PlaywrightBridge {
         &mut self,
         selector: &str,
         value: &str,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         PlaywrightBridge::select_option(self, selector, value).await
     }
 
-    async fn evaluate(&mut self, script: &str) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    async fn evaluate(&mut self, script: &str) -> Result<serde_json::Value, BridgeError> {
         PlaywrightBridge::evaluate(self, script).await
     }
 
-    async fn hover(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+    async fn hover(&mut self, selector: &str) -> Result<(), BridgeError> {
         PlaywrightBridge::hover(self, selector).await
     }
 
@@ -1324,57 +1324,57 @@ impl BrowserBackend for PlaywrightBridge {
         &mut self,
         key: &str,
         selector: Option<&str>,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         PlaywrightBridge::press_key(self, key, selector).await
     }
 
-    async fn switch_tab(&mut self, index: i64) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    async fn switch_tab(&mut self, index: i64) -> Result<serde_json::Value, BridgeError> {
         PlaywrightBridge::switch_tab(self, index).await
     }
 
-    async fn export_cookies(&mut self) -> Result<BrowserState, PlaywrightBridgeError> {
+    async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         PlaywrightBridge::export_cookies(self).await
     }
 
-    async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), PlaywrightBridgeError> {
+    async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), BridgeError> {
         PlaywrightBridge::import_cookies(self, state).await
     }
 
     async fn import_cookies_only(
         &mut self,
         state: &BrowserState,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         PlaywrightBridge::import_cookies_only(self, state).await
     }
 
     async fn import_local_storage(
         &mut self,
         state: &BrowserState,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         PlaywrightBridge::import_local_storage(self, state).await
     }
 
-    async fn list_resources(&mut self) -> Result<serde_json::Value, PlaywrightBridgeError> {
+    async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
         PlaywrightBridge::list_resources(self).await
     }
 
-    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, PlaywrightBridgeError> {
+    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError> {
         PlaywrightBridge::save_file(self, url, path).await
     }
 
-    async fn click(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+    async fn click(&mut self, selector: &str) -> Result<(), BridgeError> {
         PlaywrightBridge::click(self, selector).await
     }
 
-    async fn fill(&mut self, selector: &str, value: &str) -> Result<(), PlaywrightBridgeError> {
+    async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         PlaywrightBridge::fill(self, selector, value).await
     }
 
-    async fn screenshot(&mut self) -> Result<(String, usize), PlaywrightBridgeError> {
+    async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
         PlaywrightBridge::screenshot(self).await
     }
 
-    async fn go_back(&mut self) -> Result<String, PlaywrightBridgeError> {
+    async fn go_back(&mut self) -> Result<String, BridgeError> {
         PlaywrightBridge::go_back(self).await
     }
 }
@@ -1429,7 +1429,7 @@ mod tests {
 
     use runtime::config_home_dir;
 
-    use super::{PageInfo, PlaywrightBridge, PlaywrightBridgeError};
+    use super::{PageInfo, PlaywrightBridge, BridgeError};
 
     fn temp_dir(prefix: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -1511,7 +1511,7 @@ sys.exit(1)
         cleanup_temp_script(&script_path);
 
         match result {
-            Err(PlaywrightBridgeError::PlaywrightNotInstalled(message)) => {
+            Err(BridgeError::PlaywrightNotInstalled(message)) => {
                 assert!(message.contains("playwright"));
             }
             other => panic!("expected PlaywrightNotInstalled error, got {other:?}"),
@@ -1538,7 +1538,7 @@ print('{"event":"bridge_bootstrap","ok":true}', flush=True)
         cleanup_temp_script(&script_path);
 
         match result {
-            Err(PlaywrightBridgeError::LaunchTimeout { .. }) => {}
+            Err(BridgeError::LaunchTimeout { .. }) => {}
             other => panic!("expected LaunchTimeout error, got {other:?}"),
         }
     }
