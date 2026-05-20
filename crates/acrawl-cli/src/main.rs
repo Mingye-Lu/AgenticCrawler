@@ -627,15 +627,16 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
             "install",
         ])
         .status()?;
-    if !status.success() {
-        eprintln!("WARNING: Browser binary download failed. It will be downloaded on first use.");
-    } else {
+    if status.success() {
         println!("Browser binary ready.");
+    } else {
+        eprintln!("WARNING: Browser binary download failed. It will be downloaded on first use.");
     }
 
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "acrawl v{VERSION}")?;
     writeln!(out)?;
