@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use async_trait::async_trait;
 
-use crate::{BrowserState, PageInfo, BridgeError};
+use crate::{BridgeError, BrowserState, PageInfo};
 
 #[async_trait]
 pub trait BrowserBackend: Debug {
@@ -23,29 +23,15 @@ pub trait BrowserBackend: Debug {
         selector: &str,
         timeout_ms: u64,
     ) -> Result<bool, BridgeError>;
-    async fn select_option(
-        &mut self,
-        selector: &str,
-        value: &str,
-    ) -> Result<(), BridgeError>;
+    async fn select_option(&mut self, selector: &str, value: &str) -> Result<(), BridgeError>;
     async fn evaluate(&mut self, script: &str) -> Result<serde_json::Value, BridgeError>;
     async fn hover(&mut self, selector: &str) -> Result<(), BridgeError>;
-    async fn press_key(
-        &mut self,
-        key: &str,
-        selector: Option<&str>,
-    ) -> Result<(), BridgeError>;
+    async fn press_key(&mut self, key: &str, selector: Option<&str>) -> Result<(), BridgeError>;
     async fn switch_tab(&mut self, index: i64) -> Result<serde_json::Value, BridgeError>;
     async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError>;
     async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), BridgeError>;
-    async fn import_cookies_only(
-        &mut self,
-        state: &BrowserState,
-    ) -> Result<(), BridgeError>;
-    async fn import_local_storage(
-        &mut self,
-        state: &BrowserState,
-    ) -> Result<(), BridgeError>;
+    async fn import_cookies_only(&mut self, state: &BrowserState) -> Result<(), BridgeError>;
+    async fn import_local_storage(&mut self, state: &BrowserState) -> Result<(), BridgeError>;
     async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError>;
     async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError>;
     async fn click(&mut self, selector: &str) -> Result<(), BridgeError>;

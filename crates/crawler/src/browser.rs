@@ -1,6 +1,6 @@
 use tokio::sync::MutexGuard;
 
-use crate::{BrowserBackend, BridgeError, SharedBridge};
+use crate::{BridgeError, BrowserBackend, SharedBridge};
 
 #[derive(Debug, Clone)]
 pub struct BrowserContext {

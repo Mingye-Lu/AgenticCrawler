@@ -49,10 +49,7 @@ fn try_bind_with_retry(addr: SocketAddr) -> std::io::Result<TcpListener> {
 }
 
 fn is_port_conflict(e: &std::io::Error) -> bool {
-    matches!(
-        e.raw_os_error(),
-        Some(10048 | 10013 | 98 | 48)
-    )
+    matches!(e.raw_os_error(), Some(10048 | 10013 | 98 | 48))
 }
 
 fn clean_stale_bridge_file(expected_port: u16) {
@@ -670,7 +667,10 @@ mod tests {
     fn validate_ws_upgrade_accepts_valid_request() {
         let req = ws_http::Request::builder()
             .uri("http://localhost/bridge?token=secret")
-            .header("origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb")
+            .header(
+                "origin",
+                "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb",
+            )
             .body(())
             .unwrap();
         let resp = ws_http::Response::builder().body(()).unwrap();
@@ -682,7 +682,10 @@ mod tests {
     fn validate_ws_upgrade_accepts_edge_extension_origin() {
         let req = ws_http::Request::builder()
             .uri("http://localhost/bridge?token=secret")
-            .header("origin", "edge-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb")
+            .header(
+                "origin",
+                "edge-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb",
+            )
             .body(())
             .unwrap();
         let resp = ws_http::Response::builder().body(()).unwrap();
