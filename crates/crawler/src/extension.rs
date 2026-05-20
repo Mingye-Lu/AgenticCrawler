@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::ws_server::{BridgeCommand, BridgeResponse};
-use crate::{BrowserBackend, BrowserState, PageInfo, PlaywrightBridgeError};
+use crate::{BrowserBackend, BrowserState, PageInfo, BridgeError};
 
 #[cfg(not(test))]
 const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
@@ -40,7 +40,7 @@ impl ExtensionBridge {
         &self,
         action: &str,
         payload: Value,
-    ) -> Result<BridgeResponse, PlaywrightBridgeError> {
+    ) -> Result<BridgeResponse, BridgeError> {
         self.send_command_with_timeout(action, payload, EXTENSION_COMMAND_TIMEOUT)
             .await
     }
@@ -50,9 +50,9 @@ impl ExtensionBridge {
         action: &str,
         payload: Value,
         timeout: Duration,
-    ) -> Result<BridgeResponse, PlaywrightBridgeError> {
+    ) -> Result<BridgeResponse, BridgeError> {
         if !*self.connected.borrow() {
-            return Err(PlaywrightBridgeError::ExtensionDisconnected);
+            return Err(BridgeError::ExtensionDisconnected);
         }
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -66,19 +66,19 @@ impl ExtensionBridge {
         self.command_tx
             .send((cmd, resp_tx))
             .await
-            .map_err(|_| PlaywrightBridgeError::ExtensionDisconnected)?;
+            .map_err(|_| BridgeError::ExtensionDisconnected)?;
 
         tokio::time::timeout(timeout, resp_rx)
             .await
-            .map_err(|_| PlaywrightBridgeError::ExtensionTimeout { timeout })?
-            .map_err(|_| PlaywrightBridgeError::ExtensionDisconnected)
+            .map_err(|_| BridgeError::ExtensionTimeout { timeout })?
+            .map_err(|_| BridgeError::ExtensionDisconnected)
     }
 
-    fn require_ok(response: BridgeResponse) -> Result<BridgeResponse, PlaywrightBridgeError> {
+    fn require_ok(response: BridgeResponse) -> Result<BridgeResponse, BridgeError> {
         if response.ok {
             Ok(response)
         } else {
-            Err(PlaywrightBridgeError::Protocol(
+            Err(BridgeError::Protocol(
                 response.error.unwrap_or_default(),
             ))
         }
@@ -87,22 +87,22 @@ impl ExtensionBridge {
     fn require_result(
         response: BridgeResponse,
         action: &str,
-    ) -> Result<Value, PlaywrightBridgeError> {
+    ) -> Result<Value, BridgeError> {
         Self::require_ok(response)?
             .result
-            .ok_or_else(|| PlaywrightBridgeError::Protocol(format!("{action} missing result")))
+            .ok_or_else(|| BridgeError::Protocol(format!("{action} missing result")))
     }
 
     fn parse_result<T: DeserializeOwned>(
         result: Value,
         action: &str,
-    ) -> Result<T, PlaywrightBridgeError> {
+    ) -> Result<T, BridgeError> {
         serde_json::from_value(result).map_err(|error| {
-            PlaywrightBridgeError::Protocol(format!("{action} result parse error: {error}"))
+            BridgeError::Protocol(format!("{action} result parse error: {error}"))
         })
     }
 
-    async fn expect_unit(&self, action: &str, payload: Value) -> Result<(), PlaywrightBridgeError> {
+    async fn expect_unit(&self, action: &str, payload: Value) -> Result<(), BridgeError> {
         let response = self.send_command(action, payload).await?;
         Self::require_ok(response)?;
         Ok(())
@@ -117,13 +117,13 @@ impl fmt::Debug for ExtensionBridge {
 
 #[async_trait]
 impl BrowserBackend for ExtensionBridge {
-    async fn navigate(&mut self, url: &str) -> Result<PageInfo, PlaywrightBridgeError> {
+    async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         let response = self.send_command("navigate", json!({ "url": url })).await?;
         let result = Self::require_result(response, "navigate")?;
         Self::parse_result(result, "navigate")
     }
 
-    async fn new_page(&mut self, url: Option<&str>) -> Result<usize, PlaywrightBridgeError> {
+    async fn new_page(&mut self, url: Option<&str>) -> Result<usize, BridgeError> {
         let payload = url.map_or_else(|| json!({}), |url| json!({ "url": url }));
         let response = self.send_command("new_page", payload).await?;
         let result = Self::require_result(response, "new_page")?;
@@ -131,21 +131,21 @@ impl BrowserBackend for ExtensionBridge {
             .get("pageIndex")
             .and_then(Value::as_u64)
             .ok_or_else(|| {
-                PlaywrightBridgeError::Protocol("new_page missing pageIndex".to_string())
+                BridgeError::Protocol("new_page missing pageIndex".to_string())
             })?;
         usize::try_from(page_index).map_err(|_| {
-            PlaywrightBridgeError::Protocol(format!(
+            BridgeError::Protocol(format!(
                 "new_page returned out-of-range pageIndex {page_index}"
             ))
         })
     }
 
-    async fn close_page(&mut self, page_index: usize) -> Result<(), PlaywrightBridgeError> {
+    async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError> {
         self.expect_unit("close_page", json!({ "page_index": page_index }))
             .await
     }
 
-    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), PlaywrightBridgeError> {
+    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError> {
         self.expect_unit(
             "scroll",
             json!({
@@ -156,7 +156,7 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn page_map(&mut self) -> Result<Value, PlaywrightBridgeError> {
+    async fn page_map(&mut self) -> Result<Value, BridgeError> {
         let response = self.send_command("page_map", json!({})).await?;
         Self::require_result(response, "page_map")
     }
@@ -167,7 +167,7 @@ impl BrowserBackend for ExtensionBridge {
         selector: Option<&str>,
         offset: usize,
         max_chars: usize,
-    ) -> Result<Value, PlaywrightBridgeError> {
+    ) -> Result<Value, BridgeError> {
         let response = self
             .send_command(
                 "read_content",
@@ -186,7 +186,7 @@ impl BrowserBackend for ExtensionBridge {
         &mut self,
         selector: &str,
         timeout_ms: u64,
-    ) -> Result<bool, PlaywrightBridgeError> {
+    ) -> Result<bool, BridgeError> {
         let response = self
             .send_command(
                 "wait_for_selector",
@@ -207,7 +207,7 @@ impl BrowserBackend for ExtensionBridge {
         &mut self,
         selector: &str,
         value: &str,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         self.expect_unit(
             "select_option",
             json!({
@@ -218,14 +218,14 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn evaluate(&mut self, script: &str) -> Result<Value, PlaywrightBridgeError> {
+    async fn evaluate(&mut self, script: &str) -> Result<Value, BridgeError> {
         let response = self
             .send_command("execute_js", json!({ "script": script }))
             .await?;
         Self::require_result(response, "execute_js")
     }
 
-    async fn hover(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+    async fn hover(&mut self, selector: &str) -> Result<(), BridgeError> {
         self.expect_unit("hover", json!({ "selector": selector }))
             .await
     }
@@ -234,7 +234,7 @@ impl BrowserBackend for ExtensionBridge {
         &mut self,
         key: &str,
         selector: Option<&str>,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         let mut payload = json!({ "key": key });
         if let Some(selector) = selector {
             payload["selector"] = Value::String(selector.to_string());
@@ -242,20 +242,20 @@ impl BrowserBackend for ExtensionBridge {
         self.expect_unit("press_key", payload).await
     }
 
-    async fn switch_tab(&mut self, index: i64) -> Result<Value, PlaywrightBridgeError> {
+    async fn switch_tab(&mut self, index: i64) -> Result<Value, BridgeError> {
         let response = self
             .send_command("switch_tab", json!({ "index": index }))
             .await?;
         Self::require_result(response, "switch_tab")
     }
 
-    async fn export_cookies(&mut self) -> Result<BrowserState, PlaywrightBridgeError> {
+    async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         let response = self.send_command("export_cookies", json!({})).await?;
         let result = Self::require_result(response, "export_cookies")?;
         Self::parse_result(result, "export_cookies")
     }
 
-    async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), PlaywrightBridgeError> {
+    async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), BridgeError> {
         self.expect_unit(
             "import_cookies",
             json!({ "state": serde_json::to_value(state)? }),
@@ -266,7 +266,7 @@ impl BrowserBackend for ExtensionBridge {
     async fn import_cookies_only(
         &mut self,
         state: &BrowserState,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         self.expect_unit(
             "import_cookies_only",
             json!({ "state": serde_json::to_value(state)? }),
@@ -277,7 +277,7 @@ impl BrowserBackend for ExtensionBridge {
     async fn import_local_storage(
         &mut self,
         state: &BrowserState,
-    ) -> Result<(), PlaywrightBridgeError> {
+    ) -> Result<(), BridgeError> {
         self.expect_unit(
             "import_local_storage",
             json!({ "state": serde_json::to_value(state)? }),
@@ -285,14 +285,14 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn list_resources(&mut self) -> Result<Value, PlaywrightBridgeError> {
+    async fn list_resources(&mut self) -> Result<Value, BridgeError> {
         let response = self.send_command("list_resources", json!({})).await?;
         Self::require_result(response, "list_resources")
     }
 
-    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, PlaywrightBridgeError> {
+    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError> {
         if path.contains("..") {
-            return Err(PlaywrightBridgeError::Protocol(
+            return Err(BridgeError::Protocol(
                 "save_file path contains path traversal".into(),
             ));
         }
@@ -312,26 +312,26 @@ impl BrowserBackend for ExtensionBridge {
             .get("data_base64")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                PlaywrightBridgeError::Protocol("save_file missing data_base64".into())
+                BridgeError::Protocol("save_file missing data_base64".into())
             })?;
 
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data_base64)
-            .map_err(|e| PlaywrightBridgeError::Protocol(format!("base64 decode failed: {e}")))?;
+            .map_err(|e| BridgeError::Protocol(format!("base64 decode failed: {e}")))?;
 
         tokio::fs::write(path, &bytes)
             .await
-            .map_err(|e| PlaywrightBridgeError::Protocol(format!("write failed: {e}")))?;
+            .map_err(|e| BridgeError::Protocol(format!("write failed: {e}")))?;
 
         Ok(path.to_string())
     }
 
-    async fn click(&mut self, selector: &str) -> Result<(), PlaywrightBridgeError> {
+    async fn click(&mut self, selector: &str) -> Result<(), BridgeError> {
         self.expect_unit("click", json!({ "selector": selector }))
             .await
     }
 
-    async fn fill(&mut self, selector: &str, value: &str) -> Result<(), PlaywrightBridgeError> {
+    async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         self.expect_unit(
             "fill",
             json!({
@@ -342,14 +342,14 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn screenshot(&mut self) -> Result<(String, usize), PlaywrightBridgeError> {
+    async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
         let response = self.send_command("screenshot", json!({})).await?;
         let result = Self::require_result(response, "screenshot")?;
         let screenshot_base64 = result
             .get("screenshot_base64")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                PlaywrightBridgeError::Protocol("screenshot missing screenshot_base64".to_string())
+                BridgeError::Protocol("screenshot missing screenshot_base64".to_string())
             })?
             .to_string();
         let size_bytes = result
@@ -360,14 +360,14 @@ impl BrowserBackend for ExtensionBridge {
         Ok((screenshot_base64, size_bytes))
     }
 
-    async fn go_back(&mut self) -> Result<String, PlaywrightBridgeError> {
+    async fn go_back(&mut self) -> Result<String, BridgeError> {
         let response = self.send_command("go_back", json!({})).await?;
         let result = Self::require_result(response, "go_back")?;
         result
             .get("url")
             .and_then(Value::as_str)
             .map(ToString::to_string)
-            .ok_or_else(|| PlaywrightBridgeError::Protocol("go_back missing url".to_string()))
+            .ok_or_else(|| BridgeError::Protocol("go_back missing url".to_string()))
     }
 }
 
@@ -468,7 +468,7 @@ mod tests {
         let error = bridge.click("#submit").await.expect_err("send should fail");
         assert!(matches!(
             error,
-            PlaywrightBridgeError::ExtensionDisconnected
+            BridgeError::ExtensionDisconnected
         ));
     }
 
@@ -491,7 +491,7 @@ mod tests {
             .expect_err("timeout should error");
         assert!(matches!(
             error,
-            PlaywrightBridgeError::ExtensionTimeout { timeout } if timeout == EXTENSION_COMMAND_TIMEOUT
+            BridgeError::ExtensionTimeout { timeout } if timeout == EXTENSION_COMMAND_TIMEOUT
         ));
     }
 }

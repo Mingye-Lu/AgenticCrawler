@@ -27,7 +27,7 @@ pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
 pub use playwright::{
-    BrowserState, PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge,
+    BrowserState, PageInfo, PlaywrightBridge, BridgeError, SharedBridge,
 };
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
@@ -408,7 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cloakbrowser_launch_smoke() {
-        use super::{PlaywrightBridge, PlaywrightBridgeError};
+        use super::{PlaywrightBridge, BridgeError};
 
         // Self-skip if not in CI and CloakBrowser not installed locally
         let in_ci = std::env::var("CI").is_ok();
@@ -427,7 +427,7 @@ mod tests {
             Ok(bridge) => {
                 let _ = bridge.close().await;
             }
-            Err(PlaywrightBridgeError::PlaywrightNotInstalled(_)) => {
+            Err(BridgeError::PlaywrightNotInstalled(_)) => {
                 eprintln!(
                     "test_cloakbrowser_launch_smoke: skipping — CloakBrowser binary not available"
                 );
