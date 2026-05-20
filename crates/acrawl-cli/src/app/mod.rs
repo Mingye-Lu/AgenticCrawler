@@ -620,7 +620,8 @@ impl LiveCli {
         };
 
         let sender = server.command_sender();
-        let bridge = crawler::ExtensionBridge::new(sender);
+        let connected = server.connection_watcher();
+        let bridge = crawler::ExtensionBridge::new(sender, connected);
         let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
             Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>
         ));

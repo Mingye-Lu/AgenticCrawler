@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::ws_server::{BridgeCommand, BridgeResponse};
 use crate::{BrowserBackend, BrowserState, PageInfo, PlaywrightBridgeError};
@@ -19,14 +19,19 @@ const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub struct ExtensionBridge {
     command_tx: mpsc::Sender<(BridgeCommand, oneshot::Sender<BridgeResponse>)>,
+    connected: watch::Receiver<bool>,
     next_id: Arc<AtomicU64>,
 }
 
 impl ExtensionBridge {
     #[must_use]
-    pub fn new(command_tx: mpsc::Sender<(BridgeCommand, oneshot::Sender<BridgeResponse>)>) -> Self {
+    pub fn new(
+        command_tx: mpsc::Sender<(BridgeCommand, oneshot::Sender<BridgeResponse>)>,
+        connected: watch::Receiver<bool>,
+    ) -> Self {
         Self {
             command_tx,
+            connected,
             next_id: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -46,6 +51,10 @@ impl ExtensionBridge {
         payload: Value,
         timeout: Duration,
     ) -> Result<BridgeResponse, PlaywrightBridgeError> {
+        if !*self.connected.borrow() {
+            return Err(PlaywrightBridgeError::ExtensionDisconnected);
+        }
+
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let cmd = BridgeCommand {
             id,
@@ -373,7 +382,8 @@ mod tests {
         mpsc::Receiver<(BridgeCommand, oneshot::Sender<BridgeResponse>)>,
     ) {
         let (command_tx, command_rx) = mpsc::channel(1);
-        (ExtensionBridge::new(command_tx), command_rx)
+        let (_tx, connected) = watch::channel(true);
+        (ExtensionBridge::new(command_tx, connected), command_rx)
     }
 
     #[tokio::test]

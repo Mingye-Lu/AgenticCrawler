@@ -63,7 +63,8 @@ async fn extension_bridge_e2e_tool_routes_through_websocket() {
 
     // Create ExtensionBridge from the server's command sender
     let sender = server.command_sender();
-    let bridge = ExtensionBridge::new(sender);
+    let connected = server.connection_watcher();
+    let bridge = ExtensionBridge::new(sender, connected);
     let shared: SharedBridge = Arc::new(Mutex::new(
         Box::new(bridge) as Box<dyn BrowserBackend + Send>
     ));
