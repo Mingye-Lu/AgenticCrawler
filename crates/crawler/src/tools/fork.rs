@@ -12,7 +12,6 @@ use crate::{
 /// {
 ///   "objective": "collect details from posts page 2",
 ///   "scope": { "type": "single_page", "url": "https://example.com/posts?page=2" },
-///   "success_criteria": "extracted at least 10 items",
 ///   "max_steps": 12
 /// }
 /// ```
@@ -37,22 +36,15 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
         .ok_or_else(|| ToolError::new("fork requires scope".to_string()))?;
     let scope = parse_scope(scope_value)?;
 
-    let success_criteria = input
-        .get("success_criteria")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
     let max_steps = input
         .get("max_steps")
         .and_then(Value::as_u64)
         .map(|v| usize::try_from(v).unwrap_or(usize::MAX));
-    let deadline_secs = input.get("deadline_secs").and_then(Value::as_u64);
 
     Ok(ToolEffect::Spawn(CrawlTask {
         objective,
         scope,
-        success_criteria,
         max_steps,
-        deadline_secs,
         page_index: None,
     }))
 }

@@ -315,7 +315,6 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                         },
                         "required": ["type"]
                     },
-                    "success_criteria": { "type": "string", "description": "Optional definition of done." },
                     "max_steps": { "type": "integer", "minimum": 1, "description": "Override the child's step budget." }
                 },
                 "required": ["objective", "scope"],
