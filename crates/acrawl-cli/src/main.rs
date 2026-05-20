@@ -588,6 +588,31 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
         println!("CloakBrowser installed.");
     }
 
+    // Install system-level OS dependencies required by Chromium (Linux only).
+    // playwright-core ships an install-deps subcommand that handles this correctly
+    // across distros; it requires root on Linux but is a no-op on macOS.
+    #[cfg(target_os = "linux")]
+    {
+        println!("Installing system dependencies for Chromium...");
+        let status = Command::new("npx")
+            .args([
+                "--prefix",
+                &config_home.to_string_lossy(),
+                "playwright-core",
+                "install-deps",
+                "chromium",
+            ])
+            .status();
+        match status {
+            Ok(s) if s.success() => println!("System dependencies installed."),
+            _ => eprintln!(
+                "WARNING: Could not install system dependencies (may need sudo). \
+                 If the browser fails to launch, run: sudo npx --prefix \"{}\" playwright-core install-deps chromium",
+                config_home.display()
+            ),
+        }
+    }
+
     // Download the browser binary
     println!("Ensuring browser binary is downloaded...");
     let status = Command::new("npx")
