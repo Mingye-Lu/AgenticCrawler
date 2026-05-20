@@ -821,9 +821,7 @@ impl LiveCli {
         }
         if let Err(e) = self.start_extension_server() {
             eprintln!("[acrawl] bridge server auto-start failed: {e}");
-            return;
         }
-        self.runtime.tool_executor_mut().set_extension_mode(true);
     }
 
     pub(crate) fn status_report(&self) -> Result<String, CliError> {
