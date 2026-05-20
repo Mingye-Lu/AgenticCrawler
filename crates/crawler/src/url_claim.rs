@@ -124,16 +124,19 @@ impl UrlClaimRegistry {
                 for url in urls {
                     check_exact(&guard, url, owner_id)?;
                 }
-                let keys = urls
-                    .iter()
-                    .map(|url| {
+                // Deduplicate within the submitted list; the LLM may
+                // accidentally list the same URL twice.
+                let mut seen = std::collections::HashSet::new();
+                let mut keys = Vec::new();
+                for url in urls {
+                    if seen.insert(url.as_str()) {
                         guard.entries.push(Entry::Exact {
                             url: url.clone(),
                             owner: owner_id.to_string(),
                         });
-                        ClaimKey::Exact(url.clone())
-                    })
-                    .collect();
+                        keys.push(ClaimKey::Exact(url.clone()));
+                    }
+                }
                 Ok(ClaimGuard {
                     registry: Arc::clone(&self.inner),
                     keys,
@@ -452,6 +455,31 @@ mod tests {
             )
             .expect_err("invalid regex should fail");
         assert!(matches!(err, ClaimConflict::InvalidRegex { .. }));
+    }
+
+    #[test]
+    fn url_list_deduplicates_intra_list_duplicate_urls() {
+        let registry = UrlClaimRegistry::new();
+        let _g = registry
+            .try_claim(
+                &CrawlScope::UrlList {
+                    urls: vec![
+                        "https://example.com/a".to_string(),
+                        "https://example.com/b".to_string(),
+                        "https://example.com/a".to_string(), // duplicate
+                    ],
+                },
+                "child-1",
+            )
+            .expect("claim with intra-list duplicate should succeed (deduped)");
+
+        // Only 2 entries registered, not 3.
+        assert_eq!(registry.len(), 2);
+
+        // The deduplicated URL is still claimable by another child after the
+        // guard drops (this verifies len() tracked correctly).
+        drop(_g);
+        assert_eq!(registry.len(), 0);
     }
 
     #[test]
