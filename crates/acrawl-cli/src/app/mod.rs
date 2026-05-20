@@ -782,6 +782,10 @@ impl LiveCli {
         if self.ws_bridge_server.is_some() {
             return;
         }
+        let settings = runtime::load_settings();
+        if settings.browser_backend.as_deref() != Some("extension") {
+            return;
+        }
         if let Err(e) = self.start_extension_server() {
             eprintln!("[acrawl] bridge server auto-start failed: {e}");
         }
