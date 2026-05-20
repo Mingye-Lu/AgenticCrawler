@@ -517,7 +517,14 @@ async fn send_raw_http_error(mut stream: TcpStream, status: u16, message: &str) 
 }
 
 fn is_allowed_extension_origin(origin: &str) -> bool {
-    origin.starts_with("chrome-extension://") || origin.starts_with("edge-extension://")
+    let id = if let Some(rest) = origin.strip_prefix("chrome-extension://") {
+        rest
+    } else if let Some(rest) = origin.strip_prefix("edge-extension://") {
+        rest
+    } else {
+        return false;
+    };
+    id.len() == 32 && id.bytes().all(|b| b.is_ascii_lowercase())
 }
 
 // ---------------------------------------------------------------------------
@@ -682,7 +689,7 @@ mod tests {
     fn validate_ws_upgrade_accepts_valid_request() {
         let req = ws_http::Request::builder()
             .uri("http://localhost/bridge?token=secret")
-            .header("origin", "chrome-extension://abcdef123456")
+            .header("origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb")
             .body(())
             .unwrap();
         let resp = ws_http::Response::builder().body(()).unwrap();
@@ -694,7 +701,7 @@ mod tests {
     fn validate_ws_upgrade_accepts_edge_extension_origin() {
         let req = ws_http::Request::builder()
             .uri("http://localhost/bridge?token=secret")
-            .header("origin", "edge-extension://abcdef123456")
+            .header("origin", "edge-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb")
             .body(())
             .unwrap();
         let resp = ws_http::Response::builder().body(()).unwrap();
