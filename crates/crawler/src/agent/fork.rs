@@ -977,7 +977,7 @@ mod tests {
             .with_child_event_sender(tx)
             .with_child_control_registry(registry.clone());
         let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            tokio::time::sleep(Duration::from_mins(1)).await;
             Some(Vec::new())
         });
         agent
