@@ -664,9 +664,7 @@ mod tests {
                 scope: crate::CrawlScope::SinglePage {
                     url: "https://example.com".to_string(),
                 },
-                success_criteria: None,
                 max_steps: None,
-                deadline_secs: None,
                 page_index: None,
             }))
             .await

@@ -35,9 +35,7 @@ impl ToolEffect {
 pub struct CrawlTask {
     pub objective: String,
     pub scope: CrawlScope,
-    pub success_criteria: Option<String>,
     pub max_steps: Option<usize>,
-    pub deadline_secs: Option<u64>,
     /// Set by the fork supervisor once a page is allocated; never provided
     /// by the LLM.
     pub page_index: Option<usize>,
