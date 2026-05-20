@@ -44,7 +44,6 @@ impl CrawlerAgent {
     }
 
     pub fn set_shared_bridge(&mut self, bridge: SharedBridge) {
-        eprintln!("[acrawl] set_shared_bridge: clearing browser, setting extension bridge");
         self.browser = None;
         self.shared_bridge = Some(bridge);
     }
@@ -54,7 +53,6 @@ impl CrawlerAgent {
     }
 
     pub fn set_extension_mode(&mut self, active: bool) {
-        eprintln!("[acrawl] set_extension_mode({active}), clearing browser context");
         self.extension_mode = active;
         if active {
             self.browser = None;
@@ -73,7 +71,6 @@ impl CrawlerAgent {
                      Run /extension and wait for the browser to connect.",
                 )
             })?;
-            eprintln!("[acrawl] ensure_browser: extension mode — using extension bridge");
             let session = BrowserSession::from_bridge(bridge);
             self.browser = Some(session.browser);
             self.shared_bridge = Some(session.shared_bridge);
@@ -81,14 +78,12 @@ impl CrawlerAgent {
         }
 
         if let Some(bridge) = self.shared_bridge.clone() {
-            eprintln!("[acrawl] ensure_browser: using pre-set shared bridge");
             let session = BrowserSession::from_bridge(bridge);
             self.browser = Some(session.browser);
             self.shared_bridge = Some(session.shared_bridge);
             return Ok(());
         }
 
-        eprintln!("[acrawl] ensure_browser: launching CloakBrowser");
         let session = BrowserSession::launch_cloakbrowser().await?;
         self.browser = Some(session.browser);
         self.shared_bridge = Some(session.shared_bridge);
