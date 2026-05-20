@@ -170,8 +170,6 @@ impl ChildTabPanel {
                 let tab = &mut self.tabs[idx];
                 tab.step = *step;
                 tab.max_steps = *max_steps;
-                tab.entries
-                    .push(TranscriptEntry::Status(format!("Step {step}/{max_steps}")));
             }
             crawler::ChildEventKind::PauseRequested { reason } => {
                 self.tabs[idx].status = ChildTabStatus::Paused {
@@ -491,15 +489,12 @@ mod tests {
     #[test]
     fn test_bounded_storage_cap() {
         let mut panel = ChildTabPanel::default();
-        // Push more than 1000 entries via StepStarted events
+        // Push more than 1000 entries via TextDelta events (one line each)
         for i in 0..1100u32 {
             panel.apply_event(
                 "child-1",
                 "goal",
-                &crawler::ChildEventKind::StepStarted {
-                    step: i as usize,
-                    max_steps: 1100,
-                },
+                &crawler::ChildEventKind::TextDelta(format!("line {i}\n")),
             );
         }
         let tab = &panel.tabs[0];
