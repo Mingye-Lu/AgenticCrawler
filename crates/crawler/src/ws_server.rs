@@ -40,12 +40,9 @@ fn try_bind_with_retry(addr: SocketAddr) -> std::io::Result<TcpListener> {
     match bind_with_reuse(addr) {
         Ok(listener) => Ok(listener),
         Err(e) if is_port_conflict(&e) => {
-            if kill_stale_bridge_process(addr.port()) {
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                bind_with_reuse(addr)
-            } else {
-                Err(e)
-            }
+            clean_stale_bridge_file(addr.port());
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            bind_with_reuse(addr)
         }
         Err(e) => Err(e),
     }
@@ -58,33 +55,17 @@ fn is_port_conflict(e: &std::io::Error) -> bool {
     )
 }
 
-fn kill_stale_bridge_process(expected_port: u16) -> bool {
+fn clean_stale_bridge_file(expected_port: u16) {
     let bridge_file = config_home_dir().join("bridge.json");
     let Ok(content) = std::fs::read_to_string(&bridge_file) else {
-        return false;
+        return;
     };
     let Ok(info) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
+        return;
     };
-    let Some(port) = info["port"].as_u64() else {
-        return false;
-    };
-    if port != u64::from(expected_port) {
-        return false;
+    if info["port"].as_u64() == Some(u64::from(expected_port)) {
+        let _ = std::fs::remove_file(&bridge_file);
     }
-    let Some(pid) = info["pid"].as_u64() else {
-        return false;
-    };
-    let output = if cfg!(target_os = "windows") {
-        std::process::Command::new("taskkill")
-            .args(["/F", "/PID", &pid.to_string()])
-            .output()
-    } else {
-        std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .output()
-    };
-    output.is_ok_and(|o| o.status.success())
 }
 
 /// A command sent from the crawler to the Chrome extension via WebSocket.
