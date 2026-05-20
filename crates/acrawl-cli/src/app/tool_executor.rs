@@ -53,7 +53,7 @@ impl CliToolExecutor {
     }
 
     pub(crate) async fn export_current_state(&mut self) -> Option<crawler::BrowserState> {
-        self.agent.export_browser_state_any().await
+        self.agent.export_browser_state().await
     }
 
     pub(crate) async fn restore_state_to_bridge(&mut self, state: &crawler::BrowserState) {

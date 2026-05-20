@@ -54,11 +54,14 @@ async fn respond_to_command(
 
 #[tokio::test]
 async fn extension_bridge_e2e_tool_routes_through_websocket() {
-    let (server, mut ws) = start_server_and_connect().await;
+    let (mut server, mut ws) = start_server_and_connect().await;
 
-    // Wait for connection to register
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert!(server.is_client_connected());
+    assert!(
+        server
+            .wait_for_connection(std::time::Duration::from_secs(5))
+            .await,
+        "extension should connect within timeout"
+    );
 
     // Create ExtensionBridge from the server's command sender
     let sender = server.command_sender();

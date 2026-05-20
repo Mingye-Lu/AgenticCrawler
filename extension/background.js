@@ -43,13 +43,11 @@ async function getSettings() {
   });
 }
 
-let connectingPromise = null;
-
 async function getConnectionStatus() {
   const { token } = await getSettings();
   return {
     connected: wsConnected,
-    connecting: Boolean(connectingPromise || (ws && ws.readyState === WebSocket.CONNECTING)),
+    connecting: Boolean(ws && ws.readyState === WebSocket.CONNECTING),
     configured: Boolean(token),
   };
 }
@@ -509,7 +507,5 @@ chrome.runtime.onInstalled.addListener(() => {
 
 (async () => {
   await restoreState();
-  connectingPromise = connect();
-  await connectingPromise;
-  connectingPromise = null;
+  await connect();
 })();

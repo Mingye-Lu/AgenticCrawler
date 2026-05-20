@@ -135,11 +135,7 @@ impl CrawlerAgent {
         Ok(())
     }
 
-    pub async fn export_browser_state_any(&self) -> Option<BrowserState> {
-        self.export_browser_state().await
-    }
-
-    async fn export_browser_state(&self) -> Option<BrowserState> {
+    pub async fn export_browser_state(&self) -> Option<BrowserState> {
         let state_result = if let Some(browser) = self.browser.as_ref() {
             let mut browser = browser.clone();
             let mut bridge = browser.acquire_bridge().await.ok()?;

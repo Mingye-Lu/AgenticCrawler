@@ -443,16 +443,17 @@ async fn handle_text_frame(
         Message,
     >,
 ) {
-    // Keepalive ping → respond with pong
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
-        if val.get("type").and_then(|v| v.as_str()) == Some("ping") {
-            let pong = serde_json::json!({"type": "pong"}).to_string();
-            let _ = sink.send(Message::Text(pong.into())).await;
-            return;
-        }
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(text) else {
+        return;
+    };
+
+    if val.get("type").and_then(|v| v.as_str()) == Some("ping") {
+        let pong = serde_json::json!({"type": "pong"}).to_string();
+        let _ = sink.send(Message::Text(pong.into())).await;
+        return;
     }
 
-    if let Ok(resp) = serde_json::from_str::<BridgeResponse>(text) {
+    if let Ok(resp) = serde_json::from_value::<BridgeResponse>(val) {
         if let Some(tx) = pending.remove(&resp.id) {
             let _ = tx.send(resp);
         }

@@ -118,7 +118,6 @@ pub(crate) struct LiveCli {
     ws_bridge_server: Option<crawler::WsBridgeServer>,
     pending_extension_state: Option<crawler::BrowserState>,
     extension_bridge_initialized: bool,
-    extension_shared_bridge: Option<crawler::SharedBridge>,
 }
 
 #[derive(Clone)]
@@ -206,7 +205,6 @@ impl LiveCli {
             ws_bridge_server: None,
             pending_extension_state: None,
             extension_bridge_initialized: false,
-            extension_shared_bridge: None,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -266,7 +264,6 @@ impl LiveCli {
             ws_bridge_server: None,
             pending_extension_state: None,
             extension_bridge_initialized: false,
-            extension_shared_bridge: None,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
@@ -502,7 +499,7 @@ impl LiveCli {
                 false
             }
             SlashCommand::Headed => {
-                if self.extension_bridge_initialized {
+                if self.is_extension_mode_active() {
                     println!("Browser mode\n  Ignored          extension mode is active (browser is already visible)");
                     return Ok(false);
                 }
@@ -515,7 +512,7 @@ impl LiveCli {
                 false
             }
             SlashCommand::Headless => {
-                if self.extension_bridge_initialized {
+                if self.is_extension_mode_active() {
                     println!("Browser mode\n  Ignored          extension mode is active (browser is already visible)");
                     return Ok(false);
                 }
@@ -632,9 +629,8 @@ impl LiveCli {
     pub(crate) fn activate_extension_bridge(&mut self, shared: crawler::SharedBridge) {
         self.runtime
             .tool_executor_mut()
-            .set_extension_bridge(shared.clone());
+            .set_extension_bridge(shared);
         self.runtime.tool_executor_mut().set_extension_mode(true);
-        self.extension_shared_bridge = Some(shared);
         self.extension_bridge_initialized = true;
         let _ = runtime::update_settings(|s| {
             s.browser_backend = Some("extension".to_string());
@@ -661,7 +657,6 @@ impl LiveCli {
         self.ws_bridge_server = None;
         self.pending_extension_state = None;
         self.extension_bridge_initialized = false;
-        self.extension_shared_bridge = None;
         self.runtime.tool_executor_mut().set_extension_mode(false);
         self.reset_browser();
 
@@ -699,7 +694,6 @@ impl LiveCli {
         self.ws_bridge_server = None;
         self.pending_extension_state = None;
         self.extension_bridge_initialized = false;
-        self.extension_shared_bridge = None;
         self.runtime.tool_executor_mut().clear_extension_bridge();
         self.runtime.tool_executor_mut().set_extension_mode(false);
 
@@ -742,7 +736,6 @@ impl LiveCli {
 
         if self.ws_bridge_server.is_some() {
             self.ws_bridge_server = None;
-            self.extension_shared_bridge = None;
             self.runtime.tool_executor_mut().clear_extension_bridge();
         }
         self.pending_extension_state = None;
