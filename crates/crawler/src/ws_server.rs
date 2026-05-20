@@ -304,7 +304,7 @@ async fn handle_incoming(
     let preview = String::from_utf8_lossy(&buf[..n]);
 
     if preview.starts_with("GET /health") && !preview.contains("Upgrade:") {
-        serve_health(stream, state.port, &state.token).await;
+        serve_health(stream, state.port).await;
         return;
     }
 
@@ -484,7 +484,7 @@ async fn handle_text_frame(
 // Raw HTTP helpers (no framework)
 // ---------------------------------------------------------------------------
 
-async fn serve_health(mut stream: TcpStream, port: u16, token: &str) {
+async fn serve_health(mut stream: TcpStream, port: u16) {
     let mut drain = vec![0u8; 4096];
     let _ = stream.read(&mut drain).await;
 
@@ -492,12 +492,11 @@ async fn serve_health(mut stream: TcpStream, port: u16, token: &str) {
         "service": "acrawl",
         "version": env!("CARGO_PKG_VERSION"),
         "port": port,
-        "token": token,
     })
     .to_string();
 
     let resp = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
         body
     );

@@ -59,19 +59,7 @@ async function getConnectionStatus() {
 }
 
 async function connect(timeoutMs = 0) {
-  const { port } = await getSettings();
-  let { token } = await getSettings();
-
-  try {
-    const resp = await fetch(`http://127.0.0.1:${port}/health`);
-    if (resp.ok) {
-      const health = await resp.json();
-      if (health.token) {
-        token = health.token;
-        chrome.storage.local.set({ token });
-      }
-    }
-  } catch (_) {}
+  const { port, token } = await getSettings();
 
   if (!token) {
     disconnect({ suppressReconnect: true, unconfigured: true });
