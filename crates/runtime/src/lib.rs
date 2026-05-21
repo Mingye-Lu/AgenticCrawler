@@ -57,10 +57,7 @@ pub use oauth::{
     PkceChallengeMethod, PkceCodePair,
 };
 pub use observer::RuntimeObserver;
-pub use prompt::{
-    load_system_prompt, prepend_bullets, ProjectContext, PromptBuildError, SystemPromptBuilder,
-    FRONTIER_MODEL_NAME, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-};
+pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use settings::{
     config_home_dir, load_settings, save_settings, settings_file_path,

@@ -21,13 +21,13 @@ pub(crate) static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::n
 
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
 use crawler::mvp_tool_specs;
-use runtime::{load_system_prompt, Session};
+use runtime::Session;
 
 use app::{
     initial_model_from_credentials, run_auth_cli, run_repl, run_resume_command, AllowedToolSet,
     LiveCli,
 };
-use format::{render_version_report, DEFAULT_DATE, VERSION};
+use format::{render_version_report, VERSION};
 
 pub(crate) use app::Provider;
 
@@ -77,7 +77,7 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
     match parse_args(&args)? {
-        CliAction::PrintSystemPrompt { cwd, date } => print_system_prompt(cwd, date),
+        CliAction::PrintSystemPrompt => print_system_prompt(),
         CliAction::Version => print_version(),
         CliAction::ResumeSession {
             session_path,
@@ -115,10 +115,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliAction {
-    PrintSystemPrompt {
-        cwd: PathBuf,
-        date: String,
-    },
+    PrintSystemPrompt,
     Version,
     ResumeSession {
         session_path: PathBuf,
@@ -365,29 +362,10 @@ fn normalize_bool_flag(flag: &str, value: &str) -> Result<bool, String> {
 }
 
 fn parse_system_prompt_args(args: &[String]) -> Result<CliAction, String> {
-    let mut cwd = env::current_dir().map_err(|error| error.to_string())?;
-    let mut date = DEFAULT_DATE.to_string();
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--cwd" => {
-                let value = args
-                    .get(index + 1)
-                    .ok_or_else(|| "missing value for --cwd".to_string())?;
-                cwd = PathBuf::from(value);
-                index += 2;
-            }
-            "--date" => {
-                let value = args
-                    .get(index + 1)
-                    .ok_or_else(|| "missing value for --date".to_string())?;
-                date.clone_from(value);
-                index += 2;
-            }
-            other => return Err(format!("unknown system-prompt option: {other}")),
-        }
+    if let Some(other) = args.first() {
+        return Err(format!("unknown system-prompt option: {other}"));
     }
-    Ok(CliAction::PrintSystemPrompt { cwd, date })
+    Ok(CliAction::PrintSystemPrompt)
 }
 
 fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
@@ -460,14 +438,11 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
     })
 }
 
-fn print_system_prompt(cwd: PathBuf, date: String) {
-    match load_system_prompt(cwd, date, env::consts::OS, "unknown") {
-        Ok(sections) => println!("{}", sections.join("\n\n")),
-        Err(error) => {
-            eprintln!("failed to build system prompt: {error}");
-            std::process::exit(1);
-        }
-    }
+fn print_system_prompt() {
+    println!(
+        "{}",
+        crawler::build_system_prompt(&mvp_tool_specs()).join("\n\n")
+    );
 }
 
 fn print_version() {
@@ -657,10 +632,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Inspect or maintain a saved session without entering the REPL"
     )?;
-    writeln!(
-        out,
-        "  acrawl system-prompt [--cwd PATH] [--date YYYY-MM-DD]"
-    )?;
+    writeln!(out, "  acrawl system-prompt")?;
     writeln!(out, "  acrawl auth [anthropic|openai|other]")?;
     writeln!(
         out,
@@ -908,24 +880,6 @@ mod tests {
         let error = parse_args(&["--allowedTools".to_string(), "teleport".to_string()])
             .expect_err("tool should be rejected");
         assert!(error.contains("unsupported tool in --allowedTools: teleport"));
-    }
-
-    #[test]
-    fn parses_system_prompt_options() {
-        let args = vec![
-            "system-prompt".to_string(),
-            "--cwd".to_string(),
-            "/tmp/project".to_string(),
-            "--date".to_string(),
-            "2026-04-01".to_string(),
-        ];
-        assert_eq!(
-            parse_args(&args).expect("args should parse"),
-            CliAction::PrintSystemPrompt {
-                cwd: PathBuf::from("/tmp/project"),
-                date: "2026-04-01".to_string(),
-            }
-        );
     }
 
     #[test]

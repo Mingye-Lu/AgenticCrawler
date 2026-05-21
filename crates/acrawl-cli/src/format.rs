@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use commands::render_slash_command_help;
-use runtime::{ConfigLoader, ContentBlock, MessageRole, ProjectContext, Session, TokenUsage};
+use runtime::{ConfigLoader, ContentBlock, MessageRole, Session, TokenUsage};
 
 pub(crate) const DEFAULT_DATE: &str = "2026-03-31";
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -139,6 +139,24 @@ fn find_git_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(PathBuf::from(path))
 }
 
+fn read_git_status(cwd: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["--no-optional-locks", "status", "--short", "--branch"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 pub(crate) fn status_context(
     session_path: Option<&Path>,
 ) -> Result<StatusContext, Box<dyn std::error::Error>> {
@@ -146,9 +164,8 @@ pub(crate) fn status_context(
     let loader = ConfigLoader::default_for();
     let discovered_config_files = loader.discover().len();
     let runtime_config = loader.load()?;
-    let project_context = ProjectContext::discover_with_git(&cwd, DEFAULT_DATE)?;
-    let (project_root, git_branch) =
-        parse_git_status_metadata(project_context.git_status.as_deref());
+    let git_status = read_git_status(&cwd);
+    let (project_root, git_branch) = parse_git_status_metadata(git_status.as_deref());
     Ok(StatusContext {
         cwd,
         session_path: session_path.map(Path::to_path_buf),
