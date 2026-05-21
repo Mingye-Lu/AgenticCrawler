@@ -3,7 +3,6 @@ mod auth;
 mod display_width;
 mod error;
 mod format;
-mod init;
 mod markdown;
 mod output_sink;
 mod self_update;
@@ -94,10 +93,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .run_turn_with_output(&prompt, output_format)?;
         }
         CliAction::Auth { provider } => run_auth_cli(provider.as_deref())?,
-        CliAction::Init => {
-            let cwd = env::current_dir()?;
-            println!("{}", crate::init::initialize_repo(&cwd)?.render());
-        }
         CliAction::Update => {
             let rt = TOKIO_RUNTIME.get().expect("tokio runtime not initialized");
             rt.block_on(self_update::run_self_update())?;
@@ -138,7 +133,6 @@ enum CliAction {
     Auth {
         provider: Option<String>,
     },
-    Init,
     Update,
     Uninstall {
         purge: bool,
@@ -292,7 +286,6 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                     .to_string(),
             )
         }
-        "init" => Ok(CliAction::Init),
         "update" => Ok(CliAction::Update),
         "uninstall" => Ok(CliAction::Uninstall {
             purge: rest.iter().any(|a| a == "--purge"),
@@ -673,7 +666,6 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Configure credentials for a provider interactively"
     )?;
-    writeln!(out, "  acrawl init")?;
     writeln!(out, "  acrawl update")?;
     writeln!(out, "  acrawl install-browser")?;
     writeln!(
@@ -738,7 +730,6 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "  acrawl --resume session.json /status /compact /export notes.txt"
     )?;
-    writeln!(out, "  acrawl init")?;
     Ok(())
 }
 
@@ -938,14 +929,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_init_subcommand() {
-        assert_eq!(
-            parse_args(&["init".to_string()]).expect("init"),
-            CliAction::Init
-        );
-    }
-
-    #[test]
     fn login_and_logout_subcommands_return_error() {
         let login_err = parse_args(&["login".to_string()]).unwrap_err();
         assert!(login_err.contains("removed"), "{login_err}");
@@ -1062,14 +1045,6 @@ mod tests {
     }
 
     #[test]
-    fn init_help_mentions_direct_subcommand() {
-        let mut help = Vec::new();
-        print_help_to(&mut help).expect("help should render");
-        let help = String::from_utf8(help).expect("help should be utf8");
-        assert!(help.contains("acrawl init"));
-    }
-
-    #[test]
     fn clear_command_requires_explicit_confirmation_flag() {
         assert_eq!(
             SlashCommand::parse("/clear"),
@@ -1098,13 +1073,6 @@ mod tests {
             })
         );
         assert_eq!(SlashCommand::parse("/debug"), Some(SlashCommand::Debug));
-    }
-
-    #[test]
-    fn init_template_mentions_detected_rust_workspace() {
-        let rendered = crate::init::render_init_agents_md(std::path::Path::new("."));
-        assert!(rendered.contains("# AGENTS.md"));
-        assert!(rendered.contains("cargo clippy --workspace --all-targets -- -D warnings"));
     }
 
     #[test]
