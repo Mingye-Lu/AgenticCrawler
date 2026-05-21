@@ -82,13 +82,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          sparse-checkout: CHANGELOG.md
+          sparse-checkout: |
+            CHANGELOG.md
+            extension
           sparse-checkout-cone-mode: false
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Build extension zip
+        working-directory: extension
+        run: |
+          zip -r ../acrawl-extension.zip \
+            manifest.json \
+            background.js \
+            options.html \
+            options.js \
+            icons \
+            commands
 
       - name: Collect binaries
         run: |
@@ -98,10 +111,11 @@ jobs:
           cp artifacts/acrawl-macos-x64/acrawl-macos-x64 release/
           cp artifacts/acrawl-macos-arm64/acrawl-macos-arm64 release/
           cp artifacts/acrawl-windows-x64.exe/acrawl-windows-x64.exe release/
+          cp acrawl-extension.zip release/
 
       - name: Generate checksums
         working-directory: release
-        run: sha256sum acrawl-linux-x64 acrawl-linux-arm64 acrawl-macos-x64 acrawl-macos-arm64 acrawl-windows-x64.exe > checksums.sha256
+        run: sha256sum acrawl-linux-x64 acrawl-linux-arm64 acrawl-macos-x64 acrawl-macos-arm64 acrawl-windows-x64.exe acrawl-extension.zip > checksums.sha256
 
       - name: Extract release notes from CHANGELOG
         id: notes
@@ -136,4 +150,5 @@ jobs:
             release/acrawl-macos-x64
             release/acrawl-macos-arm64
             release/acrawl-windows-x64.exe
+            release/acrawl-extension.zip
             release/checksums.sha256
