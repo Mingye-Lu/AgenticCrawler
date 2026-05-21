@@ -179,6 +179,11 @@ fn stdio_server_handles_initialize_list_and_tool_call() {
     assert_eq!(tool_call["id"], 3);
     assert_eq!(tool_call["result"]["isError"], false);
     assert_eq!(tool_call["result"]["structuredContent"]["tool_count"], 21);
+    let text = tool_call["result"]["content"][0]["text"]
+        .as_str()
+        .expect("tool text payload");
+    assert!(text.contains("Structured result:"));
+    assert!(text.contains("\"navigate\""));
 
     let builtin_names = builtin_tool_names(&tool_call);
     assert!(builtin_names.contains(&"navigate"));

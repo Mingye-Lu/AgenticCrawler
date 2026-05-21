@@ -363,25 +363,29 @@ fn build_run_goal_success_response(
     request: &RunGoalRequest,
     result: crawler::CrawlResult,
 ) -> Value {
+    let structured = json!({
+        "summary": result.summary,
+        "extracted_data": result.extracted_data,
+        "steps_executed": result.steps_executed,
+        "model_used": request.model,
+        "allowed_tools": request.allowed_tools,
+        "goal": request.goal,
+    });
     json!({
         "content": [
             {
                 "type": "text",
-                "text": format!(
-                    "Crawl completed in {} steps.\n\n{}",
-                    result.steps_executed,
-                    result.summary
+                "text": render_text_with_json(
+                    &format!(
+                        "Crawl completed in {} steps.\n\n{}",
+                        result.steps_executed,
+                        result.summary
+                    ),
+                    &structured,
                 )
             }
         ],
-        "structuredContent": {
-            "summary": result.summary,
-            "extracted_data": result.extracted_data,
-            "steps_executed": result.steps_executed,
-            "model_used": request.model,
-            "allowed_tools": request.allowed_tools,
-            "goal": request.goal,
-        },
+        "structuredContent": structured,
         "isError": false,
     })
 }
@@ -396,6 +400,11 @@ fn build_run_goal_failure_response(message: &str) -> Value {
         ],
         "isError": true,
     })
+}
+
+fn render_text_with_json(summary: &str, payload: &Value) -> String {
+    let pretty = serde_json::to_string_pretty(payload).unwrap_or_else(|_| payload.to_string());
+    format!("{summary}\n\nStructured result:\n```json\n{pretty}\n```")
 }
 
 fn execute_run_goal<E: GoalExecutor>(executor: &E, arguments: &Value) -> RunGoalOutcome {
@@ -780,20 +789,25 @@ fn handle_list_builtin_tools(id: Option<Value>) {
         })
         .collect();
 
+    let structured = json!({
+        "tool_count": tools.len(),
+        "tools": tools,
+    });
+
     let result = json!({
         "content": [
             {
                 "type": "text",
-                "text": format!(
-                    "acrawl provides {} built-in crawl tools (informational only - not registered as callable MCP tools).",
-                    tools.len()
+                "text": render_text_with_json(
+                    &format!(
+                        "acrawl provides {} built-in crawl tools (informational only - not registered as callable MCP tools).",
+                        structured["tool_count"].as_u64().unwrap_or(0)
+                    ),
+                    &structured,
                 )
             }
         ],
-        "structuredContent": {
-            "tool_count": tools.len(),
-            "tools": tools,
-        },
+        "structuredContent": structured,
         "isError": false,
     });
     send_response(&JsonRpcResponse {
@@ -1159,6 +1173,14 @@ mod tests {
             result["structuredContent"]["allowed_tools"],
             json!(["navigate", "read_content"])
         );
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .expect("text payload")
+            .contains("Structured result:"));
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .expect("text payload")
+            .contains("\"extracted_data\""));
     }
 
     #[test]
@@ -1219,6 +1241,15 @@ mod tests {
         let first_section = prompt.first().expect("prompt should have first section");
         assert!(first_section.contains("**navigate**"));
         assert!(!first_section.contains("**click**"));
+    }
+
+    #[test]
+    fn render_text_with_json_embeds_pretty_payload() {
+        let rendered = render_text_with_json("Summary line", &json!({"key": 1}));
+        assert!(rendered.contains("Summary line"));
+        assert!(rendered.contains("Structured result:"));
+        assert!(rendered.contains("```json"));
+        assert!(rendered.contains("\"key\": 1"));
     }
 
     #[test]
