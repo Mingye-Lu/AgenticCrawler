@@ -1,30 +1,18 @@
-use std::env;
 use std::sync::Arc;
 
-use super::{AllowedToolSet, CliError, CliToolExecutor, LlmRuntimeClient, DEFAULT_DATE};
+use super::{AllowedToolSet, CliError, CliToolExecutor, LlmRuntimeClient};
 use crawler::{mvp_tool_specs, SharedApiClient};
 use runtime::{
-    load_settings, load_system_prompt, settings_get_max_steps, ConfigLoader, ControlState,
-    ConversationRuntime, RuntimeObserver, Session,
+    load_settings, settings_get_max_steps, ConfigLoader, ControlState, ConversationRuntime,
+    RuntimeObserver, Session,
 };
 
-pub(super) fn build_system_prompt() -> Result<Vec<String>, CliError> {
-    let mut sections = crawler::build_system_prompt(&mvp_tool_specs());
-    sections.extend(load_system_prompt(
-        env::current_dir()?,
-        DEFAULT_DATE,
-        env::consts::OS,
-        "unknown",
-    )?);
-    Ok(sections)
+pub(super) fn build_system_prompt() -> Vec<String> {
+    crawler::build_system_prompt(&mvp_tool_specs())
 }
 
 pub(super) fn build_runtime_feature_config() -> Result<runtime::RuntimeFeatureConfig, CliError> {
-    let cwd = env::current_dir()?;
-    Ok(ConfigLoader::default_for(cwd)
-        .load()?
-        .feature_config()
-        .clone())
+    Ok(ConfigLoader::default_for().load()?.feature_config().clone())
 }
 
 pub(super) fn build_runtime(

@@ -1,7 +1,8 @@
-use crate::config::{McpServerConfig, ScopedMcpServerConfig};
+use crate::config::McpServerConfig;
 
 const CLAUDEAI_SERVER_PREFIX: &str = "claude.ai ";
-const CCR_PROXY_PATH_MARKERS: [&str; 2] = ["/v2/session_ingress/shttp/mcp/", "/v2/ccr-sessions/"];
+const ANTHROPIC_MCP_PROXY_PATH_MARKERS: [&str; 2] =
+    ["/v2/session_ingress/shttp/mcp/", "/v2/ccr-sessions/"];
 
 #[must_use]
 pub fn normalize_name_for_mcp(name: &str) -> String {
@@ -37,8 +38,8 @@ pub fn mcp_tool_name(server_name: &str, tool_name: &str) -> String {
 }
 
 #[must_use]
-pub fn unwrap_ccr_proxy_url(url: &str) -> String {
-    if !CCR_PROXY_PATH_MARKERS
+pub fn unwrap_proxied_mcp_url(url: &str) -> String {
+    if !ANTHROPIC_MCP_PROXY_PATH_MARKERS
         .iter()
         .any(|marker| url.contains(marker))
     {
@@ -70,19 +71,19 @@ pub fn mcp_server_signature(config: &McpServerConfig) -> Option<String> {
             Some(format!("stdio:{}", render_command_signature(&command)))
         }
         McpServerConfig::Sse(config) | McpServerConfig::Http(config) => {
-            Some(format!("url:{}", unwrap_ccr_proxy_url(&config.url)))
+            Some(format!("url:{}", unwrap_proxied_mcp_url(&config.url)))
         }
-        McpServerConfig::Ws(config) => Some(format!("url:{}", unwrap_ccr_proxy_url(&config.url))),
+        McpServerConfig::Ws(config) => Some(format!("url:{}", unwrap_proxied_mcp_url(&config.url))),
         McpServerConfig::ClaudeAiProxy(config) => {
-            Some(format!("url:{}", unwrap_ccr_proxy_url(&config.url)))
+            Some(format!("url:{}", unwrap_proxied_mcp_url(&config.url)))
         }
         McpServerConfig::Sdk(_) => None,
     }
 }
 
 #[must_use]
-pub fn scoped_mcp_config_hash(config: &ScopedMcpServerConfig) -> String {
-    let rendered = match &config.config {
+pub fn scoped_mcp_config_hash(config: &McpServerConfig) -> String {
+    let rendered = match config {
         McpServerConfig::Stdio(stdio) => format!(
             "stdio|{}|{}|{}",
             stdio.command,
@@ -206,13 +207,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::config::{
-        ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
-        McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
+        McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig, McpStdioServerConfig,
+        McpWebSocketServerConfig,
     };
 
     use super::{
         mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
-        scoped_mcp_config_hash, unwrap_ccr_proxy_url,
+        scoped_mcp_config_hash, unwrap_proxied_mcp_url,
     };
 
     #[test]
@@ -230,11 +231,14 @@ mod tests {
     }
 
     #[test]
-    fn unwraps_ccr_proxy_urls_for_signature_matching() {
+    fn unwraps_proxied_mcp_urls_for_signature_matching() {
         let wrapped = "https://api.anthropic.com/v2/session_ingress/shttp/mcp/123?mcp_url=https%3A%2F%2Fvendor.example%2Fmcp&other=1";
-        assert_eq!(unwrap_ccr_proxy_url(wrapped), "https://vendor.example/mcp");
         assert_eq!(
-            unwrap_ccr_proxy_url("https://vendor.example/mcp"),
+            unwrap_proxied_mcp_url(wrapped),
+            "https://vendor.example/mcp"
+        );
+        assert_eq!(
+            unwrap_proxied_mcp_url("https://vendor.example/mcp"),
             "https://vendor.example/mcp"
         );
     }
@@ -263,37 +267,32 @@ mod tests {
     }
 
     #[test]
-    fn scoped_hash_ignores_scope_but_tracks_config_content() {
+    fn config_hash_tracks_config_content() {
         let base_config = McpServerConfig::Http(McpRemoteServerConfig {
             url: "https://vendor.example/mcp".to_string(),
             headers: BTreeMap::from([("Authorization".to_string(), "Bearer token".to_string())]),
             headers_helper: Some("helper.sh".to_string()),
             oauth: None,
         });
-        let user = ScopedMcpServerConfig {
-            scope: ConfigSource::User,
-            config: base_config.clone(),
-        };
-        let local = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: base_config,
-        };
+        let same_config = McpServerConfig::Http(McpRemoteServerConfig {
+            url: "https://vendor.example/mcp".to_string(),
+            headers: BTreeMap::from([("Authorization".to_string(), "Bearer token".to_string())]),
+            headers_helper: Some("helper.sh".to_string()),
+            oauth: None,
+        });
         assert_eq!(
-            scoped_mcp_config_hash(&user),
-            scoped_mcp_config_hash(&local)
+            scoped_mcp_config_hash(&base_config),
+            scoped_mcp_config_hash(&same_config)
         );
 
-        let changed = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: McpServerConfig::Http(McpRemoteServerConfig {
-                url: "https://vendor.example/v2/mcp".to_string(),
-                headers: BTreeMap::new(),
-                headers_helper: None,
-                oauth: None,
-            }),
-        };
+        let changed = McpServerConfig::Http(McpRemoteServerConfig {
+            url: "https://vendor.example/v2/mcp".to_string(),
+            headers: BTreeMap::new(),
+            headers_helper: None,
+            oauth: None,
+        });
         assert_ne!(
-            scoped_mcp_config_hash(&user),
+            scoped_mcp_config_hash(&base_config),
             scoped_mcp_config_hash(&changed)
         );
     }
@@ -309,10 +308,10 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_ccr_proxy_url_decodes_plus_signs_and_percent_encoding() {
+    fn unwrap_proxied_mcp_url_decodes_plus_signs_and_percent_encoding() {
         let url = "https://api.anthropic.com/v2/ccr-sessions/s1?mcp_url=https%3A%2F%2Fexample.com%2Fpath+with+spaces";
         assert_eq!(
-            unwrap_ccr_proxy_url(url),
+            unwrap_proxied_mcp_url(url),
             "https://example.com/path with spaces"
         );
     }

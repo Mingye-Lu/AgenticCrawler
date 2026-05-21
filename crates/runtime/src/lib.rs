@@ -1,4 +1,3 @@
-mod bootstrap;
 mod compact;
 mod config;
 mod control;
@@ -8,15 +7,12 @@ mod mcp;
 mod oauth;
 pub mod observer;
 mod prompt;
-mod remote;
-pub mod sandbox;
 mod session;
 pub mod settings;
 mod summary_compression;
 pub mod update_check;
 mod usage;
 
-pub use bootstrap::{BootstrapPhase, BootstrapPlan};
 pub use compact::{
     compact_session, estimate_session_tokens, format_compact_summary,
     get_compact_continuation_message, should_compact, CompactionConfig, CompactionResult,
@@ -25,7 +21,7 @@ pub use config::{
     ConfigEntry, ConfigError, ConfigLoader, ConfigSource, McpClaudeAiProxyServerConfig,
     McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig,
     McpServerConfig, McpStdioServerConfig, McpTransport, McpWebSocketServerConfig, OAuthConfig,
-    RuntimeConfig, RuntimeFeatureConfig, ScopedMcpServerConfig, ACRAWL_SETTINGS_SCHEMA_NAME,
+    RuntimeConfig, RuntimeFeatureConfig, ACRAWL_SETTINGS_SCHEMA_NAME,
 };
 pub use control::ControlState;
 pub use conversation::{
@@ -38,7 +34,7 @@ pub use summary_compression::{
 
 pub use mcp::{
     mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
-    scoped_mcp_config_hash, unwrap_ccr_proxy_url,
+    scoped_mcp_config_hash, unwrap_proxied_mcp_url,
 };
 pub use mcp::{spawn_mcp_stdio_process, McpServerManager, McpStdioProcess};
 pub use mcp::{
@@ -61,15 +57,7 @@ pub use oauth::{
     PkceChallengeMethod, PkceCodePair,
 };
 pub use observer::RuntimeObserver;
-pub use prompt::{
-    load_system_prompt, prepend_bullets, ProjectContext, PromptBuildError, SystemPromptBuilder,
-    FRONTIER_MODEL_NAME, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-};
-pub use remote::{
-    inherited_upstream_proxy_env, no_proxy_list, read_token, upstream_proxy_ws_url,
-    RemoteSessionContext, UpstreamProxyBootstrap, UpstreamProxyState, DEFAULT_REMOTE_BASE_URL,
-    DEFAULT_SESSION_TOKEN_PATH, DEFAULT_SYSTEM_CA_BUNDLE, NO_PROXY_HOSTS, UPSTREAM_PROXY_ENV_KEYS,
-};
+pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use settings::{
     config_home_dir, load_settings, save_settings, settings_file_path,
@@ -80,7 +68,7 @@ pub use settings::{
     settings_get_compaction_prune_protect_tokens, settings_get_fork_child_max_steps,
     settings_get_fork_wait_timeout_secs, settings_get_headless,
     settings_get_max_concurrent_per_parent, settings_get_max_fork_depth, settings_get_max_steps,
-    settings_get_max_total_agents, settings_get_workspace_dir, update_settings, Settings,
+    settings_get_max_total_agents, settings_get_output_dir, update_settings, Settings,
 };
 pub use update_check::{check_for_update, check_for_update_force, UpdateInfo};
 pub use usage::{

@@ -14,10 +14,10 @@ pub use loader::{ConfigLoader, RuntimeConfig};
 pub use mcp_config::{
     McpClaudeAiProxyServerConfig, McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig,
     McpSdkServerConfig, McpServerConfig, McpStdioServerConfig, McpTransport,
-    McpWebSocketServerConfig, ScopedMcpServerConfig,
+    McpWebSocketServerConfig,
 };
 
-use features::{parse_optional_oauth_config, parse_optional_sandbox_config};
+use features::parse_optional_oauth_config;
 use mcp_config::parse_mcp_server_config;
 
 pub const ACRAWL_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
@@ -25,8 +25,6 @@ pub const ACRAWL_SETTINGS_SCHEMA_NAME: &str = "SettingsSchema";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConfigSource {
     User,
-    Project,
-    Local,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

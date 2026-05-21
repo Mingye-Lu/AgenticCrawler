@@ -2,14 +2,14 @@
 
 ## Project
 
-`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 19-tool toolbox (16 browser + 2 agent-control + 1 human intervention). It ships as a single binary with two modes: an interactive Ratatui TUI REPL (requires a TTY) and non-interactive `prompt` (one-shot) / `--resume` (slash-command replay).
+`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 21-tool toolbox (18 browser + 2 agent-control + 1 human intervention). It ships as a single binary with two modes: an interactive Ratatui TUI REPL (requires a TTY) and non-interactive `prompt` (one-shot) / `--resume` (slash-command replay).
 
 ## Commands
 
 ```bash
 cargo build --release                                        # produce ./target/release/acrawl
 cargo test --workspace                                       # run full test suite (~688 tests)
-cargo test -p <crate> <test_name>                            # run a single test (e.g. -p crawler mvp_tool_specs_contains_expected_19_tools)
+cargo test -p <crate> <test_name>                            # run a single test (e.g. -p crawler mvp_tool_specs_contains_expected_21_tools)
 cargo clippy --workspace --all-targets -- -D warnings        # lints must be clean (workspace lints set pedantic = warn)
 cargo fmt --check                                            # format check
 
@@ -26,16 +26,16 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 
 - **acrawl-cli** — binary entry (`src/main.rs`), arg parsing, REPL (`src/tui/`), session management, provider selection. `src/app/` directory owns `LiveCli` and the provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`). `output_sink.rs` bridges runtime events to the UI. `markdown.rs` handles markdown/spinner rendering. `tool_format.rs` formats tool call output.
 - **api** — HTTP + SSE clients for Anthropic (`client.rs`), OpenAI-compatible (`openai.rs`), and Codex OAuth (`codex.rs`). `sse.rs` is the shared streaming frame parser; `types.rs` holds the Anthropic message schema. `provider/registry.rs` and `provider/factory.rs` handle provider discovery and client construction.
-- **runtime** — `ConversationRuntime` (the core turn loop), `RuntimeObserver` trait for event callbacks, `Session` persistence, system-prompt builder, permission model (`PermissionMode` = ReadOnly / WorkspaceWrite / DangerFullAccess), compaction, usage/pricing, OAuth PKCE, `observer.rs` for the observer trait, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
-- **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/memory`, `/init`, `/diff`, `/version`). Knows which commands are safe to replay in `--resume`.
-- **crawler** — the browser tools (16 navigation/extraction + 2 agent-control + 1 human intervention = 19 total), agent loop (`agent.rs`), `FetchRouter` that escalates HTTP→browser, and `PlaywrightBridge` — a child `node` process running an inline JS script (`PLAYWRIGHT_BRIDGE_NODE_SCRIPT` in `playwright.rs`) that speaks newline-delimited JSON over stdio. 2 agent-control tools (`fork`, `wait_for_subagents`) and 1 human intervention tool (`wait_for_human`) live alongside the browser tools, bringing the total to 19. `agent/` subdirectory contains fork/lifecycle logic; `tool_effect.rs` defines the `ToolEffect` enum (Reply/Spawn/Wait/Finish) that tools return. `browser_backend.rs` defines the `BrowserBackend` trait; `extension.rs` implements `ExtensionBridge` (the Chrome extension backend); `ws_server.rs` is the WebSocket bridge server for extension communication. `browser.rs` owns `BrowserContext` which wraps any `SharedBridge` with tab/URL state.
+- **runtime** — `ConversationRuntime` (the core turn loop), `RuntimeObserver` trait for event callbacks, `Session` persistence, system-prompt builder, compaction, usage/pricing, OAuth PKCE, `observer.rs` for the observer trait, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
+- **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/auth`, `/headed`, `/headless`, `/extension`, `/cloakbrowser`, `/debug`, `/version`, `/exit`). Knows which commands are safe to replay in `--resume`.
+- **crawler** — the browser tools (18 navigation/extraction + 2 agent-control + 1 human intervention = 21 total), agent loop (`agent.rs`), `FetchRouter` that escalates HTTP→browser, and `PlaywrightBridge` — a child `node` process running an inline JS script (`PLAYWRIGHT_BRIDGE_NODE_SCRIPT` in `playwright.rs`) that speaks newline-delimited JSON over stdio. 2 agent-control tools (`fork`, `wait_for_subagents`) and 1 human intervention tool (`wait_for_human`) live alongside the browser tools, bringing the total to 21. `agent/` subdirectory contains fork/lifecycle logic; `tool_effect.rs` defines the `ToolEffect` enum (Reply/Spawn/Wait/Finish) that tools return. `browser_backend.rs` defines the `BrowserBackend` trait; `extension.rs` implements `ExtensionBridge` (the Chrome extension backend); `ws_server.rs` is the WebSocket bridge server for extension communication. `browser.rs` owns `BrowserContext` which wraps any `SharedBridge` with tab/URL state.
 
 ## Architecture: how a turn actually flows
 
 1. `acrawl-cli::app::LiveCli` builds a `ProviderClient` via `ProviderRegistry` from the persisted `CredentialStore` (`credentials.json`), plus a `ToolExecutor` backed by `crawler::ToolRegistry`.
 2. `runtime::ConversationRuntime::run_turn` drives the loop: call `ApiClient::stream` → feed `AssistantEvent`s (text deltas, tool_use, usage, stop) → execute tools through `ToolExecutor` → append results → repeat until the model emits `MessageStop` with no tool calls or `MAX_STEPS` is hit. The runtime notifies a `RuntimeObserver` at each event (text deltas, tool calls, turn end); `OutputSink` (`StdoutSink` for non-interactive `prompt`/`--resume`, `ChannelSink` for TUI) implements this trait to bridge events to the UI.
 3. The crawler tool handlers (`crates/crawler/src/tools/*.rs`) take JSON input, consult `CrawlState`, and act through a `BrowserContext` that wraps either the `FetchRouter` (reqwest HTTP path) or the `PlaywrightBridge` (headless Chromium). The router auto-escalates from HTTP to the browser when JS is needed.
-4. `runtime::PermissionPolicy` gates every tool call against the current `PermissionMode`. Each of the 19 `ToolSpec`s declares `required_permission` — extraction/listing are `ReadOnly`, `save_file` is `WorkspaceWrite`, the rest require `DangerFullAccess`.
+4. The optional `--allowedTools` CLI flag restricts which tools are available; `CliToolExecutor` enforces this before execution. `ToolSpec` has no permission tier — all 21 tools are unrestricted by default.
 5. `runtime::UsageTracker` + `pricing_for_model` feed `/cost` and `/status`. `runtime::compact` watches `ACRAWL_AUTO_COMPACT_INPUT_TOKENS` (default 200k) and auto-compacts the session when the threshold trips.
 
 The CloakBrowser bridge is notable: it is a **single embedded Node script** launched as a subprocess, using CloakBrowser (not stock Playwright) for stealth browsing. The browser binary auto-downloads on first use — no separate install step needed.
@@ -69,7 +69,7 @@ Default model comes from the `default_model` field in the active provider's `Sto
 
 ## Tool surface
 
-`crawler::mvp_tool_specs()` returns the canonical 19-tool list with JSON schemas and required permission. `--allowedTools` accepts canonical names and the aliases `read`/`write`/`edit`/`glob`/`grep` → `read_file`/`write_file`/`edit_file`/`glob_search`/`grep_search`, but the **crawler toolset does not include those IDE tools** — attempting to allow `read_file` is an error and there's a regression test asserting this. When you add or rename a tool, update `mvp_tool_specs`, add a handler in `tools/mod.rs`, and adjust the count assertion in `crates/crawler/src/lib.rs` tests.
+`crawler::mvp_tool_specs()` returns the canonical 21-tool list with JSON schemas and required permission. When you add or rename a tool, update `mvp_tool_specs`, add a handler in `tools/mod.rs`, and adjust the count assertion in `crates/crawler/src/lib.rs` tests.
 
 ## Conventions specific to this repo
 
@@ -84,7 +84,6 @@ Default model comes from the `default_model` field in the active provider's `Sto
   - Up/Down navigation must clamp at edges (no wrap-around) for both keyboard and mouse wheel.
   - For list selectors, Left jumps to the first item and Right jumps to the last item.
   - When scrolling to keep selection visible, use edge-follow behavior (no forced centering jumps).
-- `claw-code/` at the repo root is a separate nested project (has its own `CLAUDE.md`/`README.md`). It is not part of the `acrawl` cargo workspace — don't pull it into workspace-wide edits unless the task is specifically about it.
 
 ## Releasing a new version
 

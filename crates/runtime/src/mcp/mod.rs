@@ -10,7 +10,7 @@ pub use client::{
 };
 pub use naming::{
     mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
-    scoped_mcp_config_hash, unwrap_ccr_proxy_url,
+    scoped_mcp_config_hash, unwrap_proxied_mcp_url,
 };
 pub use process::{spawn_mcp_stdio_process, McpStdioProcess};
 pub use server_manager::McpServerManager;

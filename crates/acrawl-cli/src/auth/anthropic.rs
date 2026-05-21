@@ -1,4 +1,3 @@
-use std::env;
 use std::io::{self, Write};
 
 use api::{AnthropicClient, AuthSource};
@@ -65,8 +64,7 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
-    let cwd = env::current_dir()?;
-    let config = ConfigLoader::default_for(&cwd).load()?;
+    let config = ConfigLoader::default_for().load()?;
     let default_oauth = default_oauth_config();
     let oauth = config.oauth().unwrap_or(&default_oauth);
     let preferred_port = oauth.callback_port.unwrap_or(DEFAULT_OAUTH_CALLBACK_PORT);

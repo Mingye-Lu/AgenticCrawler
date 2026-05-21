@@ -23,9 +23,9 @@ pub struct Settings {
     #[serde(default)]
     pub reasoning_effort: Option<String>,
 
-    /// Directory for saved files (default: "workspace")
+    /// Directory for saved files (default: "output")
     #[serde(default)]
-    pub workspace_dir: Option<String>,
+    pub output_dir: Option<String>,
 
     /// Auto-compact input tokens threshold (default: 200000)
     #[serde(default)]
@@ -95,7 +95,7 @@ impl Default for Settings {
             max_steps: Some(50),
             model: None,
             reasoning_effort: None,
-            workspace_dir: Some("workspace".to_string()),
+            output_dir: Some("output".to_string()),
             auto_compact_input_tokens: Some(200_000),
             max_concurrent_per_parent: Some(5),
             max_fork_depth: Some(3),
@@ -191,10 +191,10 @@ pub fn settings_get_max_steps(s: &Settings) -> u32 {
     s.max_steps.unwrap_or(50)
 }
 
-/// Get `workspace_dir` setting, with default fallback.
+/// Get `output_dir` setting, with default fallback.
 #[must_use]
-pub fn settings_get_workspace_dir(s: &Settings) -> &str {
-    s.workspace_dir.as_deref().unwrap_or("workspace")
+pub fn settings_get_output_dir(s: &Settings) -> &str {
+    s.output_dir.as_deref().unwrap_or("output")
 }
 
 /// Get `auto_compact_input_tokens` setting, with default fallback.
@@ -334,7 +334,7 @@ mod tests {
 
         assert_eq!(settings.headless, Some(true));
         assert_eq!(settings.max_steps, Some(50));
-        assert_eq!(settings.workspace_dir, Some("workspace".to_string()));
+        assert_eq!(settings.output_dir, Some("output".to_string()));
         assert_eq!(settings.auto_compact_input_tokens, Some(200_000));
 
         cleanup_temp_dir(&temp_dir);
@@ -355,7 +355,7 @@ mod tests {
 
         assert_eq!(settings.max_steps, Some(100));
         assert_eq!(settings.headless, None);
-        assert_eq!(settings.workspace_dir, None);
+        assert_eq!(settings.output_dir, None);
 
         cleanup_temp_dir(&temp_dir);
     }
@@ -372,7 +372,7 @@ mod tests {
             max_steps: Some(100),
             model: Some("anthropic/claude-sonnet-4-6".to_string()),
             reasoning_effort: Some("high".to_string()),
-            workspace_dir: Some("custom_workspace".to_string()),
+            output_dir: Some("custom_output".to_string()),
             auto_compact_input_tokens: Some(500_000),
             max_concurrent_per_parent: Some(8),
             max_fork_depth: Some(5),
@@ -465,18 +465,18 @@ mod tests {
     }
 
     #[test]
-    fn test_settings_get_workspace_dir() {
+    fn test_settings_get_output_dir() {
         let settings_custom = Settings {
-            workspace_dir: Some("my_workspace".to_string()),
+            output_dir: Some("my_output".to_string()),
             ..Default::default()
         };
-        assert_eq!(settings_get_workspace_dir(&settings_custom), "my_workspace");
+        assert_eq!(settings_get_output_dir(&settings_custom), "my_output");
 
         let settings_none = Settings {
-            workspace_dir: None,
+            output_dir: None,
             ..Default::default()
         };
-        assert_eq!(settings_get_workspace_dir(&settings_none), "workspace");
+        assert_eq!(settings_get_output_dir(&settings_none), "output");
     }
 
     #[test]
@@ -526,7 +526,7 @@ mod tests {
             max_steps: Some(88),
             model: Some("anthropic/claude-sonnet-4-6".to_string()),
             reasoning_effort: Some("medium".to_string()),
-            workspace_dir: Some("custom_workspace".to_string()),
+            output_dir: Some("custom_output".to_string()),
             auto_compact_input_tokens: Some(123_456),
             max_concurrent_per_parent: Some(7),
             max_fork_depth: Some(4),
@@ -555,7 +555,7 @@ mod tests {
         assert_eq!(loaded.max_steps, Some(88));
         assert_eq!(loaded.model, Some("openai/o4-mini".to_string()));
         assert_eq!(loaded.reasoning_effort, Some("medium".to_string()));
-        assert_eq!(loaded.workspace_dir, Some("custom_workspace".to_string()));
+        assert_eq!(loaded.output_dir, Some("custom_output".to_string()));
         assert_eq!(loaded.auto_compact_input_tokens, Some(123_456));
         assert_eq!(loaded.max_concurrent_per_parent, Some(7));
         assert_eq!(loaded.max_fork_depth, Some(4));
@@ -588,7 +588,7 @@ mod tests {
             max_steps: Some(50),
             model: None,
             reasoning_effort: None,
-            workspace_dir: Some("workspace".to_string()),
+            output_dir: Some("output".to_string()),
             auto_compact_input_tokens: Some(200_000),
             max_concurrent_per_parent: Some(8),
             max_fork_depth: Some(4),
@@ -650,7 +650,7 @@ mod tests {
             max_steps: None,
             model: None,
             reasoning_effort: None,
-            workspace_dir: None,
+            output_dir: None,
             auto_compact_input_tokens: None,
             max_concurrent_per_parent: None,
             max_fork_depth: None,

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::Value as JsonValue;
 use tokio::time::{timeout, Duration};
 
-use crate::config::{McpTransport, RuntimeConfig, ScopedMcpServerConfig};
+use crate::config::{McpServerConfig, McpTransport, RuntimeConfig};
 
 use super::client::McpClientBootstrap;
 use super::naming::mcp_tool_name;
@@ -53,13 +53,13 @@ impl McpServerManager {
     }
 
     #[must_use]
-    pub fn from_servers(servers: &BTreeMap<String, ScopedMcpServerConfig>) -> Self {
+    pub fn from_servers(servers: &BTreeMap<String, McpServerConfig>) -> Self {
         let mut managed_servers = BTreeMap::new();
         let mut unsupported_servers = Vec::new();
 
         for (server_name, server_config) in servers {
             if server_config.transport() == McpTransport::Stdio {
-                let bootstrap = McpClientBootstrap::from_scoped_config(server_name, server_config);
+                let bootstrap = McpClientBootstrap::from_config(server_name, server_config);
                 managed_servers.insert(server_name.clone(), ManagedMcpServer::new(bootstrap));
             } else {
                 unsupported_servers.push(UnsupportedMcpServer {

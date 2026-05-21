@@ -3,7 +3,6 @@ mod auth;
 mod display_width;
 mod error;
 mod format;
-mod init;
 mod markdown;
 mod output_sink;
 mod self_update;
@@ -22,13 +21,13 @@ pub(crate) static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::n
 
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
 use crawler::mvp_tool_specs;
-use runtime::{load_system_prompt, Session};
+use runtime::Session;
 
 use app::{
     initial_model_from_credentials, run_auth_cli, run_repl, run_resume_command, AllowedToolSet,
     LiveCli,
 };
-use format::{render_version_report, DEFAULT_DATE, VERSION};
+use format::{render_version_report, VERSION};
 
 pub(crate) use app::Provider;
 
@@ -36,8 +35,8 @@ fn main() {
     // Load settings.json and set env vars consumed by child processes / the crawler.
     let settings = runtime::load_settings();
     env::set_var(
-        "WORKSPACE_DIR",
-        runtime::settings_get_workspace_dir(&settings),
+        "ACRAWL_OUTPUT_DIR",
+        runtime::settings_get_output_dir(&settings),
     );
     // Only seed HEADLESS from settings when not already overridden by a parent process.
     if env::var("HEADLESS").is_err() {
@@ -78,7 +77,7 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
     match parse_args(&args)? {
-        CliAction::PrintSystemPrompt { cwd, date } => print_system_prompt(cwd, date),
+        CliAction::PrintSystemPrompt => print_system_prompt(),
         CliAction::Version => print_version(),
         CliAction::ResumeSession {
             session_path,
@@ -94,10 +93,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .run_turn_with_output(&prompt, output_format)?;
         }
         CliAction::Auth { provider } => run_auth_cli(provider.as_deref())?,
-        CliAction::Init => {
-            let cwd = env::current_dir()?;
-            println!("{}", crate::init::initialize_repo(&cwd)?.render());
-        }
         CliAction::Update => {
             let rt = TOKIO_RUNTIME.get().expect("tokio runtime not initialized");
             rt.block_on(self_update::run_self_update())?;
@@ -120,10 +115,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliAction {
-    PrintSystemPrompt {
-        cwd: PathBuf,
-        date: String,
-    },
+    PrintSystemPrompt,
     Version,
     ResumeSession {
         session_path: PathBuf,
@@ -138,7 +130,6 @@ enum CliAction {
     Auth {
         provider: Option<String>,
     },
-    Init,
     Update,
     Uninstall {
         purge: bool,
@@ -292,7 +283,6 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                     .to_string(),
             )
         }
-        "init" => Ok(CliAction::Init),
         "update" => Ok(CliAction::Update),
         "uninstall" => Ok(CliAction::Uninstall {
             purge: rest.iter().any(|a| a == "--purge"),
@@ -372,29 +362,10 @@ fn normalize_bool_flag(flag: &str, value: &str) -> Result<bool, String> {
 }
 
 fn parse_system_prompt_args(args: &[String]) -> Result<CliAction, String> {
-    let mut cwd = env::current_dir().map_err(|error| error.to_string())?;
-    let mut date = DEFAULT_DATE.to_string();
-    let mut index = 0;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--cwd" => {
-                let value = args
-                    .get(index + 1)
-                    .ok_or_else(|| "missing value for --cwd".to_string())?;
-                cwd = PathBuf::from(value);
-                index += 2;
-            }
-            "--date" => {
-                let value = args
-                    .get(index + 1)
-                    .ok_or_else(|| "missing value for --date".to_string())?;
-                date.clone_from(value);
-                index += 2;
-            }
-            other => return Err(format!("unknown system-prompt option: {other}")),
-        }
+    if let Some(other) = args.first() {
+        return Err(format!("unknown system-prompt option: {other}"));
     }
-    Ok(CliAction::PrintSystemPrompt { cwd, date })
+    Ok(CliAction::PrintSystemPrompt)
 }
 
 fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
@@ -467,14 +438,11 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
     })
 }
 
-fn print_system_prompt(cwd: PathBuf, date: String) {
-    match load_system_prompt(cwd, date, env::consts::OS, "unknown") {
-        Ok(sections) => println!("{}", sections.join("\n\n")),
-        Err(error) => {
-            eprintln!("failed to build system prompt: {error}");
-            std::process::exit(1);
-        }
-    }
+fn print_system_prompt() {
+    println!(
+        "{}",
+        crawler::build_system_prompt(&mvp_tool_specs()).join("\n\n")
+    );
 }
 
 fn print_version() {
@@ -664,16 +632,12 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Inspect or maintain a saved session without entering the REPL"
     )?;
-    writeln!(
-        out,
-        "  acrawl system-prompt [--cwd PATH] [--date YYYY-MM-DD]"
-    )?;
+    writeln!(out, "  acrawl system-prompt")?;
     writeln!(out, "  acrawl auth [anthropic|openai|other]")?;
     writeln!(
         out,
         "      Configure credentials for a provider interactively"
     )?;
-    writeln!(out, "  acrawl init")?;
     writeln!(out, "  acrawl update")?;
     writeln!(out, "  acrawl install-browser")?;
     writeln!(
@@ -738,7 +702,6 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "  acrawl --resume session.json /status /compact /export notes.txt"
     )?;
-    writeln!(out, "  acrawl init")?;
     Ok(())
 }
 
@@ -913,36 +876,35 @@ mod tests {
     }
 
     #[test]
+    fn system_prompt_contains_no_ide_content() {
+        let prompt = crawler::build_system_prompt(&mvp_tool_specs()).join("\n\n");
+        assert!(
+            !prompt.contains("Working directory"),
+            "system prompt should not mention working directory"
+        );
+        assert!(
+            !prompt.contains("Git status"),
+            "system prompt should not mention git status"
+        );
+        assert!(
+            !prompt.contains("Model family"),
+            "system prompt should not mention model family"
+        );
+        assert!(
+            !prompt.contains("Claw Code"),
+            "system prompt should not mention Claw Code"
+        );
+        assert!(
+            prompt.contains("autonomous web crawler"),
+            "system prompt should describe crawler role"
+        );
+    }
+
+    #[test]
     fn rejects_unknown_allowed_tools() {
         let error = parse_args(&["--allowedTools".to_string(), "teleport".to_string()])
             .expect_err("tool should be rejected");
         assert!(error.contains("unsupported tool in --allowedTools: teleport"));
-    }
-
-    #[test]
-    fn parses_system_prompt_options() {
-        let args = vec![
-            "system-prompt".to_string(),
-            "--cwd".to_string(),
-            "/tmp/project".to_string(),
-            "--date".to_string(),
-            "2026-04-01".to_string(),
-        ];
-        assert_eq!(
-            parse_args(&args).expect("args should parse"),
-            CliAction::PrintSystemPrompt {
-                cwd: PathBuf::from("/tmp/project"),
-                date: "2026-04-01".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn parses_init_subcommand() {
-        assert_eq!(
-            parse_args(&["init".to_string()]).expect("init"),
-            CliAction::Init
-        );
     }
 
     #[test]
@@ -1062,14 +1024,6 @@ mod tests {
     }
 
     #[test]
-    fn init_help_mentions_direct_subcommand() {
-        let mut help = Vec::new();
-        print_help_to(&mut help).expect("help should render");
-        let help = String::from_utf8(help).expect("help should be utf8");
-        assert!(help.contains("acrawl init"));
-    }
-
-    #[test]
     fn clear_command_requires_explicit_confirmation_flag() {
         assert_eq!(
             SlashCommand::parse("/clear"),
@@ -1098,13 +1052,6 @@ mod tests {
             })
         );
         assert_eq!(SlashCommand::parse("/debug"), Some(SlashCommand::Debug));
-    }
-
-    #[test]
-    fn init_template_mentions_detected_rust_workspace() {
-        let rendered = crate::init::render_init_agents_md(std::path::Path::new("."));
-        assert!(rendered.contains("# AGENTS.md"));
-        assert!(rendered.contains("cargo clippy --workspace --all-targets -- -D warnings"));
     }
 
     #[test]

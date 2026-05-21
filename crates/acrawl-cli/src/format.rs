@@ -1,11 +1,8 @@
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use commands::render_slash_command_help;
-use runtime::{
-    ConfigLoader, ConfigSource, ContentBlock, MessageRole, ProjectContext, Session, TokenUsage,
-};
+use runtime::{ConfigLoader, ContentBlock, MessageRole, Session, TokenUsage};
 
 pub(crate) const DEFAULT_DATE: &str = "2026-03-31";
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -14,12 +11,7 @@ pub(crate) const GIT_SHA: Option<&str> = option_env!("GIT_SHA");
 
 #[derive(Debug, Clone)]
 pub(crate) struct StatusContext {
-    pub(crate) cwd: PathBuf,
     pub(crate) session_path: Option<PathBuf>,
-    pub(crate) loaded_config_files: usize,
-    pub(crate) discovered_config_files: usize,
-    pub(crate) project_root: Option<PathBuf>,
-    pub(crate) git_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -85,8 +77,9 @@ pub(crate) fn format_status_report(
 ) -> String {
     [
         format!(
-            "Status\n  Model            {model}\n  Messages         {}\n  Turns            {}\n  Estimated tokens {}",
+            "Status\n  Model            {model}\n  Messages         {}\n  Turns            {}\n  Estimated tokens {}\n  Session          {}",
             usage.message_count, usage.turns, usage.estimated_tokens,
+            context.session_path.as_ref().map_or_else(|| "live-repl".to_string(), |path| path.display().to_string()),
         ),
         format!(
             "Usage\n  Latest total     {}\n  Cumulative input {}\n  Cumulative output {}\n  Cumulative total {}",
@@ -95,70 +88,14 @@ pub(crate) fn format_status_report(
             usage.cumulative.output_tokens,
             usage.cumulative.total_tokens(),
         ),
-        format!(
-            "Workspace\n  Cwd              {}\n  Project root     {}\n  Git branch       {}\n  Session          {}\n  Config files     loaded {}/{}",
-            context.cwd.display(),
-            context.project_root.as_ref().map_or_else(|| "unknown".to_string(), |path| path.display().to_string()),
-            context.git_branch.as_deref().unwrap_or("unknown"),
-            context.session_path.as_ref().map_or_else(|| "live-repl".to_string(), |path| path.display().to_string()),
-            context.loaded_config_files,
-            context.discovered_config_files,
-        ),
     ]
     .join("\n\n")
 }
 
-pub(crate) fn parse_git_status_metadata(status: Option<&str>) -> (Option<PathBuf>, Option<String>) {
-    let Some(status) = status else {
-        return (None, None);
-    };
-    let branch = status.lines().next().and_then(|line| {
-        line.strip_prefix("## ")
-            .map(|line| {
-                line.split(['.', ' '])
-                    .next()
-                    .unwrap_or_default()
-                    .to_string()
-            })
-            .filter(|value| !value.is_empty())
-    });
-    let project_root = find_git_root().ok();
-    (project_root, branch)
-}
-
-fn find_git_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let output = Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(env::current_dir()?)
-        .output()?;
-    if !output.status.success() {
-        return Err("not a git repository".into());
-    }
-    let path = String::from_utf8(output.stdout)?.trim().to_string();
-    if path.is_empty() {
-        return Err("empty git root".into());
-    }
-    Ok(PathBuf::from(path))
-}
-
-pub(crate) fn status_context(
-    session_path: Option<&Path>,
-) -> Result<StatusContext, Box<dyn std::error::Error>> {
-    let cwd = env::current_dir()?;
-    let loader = ConfigLoader::default_for(&cwd);
-    let discovered_config_files = loader.discover().len();
-    let runtime_config = loader.load()?;
-    let project_context = ProjectContext::discover_with_git(&cwd, DEFAULT_DATE)?;
-    let (project_root, git_branch) =
-        parse_git_status_metadata(project_context.git_status.as_deref());
-    Ok(StatusContext {
-        cwd,
+pub(crate) fn status_context(session_path: Option<&Path>) -> StatusContext {
+    StatusContext {
         session_path: session_path.map(Path::to_path_buf),
-        loaded_config_files: runtime_config.loaded_entries().len(),
-        discovered_config_files,
-        project_root,
-        git_branch,
-    })
+    }
 }
 
 pub(crate) fn render_repl_help() -> String {
@@ -179,26 +116,19 @@ pub(crate) fn render_repl_help() -> String {
 pub(crate) fn render_config_report(
     section: Option<&str>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let cwd = env::current_dir()?;
-    let loader = ConfigLoader::default_for(&cwd);
+    let loader = ConfigLoader::default_for();
     let discovered = loader.discover();
     let runtime_config = loader.load()?;
 
     let mut lines = vec![
         format!(
-            "Config\n  Working directory {}\n  Loaded files      {}\n  Merged keys       {}",
-            cwd.display(),
+            "Config\n  Loaded files      {}\n  Merged keys       {}",
             runtime_config.loaded_entries().len(),
             runtime_config.merged().len()
         ),
         "Discovered files".to_string(),
     ];
     for entry in discovered {
-        let source = match entry.source {
-            ConfigSource::User => "user",
-            ConfigSource::Project => "project",
-            ConfigSource::Local => "local",
-        };
         let status = if runtime_config
             .loaded_entries()
             .iter()
@@ -208,21 +138,16 @@ pub(crate) fn render_config_report(
         } else {
             "missing"
         };
-        lines.push(format!(
-            "  {source:<7} {status:<7} {}",
-            entry.path.display()
-        ));
+        lines.push(format!("  {status:<7} {}", entry.path.display()));
     }
 
     if let Some(section) = section {
         lines.push(format!("Merged section: {section}"));
         let value = match section {
-            "env" => runtime_config.get("env"),
-            "hooks" => runtime_config.get("hooks"),
             "model" => runtime_config.get("model"),
             other => {
                 lines.push(format!(
-                    "  Unsupported config section '{other}'. Use env, hooks, or model."
+                    "  Unsupported config section '{other}'. Use model."
                 ));
                 return Ok(lines.join("\n"));
             }
@@ -421,12 +346,7 @@ mod tests {
                 estimated_tokens: 128,
             },
             &StatusContext {
-                cwd: PathBuf::from("/tmp/project"),
                 session_path: Some(PathBuf::from("session.json")),
-                loaded_config_files: 2,
-                discovered_config_files: 3,
-                project_root: Some(PathBuf::from("/tmp")),
-                git_branch: Some("main".to_string()),
             },
         );
         assert!(status.contains("Status"));
@@ -434,17 +354,13 @@ mod tests {
         assert!(status.contains("Messages         7"));
         assert!(status.contains("Latest total     10"));
         assert!(status.contains("Cumulative total 31"));
-        assert!(status.contains("Cwd              /tmp/project"));
-        assert!(status.contains("Project root     /tmp"));
-        assert!(status.contains("Git branch       main"));
         assert!(status.contains("Session          session.json"));
-        assert!(status.contains("Config files     loaded 2/3"));
     }
 
     #[test]
     fn config_report_supports_section_views() {
-        let report = render_config_report(Some("env")).expect("config report should render");
-        assert!(report.contains("Merged section: env"));
+        let report = render_config_report(Some("model")).expect("config report should render");
+        assert!(report.contains("Merged section: model"));
     }
 
     #[test]
@@ -456,18 +372,14 @@ mod tests {
     }
 
     #[test]
-    fn parses_git_status_metadata() {
-        let (root, branch) =
-            parse_git_status_metadata(Some("## rcc/cli...origin/rcc/cli\n M src/main.rs"));
-        assert_eq!(branch.as_deref(), Some("rcc/cli"));
-        let _ = root;
-    }
-
-    #[test]
-    fn status_context_reads_real_workspace_metadata() {
-        let context = status_context(None).expect("status context should load");
-        assert!(context.cwd.is_absolute());
-        assert!(context.loaded_config_files <= context.discovered_config_files);
+    fn status_context_returns_session_path() {
+        let context = status_context(None);
+        assert!(context.session_path.is_none());
+        let context = status_context(Some(Path::new("test.json")));
+        assert_eq!(
+            context.session_path.as_deref(),
+            Some(Path::new("test.json"))
+        );
     }
 
     #[test]
@@ -479,7 +391,7 @@ mod tests {
         assert!(help.contains("/model [model]"));
         assert!(help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
-        assert!(help.contains("/config [env|hooks|model]"));
+        assert!(help.contains("/config [model]"));
         assert!(help.contains("/debug"));
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));

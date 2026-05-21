@@ -1239,7 +1239,7 @@ fn handle_slash_command_tui(
             state.push_system_card("Slash Help", &render_repl_help());
         }
         SlashCommand::Status => {
-            let report = cli.lock().expect("cli lock").status_report()?;
+            let report = cli.lock().expect("cli lock").status_report();
             state.push_system_card("Status", &report);
         }
         SlashCommand::Cost => {

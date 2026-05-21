@@ -426,7 +426,6 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
 /// 3. Wire auth prompts in `acrawl-cli` if the provider needs anything beyond the default API-key flow.
 /// 4. Add or extend `ProviderProtocol` and client builders for non-standard transports.
 /// 5. Give the preset clear `model_prefixes` so provider-specific UX stays predictable.
-/// 6. Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check`.
 #[must_use]
 pub fn builtin_presets() -> Vec<ProviderPreset> {
     BUILTIN_PRESETS.to_vec()

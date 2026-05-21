@@ -749,10 +749,9 @@ mod tests {
     };
     use crate::compact::CompactionConfig;
     use crate::observer::RuntimeObserver;
-    use crate::prompt::{ProjectContext, SystemPromptBuilder};
+    use crate::prompt::SystemPromptBuilder;
     use crate::session::{ContentBlock, MessageRole, Session};
     use crate::usage::TokenUsage;
-    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::time::{timeout, Duration};
@@ -837,14 +836,7 @@ mod tests {
                 .sum::<i32>();
             Ok(total.to_string())
         });
-        let system_prompt = SystemPromptBuilder::new()
-            .with_project_context(ProjectContext {
-                cwd: PathBuf::from("/tmp/project"),
-                current_date: "2026-03-31".to_string(),
-                git_status: None,
-            })
-            .with_os("linux", "6.8")
-            .build();
+        let system_prompt = SystemPromptBuilder::new().append_section("# Tools").build();
         let mut runtime =
             ConversationRuntime::new(Session::new(), api_client, tool_executor, system_prompt);
 

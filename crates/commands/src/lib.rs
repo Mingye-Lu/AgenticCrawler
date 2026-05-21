@@ -106,7 +106,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         name: "config",
         summary: "Inspect acrawl config files or merged sections",
-        argument_hint: Some("[env|hooks|model]"),
+        argument_hint: Some("[model]"),
         resume_supported: true,
     },
     SlashCommandSpec {
@@ -460,7 +460,7 @@ mod tests {
         assert!(help.contains("/model [model]"));
         assert!(help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
-        assert!(help.contains("/config [env|hooks|model]"));
+        assert!(help.contains("/config [model]"));
         assert!(help.contains("/version"));
         assert!(help.contains("/export [file]"));
         assert!(help.contains("/sessions"));

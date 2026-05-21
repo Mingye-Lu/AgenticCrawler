@@ -4,18 +4,23 @@ use crate::json::JsonValue;
 
 use super::{
     expect_object, expect_string, optional_bool, optional_string, optional_u16, ConfigError,
-    ConfigSource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct McpConfigCollection {
-    pub(super) servers: BTreeMap<String, ScopedMcpServerConfig>,
+    pub(super) servers: BTreeMap<String, McpServerConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopedMcpServerConfig {
-    pub scope: ConfigSource,
-    pub config: McpServerConfig,
+impl McpConfigCollection {
+    #[must_use]
+    pub fn servers(&self) -> &BTreeMap<String, McpServerConfig> {
+        &self.servers
+    }
+
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&McpServerConfig> {
+        self.servers.get(name)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,25 +82,6 @@ pub struct McpOAuthConfig {
     pub callback_port: Option<u16>,
     pub auth_server_metadata_url: Option<String>,
     pub xaa: Option<bool>,
-}
-
-impl McpConfigCollection {
-    #[must_use]
-    pub fn servers(&self) -> &BTreeMap<String, ScopedMcpServerConfig> {
-        &self.servers
-    }
-
-    #[must_use]
-    pub fn get(&self, name: &str) -> Option<&ScopedMcpServerConfig> {
-        self.servers.get(name)
-    }
-}
-
-impl ScopedMcpServerConfig {
-    #[must_use]
-    pub fn transport(&self) -> McpTransport {
-        self.config.transport()
-    }
 }
 
 impl McpServerConfig {
@@ -216,9 +202,8 @@ mod tests {
 
     use super::{
         McpClaudeAiProxyServerConfig, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
-        McpStdioServerConfig, McpTransport, McpWebSocketServerConfig, ScopedMcpServerConfig,
+        McpStdioServerConfig, McpTransport, McpWebSocketServerConfig,
     };
-    use crate::config::ConfigSource;
 
     #[test]
     fn mcp_server_config_transport_matches_stdio_sse_and_http_variants() {
@@ -263,19 +248,5 @@ mod tests {
         assert_eq!(ws.transport(), McpTransport::Ws);
         assert_eq!(sdk.transport(), McpTransport::Sdk);
         assert_eq!(proxy.transport(), McpTransport::ClaudeAiProxy);
-    }
-
-    #[test]
-    fn scoped_config_delegates_transport_to_inner_config() {
-        let scoped = ScopedMcpServerConfig {
-            scope: ConfigSource::Project,
-            config: McpServerConfig::Stdio(McpStdioServerConfig {
-                command: "test".to_string(),
-                args: Vec::new(),
-                env: BTreeMap::default(),
-            }),
-        };
-        assert_eq!(scoped.transport(), McpTransport::Stdio);
-        assert_eq!(scoped.transport(), scoped.config.transport());
     }
 }

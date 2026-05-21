@@ -242,7 +242,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "save_file",
-            description: "Save a file to the workspace",
+            description: "Save a file to the output directory",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -254,7 +254,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
 
-            instructions: Some("Downloads the resource at `url` into the workspace directory. Optionally specify `filename` and `subdir`."),
+            instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename` and `subdir`."),
         },
         ToolSpec {
             name: "page_map",

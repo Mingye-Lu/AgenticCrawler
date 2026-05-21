@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 19 tools. 25 LLM providers. CloakBrowser for the hard parts.
+  Single binary. No Python runtime. 21 tools. 25 LLM providers. CloakBrowser for the hard parts.
 </p>
 
 ---
@@ -34,7 +34,7 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 - **No code required.** Describe the goal in English. The agent plans and executes.
 - **One binary, zero runtimes.** `cargo build --release` produces a self-contained executable. No Python, no Node runtime — just Rust and a Chromium download for browser automation.
 - **Smart fetching.** Static pages are served over HTTP (fast). When JavaScript or interaction is needed, acrawl detects JS framework markers (`__next_data__`, `__nuxt`, `__vue`, `ng-app`, React roots), auth redirects, and short `<noscript>` bodies — then transparently escalates to a headless browser.
-- **19 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
+- **21 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
 - **MCP support.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
 
@@ -165,7 +165,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 ## Features
 
-### 19-Tool Toolbox
+### 21-Tool Toolbox
 
 #### Navigation
 
@@ -196,7 +196,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `read_content` | Extract text by heading name or CSS selector, with offset/limit pagination for large pages. |
 | `list_resources` | List all links, images, and forms on the current page. |
 | `screenshot` | Capture a full-page screenshot (base64 PNG). |
-| `save_file` | Download a URL to the workspace directory (path traversal protected). |
+| `save_file` | Download a URL to the output directory (path traversal protected). |
 
 #### Agent Control
 
@@ -301,20 +301,22 @@ Running `acrawl` without a TTY on stdout (e.g. piped or redirected) exits with a
 - **Auto-save** — sessions are saved automatically on exit.
 - **Resume** — `--resume session.json` reloads a conversation. Resume-safe slash commands (`/status`, `/compact`, `/cost`, `/config`, `/version`, `/export`, `/help`, `/clear`) can be appended to the command line.
 - **Export** — `/export [file]` writes a human-readable markdown transcript.
-- **Auto-compaction** — when context exceeds the token threshold (default 200K), acrawl summarizes older messages while preserving the most recent turns, unique tools used, pending work items, and referenced files.
+- **Auto-compaction** — when context exceeds the token threshold (default 200K), acrawl summarizes older messages while preserving the most recent turns, unique tools used, and pending work items.
 - **Multiple sessions** — `/session list` to browse, `/session switch <id>` to switch.
 
-### Permission Model
+### Tool Allowlist
 
-| Mode | Allowed Tools |
-|------|---------------|
-| `read-only` | `navigate` `click` `fill_form` `scroll` `screenshot` `wait` `select_option` `go_back` `execute_js` `hover` `press_key` `switch_tab` `list_resources` `page_map` `read_content` |
-| `workspace-write` | Above + `save_file` |
-| `danger-full-access` | Above + `fork` `wait_for_subagents` `done` |
+Use `--allowedTools` to restrict which tools the agent can invoke (comma-separated, flag is repeatable):
+
+```
+acrawl prompt "scrape titles" --allowedTools navigate,read_content,screenshot
+```
+
+Omit `--allowedTools` to allow all 21 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
 
 ### MCP Extensibility
 
-acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 19.
+acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 21.
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
@@ -326,13 +328,11 @@ acrawl [OPTIONS] [COMMAND]
 Commands:
   prompt <text>      Run a single goal non-interactively
   auth [provider]    Configure provider credentials
-  init               Initialize project config
   system-prompt      Print the system prompt (for debugging)
 
 Options:
   --model MODEL            Model name or alias (sonnet, opus, 4o, o3, ...)
   --output-format FORMAT   text | json
-  --permission-mode MODE   read-only | workspace-write | danger-full-access
   --resume FILE            Resume a saved session (with optional /commands)
   --compact                Compact history on resume
   --headless[=BOOL]        Force browser headless on/off
@@ -386,13 +386,13 @@ Azure additionally requires `resource_name` and `deployment_name`. Bedrock requi
 
 ### `settings.json`
 
-Created with defaults on first run. Edit directly or via `acrawl init`.
+Created with defaults on first run.
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `headless` | `true` | Run browser without a visible window |
 | `max_steps` | `50` | Max agent loop iterations per goal |
-| `workspace_dir` | `"workspace"` | Where `save_file` writes output |
+| `output_dir` | `"output"` | Where `save_file` writes output |
 | `auto_compact_input_tokens` | `200000` | Token threshold for auto-compaction |
 | `reasoning_effort` | `"high"` | For reasoning models: `high` / `medium` / `low` |
 | `max_concurrent_per_parent` | `5` | Max concurrent sub-agents per parent |
@@ -408,8 +408,6 @@ Created with defaults on first run. Edit directly or via `acrawl init`.
 | Variable | Description |
 |----------|-------------|
 | `ACRAWL_CONFIG_HOME` | Override config directory (default: `~/.acrawl/`) |
-| `ACRAWL_REMOTE` | Enable remote session mode |
-| `ACRAWL_REMOTE_SESSION_ID` | Remote session identifier |
 
 Provider-specific env vars (see [provider table](#24-llm-providers) above) are read as fallbacks when no `credentials.json` entry exists.
 
@@ -424,11 +422,11 @@ flowchart LR
 ```
 
 1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/crawler/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
-2. Each turn, it picks from its 19 tools based on what it observes on the page.
+2. Each turn, it picks from its 21 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
 4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
 5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` or `done` merges results.
-6. When context grows large, auto-compaction summarizes older messages while preserving recent turns, tool usage, pending work, and file references.
+6. When context grows large, auto-compaction summarizes older messages while preserving recent turns, tool usage, and pending work items.
 7. The agent calls `done` when the goal is met, or stops when the step limit is reached.
 
 ## Architecture
@@ -437,9 +435,9 @@ flowchart LR
 crates/
   acrawl-cli/   CLI binary, TUI REPL, arg parsing, session management
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
-  commands/     16 slash commands with resume-safety annotations
-  crawler/      19 tools, agent loop, FetchRouter, PlaywrightBridge, ExtensionBridge, sub-agent fork/join
-  runtime/      ConversationRuntime, permissions, config, sessions, MCP server manager, OAuth PKCE
+  commands/     17 slash commands with resume-safety annotations
+  crawler/      21 tools, agent loop, FetchRouter, PlaywrightBridge, ExtensionBridge, sub-agent fork/join
+  runtime/      ConversationRuntime, config, sessions, MCP server manager, OAuth PKCE
 ```
 
 5 crates, ~37K lines of Rust, 690 tests.
