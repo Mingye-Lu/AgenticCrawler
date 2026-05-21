@@ -34,7 +34,10 @@ pub(crate) use app::Provider;
 fn main() {
     // Load settings.json and set env vars consumed by child processes / the crawler.
     let settings = runtime::load_settings();
-    env::set_var("WORKSPACE_DIR", runtime::settings_get_output_dir(&settings));
+    env::set_var(
+        "ACRAWL_OUTPUT_DIR",
+        runtime::settings_get_output_dir(&settings),
+    );
     // Only seed HEADLESS from settings when not already overridden by a parent process.
     if env::var("HEADLESS").is_err() {
         env::set_var(
