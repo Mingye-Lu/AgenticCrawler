@@ -7,8 +7,8 @@ use runtime::{
     RuntimeObserver, Session,
 };
 
-pub(super) fn build_system_prompt() -> Result<Vec<String>, CliError> {
-    Ok(crawler::build_system_prompt(&mvp_tool_specs()))
+pub(super) fn build_system_prompt() -> Vec<String> {
+    crawler::build_system_prompt(&mvp_tool_specs())
 }
 
 pub(super) fn build_runtime_feature_config() -> Result<runtime::RuntimeFeatureConfig, CliError> {

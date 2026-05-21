@@ -76,7 +76,7 @@ pub(crate) fn run_resume_command(
                         cumulative: usage,
                         estimated_tokens: 0,
                     },
-                    &status_context(Some(session_path))?,
+                    &status_context(Some(session_path)),
                 )),
             })
         }

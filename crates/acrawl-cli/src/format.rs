@@ -92,12 +92,10 @@ pub(crate) fn format_status_report(
     .join("\n\n")
 }
 
-pub(crate) fn status_context(
-    session_path: Option<&Path>,
-) -> Result<StatusContext, Box<dyn std::error::Error>> {
-    Ok(StatusContext {
+pub(crate) fn status_context(session_path: Option<&Path>) -> StatusContext {
+    StatusContext {
         session_path: session_path.map(Path::to_path_buf),
-    })
+    }
 }
 
 pub(crate) fn render_repl_help() -> String {
@@ -375,10 +373,9 @@ mod tests {
 
     #[test]
     fn status_context_returns_session_path() {
-        let context = status_context(None).expect("status context should load");
+        let context = status_context(None);
         assert!(context.session_path.is_none());
-        let context =
-            status_context(Some(Path::new("test.json"))).expect("status context should load");
+        let context = status_context(Some(Path::new("test.json")));
         assert_eq!(
             context.session_path.as_deref(),
             Some(Path::new("test.json"))

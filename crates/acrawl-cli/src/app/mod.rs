@@ -164,7 +164,7 @@ impl LiveCli {
         is_interactive: bool,
     ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
-        let system_prompt = build_system_prompt()?;
+        let system_prompt = build_system_prompt();
         let session = create_managed_session_handle();
         let output_mode = OutputMode::Stdout;
         let runtime = build_runtime_with_options(
@@ -221,7 +221,7 @@ impl LiveCli {
         event_tx: mpsc::Sender<ReplTuiEvent>,
     ) -> Result<Self, CliError> {
         let settings = runtime::load_settings();
-        let system_prompt = build_system_prompt()?;
+        let system_prompt = build_system_prompt();
         let session = create_managed_session_handle();
         let output_mode = OutputMode::Channel(event_tx);
         let (child_event_tx, child_event_rx) = std::sync::mpsc::channel::<crawler::ChildEvent>();
@@ -449,7 +449,7 @@ impl LiveCli {
                 false
             }
             SlashCommand::Status => {
-                println!("{}", self.status_report()?);
+                println!("{}", self.status_report());
                 false
             }
             SlashCommand::Debug => {
@@ -772,10 +772,10 @@ impl LiveCli {
         }
     }
 
-    pub(crate) fn status_report(&self) -> Result<String, CliError> {
+    pub(crate) fn status_report(&self) -> String {
         let cumulative = self.runtime.usage().cumulative_usage();
         let latest = self.runtime.usage().current_turn_usage();
-        Ok(format_status_report(
+        format_status_report(
             &self.model,
             StatusUsage {
                 message_count: self.runtime.session().messages.len(),
@@ -784,8 +784,8 @@ impl LiveCli {
                 cumulative,
                 estimated_tokens: self.runtime.estimated_tokens(),
             },
-            &status_context(Some(&self.session.path))?,
-        ))
+            &status_context(Some(&self.session.path)),
+        )
     }
 
     pub(crate) fn model_command(
