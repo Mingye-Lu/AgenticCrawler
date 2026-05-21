@@ -873,6 +873,31 @@ mod tests {
     }
 
     #[test]
+    fn system_prompt_contains_no_ide_content() {
+        let prompt = crawler::build_system_prompt(&mvp_tool_specs()).join("\n\n");
+        assert!(
+            !prompt.contains("Working directory"),
+            "system prompt should not mention working directory"
+        );
+        assert!(
+            !prompt.contains("Git status"),
+            "system prompt should not mention git status"
+        );
+        assert!(
+            !prompt.contains("Model family"),
+            "system prompt should not mention model family"
+        );
+        assert!(
+            !prompt.contains("Claw Code"),
+            "system prompt should not mention Claw Code"
+        );
+        assert!(
+            prompt.contains("autonomous web crawler"),
+            "system prompt should describe crawler role"
+        );
+    }
+
+    #[test]
     fn rejects_unknown_allowed_tools() {
         let error = parse_args(&["--allowedTools".to_string(), "teleport".to_string()])
             .expect_err("tool should be rejected");
