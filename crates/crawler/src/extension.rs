@@ -13,7 +13,7 @@ use crate::ws_server::{BridgeCommand, BridgeResponse};
 use crate::{BridgeError, BrowserBackend, BrowserState, PageInfo};
 
 #[cfg(not(test))]
-const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_mins(1);
 #[cfg(test)]
 const EXTENSION_COMMAND_TIMEOUT: Duration = Duration::from_millis(50);
 
