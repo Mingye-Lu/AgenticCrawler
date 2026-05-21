@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-05-21
+
+### Added
+
+- **Chrome Extension Bridge** — alternative browser backend that drives the user's real browser via Chrome DevTools Protocol. Connects through a local WebSocket server (`/extension` command) with token-based authentication. Supports all 16 browser tools through CDP, enabling automation with the user's logged-in sessions, cookies, and extensions.
+- **`BrowserBackend` trait** — extracted from `PlaywrightBridge` to enable multiple browser backends. Both `PlaywrightBridge` (CloakBrowser) and `ExtensionBridge` implement it.
+- **`/extension` slash command** — starts the WebSocket bridge server and displays the auth token for the Chrome extension.
+- **`/cloakbrowser` slash command** — switches back to headless CloakBrowser mode.
+- **Extension auto-reconnect** — when `browser_backend` is set to `"extension"` in settings, the bridge server auto-starts and waits for the extension to connect.
+- **`browser_backend` and `extension_bridge_port` settings** — persist browser backend preference across sessions.
+- **Chrome MV3 extension** (`extension/` directory) — service worker with CDP command handlers, options page, keepalive, exponential backoff reconnection.
+
+### Changed
+
+- **`PlaywrightBridgeError` renamed to `BridgeError`** — the error type is now backend-agnostic.
+- **`WsBridgeServer` split into submodules** — `auth.rs`, `session.rs`, `http.rs` for better maintainability.
+
+### Security
+
+- **Token auth with constant-time comparison** — 256-bit hex token generated per server start, never exposed via `/health` endpoint.
+- **Origin validation** — requires valid 32-char Chrome/Edge extension ID format.
+- **Rate limiting** — 5 failed auth attempts per IP in 60s window triggers 429.
+- **Fail-fast on disconnect** — `ExtensionBridge` immediately rejects commands when no client is connected.
+
 ## [0.4.9] - 2026-05-20
 
 ### Added
@@ -309,6 +333,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.5.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.0
 [0.4.9]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.9
 [0.4.8]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.8
 [0.4.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.7
