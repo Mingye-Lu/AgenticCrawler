@@ -4,8 +4,42 @@ Connects [acrawl](https://github.com/Mingye-Lu/AgenticCrawler) to your Chromium 
 
 ## Installation
 
-1. Install from the [Chrome Web Store](https://chrome.google.com/webstore) (link pending)
-2. Or load unpacked: open `chrome://extensions`, enable Developer Mode, click "Load unpacked", select this `extension/` folder.
+### Chrome Web Store (recommended)
+
+Install from the [Chrome Web Store](https://chrome.google.com/webstore) (link pending).
+
+### Manual install from release
+
+Download `acrawl-extension.zip` from the [latest release](https://github.com/Mingye-Lu/AgenticCrawler/releases/latest) and unzip it to a folder (e.g. `acrawl-extension/`).
+
+**Google Chrome:**
+
+1. Navigate to `chrome://extensions`
+2. Enable **Developer mode** (toggle in the top-right corner)
+3. Click **Load unpacked**
+4. Select the unzipped folder
+
+**Microsoft Edge:**
+
+1. Navigate to `edge://extensions`
+2. Enable **Developer mode** (toggle in the bottom-left)
+3. Click **Load unpacked**
+4. Select the unzipped folder
+
+**Brave:**
+
+1. Navigate to `brave://extensions`
+2. Enable **Developer mode** (toggle in the top-right corner)
+3. Click **Load unpacked**
+4. Select the unzipped folder
+
+**Arc / Vivaldi / Opera (Chromium-based):**
+
+1. Open the browser's extension management page (typically `<browser>://extensions`)
+2. Enable **Developer mode**
+3. Click **Load unpacked** and select the unzipped folder
+
+> **Note:** After a browser update you may see an "errors" badge on the extension. Simply click the extension icon or revisit the extensions page — the extension will reload automatically.
 
 ## Configuration
 
