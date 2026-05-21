@@ -103,6 +103,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             rt.block_on(self_update::run_self_update())?;
         }
         CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
+        CliAction::InstallBrowser => install_browser()?,
         CliAction::Repl {
             model,
             allowed_tools,
@@ -142,6 +143,7 @@ enum CliAction {
     Uninstall {
         purge: bool,
     },
+    InstallBrowser,
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
@@ -295,6 +297,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         "uninstall" => Ok(CliAction::Uninstall {
             purge: rest.iter().any(|a| a == "--purge"),
         }),
+        "install-browser" => Ok(CliAction::InstallBrowser),
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {
@@ -516,6 +519,124 @@ fn resume_session(session_path: &Path, commands: &[String]) {
 }
 
 #[allow(clippy::too_many_lines)]
+fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
+    use std::process::Command;
+
+    // Check for Node.js 20+
+    let node_output = Command::new("node").arg("--version").output();
+    let node_major = match node_output {
+        Ok(out) if out.status.success() => {
+            let version = String::from_utf8_lossy(&out.stdout);
+            let version = version.trim().trim_start_matches('v');
+            version
+                .split('.')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+        }
+        _ => None,
+    };
+
+    match node_major {
+        None => {
+            eprintln!("Error: Node.js not found. Node.js 20+ is required for browser automation.");
+            eprintln!("Install from https://nodejs.org/");
+            return Err("Node.js not found".into());
+        }
+        Some(major) if major < 20 => {
+            eprintln!("Error: Node.js 20+ required for browser automation (found v{major}.x).");
+            eprintln!("Install from https://nodejs.org/");
+            return Err(format!("Node.js {major} is too old").into());
+        }
+        _ => {}
+    }
+
+    let config_home = runtime::config_home_dir();
+    std::fs::create_dir_all(&config_home)?;
+
+    // npm install cloakbrowser playwright-core
+    let already_installed = config_home
+        .join("node_modules")
+        .join("cloakbrowser")
+        .exists()
+        && config_home
+            .join("node_modules")
+            .join("playwright-core")
+            .exists();
+
+    if already_installed {
+        println!(
+            "CloakBrowser already installed at {} (skipping npm install)",
+            config_home
+                .join("node_modules")
+                .join("cloakbrowser")
+                .display()
+        );
+    } else {
+        println!("Installing CloakBrowser...");
+        let status = Command::new("npm")
+            .args([
+                "install",
+                "--prefix",
+                &config_home.to_string_lossy(),
+                "cloakbrowser",
+                "playwright-core",
+            ])
+            .status()?;
+        if !status.success() {
+            return Err(format!(
+                "npm install failed. Run manually: npm install --prefix \"{}\" cloakbrowser playwright-core",
+                config_home.display()
+            )
+            .into());
+        }
+        println!("CloakBrowser installed.");
+    }
+
+    // Install system-level OS dependencies required by Chromium (Linux only).
+    // playwright-core ships an install-deps subcommand that handles this correctly
+    // across distros; it requires root on Linux but is a no-op on macOS.
+    #[cfg(target_os = "linux")]
+    {
+        println!("Installing system dependencies for Chromium...");
+        let status = Command::new("npx")
+            .args([
+                "--prefix",
+                &config_home.to_string_lossy(),
+                "playwright-core",
+                "install-deps",
+                "chromium",
+            ])
+            .status();
+        match status {
+            Ok(s) if s.success() => println!("System dependencies installed."),
+            _ => eprintln!(
+                "WARNING: Could not install system dependencies (may need sudo). \
+                 If the browser fails to launch, run: sudo npx --prefix \"{}\" playwright-core install-deps chromium",
+                config_home.display()
+            ),
+        }
+    }
+
+    // Download the browser binary
+    println!("Ensuring browser binary is downloaded...");
+    let status = Command::new("npx")
+        .args([
+            "--prefix",
+            &config_home.to_string_lossy(),
+            "cloakbrowser",
+            "install",
+        ])
+        .status()?;
+    if status.success() {
+        println!("Browser binary ready.");
+    } else {
+        eprintln!("WARNING: Browser binary download failed. It will be downloaded on first use.");
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
 fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "acrawl v{VERSION}")?;
     writeln!(out)?;
@@ -554,6 +675,11 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(out, "  acrawl init")?;
     writeln!(out, "  acrawl update")?;
+    writeln!(out, "  acrawl install-browser")?;
+    writeln!(
+        out,
+        "      Install CloakBrowser and download the browser binary"
+    )?;
     writeln!(out, "  acrawl uninstall [--purge]")?;
     writeln!(
         out,
