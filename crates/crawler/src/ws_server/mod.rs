@@ -261,6 +261,7 @@ async fn handle_incoming(
     }
 
     let token_clone = state.token.clone();
+    #[allow(clippy::result_large_err)]
     let ws_result = tokio_tungstenite::accept_hdr_async(
         stream,
         move |req: &ws_http::Request<()>, resp: ws_http::Response<()>| {
