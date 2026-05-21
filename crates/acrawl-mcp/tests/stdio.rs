@@ -122,6 +122,16 @@ fn assert_jsonrpc_error(response: &Value, id: i64, code: i64, message_fragment: 
         .contains(message_fragment));
 }
 
+fn read_json_line(reader: &mut BufReader<ChildStdout>) -> Value {
+    use std::io::BufRead;
+
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .expect("read json line response");
+    serde_json::from_str(line.trim_end_matches(['\r', '\n'])).expect("parse json line response")
+}
+
 #[test]
 fn stdio_server_handles_initialize_list_and_tool_call() {
     let mut server = TestServer::spawn();
@@ -226,6 +236,36 @@ fn stdio_server_returns_jsonrpc_error_when_run_goal_is_missing_goal() {
     }));
     let response = server.read_response();
     assert_jsonrpc_error(&response, 12, -32602, "missing required parameter: goal");
+
+    server.shutdown();
+}
+
+#[test]
+fn stdio_server_supports_line_delimited_jsonrpc() {
+    let mut server = TestServer::spawn();
+
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 21,
+        "method": "tools/list"
+    });
+    let stdin = server.stdin.as_mut().expect("child stdin available");
+    stdin
+        .write_all(
+            format!(
+                "{}\n",
+                serde_json::to_string(&request).expect("serialize request")
+            )
+            .as_bytes(),
+        )
+        .expect("write json line request");
+    stdin.flush().expect("flush json line request");
+
+    let response = read_json_line(&mut server.stdout);
+    let names = tool_names(&response);
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], 21);
+    assert_eq!(names, vec!["run_goal", "list_builtin_tools"]);
 
     server.shutdown();
 }

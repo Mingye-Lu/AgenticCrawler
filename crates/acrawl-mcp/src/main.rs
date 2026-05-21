@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::env;
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::str::FromStr;
 use std::sync::Mutex;
 
@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 static JOB_MUTEX: Mutex<()> = Mutex::new(());
+static OUTPUT_MODE: Mutex<TransportMode> = Mutex::new(TransportMode::Framed);
 
 const SERVER_NAME: &str = "acrawl-mcp-server";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -79,10 +80,77 @@ trait GoalExecutor {
 
 struct RealGoalExecutor;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransportMode {
+    Framed,
+    LineDelimited,
+}
+
+fn set_output_mode(mode: TransportMode) {
+    match OUTPUT_MODE.lock() {
+        Ok(mut guard) => *guard = mode,
+        Err(poisoned) => *poisoned.into_inner() = mode,
+    }
+}
+
+fn output_mode() -> TransportMode {
+    match OUTPUT_MODE.lock() {
+        Ok(guard) => *guard,
+        Err(poisoned) => *poisoned.into_inner(),
+    }
+}
+
+fn read_json_line(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
+    let mut line = String::new();
+    let bytes_read = reader.read_line(&mut line)?;
+    if bytes_read == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "MCP stdio stream closed while reading line-delimited message",
+        ));
+    }
+    Ok(line.trim_end_matches(['\r', '\n']).as_bytes().to_vec())
+}
+
+fn read_protocol_message(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
+    let buffered = reader.fill_buf()?;
+    if buffered.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "MCP stdio stream closed before first message",
+        ));
+    }
+
+    let first = buffered
+        .iter()
+        .copied()
+        .find(|byte| !byte.is_ascii_whitespace())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty MCP message"))?;
+
+    let mode = match first {
+        b'{' | b'[' => TransportMode::LineDelimited,
+        _ => TransportMode::Framed,
+    };
+    set_output_mode(mode);
+
+    match mode {
+        TransportMode::Framed => read_mcp_frame(reader),
+        TransportMode::LineDelimited => read_json_line(reader),
+    }
+}
+
 fn write_frame_to_stdout(payload: &[u8]) {
-    let framed = encode_mcp_frame(payload);
     let mut stdout = io::stdout().lock();
-    let _ = stdout.write_all(&framed);
+    match output_mode() {
+        TransportMode::Framed => {
+            let framed = encode_mcp_frame(payload);
+            let _ = stdout.write_all(&framed);
+        }
+        TransportMode::LineDelimited => {
+            let _ = stdout.write_all(payload);
+            let _ = stdout.write_all(b"\n");
+        }
+    }
     let _ = stdout.flush();
 }
 
@@ -783,7 +851,7 @@ fn main() {
     let mut reader = BufReader::new(stdin);
 
     loop {
-        let payload = match read_mcp_frame(&mut reader) {
+        let payload = match read_protocol_message(&mut reader) {
             Ok(p) => p,
             Err(e) => {
                 if e.kind() == io::ErrorKind::UnexpectedEof {
@@ -846,6 +914,10 @@ mod tests {
         encode_mcp_frame(body.as_bytes())
     }
 
+    fn json_line_request(body: &str) -> Vec<u8> {
+        format!("{body}\n").into_bytes()
+    }
+
     fn read_framed_response(data: &[u8]) -> Vec<u8> {
         let mut cursor = Cursor::new(data);
         read_mcp_frame(&mut cursor).expect("valid frame")
@@ -866,6 +938,16 @@ mod tests {
         let framed = framed_request("");
         let parsed = read_framed_response(&framed);
         assert_eq!(parsed, b"");
+    }
+
+    #[test]
+    fn read_protocol_message_accepts_json_line_mode() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let mut cursor = Cursor::new(json_line_request(body));
+        let parsed =
+            read_protocol_message(&mut cursor).expect("line-delimited request should parse");
+        assert_eq!(parsed, body.as_bytes());
+        assert_eq!(output_mode(), TransportMode::LineDelimited);
     }
 
     #[test]
