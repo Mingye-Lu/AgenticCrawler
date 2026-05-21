@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-05-21
+
+### Removed
+
+- **`acrawl init` subcommand** — initialized an IDE coding workspace; not relevant to a web crawler.
+- **Sandbox system** (`sandbox.rs`) — code-execution isolation inherited from the IDE era.
+- **CCR remote infrastructure** (`remote.rs`) — Claude Code Router session management, no longer used.
+- **Bootstrap plan logic** (`bootstrap.rs`) — IDE session bootstrap plans.
+- **`--permission-mode` CLI flag** — three-tier IDE permission model (`read-only` / `workspace-write` / `danger-full-access`). Use `--allowedTools` to restrict which tools the agent can invoke.
+- **Per-workspace config loading** — config is now global-only (`~/.acrawl/`).
+- **IDE-framed system prompt** — replaced with a crawler-focused identity and operating procedure.
+
+### Changed
+
+- **`WORKSPACE_DIR` env var renamed to `ACRAWL_OUTPUT_DIR`** — exported for child processes and MCP servers; aligns with the `output_dir` settings field and `ACRAWL_CONFIG_HOME` naming convention.
+- **`/status` and `/config`** — output now shows crawler-relevant info only (visited URLs, crawl state) rather than IDE workspace details.
+- **Compaction** — tracks crawled URLs instead of opened files.
+- **`unwrap_ccr_proxy_url` → `unwrap_proxied_mcp_url`** — internal MCP helper renamed to drop the CCR branding.
+- **README Permission Model section** — replaced with `--allowedTools` documentation.
+- **AGENTS.md** — updated architecture docs to reflect removed systems and current slash-command set.
+
 ## [0.5.0] - 2026-05-21
 
 ### Added
@@ -333,6 +354,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.5.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.1
 [0.5.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.0
 [0.4.9]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.9
 [0.4.8]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.8
