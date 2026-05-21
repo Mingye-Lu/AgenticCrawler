@@ -21,14 +21,14 @@ impl TestServer {
         fs::create_dir_all(&config_home).expect("create temp config home");
         fs::write(
             config_home.join("settings.json"),
-            r#"{"headless":true,"workspace_dir":"workspace"}"#,
+            r#"{"headless":true,"output_dir":"output"}"#,
         )
         .expect("write settings.json");
 
         let mut child = Command::new(env!("CARGO_BIN_EXE_acrawl-mcp-server"))
             .env("ACRAWL_CONFIG_HOME", &config_home)
             .env_remove("HEADLESS")
-            .env_remove("WORKSPACE_DIR")
+            .env_remove("ACRAWL_OUTPUT_DIR")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -168,7 +168,7 @@ fn stdio_server_handles_initialize_list_and_tool_call() {
     assert_eq!(tool_call["jsonrpc"], "2.0");
     assert_eq!(tool_call["id"], 3);
     assert_eq!(tool_call["result"]["isError"], false);
-    assert_eq!(tool_call["result"]["structuredContent"]["tool_count"], 19);
+    assert_eq!(tool_call["result"]["structuredContent"]["tool_count"], 21);
 
     let builtin_names = builtin_tool_names(&tool_call);
     assert!(builtin_names.contains(&"navigate"));

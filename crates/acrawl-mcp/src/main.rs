@@ -21,7 +21,6 @@ static JOB_MUTEX: Mutex<()> = Mutex::new(());
 const SERVER_NAME: &str = "acrawl-mcp-server";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
-const DEFAULT_DATE: &str = "2026-03-31";
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
@@ -153,7 +152,7 @@ fn tools_list_response(id: Option<Value>) {
         },
         {
             "name": "list_builtin_tools",
-            "description": "List acrawl's built-in crawl tool capabilities (read-only metadata). Returns names, descriptions, and input schemas for the 19 internal tools.",
+            "description": "List acrawl's built-in crawl tool capabilities (read-only metadata). Returns names, descriptions, and input schemas for the 21 internal tools.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -234,17 +233,9 @@ fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<crawler::ToolSpec> {
 }
 
 fn build_run_goal_system_prompt(allowed_tools: &[String]) -> Result<Vec<String>, String> {
-    let mut sections = crawler::build_system_prompt(&filtered_tool_specs(allowed_tools));
-    sections.extend(
-        runtime::load_system_prompt(
-            env::current_dir().map_err(|error| error.to_string())?,
-            DEFAULT_DATE,
-            env::consts::OS,
-            "unknown",
-        )
-        .map_err(|error| error.to_string())?,
-    );
-    Ok(sections)
+    Ok(crawler::build_system_prompt(&filtered_tool_specs(
+        allowed_tools,
+    )))
 }
 
 fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOutcome> {
@@ -697,8 +688,8 @@ fn handle_tools_call(id: Option<Value>, params: Option<Value>) {
 fn main() {
     let settings = runtime::load_settings();
     env::set_var(
-        "WORKSPACE_DIR",
-        runtime::settings_get_workspace_dir(&settings),
+        "ACRAWL_OUTPUT_DIR",
+        runtime::settings_get_output_dir(&settings),
     );
     if env::var("HEADLESS").is_err() {
         env::set_var(
@@ -903,14 +894,14 @@ mod tests {
     #[test]
     fn mvp_tool_specs_has_expected_count() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 19);
+        assert_eq!(specs.len(), 21);
     }
 
     #[test]
     fn mvp_tool_specs_names_are_unique() {
         let specs = mvp_tool_specs();
         let names: BTreeSet<&str> = specs.iter().map(|s| s.name).collect();
-        assert_eq!(names.len(), 19);
+        assert_eq!(names.len(), 21);
     }
 
     #[test]
@@ -1063,15 +1054,9 @@ mod tests {
     }
 
     #[test]
-    fn build_run_goal_system_prompt_includes_runtime_sections() {
+    fn build_run_goal_system_prompt_filters_tool_listing() {
         let prompt = build_run_goal_system_prompt(&["navigate".to_string()])
             .expect("system prompt should build");
-        assert!(prompt
-            .iter()
-            .any(|section| section.contains("Working directory:")));
-        assert!(prompt
-            .iter()
-            .any(|section| section.contains(runtime::SYSTEM_PROMPT_DYNAMIC_BOUNDARY)));
         let first_section = prompt.first().expect("prompt should have first section");
         assert!(first_section.contains("**navigate**"));
         assert!(!first_section.contains("**click**"));

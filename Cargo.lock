@@ -25,7 +25,7 @@ dependencies = [
 
 [[package]]
 name = "acrawl-mcp"
-version = "0.4.7"
+version = "0.5.1"
 dependencies = [
  "api",
  "crawler",
