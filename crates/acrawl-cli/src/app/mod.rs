@@ -664,26 +664,11 @@ impl LiveCli {
             s.browser_backend = None;
         });
 
-        let _ = block_on_runtime_future(async {
-            self.runtime
-                .tool_executor_mut()
-                .ensure_browser()
-                .await
-                .map_err(|error| RuntimeError::new(error.to_string()))
-        });
-
         if let Some(state) = saved_state.as_ref() {
-            let _ = block_on_runtime_future(async {
-                self.runtime
-                    .tool_executor_mut()
-                    .restore_state_to_bridge(state)
-                    .await;
-                Ok::<(), RuntimeError>(())
-            });
+            self.pending_extension_state = Some(state.clone());
         }
 
-        "Browser mode\n  Result           switched back to CloakBrowser (headless), state preserved"
-            .to_string()
+        "Browser mode\n  Result           switched back to CloakBrowser (headless)".to_string()
     }
 
     pub(crate) fn stop_extension_server(&mut self) -> String {
