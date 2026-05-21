@@ -5,8 +5,8 @@ use crate::json::JsonValue;
 
 use super::{
     deep_merge_objects, expect_object, parse_mcp_server_config, parse_optional_oauth_config,
-    parse_optional_sandbox_config, read_optional_json_object, ConfigEntry, ConfigError,
-    ConfigSource, McpConfigCollection, OAuthConfig, RuntimeFeatureConfig, ScopedMcpServerConfig,
+    read_optional_json_object, ConfigEntry, ConfigError, ConfigSource, McpConfigCollection,
+    OAuthConfig, RuntimeFeatureConfig, ScopedMcpServerConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +97,6 @@ impl ConfigLoader {
             },
             oauth: parse_optional_oauth_config(&merged_value, "merged settings.oauth")?,
             model: parse_optional_model(&merged_value),
-            sandbox: parse_optional_sandbox_config(&merged_value)?,
         };
 
         Ok(RuntimeConfig {
@@ -156,11 +155,6 @@ impl RuntimeConfig {
     #[must_use]
     pub fn model(&self) -> Option<&str> {
         self.feature_config.model()
-    }
-
-    #[must_use]
-    pub fn sandbox(&self) -> &crate::sandbox::SandboxConfig {
-        self.feature_config.sandbox()
     }
 }
 

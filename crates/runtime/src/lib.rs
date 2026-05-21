@@ -7,7 +7,6 @@ mod mcp;
 mod oauth;
 pub mod observer;
 mod prompt;
-pub mod sandbox;
 mod session;
 pub mod settings;
 mod summary_compression;
