@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::io::{self, BufReader, Write};
+use std::str::FromStr;
 use std::sync::Mutex;
 
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
@@ -352,18 +353,21 @@ struct CrawlApiClient {
     model: String,
     tool_names: Vec<String>,
     max_tokens: u32,
+    reasoning_effort: Option<api::ReasoningEffort>,
 }
 
 impl CrawlApiClient {
     fn new(provider: ProviderClient, model: &str, tool_names: Vec<String>) -> Self {
-        let max_tokens =
-            ProviderRegistry::from_credentials(&api::load_credentials().unwrap_or_default())
-                .max_tokens(model);
+        let store = api::load_credentials().unwrap_or_default();
+        let registry = ProviderRegistry::from_credentials(&store);
+        let max_tokens = registry.max_tokens(model);
+        let reasoning_effort = reasoning_effort_for_model(model, &registry);
         Self {
             provider,
             model: model.to_string(),
             tool_names,
             max_tokens,
+            reasoning_effort,
         }
     }
 
@@ -465,6 +469,64 @@ impl CrawlApiClient {
     }
 }
 
+fn reasoning_effort_for_model(
+    model: &str,
+    registry: &ProviderRegistry,
+) -> Option<api::ReasoningEffort> {
+    if !registry
+        .resolve_model(model)
+        .is_some_and(|info| info.capabilities.reasoning)
+    {
+        return None;
+    }
+
+    runtime::load_settings()
+        .reasoning_effort
+        .as_deref()
+        .and_then(|value| api::ReasoningEffort::from_str(value).ok())
+        .or(Some(api::ReasoningEffort::High))
+}
+
+fn reasoning_event_payload(thinking: &str) -> Option<String> {
+    if thinking.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::json!({
+                "reasoning_content": thinking,
+            })
+            .to_string(),
+        )
+    }
+}
+
+fn push_output_block(
+    block: OutputContentBlock,
+    events: &mut Vec<AssistantEvent>,
+    pending_tool: &mut Option<(String, String, String)>,
+    streaming_tool_input: bool,
+) {
+    match block {
+        OutputContentBlock::Text { text } => {
+            if !text.is_empty() {
+                events.push(AssistantEvent::TextDelta(text));
+            }
+        }
+        OutputContentBlock::ToolUse { id, name, input } => {
+            let initial_input = if streaming_tool_input
+                && input.is_object()
+                && input.as_object().is_some_and(serde_json::Map::is_empty)
+            {
+                String::new()
+            } else {
+                input.to_string()
+            };
+            *pending_tool = Some((id, name, initial_input));
+        }
+        OutputContentBlock::Reasoning => {}
+    }
+}
+
 impl ApiClient for CrawlApiClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         let tools = self.build_tool_defs();
@@ -476,7 +538,7 @@ impl ApiClient for CrawlApiClient {
             tools: Some(tools),
             tool_choice: Some(ToolChoice::Auto),
             stream: true,
-            reasoning_effort: None,
+            reasoning_effort: self.reasoning_effort,
         };
 
         tokio::task::block_in_place(|| {
@@ -490,6 +552,7 @@ impl ApiClient for CrawlApiClient {
                 let mut events: Vec<AssistantEvent> = Vec::new();
                 let mut pending_tool: Option<(String, String, String)> = None;
                 let mut pending_reasoning: Option<String> = None;
+                let mut saw_stop = false;
 
                 loop {
                     let event = stream
@@ -497,27 +560,23 @@ impl ApiClient for CrawlApiClient {
                         .await
                         .map_err(|e: api::ApiError| RuntimeError::new(e.to_string()))?;
                     match event {
-                        Some(StreamEvent::MessageStart(_)) => {}
-                        Some(StreamEvent::ContentBlockStart(start)) => match start.content_block {
-                            OutputContentBlock::Text { text } => {
-                                if !text.is_empty() {
-                                    events.push(AssistantEvent::TextDelta(text));
-                                }
+                        Some(StreamEvent::MessageStart(start)) => {
+                            for block in start.message.content {
+                                push_output_block(block, &mut events, &mut pending_tool, true);
                             }
-                            OutputContentBlock::ToolUse { id, name, input } => {
-                                let input_str = if input.is_object()
-                                    && input.as_object().is_some_and(serde_json::Map::is_empty)
-                                {
-                                    String::new()
-                                } else {
-                                    serde_json::to_string(&input).unwrap_or_default()
-                                };
-                                pending_tool = Some((id, name, input_str));
-                            }
-                            OutputContentBlock::Reasoning => {
+                        }
+                        Some(StreamEvent::ContentBlockStart(start)) => {
+                            if matches!(start.content_block, OutputContentBlock::Reasoning) {
                                 pending_reasoning = Some(String::new());
+                            } else {
+                                push_output_block(
+                                    start.content_block,
+                                    &mut events,
+                                    &mut pending_tool,
+                                    true,
+                                );
                             }
-                        },
+                        }
                         Some(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
                             delta,
                             ..
@@ -538,10 +597,17 @@ impl ApiClient for CrawlApiClient {
                         },
                         Some(StreamEvent::ContentBlockStop(_)) => {
                             if let Some((id, name, input)) = pending_tool.take() {
+                                let input = if input.is_empty() {
+                                    "{}".to_string()
+                                } else {
+                                    input
+                                };
                                 events.push(AssistantEvent::ToolUse { id, name, input });
                             }
                             if let Some(data) = pending_reasoning.take() {
-                                events.push(AssistantEvent::Reasoning { data });
+                                if let Some(data) = reasoning_event_payload(&data) {
+                                    events.push(AssistantEvent::Reasoning { data });
+                                }
                             }
                         }
                         Some(StreamEvent::MessageDelta(delta)) => {
@@ -554,11 +620,22 @@ impl ApiClient for CrawlApiClient {
                                 cache_read_input_tokens: delta.usage.cache_read_input_tokens,
                             }));
                         }
-                        Some(StreamEvent::MessageStop(_)) | None => {
+                        Some(StreamEvent::MessageStop(_)) => {
+                            saw_stop = true;
                             events.push(AssistantEvent::MessageStop);
                             break;
                         }
+                        None => break,
                     }
+                }
+
+                if !saw_stop
+                    && events.iter().any(|event| {
+                        matches!(event, AssistantEvent::TextDelta(text) if !text.is_empty())
+                            || matches!(event, AssistantEvent::ToolUse { .. })
+                    })
+                {
+                    events.push(AssistantEvent::MessageStop);
                 }
 
                 Ok(events)
@@ -1060,6 +1137,16 @@ mod tests {
         let first_section = prompt.first().expect("prompt should have first section");
         assert!(first_section.contains("**navigate**"));
         assert!(!first_section.contains("**click**"));
+    }
+
+    #[test]
+    fn reasoning_event_payload_wraps_reasoning_content() {
+        let payload = reasoning_event_payload("chain of thought").expect("payload expected");
+        assert_eq!(
+            serde_json::from_str::<Value>(&payload).expect("valid reasoning payload"),
+            json!({"reasoning_content": "chain of thought"})
+        );
+        assert_eq!(reasoning_event_payload(""), None);
     }
 
     // --- env init tests ---
