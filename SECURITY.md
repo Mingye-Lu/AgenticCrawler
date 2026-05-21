@@ -25,4 +25,4 @@ We will acknowledge your report within 48 hours and aim to release a fix within 
 
 **Browser automation.** acrawl runs a headless Chromium instance that navigates to, renders, and interacts with web pages. Be aware of what sites and content you direct it toward — the browser executes JavaScript on those pages.
 
-**Permission model.** acrawl enforces a three-tier permission model (`read-only`, `workspace-write`, `danger-full-access`) that gates which tools the LLM agent can invoke. Use the most restrictive mode that meets your needs.
+**Tool access.** Use `--allowedTools` to restrict which of the 21 built-in tools the LLM agent can invoke. Omitting the flag allows all tools. For read-only crawls, pass only the navigation and extraction tools to prevent the agent from saving files or spawning sub-agents.
