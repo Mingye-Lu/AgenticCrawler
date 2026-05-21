@@ -68,7 +68,7 @@ pub use settings::{
     settings_get_compaction_prune_protect_tokens, settings_get_fork_child_max_steps,
     settings_get_fork_wait_timeout_secs, settings_get_headless,
     settings_get_max_concurrent_per_parent, settings_get_max_fork_depth, settings_get_max_steps,
-    settings_get_max_total_agents, settings_get_workspace_dir, update_settings, Settings,
+    settings_get_max_total_agents, settings_get_output_dir, update_settings, Settings,
 };
 pub use update_check::{check_for_update, check_for_update_force, UpdateInfo};
 pub use usage::{

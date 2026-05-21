@@ -87,7 +87,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     let parsed = parse_input(input)?;
 
     let settings = runtime::load_settings();
-    let workspace = runtime::settings_get_workspace_dir(&settings).to_string();
+    let workspace = runtime::settings_get_output_dir(&settings).to_string();
     let mut target = PathBuf::from(&workspace);
     if let Some(ref sub) = parsed.subdir {
         target.push(sub);
