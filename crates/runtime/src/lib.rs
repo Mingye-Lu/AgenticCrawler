@@ -1,4 +1,3 @@
-mod bootstrap;
 mod compact;
 mod config;
 mod control;
@@ -16,7 +15,6 @@ mod summary_compression;
 pub mod update_check;
 mod usage;
 
-pub use bootstrap::{BootstrapPhase, BootstrapPlan};
 pub use compact::{
     compact_session, estimate_session_tokens, format_compact_summary,
     get_compact_continuation_message, should_compact, CompactionConfig, CompactionResult,
