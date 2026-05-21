@@ -762,8 +762,12 @@ impl LiveCli {
 
         let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
 
-        let server = crawler::WsBridgeServer::start(port, token.clone())
-            .map_err(|e| format!("Extension bridge server\n  Error            {e}"))?;
+        let server = block_on_runtime_future(async {
+            crawler::WsBridgeServer::start(port, token.clone())
+                .await
+                .map_err(|e| RuntimeError::new(e.to_string()))
+        })
+        .map_err(|e| format!("Extension bridge server\n  Error            {e}"))?;
 
         self.pending_extension_state = saved_state;
         self.ws_bridge_server = Some(server);
