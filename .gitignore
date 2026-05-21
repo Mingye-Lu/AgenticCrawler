@@ -23,6 +23,9 @@ Thumbs.db
 # Node (Playwright runtime dependency)
 node_modules/
 
+# Extension build artifact
+extension/extension.zip
+
 # Workspace (for file downloads)
 workspace/
 
