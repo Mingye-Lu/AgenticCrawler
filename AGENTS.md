@@ -28,7 +28,7 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 - **api** — HTTP + SSE clients for Anthropic (`client.rs`), OpenAI-compatible (`openai.rs`), and Codex OAuth (`codex.rs`). `sse.rs` is the shared streaming frame parser; `types.rs` holds the Anthropic message schema. `provider/registry.rs` and `provider/factory.rs` handle provider discovery and client construction.
 - **runtime** — `ConversationRuntime` (the core turn loop), `RuntimeObserver` trait for event callbacks, `Session` persistence, system-prompt builder, permission model (`PermissionMode` = ReadOnly / WorkspaceWrite / DangerFullAccess), compaction, usage/pricing, OAuth PKCE, `observer.rs` for the observer trait, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/memory`, `/init`, `/diff`, `/version`). Knows which commands are safe to replay in `--resume`.
-- **crawler** — the browser tools (16 navigation/extraction + 2 agent-control + 1 human intervention = 19 total), agent loop (`agent.rs`), `FetchRouter` that escalates HTTP→browser, and `PlaywrightBridge` — a child `node` process running an inline JS script (`PLAYWRIGHT_BRIDGE_NODE_SCRIPT` in `playwright.rs`) that speaks newline-delimited JSON over stdio. 2 agent-control tools (`fork`, `wait_for_subagents`) and 1 human intervention tool (`wait_for_human`) live alongside the browser tools, bringing the total to 19. `agent/` subdirectory contains fork/lifecycle logic; `tool_effect.rs` defines the `ToolEffect` enum (Reply/Spawn/Wait/Finish) that tools return.
+- **crawler** — the browser tools (16 navigation/extraction + 2 agent-control + 1 human intervention = 19 total), agent loop (`agent.rs`), `FetchRouter` that escalates HTTP→browser, and `PlaywrightBridge` — a child `node` process running an inline JS script (`PLAYWRIGHT_BRIDGE_NODE_SCRIPT` in `playwright.rs`) that speaks newline-delimited JSON over stdio. 2 agent-control tools (`fork`, `wait_for_subagents`) and 1 human intervention tool (`wait_for_human`) live alongside the browser tools, bringing the total to 19. `agent/` subdirectory contains fork/lifecycle logic; `tool_effect.rs` defines the `ToolEffect` enum (Reply/Spawn/Wait/Finish) that tools return. `browser_backend.rs` defines the `BrowserBackend` trait; `extension.rs` implements `ExtensionBridge` (the Chrome extension backend); `ws_server.rs` is the WebSocket bridge server for extension communication. `browser.rs` owns `BrowserContext` which wraps any `SharedBridge` with tab/URL state.
 
 ## Architecture: how a turn actually flows
 
@@ -39,6 +39,22 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 5. `runtime::UsageTracker` + `pricing_for_model` feed `/cost` and `/status`. `runtime::compact` watches `ACRAWL_AUTO_COMPACT_INPUT_TOKENS` (default 200k) and auto-compacts the session when the threshold trips.
 
 The CloakBrowser bridge is notable: it is a **single embedded Node script** launched as a subprocess, using CloakBrowser (not stock Playwright) for stealth browsing. The browser binary auto-downloads on first use — no separate install step needed.
+
+## Extension bridge (Chrome extension backend)
+
+An alternative to CloakBrowser: a Chrome MV3 extension that lets acrawl drive the user's real browser via CDP (Chrome DevTools Protocol). The system has three layers:
+
+1. **`WsBridgeServer`** (`crates/crawler/src/ws_server.rs`) — A tokio TCP server listening on `127.0.0.1:<port>` (default 19876). Handles `/health` (reachability check, no auth info) and `/bridge` (WebSocket upgrade with token auth + origin validation). Single-client gate: only one extension connection at a time.
+2. **`ExtensionBridge`** (`crates/crawler/src/extension.rs`) — Implements the `BrowserBackend` trait. Sends `{id, action, payload}` JSON commands over the WebSocket and awaits `{id, ok, result/error}` responses. Fails fast if no client is connected (checks `watch::Receiver<bool>`).
+3. **Chrome Extension** (`extension/`) — MV3 service worker (`background.js`) that connects to the bridge server, dispatches CDP commands to Chrome tabs, and returns results. Command handlers live in `extension/commands/*.js`.
+
+Key design decisions:
+- `BrowserBackend` trait (`browser_backend.rs`) is the abstraction — both `PlaywrightBridge` and `ExtensionBridge` implement it. Error type is `BridgeError` (not backend-specific).
+- Bridge server auto-starts only when `settings.browser_backend == "extension"`. Mode activation (`extension_mode`) is event-driven: it flips only when the extension actually connects, not when the server starts.
+- Token auth uses a 256-bit hex token with constant-time comparison. Token is generated per-server-start and displayed via `/extension` command. The `/health` endpoint does NOT expose the token.
+- Origin validation requires valid 32-char Chrome/Edge extension ID format.
+- `/extension` starts the bridge server and shows the token. `/cloakbrowser` tears down extension mode and switches back.
+- `extension/` at the repo root is the Chrome extension source. It has its own `manifest.json`, build scripts, and `PRIVACY.md`.
 
 ## Provider routing
 

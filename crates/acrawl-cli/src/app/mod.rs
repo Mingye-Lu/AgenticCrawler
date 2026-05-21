@@ -115,6 +115,9 @@ pub(crate) struct LiveCli {
     child_control_registry: Option<crawler::ChildControlRegistry>,
     pending_title: Arc<Mutex<Option<String>>>,
     title_dispatched: bool,
+    ws_bridge_server: Option<crawler::WsBridgeServer>,
+    pending_extension_state: Option<crawler::BrowserState>,
+    extension_bridge_initialized: bool,
 }
 
 #[derive(Clone)]
@@ -199,12 +202,16 @@ impl LiveCli {
             child_control_registry: None,
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
+            ws_bridge_server: None,
+            pending_extension_state: None,
+            extension_bridge_initialized: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
+        cli.boot_bridge_server_if_needed();
         Ok(cli)
     }
 
@@ -254,12 +261,16 @@ impl LiveCli {
             child_control_registry: Some(registry.clone()),
             pending_title: Arc::new(Mutex::new(None)),
             title_dispatched: false,
+            ws_bridge_server: None,
+            pending_extension_state: None,
+            extension_bridge_initialized: false,
         };
         if let Some(effort) = initial_effort {
             cli.runtime
                 .api_client_mut()
                 .set_reasoning_effort(Some(effort));
         }
+        cli.boot_bridge_server_if_needed();
         Ok(cli)
     }
 
@@ -488,6 +499,10 @@ impl LiveCli {
                 false
             }
             SlashCommand::Headed => {
+                if self.is_extension_mode_active() {
+                    println!("Browser mode\n  Ignored          extension mode is active (browser is already visible)");
+                    return Ok(false);
+                }
                 env::set_var("HEADLESS", "false");
                 let _ = runtime::update_settings(|s| {
                     s.headless = Some(false);
@@ -497,12 +512,42 @@ impl LiveCli {
                 false
             }
             SlashCommand::Headless => {
+                if self.is_extension_mode_active() {
+                    println!("Browser mode\n  Ignored          extension mode is active (browser is already visible)");
+                    return Ok(false);
+                }
                 env::set_var("HEADLESS", "true");
                 let _ = runtime::update_settings(|s| {
                     s.headless = Some(true);
                 });
                 self.reset_browser();
                 println!("Browser mode\n  Result           switched to headless");
+                false
+            }
+            SlashCommand::Extension { stop } => {
+                if stop {
+                    println!("{}", self.stop_extension_server());
+                    return Ok(false);
+                }
+                if let Some(status) = self.extension_bridge_status() {
+                    println!("{status}");
+                } else {
+                    match self.start_extension_server() {
+                        Ok((token, port)) => {
+                            println!(
+                                "Extension bridge\n  \
+                                 Status           server started (port {port})\n  \
+                                 Token            {token}"
+                            );
+                        }
+                        Err(e) => eprintln!("{e}"),
+                    }
+                }
+                false
+            }
+            SlashCommand::CloakBrowser => {
+                let message = self.switch_to_cloakbrowser();
+                println!("{message}");
                 false
             }
             SlashCommand::Unknown(name) => {
@@ -554,6 +599,178 @@ impl LiveCli {
 
     pub(crate) fn reset_browser(&mut self) {
         self.runtime.tool_executor_mut().reset_browser();
+    }
+
+    pub(crate) fn is_extension_mode_active(&self) -> bool {
+        self.extension_bridge_initialized || self.ws_bridge_server.is_some()
+    }
+
+    pub(crate) fn prepare_extension_bridge_activation(
+        &mut self,
+    ) -> Result<(crawler::SharedBridge, Option<crawler::BrowserState>), String> {
+        if self.extension_bridge_initialized {
+            return Err("extension bridge is already initialized".to_string());
+        }
+
+        let Some(server) = self.ws_bridge_server.as_ref() else {
+            return Err("extension bridge server is not running".to_string());
+        };
+
+        let sender = server.command_sender();
+        let connected = server.connection_watcher();
+        let bridge = crawler::ExtensionBridge::new(sender, connected);
+        let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
+            Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>
+        ));
+
+        Ok((shared, self.pending_extension_state.take()))
+    }
+
+    pub(crate) fn activate_extension_bridge(&mut self, shared: crawler::SharedBridge) {
+        self.runtime
+            .tool_executor_mut()
+            .set_extension_bridge(shared);
+        self.runtime.tool_executor_mut().set_extension_mode(true);
+        self.extension_bridge_initialized = true;
+        let _ = runtime::update_settings(|s| {
+            s.browser_backend = Some("extension".to_string());
+        });
+    }
+
+    pub(crate) fn restore_pending_extension_state(&mut self, state: Option<crawler::BrowserState>) {
+        if self.pending_extension_state.is_none() {
+            self.pending_extension_state = state;
+        }
+    }
+
+    pub(crate) fn switch_to_cloakbrowser(&mut self) -> String {
+        let saved_state = block_on_runtime_future(async {
+            Ok::<Option<crawler::BrowserState>, RuntimeError>(
+                self.runtime
+                    .tool_executor_mut()
+                    .export_current_state()
+                    .await,
+            )
+        })
+        .unwrap_or(None);
+
+        self.ws_bridge_server = None;
+        self.pending_extension_state = None;
+        self.extension_bridge_initialized = false;
+        self.runtime.tool_executor_mut().set_extension_mode(false);
+        self.reset_browser();
+
+        let _ = runtime::update_settings(|s| {
+            s.browser_backend = None;
+        });
+
+        if let Some(state) = saved_state.as_ref() {
+            self.pending_extension_state = Some(state.clone());
+        }
+
+        "Browser mode\n  Result           switched back to CloakBrowser (headless)".to_string()
+    }
+
+    pub(crate) fn stop_extension_server(&mut self) -> String {
+        if self.ws_bridge_server.is_none() {
+            return "Extension mode\n  Result           bridge server already stopped".to_string();
+        }
+
+        self.ws_bridge_server = None;
+        self.pending_extension_state = None;
+        self.extension_bridge_initialized = false;
+        self.runtime.tool_executor_mut().clear_extension_bridge();
+        self.runtime.tool_executor_mut().set_extension_mode(false);
+
+        let _ = runtime::update_settings(|s| {
+            if s.browser_backend.as_deref() == Some("extension") {
+                s.browser_backend = None;
+            }
+        });
+
+        "Extension mode\n  Result           bridge server stopped".to_string()
+    }
+
+    pub(crate) fn extension_bridge_status(&self) -> Option<String> {
+        let server = self.ws_bridge_server.as_ref()?;
+        let settings = runtime::load_settings();
+        let token = settings.extension_bridge_token.unwrap_or_default();
+        let port = server.port();
+        let status = if server.is_client_connected() && !self.extension_bridge_initialized {
+            "browser connected; initializing"
+        } else if server.is_client_connected() {
+            "connected"
+        } else {
+            "waiting for browser"
+        };
+        Some(format!(
+            "Extension mode\n  \
+             Status           {status} (port {port})\n  \
+             Token            {token}"
+        ))
+    }
+
+    pub(crate) fn extension_connection_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        self.ws_bridge_server
+            .as_ref()
+            .map(crawler::WsBridgeServer::connection_watcher)
+    }
+
+    pub(crate) fn start_extension_server(&mut self) -> Result<(String, u16), String> {
+        use crawler::ws_server::generate_bridge_token;
+
+        if self.ws_bridge_server.is_some() {
+            self.ws_bridge_server = None;
+            self.runtime.tool_executor_mut().clear_extension_bridge();
+        }
+        self.pending_extension_state = None;
+        self.extension_bridge_initialized = false;
+
+        let saved_state = block_on_runtime_future(async {
+            Ok::<Option<crawler::BrowserState>, RuntimeError>(
+                self.runtime
+                    .tool_executor_mut()
+                    .export_current_state()
+                    .await,
+            )
+        })
+        .unwrap_or(None);
+
+        let settings = runtime::load_settings();
+        let token = settings
+            .extension_bridge_token
+            .unwrap_or_else(generate_bridge_token);
+
+        let _ = runtime::update_settings(|s| {
+            s.extension_bridge_token = Some(token.clone());
+        });
+
+        let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
+
+        let server = block_on_runtime_future(async {
+            crawler::WsBridgeServer::start(port, token.clone())
+                .await
+                .map_err(|e| RuntimeError::new(e.to_string()))
+        })
+        .map_err(|e| format!("Extension bridge server\n  Error            {e}"))?;
+
+        self.pending_extension_state = saved_state;
+        self.ws_bridge_server = Some(server);
+
+        Ok((token, port))
+    }
+
+    pub(crate) fn boot_bridge_server_if_needed(&mut self) {
+        if self.ws_bridge_server.is_some() {
+            return;
+        }
+        let settings = runtime::load_settings();
+        if settings.browser_backend.as_deref() != Some("extension") {
+            return;
+        }
+        if let Err(e) = self.start_extension_server() {
+            eprintln!("[acrawl] bridge server auto-start failed: {e}");
+        }
     }
 
     pub(crate) fn status_report(&self) -> Result<String, CliError> {

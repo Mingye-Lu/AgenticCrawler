@@ -491,7 +491,11 @@ pub(super) fn build_wrapped_list(
                 ))));
 
                 // Content rows: │ key  value   │
-                let max_key_len = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+                let max_key_len = rows
+                    .iter()
+                    .map(|(k, _)| text_display_width(k))
+                    .max()
+                    .unwrap_or(0);
                 let key_col = max_key_len.max(w.saturating_sub(8).clamp(8, 30));
                 let val_col = w.saturating_sub(key_col + 5).max(8);
 
@@ -499,7 +503,8 @@ pub(super) fn build_wrapped_list(
                     let wrapped = textwrap::wrap(value, val_col);
                     for (idx, line) in wrapped.into_iter().enumerate() {
                         let line_str = line.into_owned();
-                        let pad = w.saturating_sub(2 + key_col + 1 + line_str.len() + 2);
+                        let line_width = text_display_width(&line_str);
+                        let pad = w.saturating_sub(2 + key_col + 1 + line_width + 2);
 
                         let plain_line = if idx == 0 {
                             format!("│ {key:key_col$} {line_str}{} │", " ".repeat(pad))

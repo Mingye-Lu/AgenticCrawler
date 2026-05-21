@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "acrawl Bridge",
+  "version": "1.0.0",
+  "description": "Connects acrawl to your browser for AI-driven web automation",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_popup": "options.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "acrawl Bridge"
+  },
+  "permissions": ["debugger", "tabs", "activeTab", "storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1/*", "https://*/*", "http://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

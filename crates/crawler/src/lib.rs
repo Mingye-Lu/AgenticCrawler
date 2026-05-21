@@ -2,7 +2,9 @@ use serde_json::json;
 
 mod agent;
 mod browser;
+mod browser_backend;
 pub mod child_events;
+mod extension;
 mod fetcher;
 mod manager;
 pub mod markdown;
@@ -15,19 +17,20 @@ pub mod tool_effect;
 mod tool_registry;
 mod tools;
 mod url_claim;
+pub mod ws_server;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
+pub use browser_backend::BrowserBackend;
 pub use child_events::{
     ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender, ChildLifecycle,
     ChildSnapshot, ChildSnapshotRegistry,
 };
+pub use extension::ExtensionBridge;
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
-pub use playwright::{
-    BrowserState, PageInfo, PlaywrightBridge, PlaywrightBridgeError, SharedBridge,
-};
+pub use playwright::{BridgeError, BrowserState, PageInfo, PlaywrightBridge, SharedBridge};
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
@@ -36,6 +39,9 @@ pub use tool_effect::{
 };
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};
+pub use ws_server::{
+    generate_bridge_token, BridgeCommand, BridgeResponse, WsBridgeError, WsBridgeServer,
+};
 
 /// Specification for a single tool that the agent can invoke.
 pub struct ToolSpec {
@@ -472,7 +478,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cloakbrowser_launch_smoke() {
-        use super::{PlaywrightBridge, PlaywrightBridgeError};
+        use super::{BridgeError, PlaywrightBridge};
 
         // Self-skip if not in CI and CloakBrowser not installed locally
         let in_ci = std::env::var("CI").is_ok();
@@ -491,7 +497,7 @@ mod tests {
             Ok(bridge) => {
                 let _ = bridge.close().await;
             }
-            Err(PlaywrightBridgeError::PlaywrightNotInstalled(_)) => {
+            Err(BridgeError::PlaywrightNotInstalled(_)) => {
                 eprintln!(
                     "test_cloakbrowser_launch_smoke: skipping — CloakBrowser binary not available"
                 );

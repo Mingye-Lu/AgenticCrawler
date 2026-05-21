@@ -27,7 +27,8 @@ use crate::tui::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
-    self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
 };
 use crossterm::execute;
 use ratatui::layout::Rect;
@@ -52,6 +53,16 @@ const INPUT_CARET_MARKER: char = '\u{E000}';
 pub(super) const SLASH_OVERLAY_VISIBLE_ITEMS: usize = 7;
 pub(super) const SLASH_OVERLAY_HINT_TEXT: &str =
     "Up/Down move  Enter accept  Tab complete  Esc close";
+
+fn normalize_pasted_text(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn read_clipboard_text() -> Option<String> {
+    let mut clipboard = arboard::Clipboard::new().ok()?;
+    let text = clipboard.get_text().ok()?;
+    Some(normalize_pasted_text(&text))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AppUiState {
@@ -137,6 +148,7 @@ pub(super) struct MouseCaptureGuard;
 impl Drop for MouseCaptureGuard {
     fn drop(&mut self) {
         let _ = execute!(io::stdout(), event::DisableMouseCapture);
+        let _ = execute!(io::stdout(), DisableBracketedPaste);
     }
 }
 
@@ -157,6 +169,7 @@ pub(super) struct SelectionState {
     pub(super) end: Option<(u16, usize)>,
     pub(super) pending_copy: Option<bool>,
     pub(super) mouse_drag_occurred: bool,
+    pub(super) suppress_paste_until: Option<Instant>,
 }
 
 pub(super) struct TypewriterState {
@@ -368,6 +381,15 @@ impl ReplTuiState {
         let idx = self.input_char_to_byte(self.input.cursor);
         self.input.text.insert(idx, ch);
         self.input.cursor = self.input.cursor.saturating_add(1);
+        self.input.preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn insert_input_str(&mut self, text: &str) {
+        self.clamp_input_cursor();
+        let idx = self.input_char_to_byte(self.input.cursor);
+        self.input.text.insert_str(idx, text);
+        self.input.cursor = self.input.cursor.saturating_add(text.chars().count());
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
@@ -1021,6 +1043,14 @@ impl ReplTuiState {
                     self.status_line = "Thinking...".to_string();
                 }
                 ReplTuiEvent::ChildEvent(_) => {}
+                ReplTuiEvent::ExtensionBridgeResult { success, message } => {
+                    let title = if success {
+                        "Extension"
+                    } else {
+                        "Extension Error"
+                    };
+                    self.push_system_card(title, &message);
+                }
             }
         }
 
@@ -1308,40 +1338,94 @@ fn handle_slash_command_tui(
             ));
         }
         SlashCommand::Headed => {
-            #[cfg(target_os = "linux")]
-            let has_display = std::env::var_os("DISPLAY").is_some()
-                || std::env::var_os("WAYLAND_DISPLAY").is_some();
-            #[cfg(not(target_os = "linux"))]
-            let has_display = true;
+            if cli.lock().expect("cli lock").is_extension_mode_active() {
+                state.push_system_card(
+                    "Browser Mode",
+                    "Browser mode\n  Ignored          extension mode is active (browser is already visible)",
+                );
+            } else {
+                #[cfg(target_os = "linux")]
+                let has_display = std::env::var_os("DISPLAY").is_some()
+                    || std::env::var_os("WAYLAND_DISPLAY").is_some();
+                #[cfg(not(target_os = "linux"))]
+                let has_display = true;
 
-            if has_display {
-                std::env::set_var("HEADLESS", "false");
+                if has_display {
+                    std::env::set_var("HEADLESS", "false");
+                    let _ = runtime::update_settings(|s| {
+                        s.headless = Some(false);
+                    });
+                    cli.lock().expect("cli lock").reset_browser();
+                    state.push_system_card(
+                        "Browser Mode",
+                        "Browser mode\n  Result           switched to headed (visible)",
+                    );
+                } else {
+                    state.push_system_card(
+                        "Browser Mode",
+                        "Browser mode\n  Error            No display server found ($DISPLAY / $WAYLAND_DISPLAY not set).\n                   Run inside a desktop session or use `xvfb-run` to create a virtual display.",
+                    );
+                }
+            }
+        }
+        SlashCommand::Headless => {
+            if cli.lock().expect("cli lock").is_extension_mode_active() {
+                state.push_system_card(
+                    "Browser Mode",
+                    "Browser mode\n  Ignored          extension mode is active (browser is already visible)",
+                );
+            } else {
+                std::env::set_var("HEADLESS", "true");
                 let _ = runtime::update_settings(|s| {
-                    s.headless = Some(false);
+                    s.headless = Some(true);
                 });
                 cli.lock().expect("cli lock").reset_browser();
                 state.push_system_card(
                     "Browser Mode",
-                    "Browser mode\n  Result           switched to headed (visible)",
-                );
-            } else {
-                state.push_system_card(
-                    "Browser Mode",
-                    "Browser mode\n  Error            No display server found ($DISPLAY / $WAYLAND_DISPLAY not set).\n                   Run inside a desktop session or use `xvfb-run` to create a virtual display.",
+                    "Browser mode\n  Result           switched to headless",
                 );
             }
         }
-        SlashCommand::Headless => {
-            std::env::set_var("HEADLESS", "true");
-            let _ = runtime::update_settings(|s| {
-                s.headless = Some(true);
-            });
-            cli.lock().expect("cli lock").reset_browser();
-            state.push_system_card(
-                "Browser Mode",
-                "Browser mode\n  Result           switched to headless",
-            );
-        }
+        cmd @ (SlashCommand::Extension { .. } | SlashCommand::CloakBrowser) => match cmd {
+            SlashCommand::Extension { stop } => {
+                if stop {
+                    let mut g = cli.lock().expect("cli lock");
+                    let msg = g.stop_extension_server();
+                    state.push_system_card("Extension", &msg);
+                    return Ok(());
+                }
+                let mut g = cli.lock().expect("cli lock");
+                if let Some(status) = g.extension_bridge_status() {
+                    state.push_system_card("Extension", &status);
+                } else {
+                    match g.start_extension_server() {
+                        Ok((token, port)) => {
+                            state.push_system_card(
+                                "Extension",
+                                &format!(
+                                    "Extension bridge\n  \
+                                     Status           server started (port {port})\n  \
+                                     Token            {token}"
+                                ),
+                            );
+                            if let Some(watch) = g.extension_connection_watch() {
+                                drop(g);
+                                spawn_extension_connection_watch_from_receiver(watch, cli, ui_tx);
+                            }
+                        }
+                        Err(e) => {
+                            state.push_system_card("Extension", &e);
+                        }
+                    }
+                }
+            }
+            SlashCommand::CloakBrowser => {
+                let mut g = cli.lock().expect("cli lock");
+                let msg = g.switch_to_cloakbrowser();
+                state.push_system_card("Browser Mode", &msg);
+            }
+            _ => unreachable!(),
+        },
         SlashCommand::Auth { provider } => {
             if state.busy {
                 state.push_system("Please wait for the current task to finish.");
@@ -1391,6 +1475,102 @@ fn extract_openai_account_id(jwt: &str) -> Option<String> {
                 .and_then(|v| v.as_str())
         })
         .map(String::from)
+}
+
+fn spawn_extension_connection_watch(cli: &Arc<Mutex<LiveCli>>, ui_tx: &mpsc::Sender<ReplTuiEvent>) {
+    let connection_watch = {
+        let g = cli.lock().expect("cli lock");
+        g.extension_connection_watch()
+    };
+    let Some(watch) = connection_watch else {
+        return;
+    };
+    spawn_extension_connection_watch_from_receiver(watch, cli, ui_tx);
+}
+
+fn spawn_extension_connection_watch_from_receiver(
+    mut connection_watch: tokio::sync::watch::Receiver<bool>,
+    cli: &Arc<Mutex<LiveCli>>,
+    ui_tx: &mpsc::Sender<ReplTuiEvent>,
+) {
+    let cli_clone = cli.clone();
+    let ui_tx_clone = ui_tx.clone();
+    std::thread::spawn(move || {
+        let rt = crate::TOKIO_RUNTIME.get().expect("tokio runtime");
+        let connected = rt.block_on(async {
+            if *connection_watch.borrow() {
+                true
+            } else {
+                connection_watch.changed().await.is_ok() && *connection_watch.borrow()
+            }
+        });
+        if connected {
+            let setup = {
+                let mut g = cli_clone.lock().expect("cli lock");
+                g.prepare_extension_bridge_activation()
+            };
+            let result = match setup {
+                Ok((shared, saved_state)) => {
+                    let init_result = rt.block_on(async {
+                        prime_extension_bridge(&shared, saved_state.as_ref()).await
+                    });
+                    match init_result {
+                        Ok(()) => {
+                            let mut g = cli_clone.lock().expect("cli lock");
+                            g.activate_extension_bridge(shared);
+                            Ok(())
+                        }
+                        Err(error) => {
+                            let mut g = cli_clone.lock().expect("cli lock");
+                            g.restore_pending_extension_state(saved_state);
+                            Err(error)
+                        }
+                    }
+                }
+                Err(error) => Err(error),
+            };
+            let _ = ui_tx_clone.send(ReplTuiEvent::ExtensionBridgeResult {
+                success: result.is_ok(),
+                message: match result {
+                    Ok(()) => "Extension bridge\n  \
+                              Result           connected — browser commands routed to extension"
+                        .to_string(),
+                    Err(error) => format!("Extension bridge\n  Error            {error}"),
+                },
+            });
+        }
+    });
+}
+
+async fn prime_extension_bridge(
+    shared: &crawler::SharedBridge,
+    saved_state: Option<&crawler::BrowserState>,
+) -> Result<(), String> {
+    let mut bridge = shared.lock().await;
+    if let Some(state) = saved_state {
+        bridge
+            .new_page(None)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        bridge
+            .import_cookies_only(state)
+            .await
+            .map_err(|error| error.to_string())?;
+
+        if !state.url.is_empty() && state.url != "about:blank" {
+            bridge
+                .navigate(&state.url)
+                .await
+                .map_err(|error| error.to_string())?;
+            bridge
+                .import_local_storage(state)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+    }
+
+    Ok(())
 }
 
 fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
@@ -1676,6 +1856,8 @@ pub fn run_repl_ratatui(
         ui_tx.clone(),
     )?));
 
+    spawn_extension_connection_watch(&cli, &ui_tx);
+
     let cli_worker = Arc::clone(&cli);
     thread::spawn(move || {
         while let Ok(msg) = work_rx.recv() {
@@ -1709,6 +1891,7 @@ fn run_loop(
     cancel_flag: &Arc<ControlState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _ = execute!(io::stdout(), event::EnableMouseCapture);
+    let _ = execute!(io::stdout(), EnableBracketedPaste);
     let _ = execute!(io::stdout(), SetCursorStyle::SteadyBar);
     let _mouse_guard = MouseCaptureGuard;
 
@@ -1720,6 +1903,8 @@ fn run_loop(
         state.child_event_rx = g.take_child_event_rx();
         state.child_control_registry = g.take_child_control_registry();
     }
+
+    // Extension bridge is started explicitly via /extension.
 
     let (update_tx, update_rx) =
         tokio::sync::oneshot::channel::<Option<runtime::update_check::UpdateInfo>>();
@@ -1939,6 +2124,8 @@ fn run_loop(
                             if state.selection.anchor.is_some() =>
                         {
                             state.selection.pending_copy = Some(true);
+                            state.selection.suppress_paste_until =
+                                Some(Instant::now() + Duration::from_millis(800));
                         }
                         _ => {}
                     }
@@ -2001,6 +2188,8 @@ fn run_loop(
                             if state.selection.anchor.is_some() =>
                         {
                             state.selection.pending_copy = Some(true);
+                            state.selection.suppress_paste_until =
+                                Some(Instant::now() + Duration::from_millis(800));
                         }
                         _ => {}
                     }
@@ -2018,10 +2207,60 @@ fn run_loop(
                     }
                 }
             }
+            Event::Paste(text) => {
+                let suppress = state
+                    .selection
+                    .suppress_paste_until
+                    .is_some_and(|deadline| Instant::now() <= deadline);
+                state.selection.suppress_paste_until = None;
+
+                if suppress || state.active_modal.is_some() {
+                    continue;
+                }
+
+                state.insert_input_str(&normalize_pasted_text(&text));
+                state.wake_input_caret();
+                state.refresh_slash_overlay();
+            }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                let suppress_paste_key = state
+                    .selection
+                    .suppress_paste_until
+                    .is_some_and(|deadline| Instant::now() <= deadline)
+                    && matches!(
+                        key.code,
+                        KeyCode::Char(_) | KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace
+                    );
+                if suppress_paste_key {
+                    state.selection.suppress_paste_until =
+                        Some(Instant::now() + Duration::from_millis(150));
+                    continue;
+                }
+                if state
+                    .selection
+                    .suppress_paste_until
+                    .is_some_and(|deadline| Instant::now() > deadline)
+                {
+                    state.selection.suppress_paste_until = None;
+                }
+
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
                     state.selection.anchor = None;
                     state.selection.end = None;
+                }
+
+                if state.active_modal.is_none()
+                    && ((key.code == KeyCode::Char('v')
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                        || (key.code == KeyCode::Insert
+                            && key.modifiers.contains(KeyModifiers::SHIFT)))
+                {
+                    if let Some(text) = read_clipboard_text() {
+                        state.insert_input_str(&text);
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
+                    continue;
                 }
 
                 if let ViewMode::Child(child_id) = state.view_mode.clone() {

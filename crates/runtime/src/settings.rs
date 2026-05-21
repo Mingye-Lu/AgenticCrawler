@@ -51,6 +51,18 @@ pub struct Settings {
     #[serde(default)]
     pub fork_wait_timeout_secs: Option<u32>,
 
+    /// Token for Chrome extension bridge authentication
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_bridge_token: Option<String>,
+
+    /// Port for Chrome extension bridge WebSocket server (default: 19876)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_bridge_port: Option<u16>,
+
+    /// Active browser backend: "extension" or "cloakbrowser" (default: cloakbrowser)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub browser_backend: Option<String>,
+
     /// Compaction: token window protecting recent messages from pruning (default: 40000)
     #[serde(default)]
     pub compaction_prune_protect_tokens: Option<u64>,
@@ -90,6 +102,9 @@ impl Default for Settings {
             max_total_agents: Some(10),
             fork_child_max_steps: Some(100),
             fork_wait_timeout_secs: Some(60),
+            extension_bridge_token: None,
+            extension_bridge_port: None,
+            browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
             compaction_preserve_recent_tokens: None,
@@ -364,6 +379,9 @@ mod tests {
             max_total_agents: Some(20),
             fork_child_max_steps: Some(25),
             fork_wait_timeout_secs: Some(120),
+            extension_bridge_token: None,
+            extension_bridge_port: None,
+            browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
             compaction_preserve_recent_tokens: None,
@@ -515,6 +533,9 @@ mod tests {
             max_total_agents: Some(15),
             fork_child_max_steps: Some(20),
             fork_wait_timeout_secs: Some(90),
+            extension_bridge_token: None,
+            extension_bridge_port: None,
+            browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
             compaction_preserve_recent_tokens: None,
@@ -574,6 +595,9 @@ mod tests {
             max_total_agents: Some(16),
             fork_child_max_steps: Some(20),
             fork_wait_timeout_secs: Some(75),
+            extension_bridge_token: None,
+            extension_bridge_port: None,
+            browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
             compaction_preserve_recent_tokens: None,
@@ -633,6 +657,9 @@ mod tests {
             max_total_agents: None,
             fork_child_max_steps: None,
             fork_wait_timeout_secs: None,
+            extension_bridge_token: None,
+            extension_bridge_port: None,
+            browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
             compaction_preserve_recent_tokens: None,
