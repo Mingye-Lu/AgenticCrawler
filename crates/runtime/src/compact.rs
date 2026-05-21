@@ -291,9 +291,9 @@ fn summarize_messages(messages: &[ConversationMessage]) -> String {
         lines.extend(pending_work.into_iter().map(|item| format!("  - {item}")));
     }
 
-    let key_files = collect_key_files(messages);
-    if !key_files.is_empty() {
-        lines.push(format!("- Key files referenced: {}.", key_files.join(", ")));
+    let key_urls = collect_key_urls(messages);
+    if !key_urls.is_empty() {
+        lines.push(format!("- Key URLs visited: {}.", key_urls.join(", ")));
     }
 
     if let Some(current_work) = infer_current_work(messages) {
@@ -377,21 +377,29 @@ fn infer_pending_work(messages: &[ConversationMessage]) -> Vec<String> {
         .collect()
 }
 
-fn collect_key_files(messages: &[ConversationMessage]) -> Vec<String> {
-    let mut files = messages
+fn collect_key_urls(messages: &[ConversationMessage]) -> Vec<String> {
+    let urls = messages
         .iter()
         .flat_map(|message| message.blocks.iter())
-        .map(|block| match block {
-            ContentBlock::Text { text } => text.as_str(),
-            ContentBlock::ToolUse { input, .. } => input.as_str(),
-            ContentBlock::ToolResult { output, .. } => output.as_str(),
-            ContentBlock::Reasoning { data } => data.as_str(),
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            ContentBlock::ToolUse { .. }
+            | ContentBlock::ToolResult { .. }
+            | ContentBlock::Reasoning { .. } => None,
         })
-        .flat_map(extract_file_candidates)
+        .flat_map(extract_url_candidates)
         .collect::<Vec<_>>();
-    files.sort();
-    files.dedup();
-    files.into_iter().take(8).collect()
+    let mut recent_unique = Vec::new();
+    for url in urls.iter().rev() {
+        if recent_unique.contains(url) {
+            continue;
+        }
+        recent_unique.push(url.clone());
+        if recent_unique.len() == 10 {
+            break;
+        }
+    }
+    recent_unique.into_iter().rev().collect()
 }
 
 fn infer_current_work(messages: &[ConversationMessage]) -> Option<String> {
@@ -413,31 +421,34 @@ fn first_text_block(message: &ConversationMessage) -> Option<&str> {
     })
 }
 
-fn has_interesting_extension(candidate: &str) -> bool {
-    std::path::Path::new(candidate)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            ["rs", "ts", "tsx", "js", "json", "md"]
-                .iter()
-                .any(|expected| extension.eq_ignore_ascii_case(expected))
-        })
-}
+fn extract_url_candidates(content: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut pos = 0;
 
-fn extract_file_candidates(content: &str) -> Vec<String> {
-    content
-        .split_whitespace()
-        .filter_map(|token| {
-            let candidate = token.trim_matches(|char: char| {
-                matches!(char, ',' | '.' | ':' | ';' | ')' | '(' | '"' | '\'' | '`')
-            });
-            if candidate.contains('/') && has_interesting_extension(candidate) {
-                Some(candidate.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
+    while pos < content.len() {
+        let remaining = &content[pos..];
+        let next_http = remaining.find("http://");
+        let next_https = remaining.find("https://");
+        let start = match (next_http, next_https) {
+            (Some(http), Some(https)) => http.min(https),
+            (Some(http), None) => http,
+            (None, Some(https)) => https,
+            (None, None) => break,
+        };
+
+        let abs_start = pos + start;
+        let end = content[abs_start..]
+            .find(|c: char| c.is_whitespace() || "\"'<>)]},".contains(c))
+            .map_or(content.len(), |offset| abs_start + offset);
+
+        let candidate = content[abs_start..end].trim_end_matches(|c: char| ".,;:!?".contains(c));
+        if !candidate.is_empty() {
+            urls.push(candidate.to_string());
+        }
+        pos = end;
+    }
+
+    urls
 }
 
 fn truncate_summary(content: &str, max_chars: usize) -> String {
@@ -642,7 +653,7 @@ fn prune_tool_outputs(
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_key_files, compact_session, estimate_session_tokens, format_compact_summary,
+        collect_key_urls, compact_session, estimate_session_tokens, format_compact_summary,
         get_compact_continuation_message, infer_pending_work, should_compact, CompactionConfig,
     };
     use crate::session::{ContentBlock, ConversationMessage, MessageRole, Session};
@@ -734,12 +745,22 @@ mod tests {
     }
 
     #[test]
-    fn extracts_key_files_from_message_content() {
-        let files = collect_key_files(&[ConversationMessage::user_text(
-            "Update rust/crates/runtime/src/compact.rs and rust/crates/rusty-claude-cli/src/main.rs next.",
-        )]);
-        assert!(files.contains(&"rust/crates/runtime/src/compact.rs".to_string()));
-        assert!(files.contains(&"rust/crates/rusty-claude-cli/src/main.rs".to_string()));
+    fn extracts_key_urls_from_message_content() {
+        let urls = collect_key_urls(&[
+            ConversationMessage::user_text("First visit https://example.com before checking docs."),
+            ConversationMessage::assistant(vec![ContentBlock::Text {
+                text:
+                    "Then inspect https://docs.example.com/guide and revisit https://example.com."
+                        .to_string(),
+            }]),
+        ]);
+        assert_eq!(
+            urls,
+            vec![
+                "https://docs.example.com/guide".to_string(),
+                "https://example.com".to_string(),
+            ]
+        );
     }
 
     #[test]
