@@ -16,12 +16,16 @@ mod state;
 pub mod tool_effect;
 mod tool_registry;
 mod tools;
+mod url_claim;
 pub mod ws_server;
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
 pub use browser_backend::BrowserBackend;
-pub use child_events::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
+pub use child_events::{
+    ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender, ChildLifecycle,
+    ChildSnapshot, ChildSnapshotRegistry,
+};
 pub use extension::ExtensionBridge;
 pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
@@ -30,8 +34,11 @@ pub use playwright::{BridgeError, BrowserState, PageInfo, PlaywrightBridge, Shar
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
-pub use tool_effect::{ForkSpec, ToolEffect, ToolError, WaitSpec};
+pub use tool_effect::{
+    CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, ToolError, WaitSpec,
+};
 pub use tool_registry::{ToolHandler, ToolRegistry};
+pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};
 pub use ws_server::{
     generate_bridge_token, BridgeCommand, BridgeResponse, WsBridgeError, WsBridgeServer,
 };
@@ -290,29 +297,92 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "fork",
-            description: "Spawn a parallel subagent on a new browser tab to explore a URL or complete a sub-goal independently. Results are merged when the subagent completes.",
+            description: "Spawn a parallel subagent on a new browser tab with a typed work packet. The packet declares an `objective` (what to do) and a `scope` (which URLs the child is allowed to claim). Sibling forks CANNOT claim overlapping URLs/patterns — the call errors atomically with the conflicting owner.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "sub_goal": { "type": "string" },
-                    "url": { "type": "string" }
+                    "objective": {
+                        "type": "string",
+                        "description": "Human-readable goal for the subagent (e.g., 'extract all product titles')."
+                    },
+                    "scope": {
+                        "type": "object",
+                        "description": "Declared work boundary. Exactly one of single_page, url_list, or url_pattern.",
+                        "properties": {
+                            "type": { "type": "string", "enum": ["single_page", "url_list", "url_pattern"] },
+                            "url": { "type": "string", "description": "Required when type=single_page." },
+                            "urls": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "minItems": 1,
+                                "description": "Required when type=url_list."
+                            },
+                            "regex": { "type": "string", "description": "Required when type=url_pattern. Must compile." }
+                        },
+                        "required": ["type"]
+                    },
+                    "max_steps": { "type": "integer", "minimum": 1, "description": "Override the child's step budget." }
                 },
-                "required": ["sub_goal"],
+                "required": ["objective", "scope"],
                 "additionalProperties": false
             }),
 
-            instructions: Some("Use fork when you need to visit multiple pages in parallel — e.g., scraping pagination, exploring search results, or comparing products. Each subagent has a step budget and works independently. Fork multiple subagents before waiting for any of them."),
+            instructions: Some("Use fork to parallelize crawls — e.g., scraping pagination, exploring search results, comparing products. Each subagent gets its own browser tab and step budget. Scope is mandatory: choose single_page for one URL, url_list for a small set, url_pattern (regex) for a navigable subdomain. Siblings CANNOT overlap — if two forks would touch the same URL, the second errors with the conflicting child's id. Pattern overlap is detected only for identical regex strings; subtly different but semantically overlapping patterns (e.g. /posts/.* and /posts/2024/.*) are not caught, so use non-overlapping patterns deliberately. Plan scope upfront to avoid duplicate work. Fork multiple subagents in a row, then poll with subagent_status or wait_for_subagents."),
         },
         ToolSpec {
             name: "wait_for_subagents",
-            description: "Wait for all active subagents to complete and collect their results. Returns immediately if no subagents are active.",
+            description: "Wait for active subagents and return a JSON snapshot of each one's status. Children that finish during the wait have their items collected and merged. Children that have not finished by the timeout are reported as `status: \"running\"` and KEEP RUNNING — wait NEVER cancels or aborts. Use `cancel_subagent` if you actually want to stop a child.",
             input_schema: json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "child_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional list of child IDs to wait for. Defaults to all active children."
+                    }
+                },
                 "additionalProperties": false
             }),
 
-            instructions: Some("Only call this when you need subagent results before deciding your next action."),
+            instructions: Some("Returns a JSON object: {\"waited\": N, \"finished\": [...], \"still_running\": [...]}. Finished entries include items_extracted and success/error. Still-running entries can be polled again (via another wait_for_subagents) or cancelled (via cancel_subagent). Do NOT assume a timeout means the child failed."),
+        },
+        ToolSpec {
+            name: "subagent_status",
+            description: "Read-only poll: returns a JSON snapshot of each subagent's lifecycle, current step, last tool call, last text output, items extracted, and how long ago its last event was observed. Never joins or cancels — safe to call between any other actions.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "child_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional list of child IDs to inspect. Defaults to all tracked children."
+                    }
+                },
+                "additionalProperties": false
+            }),
+            instructions: Some("Returns {\"children\": [{child_id, sub_goal, state, step, max_steps, last_tool, last_text, items_extracted, last_event_secs_ago, error}, ...]}. State is one of: created, running, paused, completed, failed, cancelled. Use this to decide whether to wait, cancel, or fork more — without consuming the child."),
+        },
+        ToolSpec {
+            name: "cancel_subagent",
+            description: "Abort one or more running subagents immediately. Their in-flight work is discarded. Use this only when you have decided the child's result is no longer needed.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "child_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "minItems": 1,
+                        "description": "Child IDs to cancel (required, non-empty)."
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Optional human-readable reason for cancellation (logged in the Finished event)."
+                    }
+                },
+                "required": ["child_ids"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Cancellation is abortive: the child JoinHandle is aborted and any partial extracted data is discarded. If you want results, call wait_for_subagents instead and let the child finish."),
         },
         ToolSpec {
             name: "wait_for_human",
@@ -351,16 +421,18 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_19_tools() {
+    fn mvp_tool_specs_contains_expected_21_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 19);
+        assert_eq!(specs.len(), 21);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 19, "tool names should be unique");
+        assert_eq!(names.len(), 21, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("save_file"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));
+        assert!(names.contains("cancel_subagent"));
+        assert!(names.contains("subagent_status"));
     }
 
     #[test]

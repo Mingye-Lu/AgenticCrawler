@@ -19,6 +19,7 @@ csv = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 htmd = "0.5"
 base64 = "0.22"
+regex = "1"
 
 [lints]
 workspace = true

@@ -89,6 +89,7 @@ pub(super) enum TranscriptEntry {
     System(String),
     Status(String),
     User(String),
+    Parent(String),
     Stream(Line<'static>),
     SystemCard {
         title: String,

@@ -78,7 +78,15 @@ pub trait CrawlAgent {
     }
 }
 
-type ChildTaskMap = HashMap<String, (String, tokio::task::JoinHandle<Option<Vec<Value>>>)>;
+/// Per-child task slot: sub-goal text, the spawned task handle, and the
+/// URL [`crate::ClaimGuard`] (dropping the guard releases the claim so a
+/// sibling can re-use the scope).
+pub(crate) type ChildTaskEntry = (
+    String,
+    tokio::task::JoinHandle<Option<Vec<Value>>>,
+    Option<crate::ClaimGuard>,
+);
+type ChildTaskMap = HashMap<String, ChildTaskEntry>;
 
 pub struct CrawlerAgent {
     pub(super) browser: Option<BrowserContext>,
@@ -98,6 +106,7 @@ pub struct CrawlerAgent {
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
     child_control_registry: Option<crate::child_events::ChildControlRegistry>,
     extension_mode: bool,
+    pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
@@ -123,6 +132,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -148,6 +158,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -173,6 +184,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -227,6 +239,15 @@ impl CrawlerAgent {
         self
     }
 
+    #[must_use]
+    pub fn with_child_snapshots(
+        mut self,
+        snapshots: crate::child_events::ChildSnapshotRegistry,
+    ) -> Self {
+        self.child_snapshots = snapshots;
+        self
+    }
+
     pub fn set_control_state(&mut self, state: Arc<ControlState>) {
         self.control_state = Some(state);
     }
@@ -257,14 +278,17 @@ impl CrawlerAgent {
             ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
                 .with_max_iterations(max_steps);
 
-        // Attach child event observer for streaming child output to TUI
+        // Attach child event observer for streaming child output to TUI and
+        // mirroring lifecycle/heartbeat data into the shared snapshot registry.
         if let Some(tx) = runtime.tool_executor_mut().child_event_tx.take() {
+            let snapshots = runtime.tool_executor_mut().child_snapshots.clone();
             let observer = crate::child_events::ChildEventSender::new(
                 runtime.tool_executor_mut().agent_id.clone(),
                 goal.to_string(),
                 tx,
                 max_steps,
-            );
+            )
+            .with_snapshots(snapshots);
             runtime = runtime.with_observer(Box::new(observer));
         }
 
@@ -286,8 +310,12 @@ impl CrawlerAgent {
 }
 
 impl Drop for CrawlerAgent {
+    /// Children should not outlive the parent: any handle still in
+    /// `child_tasks` when the agent is dropped is aborted immediately. This
+    /// is the same semantics as an explicit `cancel_subagent` (abort = no
+    /// graceful drain) — see plan step 1.
     fn drop(&mut self) {
-        for (_, (_, handle)) in self.child_tasks.drain() {
+        for (_, (_, handle, _)) in self.child_tasks.drain() {
             handle.abort();
         }
     }
@@ -348,6 +376,8 @@ impl CrawlerAgent {
             ToolEffect::Reply(output) => Ok(output),
             ToolEffect::Spawn(spec) => self.handle_spawn(spec).await,
             ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
+            ToolEffect::Cancel(spec) => self.handle_cancel_effect(spec).await,
+            ToolEffect::Status(spec) => self.handle_status_effect(spec).await,
             ToolEffect::Pause { reason } => self.handle_pause(reason).await,
         }
     }
@@ -637,8 +667,12 @@ mod tests {
         agent.fork_page_index_override = Some(1);
 
         let observation = agent
-            .dispatch_tool_effect(ToolEffect::Spawn(crate::ForkSpec {
-                goal: "collect details".to_string(),
+            .dispatch_tool_effect(ToolEffect::Spawn(crate::CrawlTask {
+                objective: "collect details".to_string(),
+                scope: crate::CrawlScope::SinglePage {
+                    url: "https://example.com".to_string(),
+                },
+                max_steps: None,
                 page_index: None,
             }))
             .await
@@ -649,7 +683,7 @@ mod tests {
             "Forked subagent root-child-1 for: collect details"
         );
         assert_eq!(agent.child_tasks.len(), 1);
-        for (_, (_, handle)) in agent.child_tasks.drain() {
+        for (_, (_, handle, _)) in agent.child_tasks.drain() {
             handle.abort();
         }
     }
@@ -663,7 +697,7 @@ mod tests {
         let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
         agent
             .child_tasks
-            .insert("child-1".to_string(), ("goal".to_string(), handle));
+            .insert("child-1".to_string(), ("goal".to_string(), handle, None));
 
         let result = agent
             .dispatch_tool_effect(ToolEffect::Wait(crate::WaitSpec {
@@ -672,7 +706,9 @@ mod tests {
             .await
             .expect("wait effect should collect child results");
 
-        assert_eq!(result, "Waited for 1 subagent(s). Collected 1 item(s).");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 1);
+        assert_eq!(parsed["finished"][0]["items_extracted"], 1);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
     }
 
@@ -850,7 +886,7 @@ mod tests {
         let observation = agent
             .execute(
                 "fork",
-                r#"{"sub_goal":"check result","url":"https://example.com"}"#,
+                r#"{"objective":"check result","scope":{"type":"single_page","url":"https://example.com"}}"#,
             )
             .await
             .expect("fork should succeed");
@@ -858,7 +894,7 @@ mod tests {
         assert!(observation.contains("Forked subagent root-child-1 for: check result"));
         assert_eq!(manager.lock().await.get_children("root").len(), 1);
         assert_eq!(agent.child_tasks.len(), 1);
-        for (_, (_, handle)) in agent.child_tasks.drain() {
+        for (_, (_, handle, _)) in agent.child_tasks.drain() {
             let _ = handle.await;
         }
 
@@ -890,7 +926,10 @@ mod tests {
         agent.fork_page_index_override = Some(1);
 
         let observation = agent
-            .execute("fork", r#"{"sub_goal":"collect details"}"#)
+            .execute(
+                "fork",
+                r#"{"objective":"collect details","scope":{"type":"single_page","url":"https://example.com"}}"#,
+            )
             .await
             .expect("fork should succeed");
 
@@ -899,7 +938,7 @@ mod tests {
             "Forked subagent root-child-1 for: collect details"
         );
 
-        for (_, (_, handle)) in agent.child_tasks.drain() {
+        for (_, (_, handle, _)) in agent.child_tasks.drain() {
             handle.abort();
         }
     }
@@ -915,7 +954,10 @@ mod tests {
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
 
         let err = agent
-            .execute("fork", r#"{"sub_goal":"blocked"}"#)
+            .execute(
+                "fork",
+                r#"{"objective":"blocked","scope":{"type":"single_page","url":"https://example.com"}}"#,
+            )
             .await
             .expect_err("fork at limit should return an error");
 
@@ -926,7 +968,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fork_empty_subgoal_returns_error() {
+    async fn test_fork_empty_objective_returns_error() {
         let manager = default_agent_manager();
         manager.lock().await.register_root("root");
 
@@ -935,22 +977,29 @@ mod tests {
             .with_agent_manager(manager);
 
         let err = agent
-            .execute("fork", r#"{"sub_goal":"   "}"#)
+            .execute(
+                "fork",
+                r#"{"objective":"   ","scope":{"type":"single_page","url":"https://example.com"}}"#,
+            )
             .await
-            .expect_err("empty sub_goal should fail");
+            .expect_err("empty objective should fail");
 
-        assert_eq!(err.to_string(), "fork requires non-empty sub_goal");
+        assert_eq!(err.to_string(), "fork requires non-empty objective");
     }
 
     #[tokio::test]
-    async fn test_wait_no_children_returns_immediately() {
+    async fn test_wait_no_children_returns_empty_snapshot() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
 
         let result = agent
             .handle_wait_effect(crate::WaitSpec { child_ids: None })
-            .await;
+            .await
+            .expect("wait with no children should succeed");
 
-        assert_eq!(result.unwrap(), "No active subagents");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 0);
+        assert!(parsed["finished"].as_array().unwrap().is_empty());
+        assert!(parsed["still_running"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -962,13 +1011,15 @@ mod tests {
         let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async { None });
         agent
             .child_tasks
-            .insert("child-1".to_string(), ("search".to_string(), handle));
+            .insert("child-1".to_string(), ("search".to_string(), handle, None));
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
 
-        assert_eq!(result, "Waited for 1 subagent(s). Collected 0 item(s).");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["waited"], 1);
+        assert_eq!(parsed["finished"].as_array().unwrap().len(), 1);
         assert_eq!(agent.crawl_state.action_history.len(), 1);
-        assert_eq!(agent.crawl_state.action_history[0], result);
+        assert!(agent.crawl_state.action_history[0].contains("Waited on 1 subagent(s)"));
     }
 
     #[tokio::test]
@@ -986,11 +1037,12 @@ mod tests {
             tokio::spawn(async { Some(vec![serde_json::json!({"data": 1})]) });
         agent
             .child_tasks
-            .insert("child-1".to_string(), ("search".to_string(), handle));
+            .insert("child-1".to_string(), ("search".to_string(), handle, None));
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
 
-        assert!(result.contains("Collected 1"));
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["finished"][0]["items_extracted"], 1);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
         assert_eq!(agent.crawl_state.child_blocks[0].child_id, "child-1");
         assert_eq!(agent.crawl_state.child_blocks[0].sub_goal, "search");
@@ -1013,7 +1065,7 @@ mod tests {
         let handle = tokio::spawn(async { Some(vec![serde_json::json!({"child": 1})]) });
         agent
             .child_tasks
-            .insert("child-1".to_string(), ("goal".to_string(), handle));
+            .insert("child-1".to_string(), ("goal".to_string(), handle, None));
 
         let _ = agent.execute("wait_for_subagents", "{}").await;
 
@@ -1042,12 +1094,14 @@ mod tests {
                 serde_json::json!({"child": 2}),
             ])
         });
-        parent
-            .child_tasks
-            .insert("child-1".to_string(), ("search page 2".to_string(), handle));
+        parent.child_tasks.insert(
+            "child-1".to_string(),
+            ("search page 2".to_string(), handle, None),
+        );
 
         let wait_result = parent.execute("wait_for_subagents", "{}").await.unwrap();
-        assert!(wait_result.contains("Collected 2"));
+        let parsed: serde_json::Value = serde_json::from_str(&wait_result).unwrap();
+        assert_eq!(parsed["finished"][0]["items_extracted"], 2);
 
         let all = parent.crawl_state.all_data();
         assert_eq!(all.len(), 3);
