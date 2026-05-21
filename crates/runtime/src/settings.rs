@@ -372,7 +372,7 @@ mod tests {
             max_steps: Some(100),
             model: Some("anthropic/claude-sonnet-4-6".to_string()),
             reasoning_effort: Some("high".to_string()),
-            output_dir: Some("custom_workspace".to_string()),
+            output_dir: Some("custom_output".to_string()),
             auto_compact_input_tokens: Some(500_000),
             max_concurrent_per_parent: Some(8),
             max_fork_depth: Some(5),
@@ -467,10 +467,10 @@ mod tests {
     #[test]
     fn test_settings_get_output_dir() {
         let settings_custom = Settings {
-            output_dir: Some("my_workspace".to_string()),
+            output_dir: Some("my_output".to_string()),
             ..Default::default()
         };
-        assert_eq!(settings_get_output_dir(&settings_custom), "my_workspace");
+        assert_eq!(settings_get_output_dir(&settings_custom), "my_output");
 
         let settings_none = Settings {
             output_dir: None,
@@ -526,7 +526,7 @@ mod tests {
             max_steps: Some(88),
             model: Some("anthropic/claude-sonnet-4-6".to_string()),
             reasoning_effort: Some("medium".to_string()),
-            output_dir: Some("custom_workspace".to_string()),
+            output_dir: Some("custom_output".to_string()),
             auto_compact_input_tokens: Some(123_456),
             max_concurrent_per_parent: Some(7),
             max_fork_depth: Some(4),
@@ -555,7 +555,7 @@ mod tests {
         assert_eq!(loaded.max_steps, Some(88));
         assert_eq!(loaded.model, Some("openai/o4-mini".to_string()));
         assert_eq!(loaded.reasoning_effort, Some("medium".to_string()));
-        assert_eq!(loaded.output_dir, Some("custom_workspace".to_string()));
+        assert_eq!(loaded.output_dir, Some("custom_output".to_string()));
         assert_eq!(loaded.auto_compact_input_tokens, Some(123_456));
         assert_eq!(loaded.max_concurrent_per_parent, Some(7));
         assert_eq!(loaded.max_fork_depth, Some(4));
