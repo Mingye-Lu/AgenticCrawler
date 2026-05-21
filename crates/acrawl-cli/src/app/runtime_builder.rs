@@ -20,11 +20,7 @@ pub(super) fn build_system_prompt() -> Result<Vec<String>, CliError> {
 }
 
 pub(super) fn build_runtime_feature_config() -> Result<runtime::RuntimeFeatureConfig, CliError> {
-    let cwd = env::current_dir()?;
-    Ok(ConfigLoader::default_for(cwd)
-        .load()?
-        .feature_config()
-        .clone())
+    Ok(ConfigLoader::default_for().load()?.feature_config().clone())
 }
 
 pub(super) fn build_runtime(

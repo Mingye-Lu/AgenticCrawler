@@ -1,4 +1,4 @@
-use crate::config::{McpServerConfig, ScopedMcpServerConfig};
+use crate::config::McpServerConfig;
 
 const CLAUDEAI_SERVER_PREFIX: &str = "claude.ai ";
 const CCR_PROXY_PATH_MARKERS: [&str; 2] = ["/v2/session_ingress/shttp/mcp/", "/v2/ccr-sessions/"];
@@ -81,8 +81,8 @@ pub fn mcp_server_signature(config: &McpServerConfig) -> Option<String> {
 }
 
 #[must_use]
-pub fn scoped_mcp_config_hash(config: &ScopedMcpServerConfig) -> String {
-    let rendered = match &config.config {
+pub fn scoped_mcp_config_hash(config: &McpServerConfig) -> String {
+    let rendered = match config {
         McpServerConfig::Stdio(stdio) => format!(
             "stdio|{}|{}|{}",
             stdio.command,
@@ -206,8 +206,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::config::{
-        ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig,
-        McpStdioServerConfig, McpWebSocketServerConfig, ScopedMcpServerConfig,
+        McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig, McpStdioServerConfig,
+        McpWebSocketServerConfig,
     };
 
     use super::{
@@ -263,37 +263,32 @@ mod tests {
     }
 
     #[test]
-    fn scoped_hash_ignores_scope_but_tracks_config_content() {
+    fn config_hash_tracks_config_content() {
         let base_config = McpServerConfig::Http(McpRemoteServerConfig {
             url: "https://vendor.example/mcp".to_string(),
             headers: BTreeMap::from([("Authorization".to_string(), "Bearer token".to_string())]),
             headers_helper: Some("helper.sh".to_string()),
             oauth: None,
         });
-        let user = ScopedMcpServerConfig {
-            scope: ConfigSource::User,
-            config: base_config.clone(),
-        };
-        let local = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: base_config,
-        };
+        let same_config = McpServerConfig::Http(McpRemoteServerConfig {
+            url: "https://vendor.example/mcp".to_string(),
+            headers: BTreeMap::from([("Authorization".to_string(), "Bearer token".to_string())]),
+            headers_helper: Some("helper.sh".to_string()),
+            oauth: None,
+        });
         assert_eq!(
-            scoped_mcp_config_hash(&user),
-            scoped_mcp_config_hash(&local)
+            scoped_mcp_config_hash(&base_config),
+            scoped_mcp_config_hash(&same_config)
         );
 
-        let changed = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: McpServerConfig::Http(McpRemoteServerConfig {
-                url: "https://vendor.example/v2/mcp".to_string(),
-                headers: BTreeMap::new(),
-                headers_helper: None,
-                oauth: None,
-            }),
-        };
+        let changed = McpServerConfig::Http(McpRemoteServerConfig {
+            url: "https://vendor.example/v2/mcp".to_string(),
+            headers: BTreeMap::new(),
+            headers_helper: None,
+            oauth: None,
+        });
         assert_ne!(
-            scoped_mcp_config_hash(&user),
+            scoped_mcp_config_hash(&base_config),
             scoped_mcp_config_hash(&changed)
         );
     }

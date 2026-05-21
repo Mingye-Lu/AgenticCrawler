@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use super::naming::{mcp_server_signature, mcp_tool_prefix, normalize_name_for_mcp};
-use crate::config::{McpOAuthConfig, McpServerConfig, ScopedMcpServerConfig};
+use crate::config::{McpOAuthConfig, McpServerConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpClientTransport {
@@ -56,13 +56,13 @@ pub struct McpClientBootstrap {
 
 impl McpClientBootstrap {
     #[must_use]
-    pub fn from_scoped_config(server_name: &str, config: &ScopedMcpServerConfig) -> Self {
+    pub fn from_config(server_name: &str, config: &McpServerConfig) -> Self {
         Self {
             server_name: server_name.to_string(),
             normalized_name: normalize_name_for_mcp(server_name),
             tool_prefix: mcp_tool_prefix(server_name),
-            signature: mcp_server_signature(&config.config),
-            transport: McpClientTransport::from_config(&config.config),
+            signature: mcp_server_signature(config),
+            transport: McpClientTransport::from_config(config),
         }
     }
 }
@@ -124,25 +124,21 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::config::{
-        ConfigSource, McpClaudeAiProxyServerConfig, McpOAuthConfig, McpRemoteServerConfig,
-        McpSdkServerConfig, McpServerConfig, McpStdioServerConfig, McpWebSocketServerConfig,
-        ScopedMcpServerConfig,
+        McpClaudeAiProxyServerConfig, McpOAuthConfig, McpRemoteServerConfig, McpSdkServerConfig,
+        McpServerConfig, McpStdioServerConfig, McpWebSocketServerConfig,
     };
 
     use super::{McpClientAuth, McpClientBootstrap, McpClientTransport};
 
     #[test]
     fn bootstraps_stdio_servers_into_transport_targets() {
-        let config = ScopedMcpServerConfig {
-            scope: ConfigSource::User,
-            config: McpServerConfig::Stdio(McpStdioServerConfig {
-                command: "uvx".to_string(),
-                args: vec!["mcp-server".to_string()],
-                env: BTreeMap::from([("TOKEN".to_string(), "secret".to_string())]),
-            }),
-        };
+        let config = McpServerConfig::Stdio(McpStdioServerConfig {
+            command: "uvx".to_string(),
+            args: vec!["mcp-server".to_string()],
+            env: BTreeMap::from([("TOKEN".to_string(), "secret".to_string())]),
+        });
 
-        let bootstrap = McpClientBootstrap::from_scoped_config("stdio-server", &config);
+        let bootstrap = McpClientBootstrap::from_config("stdio-server", &config);
         assert_eq!(bootstrap.normalized_name, "stdio-server");
         assert_eq!(bootstrap.tool_prefix, "mcp__stdio-server__");
         assert_eq!(
@@ -164,24 +160,21 @@ mod tests {
 
     #[test]
     fn bootstraps_remote_servers_with_oauth_auth() {
-        let config = ScopedMcpServerConfig {
-            scope: ConfigSource::Project,
-            config: McpServerConfig::Http(McpRemoteServerConfig {
-                url: "https://vendor.example/mcp".to_string(),
-                headers: BTreeMap::from([("X-Test".to_string(), "1".to_string())]),
-                headers_helper: Some("helper.sh".to_string()),
-                oauth: Some(McpOAuthConfig {
-                    client_id: Some("client-id".to_string()),
-                    callback_port: Some(7777),
-                    auth_server_metadata_url: Some(
-                        "https://issuer.example/.well-known/oauth-authorization-server".to_string(),
-                    ),
-                    xaa: Some(true),
-                }),
+        let config = McpServerConfig::Http(McpRemoteServerConfig {
+            url: "https://vendor.example/mcp".to_string(),
+            headers: BTreeMap::from([("X-Test".to_string(), "1".to_string())]),
+            headers_helper: Some("helper.sh".to_string()),
+            oauth: Some(McpOAuthConfig {
+                client_id: Some("client-id".to_string()),
+                callback_port: Some(7777),
+                auth_server_metadata_url: Some(
+                    "https://issuer.example/.well-known/oauth-authorization-server".to_string(),
+                ),
+                xaa: Some(true),
             }),
-        };
+        });
 
-        let bootstrap = McpClientBootstrap::from_scoped_config("remote server", &config);
+        let bootstrap = McpClientBootstrap::from_config("remote server", &config);
         assert_eq!(bootstrap.normalized_name, "remote_server");
         match bootstrap.transport {
             McpClientTransport::Http(transport) => {
@@ -201,22 +194,16 @@ mod tests {
 
     #[test]
     fn bootstraps_websocket_and_sdk_transports_without_oauth() {
-        let ws = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: McpServerConfig::Ws(McpWebSocketServerConfig {
-                url: "wss://vendor.example/mcp".to_string(),
-                headers: BTreeMap::new(),
-                headers_helper: None,
-            }),
-        };
-        let sdk = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: McpServerConfig::Sdk(McpSdkServerConfig {
-                name: "sdk-server".to_string(),
-            }),
-        };
+        let ws = McpServerConfig::Ws(McpWebSocketServerConfig {
+            url: "wss://vendor.example/mcp".to_string(),
+            headers: BTreeMap::new(),
+            headers_helper: None,
+        });
+        let sdk = McpServerConfig::Sdk(McpSdkServerConfig {
+            name: "sdk-server".to_string(),
+        });
 
-        let ws_bootstrap = McpClientBootstrap::from_scoped_config("ws server", &ws);
+        let ws_bootstrap = McpClientBootstrap::from_config("ws server", &ws);
         match ws_bootstrap.transport {
             McpClientTransport::WebSocket(transport) => {
                 assert_eq!(transport.url, "wss://vendor.example/mcp");
@@ -225,7 +212,7 @@ mod tests {
             other => panic!("expected websocket transport, got {other:?}"),
         }
 
-        let sdk_bootstrap = McpClientBootstrap::from_scoped_config("sdk server", &sdk);
+        let sdk_bootstrap = McpClientBootstrap::from_config("sdk server", &sdk);
         assert_eq!(sdk_bootstrap.signature, None);
         match sdk_bootstrap.transport {
             McpClientTransport::Sdk(transport) => {
@@ -237,16 +224,13 @@ mod tests {
 
     #[test]
     fn sse_transport_from_config_maps_url_headers_and_auth() {
-        let config = ScopedMcpServerConfig {
-            scope: ConfigSource::User,
-            config: McpServerConfig::Sse(McpRemoteServerConfig {
-                url: "https://vendor.example/sse".to_string(),
-                headers: BTreeMap::from([("X-Token".to_string(), "abc".to_string())]),
-                headers_helper: None,
-                oauth: None,
-            }),
-        };
-        let bootstrap = McpClientBootstrap::from_scoped_config("sse server", &config);
+        let config = McpServerConfig::Sse(McpRemoteServerConfig {
+            url: "https://vendor.example/sse".to_string(),
+            headers: BTreeMap::from([("X-Token".to_string(), "abc".to_string())]),
+            headers_helper: None,
+            oauth: None,
+        });
+        let bootstrap = McpClientBootstrap::from_config("sse server", &config);
         match bootstrap.transport {
             McpClientTransport::Sse(transport) => {
                 assert_eq!(transport.url, "https://vendor.example/sse");
@@ -269,14 +253,11 @@ mod tests {
 
     #[test]
     fn claude_ai_proxy_bootstrap_maps_url_and_id() {
-        let config = ScopedMcpServerConfig {
-            scope: ConfigSource::Project,
-            config: McpServerConfig::ClaudeAiProxy(McpClaudeAiProxyServerConfig {
-                url: "https://proxy.example/mcp".to_string(),
-                id: "proxy-123".to_string(),
-            }),
-        };
-        let bootstrap = McpClientBootstrap::from_scoped_config("proxy server", &config);
+        let config = McpServerConfig::ClaudeAiProxy(McpClaudeAiProxyServerConfig {
+            url: "https://proxy.example/mcp".to_string(),
+            id: "proxy-123".to_string(),
+        });
+        let bootstrap = McpClientBootstrap::from_config("proxy server", &config);
         assert_eq!(bootstrap.normalized_name, "proxy_server");
         match bootstrap.transport {
             McpClientTransport::ClaudeAiProxy(transport) => {

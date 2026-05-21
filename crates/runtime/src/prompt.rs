@@ -207,7 +207,7 @@ pub fn load_system_prompt(
 ) -> Result<Vec<String>, PromptBuildError> {
     let cwd = cwd.into();
     let project_context = ProjectContext::discover_with_git(&cwd, current_date.into())?;
-    let config = ConfigLoader::default_for(&cwd).load()?;
+    let config = ConfigLoader::default_for().load()?;
     Ok(SystemPromptBuilder::new()
         .with_os(os_name, os_version)
         .with_project_context(project_context)
@@ -279,9 +279,10 @@ mod tests {
     #[test]
     fn load_system_prompt_loads_config() {
         let root = temp_dir();
-        fs::create_dir_all(root.join(".acrawl")).expect("acrawl dir");
+        let config_home = root.join(".acrawl");
+        fs::create_dir_all(&config_home).expect("acrawl dir");
         fs::write(
-            root.join(".acrawl").join("settings.json"),
+            config_home.join("settings.json"),
             r#"{"permissionMode":"acceptEdits"}"#,
         )
         .expect("write settings");
@@ -291,7 +292,7 @@ mod tests {
         let original_home = std::env::var("HOME").ok();
         let original_acrawl_home = std::env::var("ACRAWL_CONFIG_HOME").ok();
         std::env::set_var("HOME", &root);
-        std::env::set_var("ACRAWL_CONFIG_HOME", root.join("missing-home"));
+        std::env::set_var("ACRAWL_CONFIG_HOME", &config_home);
         std::env::set_current_dir(&root).expect("change cwd");
         let prompt = super::load_system_prompt(&root, "2026-03-31", "linux", "6.8")
             .expect("system prompt should load")
@@ -322,16 +323,17 @@ mod tests {
     #[test]
     fn renders_style_sections_with_project_context() {
         let root = temp_dir();
-        fs::create_dir_all(root.join(".acrawl")).expect("acrawl dir");
+        let config_home = root.join(".acrawl");
+        fs::create_dir_all(&config_home).expect("acrawl dir");
         fs::write(
-            root.join(".acrawl").join("settings.json"),
+            config_home.join("settings.json"),
             r#"{"permissionMode":"acceptEdits"}"#,
         )
         .expect("write settings");
 
         let project_context =
             ProjectContext::discover(&root, "2026-03-31").expect("context should load");
-        let config = ConfigLoader::new(&root, root.join("missing-home"))
+        let config = ConfigLoader::new(&config_home)
             .load()
             .expect("config should load");
         let prompt = SystemPromptBuilder::new()

@@ -295,10 +295,7 @@ mod tests {
     use serde_json::json;
     use tokio::runtime::Builder;
 
-    use crate::config::{
-        ConfigSource, McpSdkServerConfig, McpServerConfig, McpStdioServerConfig,
-        ScopedMcpServerConfig,
-    };
+    use crate::config::{McpSdkServerConfig, McpServerConfig, McpStdioServerConfig};
     use crate::mcp::McpInitializeServerInfo;
 
     use super::{
@@ -543,15 +540,12 @@ while True:
     }
 
     fn sample_bootstrap(script_path: &Path) -> McpClientBootstrap {
-        let config = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: McpServerConfig::Stdio(McpStdioServerConfig {
-                command: "/bin/sh".to_string(),
-                args: vec![script_path.to_string_lossy().into_owned()],
-                env: BTreeMap::from([("MCP_TEST_TOKEN".to_string(), "secret-value".to_string())]),
-            }),
-        };
-        McpClientBootstrap::from_scoped_config("stdio server", &config)
+        let config = McpServerConfig::Stdio(McpStdioServerConfig {
+            command: "/bin/sh".to_string(),
+            args: vec![script_path.to_string_lossy().into_owned()],
+            env: BTreeMap::from([("MCP_TEST_TOKEN".to_string(), "secret-value".to_string())]),
+        });
+        McpClientBootstrap::from_config("stdio server", &config)
     }
 
     fn script_transport(script_path: &Path) -> crate::mcp::client::McpStdioTransport {
@@ -598,13 +592,10 @@ while True:
 
     #[test]
     fn rejects_non_stdio_bootstrap() {
-        let config = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: McpServerConfig::Sdk(McpSdkServerConfig {
-                name: "sdk-server".to_string(),
-            }),
-        };
-        let bootstrap = McpClientBootstrap::from_scoped_config("sdk server", &config);
+        let config = McpServerConfig::Sdk(McpSdkServerConfig {
+            name: "sdk-server".to_string(),
+        });
+        let bootstrap = McpClientBootstrap::from_config("sdk server", &config);
         let error = spawn_mcp_stdio_process(&bootstrap).expect_err("non-stdio should fail");
         assert_eq!(error.kind(), ErrorKind::InvalidInput);
     }
@@ -937,9 +928,7 @@ mod cross_platform_tests {
     use std::collections::BTreeMap;
     use std::io::ErrorKind;
 
-    use crate::config::{
-        ConfigSource, McpRemoteServerConfig, McpServerConfig, ScopedMcpServerConfig,
-    };
+    use crate::config::{McpRemoteServerConfig, McpServerConfig};
     use crate::mcp::McpClientBootstrap;
 
     use super::{default_initialize_params, encode_frame, spawn_mcp_stdio_process};
@@ -962,16 +951,13 @@ mod cross_platform_tests {
 
     #[test]
     fn spawn_rejects_non_stdio_transport_with_descriptive_error() {
-        let config = ScopedMcpServerConfig {
-            scope: ConfigSource::Local,
-            config: McpServerConfig::Http(McpRemoteServerConfig {
-                url: "https://example.test/mcp".to_string(),
-                headers: BTreeMap::new(),
-                headers_helper: None,
-                oauth: None,
-            }),
-        };
-        let bootstrap = McpClientBootstrap::from_scoped_config("http-server", &config);
+        let config = McpServerConfig::Http(McpRemoteServerConfig {
+            url: "https://example.test/mcp".to_string(),
+            headers: BTreeMap::new(),
+            headers_helper: None,
+            oauth: None,
+        });
+        let bootstrap = McpClientBootstrap::from_config("http-server", &config);
         let error = spawn_mcp_stdio_process(&bootstrap).expect_err("non-stdio should fail");
         assert_eq!(error.kind(), ErrorKind::InvalidInput);
         assert!(error.to_string().contains("http-server"));

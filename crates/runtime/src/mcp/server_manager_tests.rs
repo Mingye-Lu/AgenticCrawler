@@ -8,8 +8,8 @@ use serde_json::json;
 use tokio::runtime::Builder;
 
 use crate::config::{
-    ConfigSource, McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig, McpStdioServerConfig,
-    McpWebSocketServerConfig, ScopedMcpServerConfig,
+    McpRemoteServerConfig, McpSdkServerConfig, McpServerConfig, McpStdioServerConfig,
+    McpWebSocketServerConfig,
 };
 
 use super::{mcp_tool_name, McpServerManager, McpServerManagerError};
@@ -131,25 +131,18 @@ fn cleanup_script(script_path: &Path) {
     fs::remove_dir_all(script_path.parent().expect("script parent")).expect("cleanup dir");
 }
 
-fn manager_server_config(
-    script_path: &Path,
-    label: &str,
-    log_path: &Path,
-) -> ScopedMcpServerConfig {
-    ScopedMcpServerConfig {
-        scope: ConfigSource::Local,
-        config: McpServerConfig::Stdio(McpStdioServerConfig {
-            command: "python3".to_string(),
-            args: vec![script_path.to_string_lossy().into_owned()],
-            env: BTreeMap::from([
-                ("MCP_SERVER_LABEL".to_string(), label.to_string()),
-                (
-                    "MCP_LOG_PATH".to_string(),
-                    log_path.to_string_lossy().into_owned(),
-                ),
-            ]),
-        }),
-    }
+fn manager_server_config(script_path: &Path, label: &str, log_path: &Path) -> McpServerConfig {
+    McpServerConfig::Stdio(McpStdioServerConfig {
+        command: "python3".to_string(),
+        args: vec![script_path.to_string_lossy().into_owned()],
+        env: BTreeMap::from([
+            ("MCP_SERVER_LABEL".to_string(), label.to_string()),
+            (
+                "MCP_LOG_PATH".to_string(),
+                log_path.to_string_lossy().into_owned(),
+            ),
+        ]),
+    })
 }
 
 #[test]
@@ -249,35 +242,26 @@ fn manager_records_unsupported_non_stdio_servers_without_panicking() {
     let servers = BTreeMap::from([
         (
             "http".to_string(),
-            ScopedMcpServerConfig {
-                scope: ConfigSource::Local,
-                config: McpServerConfig::Http(McpRemoteServerConfig {
-                    url: "https://example.test/mcp".to_string(),
-                    headers: BTreeMap::new(),
-                    headers_helper: None,
-                    oauth: None,
-                }),
-            },
+            McpServerConfig::Http(McpRemoteServerConfig {
+                url: "https://example.test/mcp".to_string(),
+                headers: BTreeMap::new(),
+                headers_helper: None,
+                oauth: None,
+            }),
         ),
         (
             "sdk".to_string(),
-            ScopedMcpServerConfig {
-                scope: ConfigSource::Local,
-                config: McpServerConfig::Sdk(McpSdkServerConfig {
-                    name: "sdk-server".to_string(),
-                }),
-            },
+            McpServerConfig::Sdk(McpSdkServerConfig {
+                name: "sdk-server".to_string(),
+            }),
         ),
         (
             "ws".to_string(),
-            ScopedMcpServerConfig {
-                scope: ConfigSource::Local,
-                config: McpServerConfig::Ws(McpWebSocketServerConfig {
-                    url: "wss://example.test/mcp".to_string(),
-                    headers: BTreeMap::new(),
-                    headers_helper: None,
-                }),
-            },
+            McpServerConfig::Ws(McpWebSocketServerConfig {
+                url: "wss://example.test/mcp".to_string(),
+                headers: BTreeMap::new(),
+                headers_helper: None,
+            }),
         ),
     ]);
 
