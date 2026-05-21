@@ -7,7 +7,6 @@ mod mcp;
 mod oauth;
 pub mod observer;
 mod prompt;
-mod remote;
 pub mod sandbox;
 mod session;
 pub mod settings;
@@ -62,11 +61,6 @@ pub use observer::RuntimeObserver;
 pub use prompt::{
     load_system_prompt, prepend_bullets, ProjectContext, PromptBuildError, SystemPromptBuilder,
     FRONTIER_MODEL_NAME, SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
-};
-pub use remote::{
-    inherited_upstream_proxy_env, no_proxy_list, read_token, upstream_proxy_ws_url,
-    RemoteSessionContext, UpstreamProxyBootstrap, UpstreamProxyState, DEFAULT_REMOTE_BASE_URL,
-    DEFAULT_SESSION_TOKEN_PATH, DEFAULT_SYSTEM_CA_BUNDLE, NO_PROXY_HOSTS, UPSTREAM_PROXY_ENV_KEYS,
 };
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use settings::{

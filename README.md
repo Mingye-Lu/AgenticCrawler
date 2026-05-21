@@ -408,8 +408,6 @@ Created with defaults on first run. Edit directly or via `acrawl init`.
 | Variable | Description |
 |----------|-------------|
 | `ACRAWL_CONFIG_HOME` | Override config directory (default: `~/.acrawl/`) |
-| `ACRAWL_REMOTE` | Enable remote session mode |
-| `ACRAWL_REMOTE_SESSION_ID` | Remote session identifier |
 
 Provider-specific env vars (see [provider table](#24-llm-providers) above) are read as fallbacks when no `credentials.json` entry exists.
 
