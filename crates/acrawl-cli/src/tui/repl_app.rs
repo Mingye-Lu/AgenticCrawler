@@ -673,7 +673,7 @@ impl ReplTuiState {
             // Already on the first visual line — go to column 0
             let (start, _) = vis[0];
             self.set_input_cursor_line_col_by_char(start);
-            self.input.preferred_col = Some(0);
+            self.input.preferred_col = self.input.preferred_col.or(Some(0));
             return;
         }
         let prev_start = vis[cur_vis - 1].0;
@@ -688,11 +688,8 @@ impl ReplTuiState {
             .take(cur_offset)
             .map(char_display_width)
             .sum::<usize>();
-        let target_col = self
-            .input
-            .preferred_col
-            .unwrap_or(cur_display_col)
-            .min(prev_width);
+        let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
+        let target_col = preferred_col.min(prev_width);
         let col_chars = char_count_for_display_col(
             &self
                 .input
@@ -704,7 +701,7 @@ impl ReplTuiState {
             target_col,
         );
         self.set_input_cursor_line_col_by_char(prev_start + col_chars);
-        self.input.preferred_col = Some(target_col);
+        self.input.preferred_col = Some(preferred_col);
     }
 
     fn move_input_cursor_down(&mut self) {
@@ -746,7 +743,7 @@ impl ReplTuiState {
                         width,
                     ),
             );
-            self.input.preferred_col = Some(width);
+            self.input.preferred_col = self.input.preferred_col.or(Some(width));
             return;
         }
         let next_start = vis[cur_vis + 1].0;
@@ -760,11 +757,8 @@ impl ReplTuiState {
             .take(cur_offset)
             .map(char_display_width)
             .sum::<usize>();
-        let target_col = self
-            .input
-            .preferred_col
-            .unwrap_or(cur_display_col)
-            .min(next_width);
+        let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
+        let target_col = preferred_col.min(next_width);
         let col_chars = char_count_for_display_col(
             &self
                 .input
@@ -776,7 +770,7 @@ impl ReplTuiState {
             target_col,
         );
         self.set_input_cursor_line_col_by_char(next_start + col_chars);
-        self.input.preferred_col = Some(target_col);
+        self.input.preferred_col = Some(preferred_col);
     }
 
     /// Set cursor directly by character index (used by visual-line nav).
