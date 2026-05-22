@@ -478,9 +478,9 @@ impl InputField {
         let threshold = self.paste_threshold_ms?;
         let now = Instant::now();
 
-        let is_burst = self
-            .last_key_time
-            .is_some_and(|t| u64::try_from(now.duration_since(t).as_millis()).unwrap_or(u64::MAX) <= threshold);
+        let is_burst = self.last_key_time.is_some_and(|t| {
+            u64::try_from(now.duration_since(t).as_millis()).unwrap_or(u64::MAX) <= threshold
+        });
 
         let is_immediate_paste = self.last_key_time.is_none();
 

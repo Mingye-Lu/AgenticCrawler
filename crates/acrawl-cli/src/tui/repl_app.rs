@@ -316,7 +316,10 @@ impl ReplTuiState {
         }
         if let Some(ref info) = self.update_info {
             if info.is_outdated {
-                return format!("Update v{} available (you have v{})", info.latest_version, info.current_version);
+                return format!(
+                    "Update v{} available (you have v{})",
+                    info.latest_version, info.current_version
+                );
             }
         }
         if self.ui_state == AppUiState::WelcomeMode {
@@ -2597,8 +2600,7 @@ fn run_loop(
                 if state.selection.anchor.is_some()
                     && ((key.code == KeyCode::Char('c')
                         && key.modifiers.contains(KeyModifiers::CONTROL))
-                        || (key.code == KeyCode::Insert
-                            && key.modifiers == KeyModifiers::CONTROL))
+                        || (key.code == KeyCode::Insert && key.modifiers == KeyModifiers::CONTROL))
                 {
                     state.selection.pending_copy = Some(true);
                     state.selection.suppress_paste_until =

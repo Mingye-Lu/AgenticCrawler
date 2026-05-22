@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use runtime::config_home_dir;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{self as tokio_io, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
@@ -813,6 +813,14 @@ impl PlaywrightBridge {
         let stdout = child.stdout.take().ok_or_else(|| {
             BridgeError::Protocol("bridge process missing stdout pipe".to_string())
         })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            BridgeError::Protocol("bridge process missing stderr pipe".to_string())
+        })?;
+        let _stderr_drain = tokio::spawn(async move {
+            let mut stderr = stderr;
+            let mut sink = tokio_io::sink();
+            let _ = tokio_io::copy(&mut stderr, &mut sink).await;
+        });
         let mut bridge = Self {
             child,
             stdin,
@@ -848,7 +856,7 @@ impl PlaywrightBridge {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .env("NODE_PATH", node_path);
         command
@@ -936,7 +944,7 @@ impl PlaywrightBridge {
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
 
-        let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
+        let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_json_line())
             .await
             .map_err(|_| BridgeError::CommandTimeout {
                 timeout: DEFAULT_COMMAND_TIMEOUT,
@@ -1564,6 +1572,43 @@ for line in sys.stdin:
                 html: "<html><title>Synthetic Example</title></html>".to_string(),
             }
         );
+
+        bridge.close().await.expect("close should succeed");
+        cleanup_temp_script(&script_path);
+    }
+
+    #[tokio::test]
+    async fn send_raw_command_skips_non_json_lines() {
+        let script_path = write_python_script(
+            "protocol-server-non-json",
+            r#"import json
+import sys
+print(json.dumps({"event": "bridge_bootstrap", "ok": True}), flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command.get("action") == "page_map":
+        print("[cloakbrowser] Update available: 0.3.28 -> 0.3.30", flush=True)
+        print(json.dumps({
+            "event": "bridge_response",
+            "ok": True,
+            "result": {"items": ["synthetic"]}
+        }), flush=True)
+    elif command.get("action") == "close":
+        print(json.dumps({"event": "bridge_response", "ok": True}), flush=True)
+        break
+"#,
+        );
+
+        let mut bridge = PlaywrightBridge::new_with_invocation(
+            python_program(),
+            vec![script_path.to_string_lossy().into_owned()],
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("bridge should bootstrap");
+
+        let page_map = bridge.page_map().await.expect("page_map should succeed");
+        assert_eq!(page_map["items"][0], "synthetic");
 
         bridge.close().await.expect("close should succeed");
         cleanup_temp_script(&script_path);
