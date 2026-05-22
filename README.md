@@ -320,6 +320,104 @@ acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) server
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
+### MCP Server (expose acrawl as a tool)
+
+`acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, Windsurf, or any MCP-compatible client.
+
+The server provides **17 tools** in two modes:
+
+**Direct browser tools (16)** — fine-grained control for clients that orchestrate themselves:
+`navigate`, `click`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`
+
+**Autonomous agent (1)** — delegate a full crawl task:
+- **`run_goal`** — Execute a high-level crawl goal autonomously. The agent plans, navigates, and extracts data using its own LLM loop. Requires `~/.acrawl/credentials.json` configured with a model.
+
+**Transport:** stdio only (no SSE / HTTP / WebSocket in this release).
+
+#### Quick install
+
+```bash
+acrawl mcp install
+```
+
+Interactive installer that auto-detects your IDEs, lets you toggle which to configure (Space to select, Enter to confirm), and writes the correct config for each. Supports global (user-level) and project-level scopes.
+
+Supported IDEs: **Claude Code**, **Cursor**, **Windsurf**, **VS Code (Copilot)**, **OpenCode**.
+
+#### Manual configuration
+
+If you prefer to configure manually, add this to your IDE's MCP config file:
+
+<table>
+<tr><th>IDE</th><th>Config file</th><th>Configuration</th></tr>
+<tr>
+<td>Claude Code</td>
+<td><code>.mcp.json</code> (project)<br><code>~/.claude.json</code> (user)</td>
+<td rowspan="3">
+
+```json
+{
+  "mcpServers": {
+    "acrawl": {
+      "command": "acrawl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+</td>
+</tr>
+<tr><td>Cursor</td><td><code>.cursor/mcp.json</code></td></tr>
+<tr><td>Windsurf</td><td><code>~/.codeium/windsurf/mcp_config.json</code></td></tr>
+<tr>
+<td>VS Code (Copilot)</td>
+<td><code>.vscode/mcp.json</code></td>
+<td>
+
+```json
+{
+  "servers": {
+    "acrawl": {
+      "command": "acrawl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+</td>
+</tr>
+<tr>
+<td>OpenCode</td>
+<td><code>opencode.json</code></td>
+<td>
+
+```json
+{
+  "mcp": {
+    "acrawl": {
+      "type": "local",
+      "command": ["acrawl", "mcp"]
+    }
+  }
+}
+```
+
+</td>
+</tr>
+</table>
+
+Or via the Claude Code CLI directly:
+
+```bash
+claude mcp add acrawl -- acrawl mcp
+```
+
+The browser tools share a persistent session across calls. `run_goal` creates its own isolated agent and browser.
+
+**Requirements:** The 16 browser tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
+
 ## Usage
 
 ```
@@ -327,6 +425,8 @@ acrawl [OPTIONS] [COMMAND]
 
 Commands:
   prompt <text>      Run a single goal non-interactively
+  mcp                Start MCP server (stdio transport)
+  mcp install        Install MCP config into your IDEs interactively
   auth [provider]    Configure provider credentials
   system-prompt      Print the system prompt (for debugging)
 

@@ -107,14 +107,10 @@ impl McpStdioProcess {
                     "MCP stdio stream closed while reading headers",
                 ));
             }
-            if line == "\r\n" {
+            if is_header_terminator(&line) {
                 break;
             }
-            if let Some(value) = line.strip_prefix("Content-Length:") {
-                let parsed = value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            if let Some(parsed) = parse_content_length_header(&line)? {
                 content_length = Some(parsed);
             }
         }
@@ -281,6 +277,63 @@ fn encode_frame(payload: &[u8]) -> Vec<u8> {
     let mut framed = header.into_bytes();
     framed.extend_from_slice(payload);
     framed
+}
+
+#[must_use]
+pub fn encode_mcp_frame(payload: &[u8]) -> Vec<u8> {
+    encode_frame(payload)
+}
+
+pub fn read_mcp_frame(reader: &mut impl io::BufRead) -> io::Result<Vec<u8>> {
+    let mut content_length = None;
+    loop {
+        let mut line = String::new();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "MCP stdio stream closed while reading headers",
+            ));
+        }
+        if is_header_terminator(&line) {
+            break;
+        }
+        if let Some(parsed) = parse_content_length_header(&line)? {
+            content_length = Some(parsed);
+        }
+    }
+
+    let content_length = content_length.ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "missing Content-Length header")
+    })?;
+    if content_length > MAX_MCP_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("MCP frame too large: {content_length} bytes (limit {MAX_MCP_FRAME_BYTES})"),
+        ));
+    }
+    let mut payload = vec![0_u8; content_length];
+    reader.read_exact(&mut payload)?;
+    Ok(payload)
+}
+
+fn is_header_terminator(line: &str) -> bool {
+    line.trim_end_matches(['\r', '\n']).is_empty()
+}
+
+fn parse_content_length_header(line: &str) -> io::Result<Option<usize>> {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    let Some((name, value)) = trimmed.split_once(':') else {
+        return Ok(None);
+    };
+    if !name.eq_ignore_ascii_case("Content-Length") {
+        return Ok(None);
+    }
+    let parsed = value
+        .trim()
+        .parse::<usize>()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(Some(parsed))
 }
 
 #[cfg(all(test, unix))]
@@ -926,12 +979,13 @@ while True:
 #[cfg(test)]
 mod cross_platform_tests {
     use std::collections::BTreeMap;
+    use std::io::Cursor;
     use std::io::ErrorKind;
 
     use crate::config::{McpRemoteServerConfig, McpServerConfig};
     use crate::mcp::McpClientBootstrap;
 
-    use super::{default_initialize_params, encode_frame, spawn_mcp_stdio_process};
+    use super::{default_initialize_params, encode_frame, read_mcp_frame, spawn_mcp_stdio_process};
 
     #[test]
     fn encode_frame_formats_content_length_and_preserves_payload() {
@@ -947,6 +1001,28 @@ mod cross_platform_tests {
         let framed = encode_frame(b"");
         let text = String::from_utf8(framed).expect("valid utf8");
         assert_eq!(text, "Content-Length: 0\r\n\r\n");
+    }
+
+    #[test]
+    fn read_mcp_frame_accepts_lf_only_terminator() {
+        let payload = b"{}";
+        let framed = format!("Content-Length: {}\n\n", payload.len()).into_bytes();
+        let mut bytes = framed;
+        bytes.extend_from_slice(payload);
+        let mut cursor = Cursor::new(bytes);
+        let parsed = read_mcp_frame(&mut cursor).expect("lf-only frame should parse");
+        assert_eq!(parsed, payload);
+    }
+
+    #[test]
+    fn read_mcp_frame_accepts_case_insensitive_content_length() {
+        let payload = b"{}";
+        let framed = format!("content-length: {}\r\n\r\n", payload.len()).into_bytes();
+        let mut bytes = framed;
+        bytes.extend_from_slice(payload);
+        let mut cursor = Cursor::new(bytes);
+        let parsed = read_mcp_frame(&mut cursor).expect("lowercase header should parse");
+        assert_eq!(parsed, payload);
     }
 
     #[test]

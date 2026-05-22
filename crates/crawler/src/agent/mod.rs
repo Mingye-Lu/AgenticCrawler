@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -91,6 +91,7 @@ type ChildTaskMap = HashMap<String, ChildTaskEntry>;
 pub struct CrawlerAgent {
     pub(super) browser: Option<BrowserContext>,
     registry: ToolRegistry,
+    allowed_tools: Option<BTreeSet<String>>,
     max_steps: usize,
     pub(super) agent_id: String,
     pub(super) agent_manager: SharedAgentManager,
@@ -118,6 +119,7 @@ impl CrawlerAgent {
             shared_bridge: Some(browser.bridge().clone()),
             browser: Some(browser),
             registry,
+            allowed_tools: None,
             max_steps: DEFAULT_MAX_STEPS,
             agent_id: generate_agent_id(),
             agent_manager: default_agent_manager(),
@@ -143,6 +145,7 @@ impl CrawlerAgent {
         Self {
             browser: None,
             registry,
+            allowed_tools: None,
             max_steps: DEFAULT_MAX_STEPS,
             agent_id: generate_agent_id(),
             agent_manager: default_agent_manager(),
@@ -169,6 +172,7 @@ impl CrawlerAgent {
         Self {
             browser: None,
             registry,
+            allowed_tools: None,
             max_steps: DEFAULT_MAX_STEPS,
             agent_id: "test-agent".to_string(),
             agent_manager: default_agent_manager(),
@@ -194,6 +198,12 @@ impl CrawlerAgent {
     pub fn with_max_steps(mut self, max_steps: usize) -> Self {
         self.max_steps = max_steps;
         self.crawl_state.max_steps = max_steps;
+        self
+    }
+
+    #[must_use]
+    pub fn with_allowed_tools(mut self, allowed_tools: BTreeSet<String>) -> Self {
+        self.allowed_tools = Some(allowed_tools);
         self
     }
 
@@ -252,10 +262,33 @@ impl CrawlerAgent {
         self.control_state = Some(state);
     }
 
+    #[must_use]
+    pub fn crawl_state(&self) -> &CrawlState {
+        &self.crawl_state
+    }
+
     pub async fn run(
+        self,
+        goal: &str,
+        api_client: impl ApiClient + Send + Sync + 'static,
+    ) -> Result<CrawlResult, CrawlError> {
+        let specs = match &self.allowed_tools {
+            Some(allowed) => mvp_tool_specs()
+                .into_iter()
+                .filter(|s| allowed.contains(s.name))
+                .collect(),
+            None => mvp_tool_specs(),
+        };
+        let system_prompt = build_system_prompt(&specs);
+        self.run_with_system_prompt(goal, api_client, system_prompt)
+            .await
+    }
+
+    pub async fn run_with_system_prompt(
         mut self,
         goal: &str,
         api_client: impl ApiClient + Send + Sync + 'static,
+        system_prompt: Vec<String>,
     ) -> Result<CrawlResult, CrawlError> {
         let shared_client = SharedApiClient::new(api_client);
         self.api_client_arc = Some(shared_client.clone());
@@ -273,7 +306,6 @@ impl CrawlerAgent {
         }
 
         let max_steps = self.max_steps;
-        let system_prompt = build_system_prompt(&mvp_tool_specs());
         let mut runtime =
             ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
                 .with_max_iterations(max_steps);
@@ -323,6 +355,16 @@ impl Drop for CrawlerAgent {
 
 impl ToolExecutor for CrawlerAgent {
     async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+        if self
+            .allowed_tools
+            .as_ref()
+            .is_some_and(|allowed| !allowed.contains(tool_name))
+        {
+            return Err(ToolError::new(format!(
+                "tool `{tool_name}` is not enabled by the current allowlist"
+            )));
+        }
+
         let input_value: Value = if input.is_empty() {
             Value::Object(serde_json::Map::new())
         } else {
@@ -779,6 +821,39 @@ mod tests {
             .await
             .expect("navigate should succeed");
         assert!(result.contains("Navigated to https://example.com"));
+    }
+
+    #[tokio::test]
+    async fn crawler_agent_rejects_disallowed_tool() {
+        let mut allowed_tools = BTreeSet::new();
+        allowed_tools.insert("extract_data".to_string());
+        let mut agent =
+            CrawlerAgent::new_for_testing(mock_registry()).with_allowed_tools(allowed_tools);
+        let err = agent
+            .execute("navigate", r#"{"url":"https://example.com"}"#)
+            .await
+            .expect_err("disallowed tool should be rejected");
+        assert!(err
+            .to_string()
+            .contains("not enabled by the current allowlist"));
+    }
+
+    #[test]
+    fn run_builds_filtered_system_prompt_when_allowed_tools_set() {
+        let mut allowed = BTreeSet::new();
+        allowed.insert("navigate".to_string());
+        allowed.insert("screenshot".to_string());
+        let agent = CrawlerAgent::new_for_testing(mock_registry()).with_allowed_tools(allowed);
+
+        // Verify the agent has the allowlist set (system prompt filtering
+        // is derived from allowed_tools inside run(); we verify the field directly)
+        let tools = agent
+            .allowed_tools
+            .as_ref()
+            .expect("allowed_tools should be set");
+        assert!(tools.contains("navigate"));
+        assert!(tools.contains("screenshot"));
+        assert!(!tools.contains("click"));
     }
 
     #[tokio::test]

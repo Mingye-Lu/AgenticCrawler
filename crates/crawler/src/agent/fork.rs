@@ -195,6 +195,9 @@ impl CrawlerAgent {
         if let Some(ref registry) = self.child_control_registry {
             child_agent = child_agent.with_child_control_registry(registry.clone());
         }
+        if let Some(ref allowed) = self.allowed_tools {
+            child_agent = child_agent.with_allowed_tools(allowed.clone());
+        }
         child_agent.shared_bridge = Some(shared_bridge);
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
