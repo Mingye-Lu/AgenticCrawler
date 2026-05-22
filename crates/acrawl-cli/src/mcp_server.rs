@@ -372,19 +372,18 @@ fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOu
     })?;
     let allowed_tools = normalize_tool_names(&raw_allowed_tools);
 
-    #[allow(clippy::cast_possible_truncation)]
-    let max_steps = arguments
-        .get("max_steps")
-        .and_then(Value::as_u64)
-        .map(|value| value.min(200) as usize);
-    if let Some(max_steps) = max_steps {
-        if !(1..=200).contains(&max_steps) {
+    let max_steps = if let Some(raw) = arguments.get("max_steps").and_then(Value::as_u64) {
+        if !(1..=200).contains(&raw) {
             return Err(RunGoalOutcome::JsonRpcError {
                 code: -32602,
-                message: format!("max_steps must be between 1 and 200, got {max_steps}"),
+                message: format!("max_steps must be between 1 and 200, got {raw}"),
             });
         }
-    }
+        #[allow(clippy::cast_possible_truncation)]
+        Some(raw as usize)
+    } else {
+        None
+    };
 
     Ok(RunGoalRequest {
         goal: goal.to_string(),
