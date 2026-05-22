@@ -117,10 +117,23 @@ fn detect_ides() -> Vec<DetectedIde> {
 }
 
 fn resolve_acrawl_path() -> String {
-    let exe = env::current_exe()
-        .ok()
-        .and_then(|p| fs::canonicalize(p).ok())
-        .unwrap_or_else(|| PathBuf::from("acrawl"));
+    let exe = env::current_exe().ok().and_then(|p| {
+        match fs::canonicalize(&p) {
+            Ok(canonical) => Some(canonical),
+            Err(e) => {
+                eprintln!(
+                    "warning: could not canonicalize binary path {}: {e}",
+                    p.display()
+                );
+                eprintln!(
+                    "warning: IDE configs will use the bare name `acrawl` — \
+                     ensure it is on PATH when IDEs launch the server"
+                );
+                None
+            }
+        }
+    });
+    let exe = exe.unwrap_or_else(|| PathBuf::from("acrawl"));
 
     let path_str = exe.to_string_lossy().to_string();
     path_str
