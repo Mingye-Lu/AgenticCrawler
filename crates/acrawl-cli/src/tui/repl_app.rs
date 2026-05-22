@@ -767,8 +767,18 @@ impl ReplTuiState {
     }
 
     /// Set cursor directly by character index (used by visual-line nav).
+    /// Snaps back from `\n` so the cursor never lands on the invisible separator.
     fn set_input_cursor_line_col_by_char(&mut self, char_idx: usize) {
-        self.input.cursor = char_idx.min(self.input_char_len());
+        let mut target = char_idx.min(self.input_char_len());
+        if target > 0 {
+            // Check the character just before target; if _it_ is \n then the
+            // computed col_chars included the \n as a zero-width char — snap
+            // back one more position to stay before the newline.
+            if self.input.text.chars().nth(target) == Some('\n') {
+                target = target.saturating_sub(1);
+            }
+        }
+        self.input.cursor = target;
         self.resync_byte_cursor();
         self.input_scroll_offset = usize::MAX;
     }
