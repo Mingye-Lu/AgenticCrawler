@@ -905,6 +905,9 @@ impl ReplTuiState {
             .take(line_end.saturating_sub(start))
         {
             let cw = char_display_width(ch);
+            if cw == 0 {
+                continue;
+            }
             if col + cw > target_col {
                 break;
             }
@@ -1112,18 +1115,26 @@ impl ReplTuiState {
         }
         self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
 
-        // Compute char-index range for each visual line (excluding the caret
-        // marker) for selection highlighting — must be done before consuming
-        // visual_lines with into_iter below.
-        let visual_ranges: Vec<(usize, usize)> = {
-            let mut acc = 0usize;
-            let mut ranges = Vec::with_capacity(visual_lines.len());
-            for (_, line) in &visual_lines {
-                let n = line.chars().filter(|&c| c != INPUT_CARET_MARKER).count();
-                ranges.push((acc, acc + n));
-                acc += n;
-            }
-            ranges
+        // Compute char-index range for each visual line using the original
+        // input text so embedded `\n` separators keep their real char indices.
+        let visual_ranges: Vec<(usize, usize)> = if is_placeholder {
+            vec![(0, 0); visual_lines.len()]
+        } else {
+            let vis = self.visual_line_info(safe_width);
+            vis.iter()
+                .enumerate()
+                .map(|(idx, &(start, _))| {
+                    let raw_end = vis.get(idx + 1).map_or(self.input_char_len(), |v| v.0);
+                    let line_end = if raw_end > start
+                        && self.input.text.chars().nth(raw_end.saturating_sub(1)) == Some('\n')
+                    {
+                        raw_end.saturating_sub(1)
+                    } else {
+                        raw_end
+                    };
+                    (start, line_end)
+                })
+                .collect()
         };
 
         let skip = self.input_scroll_offset;
@@ -3501,12 +3512,21 @@ mod tests {
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::repl_render::{line_to_plain_text, render_tool_call_lines, wrap_ansi_line};
     use crate::tui::ReplTuiEvent;
+    use ratatui::style::Color;
     use ratatui::text::Line;
 
     use super::{ReplTuiState, ToolCallStatus, TranscriptEntry};
 
     fn assert_matching_lengths(items: &[ratatui::widgets::ListItem<'static>], text: &[String]) {
         assert_eq!(items.len(), text.len());
+    }
+
+    fn selected_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .filter(|span| span.style.bg == Some(Color::DarkGray))
+            .map(|span| span.content.as_ref())
+            .collect()
     }
 
     #[test]
@@ -3745,6 +3765,19 @@ mod tests {
         let prompt_width = u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX);
 
         assert_eq!(cursor_pos, Some((1, prompt_width + 2)));
+    }
+
+    #[test]
+    fn input_selection_preserves_newline_char_offsets_across_paragraphs() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd\nef".to_string();
+        state.input.cursor = state.input.text.chars().count();
+        state.input_selection = Some((3, 7));
+
+        let (_, render_lines, _, _) = state.calculate_input_dimensions(20, "model");
+
+        assert_eq!(selected_text(&render_lines[2]), "cd");
+        assert_eq!(selected_text(&render_lines[3]), "e");
     }
 
     #[test]
