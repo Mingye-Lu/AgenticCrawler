@@ -487,6 +487,19 @@ impl ReplTuiState {
         }
     }
 
+    fn selected_input_text(&self) -> Option<&str> {
+        let (a, b) = self.input_selection?;
+        let sel_start = self.input_char_to_byte(a);
+        let sel_end = self.input_char_to_byte(b);
+        self.input.text.get(sel_start..sel_end)
+    }
+
+    fn cut_input_selection_text(&mut self) -> Option<String> {
+        let text = self.selected_input_text()?.to_string();
+        self.delete_selection_range();
+        Some(text)
+    }
+
     fn insert_input_char(&mut self, ch: char) {
         self.input_scroll_manual = false;
         self.delete_selection_range();
@@ -651,6 +664,20 @@ impl ReplTuiState {
             .map_or(0, |input_line| text_display_width(input_line));
         self.set_input_cursor_line_col(line, target);
         self.input.preferred_col = Some(target);
+    }
+
+    fn select_all_input(&mut self) {
+        let char_len = self.input_char_len();
+        if char_len == 0 {
+            return;
+        }
+        self.input_scroll_manual = false;
+        self.input_selection = Some((0, char_len));
+        self.input_click_anchor = None;
+        self.input.cursor = char_len;
+        self.resync_byte_cursor();
+        self.input.preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
     }
 
     /// Compute visual line boundaries for the input text.
@@ -2874,6 +2901,15 @@ fn run_loop(
                     continue;
                 }
 
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('a')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.select_all_input();
+                    state.wake_input_caret();
+                    continue;
+                }
+
                 // Copy input selection (Ctrl+C / Ctrl+Insert).
                 if state.active_modal.is_none()
                     && state.input_selection.is_some()
@@ -2881,18 +2917,29 @@ fn run_loop(
                         && key.modifiers.contains(KeyModifiers::CONTROL))
                         || (key.code == KeyCode::Insert && key.modifiers == KeyModifiers::CONTROL))
                 {
-                    if let Some((a, b)) = state.input_selection {
-                        let sel_start = state.input_char_to_byte(a);
-                        let sel_end = state.input_char_to_byte(b);
-                        if let Some(text) = state.input.text.get(sel_start..sel_end) {
-                            if let Ok(mut cb) = arboard::Clipboard::new() {
-                                let _ = cb.set_text(text.to_string());
-                            }
+                    if let Some(text) = state.selected_input_text() {
+                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                            let _ = cb.set_text(text.to_string());
                         }
                     }
                     state.input_selection = None;
                     state.selection.anchor = None;
                     state.selection.end = None;
+                    continue;
+                }
+
+                if state.active_modal.is_none()
+                    && state.input_selection.is_some()
+                    && key.code == KeyCode::Char('x')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    if let Some(text) = state.cut_input_selection_text() {
+                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                            let _ = cb.set_text(text);
+                        }
+                    }
+                    state.wake_input_caret();
+                    state.refresh_slash_overlay();
                     continue;
                 }
 
@@ -3765,6 +3812,35 @@ mod tests {
         let prompt_width = u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX);
 
         assert_eq!(cursor_pos, Some((1, prompt_width + 2)));
+    }
+
+    #[test]
+    fn select_all_input_marks_entire_buffer() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd".to_string();
+        state.input.cursor = 1;
+        state.resync_byte_cursor();
+
+        state.select_all_input();
+
+        assert_eq!(state.input_selection, Some((0, 5)));
+        assert_eq!(state.input.cursor, 5);
+    }
+
+    #[test]
+    fn cut_input_selection_text_returns_text_and_removes_it() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd".to_string();
+        state.input.cursor = 5;
+        state.resync_byte_cursor();
+        state.input_selection = Some((0, 3));
+
+        let cut = state.cut_input_selection_text();
+
+        assert_eq!(cut.as_deref(), Some("ab\n"));
+        assert_eq!(state.input.text, "cd");
+        assert_eq!(state.input.cursor, 0);
+        assert_eq!(state.input_selection, None);
     }
 
     #[test]
