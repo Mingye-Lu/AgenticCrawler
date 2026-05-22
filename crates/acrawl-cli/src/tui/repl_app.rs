@@ -855,15 +855,19 @@ impl ReplTuiState {
     /// a character index in `input.text`.  Returns `None` if the position
     /// falls outside the text bounds.
     fn char_index_at_mouse(&self, widget_row: usize, widget_col: usize) -> Option<usize> {
+        // The render adds a blank padding line above (row 0) and below
+        // the content, so the first content visual line is at row 1.
+        if widget_row == 0 {
+            return None;
+        }
+        let content_row = widget_row.saturating_sub(1);
         let w = usize::from(self.input_area_width).max(10);
         let safe_width = w.saturating_sub(5).max(5);
         let vis = self.visual_line_info(safe_width);
         if vis.is_empty() {
             return None;
         }
-        // widget_row is relative to the input widget; the first visible row
-        // is at input_scroll_offset.
-        let abs_row = self.input_scroll_offset + widget_row;
+        let abs_row = self.input_scroll_offset + content_row;
         let &(start, width) = vis.get(abs_row)?;
         // First visual line of the first logical line has a 2‑cell prompt prefix.
         let is_first = abs_row == 0;
