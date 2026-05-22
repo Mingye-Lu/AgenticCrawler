@@ -160,7 +160,19 @@ enum WorkerMsg {
 struct InputEditorState {
     text: String,
     cursor: usize,
+    /// Byte-level position matching `cursor` — avoids O(n) `char_indices().nth()`
+    /// scans in hot paths (paste, render).  Invalidated and lazily re-synced
+    /// when the cursor is set directly (clamp / `set_line_col`).
+    byte_cursor: usize,
     preferred_col: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InputUndoSnapshot {
+    text: String,
+    cursor: usize,
+    preferred_col: Option<usize>,
+    selection: Option<(usize, usize)>,
 }
 
 #[derive(Default)]
@@ -188,6 +200,21 @@ pub(super) struct ReplTuiState {
     pub(super) last_view_height: usize,
     pub(super) last_input_rect: Rect,
     pub(super) input_scroll_offset: usize,
+    /// Set to `true` when the user manually scrolls the input field with the
+    /// mouse wheel; suppresses the caret-visibility snap in
+    /// `calculate_input_dimensions` so the scroll position is preserved until
+    /// the cursor moves (typing, arrow keys, paste, etc.).
+    input_scroll_manual: bool,
+    /// Active text selection within the input field: `(start_char, end_char)`
+    /// where start ≤ end.  `None` when no selection is active.
+    pub(super) input_selection: Option<(usize, usize)>,
+    /// Immutable anchor set on mouse Down(Left); used by Drag to extend the
+    /// selection without ever being modified by other mouse events or key
+    /// handlers.  `None` between drags.
+    input_click_anchor: Option<usize>,
+    /// Cached width (columns) of the input widget from the last render pass.
+    /// Used by cursor up/down to compute soft-wrap boundaries.
+    pub(super) input_area_width: u16,
     input: InputEditorState,
     status_line: String,
     pub(super) busy: bool,
@@ -212,6 +239,16 @@ pub(super) struct ReplTuiState {
     spinner_deadline: Instant,
     pub(super) typewriter: TypewriterState,
     pub(super) selection: SelectionState,
+    /// Accumulates characters arriving faster than a human can type (≤30 ms
+    /// apart) so they can be flushed as a single `insert_input_str` call instead
+    /// of being inserted one-by-one.  `None` = not currently in a burst.
+    paste_buffer: Option<(Instant, Vec<char>)>,
+    /// Timestamp of the most-recently processed `KeyCode::Char` (or `Enter`
+    /// treated as a paste newline).  Used together with `paste_buffer` above to
+    /// detect burst boundaries.
+    last_key_time: Option<Instant>,
+    input_undo_stack: Vec<InputUndoSnapshot>,
+    input_redo_stack: Vec<InputUndoSnapshot>,
     last_esc_at: Option<Instant>,
     pub(super) debug_mode: bool,
     pub(super) update_info: Option<runtime::update_check::UpdateInfo>,
@@ -235,9 +272,14 @@ impl ReplTuiState {
             last_view_height: 0,
             last_input_rect: Rect::default(),
             input_scroll_offset: 0,
+            input_scroll_manual: false,
+            input_selection: None,
+            input_click_anchor: None,
+            input_area_width: 0,
             input: InputEditorState {
                 text: String::new(),
                 cursor: 0,
+                byte_cursor: 0,
                 preferred_col: None,
             },
             status_line: String::new(),
@@ -265,6 +307,10 @@ impl ReplTuiState {
                 live: String::new(),
             },
             selection: SelectionState::default(),
+            paste_buffer: None,
+            last_key_time: None,
+            input_undo_stack: Vec::new(),
+            input_redo_stack: Vec::new(),
             last_esc_at: None,
             debug_mode: false,
             update_info: None,
@@ -360,10 +406,115 @@ impl ReplTuiState {
         self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
     }
 
+    /// Maximum gap (ms) between consecutive keystrokes to be considered a
+    /// paste burst.  Human typing at 120 WPM averages ≈100 ms/char, so 30 ms
+    /// cleanly separates programmatic paste from even the fastest typists.
+    const PASTE_THRESHOLD_MS: u64 = 30;
+
+    fn current_input_snapshot(&self) -> InputUndoSnapshot {
+        InputUndoSnapshot {
+            text: self.input.text.clone(),
+            cursor: self.input.cursor,
+            preferred_col: self.input.preferred_col,
+            selection: self.input_selection,
+        }
+    }
+
+    fn apply_input_snapshot(&mut self, snapshot: InputUndoSnapshot) {
+        self.input_scroll_manual = false;
+        self.input.text = snapshot.text;
+        self.input.cursor = snapshot.cursor.min(self.input_char_len());
+        self.input.preferred_col = snapshot.preferred_col;
+        self.input_selection = snapshot.selection;
+        self.input_click_anchor = None;
+        self.resync_byte_cursor();
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn record_input_undo_snapshot(&mut self) {
+        let snapshot = self.current_input_snapshot();
+        if self.input_undo_stack.last() != Some(&snapshot) {
+            self.input_undo_stack.push(snapshot);
+        }
+        self.input_redo_stack.clear();
+    }
+
+    fn clear_input_history(&mut self) {
+        self.input_undo_stack.clear();
+        self.input_redo_stack.clear();
+    }
+
+    fn undo_input_edit(&mut self) -> bool {
+        let Some(snapshot) = self.input_undo_stack.pop() else {
+            return false;
+        };
+        self.input_redo_stack.push(self.current_input_snapshot());
+        self.apply_input_snapshot(snapshot);
+        true
+    }
+
+    fn redo_input_edit(&mut self) -> bool {
+        let Some(snapshot) = self.input_redo_stack.pop() else {
+            return false;
+        };
+        self.input_undo_stack.push(self.current_input_snapshot());
+        self.apply_input_snapshot(snapshot);
+        true
+    }
+
+    /// If a paste burst is active, flush the accumulated characters into the
+    /// input buffer by concatenating prefix + `pasted_text` + suffix directly
+    /// (avoids the O(n) `insert_str` tail-shift and `text.chars().count()`).
+    fn flush_paste_buffer(&mut self) {
+        self.input_scroll_manual = false;
+        if let Some((_, chars)) = self.paste_buffer.take() {
+            let n = chars.len();
+            if n == 0 {
+                return;
+            }
+            self.clamp_input_cursor();
+            self.record_input_undo_snapshot();
+            let prefix = &self.input.text[..self.input.byte_cursor];
+            let suffix = &self.input.text[self.input.byte_cursor..];
+            // Compute UTF-8 byte length of pasted chars while building the
+            // replacement string — one pass instead of two.
+            let mut pasted_len = 0usize;
+            let cap = prefix.len() + suffix.len() + n; // n ≤ actual UTF-8 bytes
+            let mut text = String::with_capacity(cap);
+            text.push_str(prefix);
+            for c in chars {
+                pasted_len += c.len_utf8();
+                text.push(c);
+            }
+            text.push_str(suffix);
+            self.input.byte_cursor = self.input.byte_cursor.saturating_add(pasted_len);
+            self.input.cursor = self.input.cursor.saturating_add(n);
+            self.input.text = text;
+            self.input.preferred_col = None;
+            self.input_scroll_offset = usize::MAX;
+            self.wake_input_caret();
+            self.refresh_slash_overlay();
+        }
+    }
+
     fn input_char_len(&self) -> usize {
         self.input.text.chars().count()
     }
 
+    /// Re-sync `byte_cursor` from `cursor` when the cursor is set directly
+    /// (clamp / `set_input_cursor_line_col`).
+    fn resync_byte_cursor(&mut self) {
+        self.input.byte_cursor = self
+            .input
+            .text
+            .char_indices()
+            .nth(self.input.cursor)
+            .map_or(self.input.text.len(), |(idx, _)| idx);
+    }
+
+    /// Returns the byte offset of character index `char_idx` by scanning the
+    /// string.  Hot-path mutators (`insert_input_char`, `insert_input_str`,
+    /// etc.) use the cached `byte_cursor` field directly instead.
     fn input_char_to_byte(&self, char_idx: usize) -> usize {
         self.input
             .text
@@ -373,49 +524,128 @@ impl ReplTuiState {
     }
 
     fn clamp_input_cursor(&mut self) {
+        let old = self.input.cursor;
         self.input.cursor = self.input.cursor.min(self.input_char_len());
+        if self.input.cursor != old {
+            self.resync_byte_cursor();
+        }
+    }
+
+    /// If an input selection is active, delete the selected range, move the
+    /// cursor to the anchor, and clear the selection.  Returns `true` if a
+    /// selection was deleted.
+    fn delete_selection_range(&mut self) -> bool {
+        if let Some((a, b)) = self.input_selection.take() {
+            self.input_click_anchor = None;
+            self.input.cursor = a;
+            self.resync_byte_cursor();
+            let end_byte = self.input_char_to_byte(b);
+            self.input
+                .text
+                .replace_range(self.input.byte_cursor..end_byte, "");
+            self.input.preferred_col = None;
+            self.input_scroll_offset = usize::MAX;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn selected_input_text(&self) -> Option<&str> {
+        let (a, b) = self.input_selection?;
+        let sel_start = self.input_char_to_byte(a);
+        let sel_end = self.input_char_to_byte(b);
+        self.input.text.get(sel_start..sel_end)
+    }
+
+    fn cut_input_selection_text(&mut self) -> Option<String> {
+        let text = self.selected_input_text()?.to_string();
+        self.record_input_undo_snapshot();
+        self.delete_selection_range();
+        Some(text)
     }
 
     fn insert_input_char(&mut self, ch: char) {
+        self.input_scroll_manual = false;
+        self.record_input_undo_snapshot();
+        self.delete_selection_range();
         self.clamp_input_cursor();
-        let idx = self.input_char_to_byte(self.input.cursor);
-        self.input.text.insert(idx, ch);
+        self.input.text.insert(self.input.byte_cursor, ch);
         self.input.cursor = self.input.cursor.saturating_add(1);
+        self.input.byte_cursor = self.input.byte_cursor.saturating_add(ch.len_utf8());
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn insert_input_str(&mut self, text: &str) {
+        self.input_scroll_manual = false;
+        if text.is_empty() {
+            return;
+        }
+        self.record_input_undo_snapshot();
+        self.delete_selection_range();
         self.clamp_input_cursor();
-        let idx = self.input_char_to_byte(self.input.cursor);
-        self.input.text.insert_str(idx, text);
-        self.input.cursor = self.input.cursor.saturating_add(text.chars().count());
+        self.input.text.insert_str(self.input.byte_cursor, text);
+        let char_count = text.chars().count();
+        self.input.cursor = self.input.cursor.saturating_add(char_count);
+        self.input.byte_cursor = self.input.byte_cursor.saturating_add(text.len());
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn backspace_input_char(&mut self) {
+        self.input_scroll_manual = false;
+        let had_selection = self.input_selection.is_some();
         self.clamp_input_cursor();
-        if self.input.cursor == 0 {
+        if !had_selection && self.input.cursor == 0 {
             return;
         }
-        let prev = self.input.cursor - 1;
-        let start = self.input_char_to_byte(prev);
-        let end = self.input_char_to_byte(prev + 1);
+        self.record_input_undo_snapshot();
+        // If selection is active, delete it instead of a single char.
+        if self.delete_selection_range() {
+            return;
+        }
+        // Find byte-offset of the character before cursor
+        let prev_byte = if self.input.byte_cursor > 0 {
+            // Walk backwards from byte_cursor to the previous char boundary
+            let bytes = self.input.text.as_bytes();
+            let mut pos = self.input.byte_cursor - 1;
+            while pos > 0 && (bytes[pos] & 0xC0) == 0x80 {
+                pos -= 1;
+            }
+            pos
+        } else {
+            0
+        };
+        let start = prev_byte;
+        let end = self.input.byte_cursor;
         self.input.text.replace_range(start..end, "");
         self.input.cursor -= 1;
+        self.input.byte_cursor = start;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn delete_input_char(&mut self) {
+        self.input_scroll_manual = false;
+        let had_selection = self.input_selection.is_some();
         self.clamp_input_cursor();
-        if self.input.cursor >= self.input_char_len() {
+        if !had_selection && self.input.cursor >= self.input_char_len() {
             return;
         }
-        let start = self.input_char_to_byte(self.input.cursor);
-        let end = self.input_char_to_byte(self.input.cursor + 1);
-        self.input.text.replace_range(start..end, "");
+        self.record_input_undo_snapshot();
+        if self.delete_selection_range() {
+            return;
+        }
+        // Find byte-offset of the character after cursor
+        let bytes = self.input.text.as_bytes();
+        let mut end = self.input.byte_cursor + 1;
+        while end < bytes.len() && (bytes[end] & 0xC0) == 0x80 {
+            end += 1;
+        }
+        self.input
+            .text
+            .replace_range(self.input.byte_cursor..end, "");
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
@@ -442,6 +672,7 @@ impl ReplTuiState {
     }
 
     fn set_input_cursor_line_col(&mut self, target_line: usize, target_col: usize) {
+        self.input_scroll_manual = false;
         let lines = self.input_lines();
         let line = target_line.min(lines.len().saturating_sub(1));
         let col = char_count_for_display_col(lines[line], target_col);
@@ -451,17 +682,44 @@ impl ReplTuiState {
         }
         cursor += col;
         self.input.cursor = cursor.min(self.input_char_len());
+        self.resync_byte_cursor();
         self.input_scroll_offset = usize::MAX;
     }
 
     fn move_input_cursor_left(&mut self) {
-        self.input.cursor = self.input.cursor.saturating_sub(1);
+        self.input_scroll_manual = false;
+        self.input_selection = None;
+        self.input_click_anchor = None;
+        if self.input.cursor == 0 {
+            return;
+        }
+        // Walk backwards from byte_cursor to the previous char boundary
+        let bytes = self.input.text.as_bytes();
+        let mut pos = self.input.byte_cursor.saturating_sub(1);
+        while pos > 0 && (bytes[pos] & 0xC0) == 0x80 {
+            pos -= 1;
+        }
+        self.input.byte_cursor = pos;
+        self.input.cursor -= 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
 
     fn move_input_cursor_right(&mut self) {
-        self.input.cursor = (self.input.cursor + 1).min(self.input_char_len());
+        self.input_scroll_manual = false;
+        self.input_selection = None;
+        self.input_click_anchor = None;
+        if self.input.cursor >= self.input_char_len() {
+            return;
+        }
+        // Walk forward from byte_cursor past the current character
+        let bytes = self.input.text.as_bytes();
+        let mut end = self.input.byte_cursor + 1;
+        while end < bytes.len() && (bytes[end] & 0xC0) == 0x80 {
+            end += 1;
+        }
+        self.input.byte_cursor = end;
+        self.input.cursor += 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
@@ -482,7 +740,288 @@ impl ReplTuiState {
         self.input.preferred_col = Some(target);
     }
 
+    fn select_all_input(&mut self) {
+        let char_len = self.input_char_len();
+        if char_len == 0 {
+            return;
+        }
+        self.input_scroll_manual = false;
+        self.input_selection = Some((0, char_len));
+        self.input_click_anchor = None;
+        self.input.cursor = char_len;
+        self.resync_byte_cursor();
+        self.input.preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    /// Compute visual line boundaries for the input text.
+    ///
+    /// Returns `Vec<(char_start, display_width)>` — the char-index of each
+    /// visual line's first character and its display width in terminal cells.
+    /// The first visual line of the first logical line has a 2‑cell offset
+    /// (the `"> "` prompt prefix); all others wrap at `safe_width` columns.
+    fn visual_line_info(&self, safe_width: usize) -> Vec<(usize, usize)> {
+        let mut lines = Vec::new();
+        let mut char_idx = 0usize;
+        let parts: Vec<&str> = self.input.text.split('\n').collect();
+        for (logical_idx, logical_line) in parts.iter().enumerate() {
+            let logical_chars: Vec<char> = logical_line.chars().collect();
+            let prompt_offset = if logical_idx == 0 { 2usize } else { 0 };
+            let first_cap = safe_width.saturating_sub(prompt_offset);
+            let cap = safe_width;
+            let mut offset = 0usize;
+            loop {
+                let remaining = logical_chars.len().saturating_sub(offset);
+                if remaining == 0 {
+                    if offset == 0 {
+                        lines.push((char_idx, 0));
+                    }
+                    break;
+                }
+                let w = if offset == 0 { first_cap } else { cap };
+                // Walk forward up to `w` display cells
+                let mut col = 0usize;
+                let mut end = offset;
+                while end < logical_chars.len() {
+                    let cw = char_display_width(logical_chars[end]);
+                    if col + cw > w {
+                        break;
+                    }
+                    col += cw;
+                    end += 1;
+                }
+                lines.push((char_idx + offset, col));
+                if end == offset {
+                    // Zero-width char at start — force advance
+                    end = offset + 1;
+                }
+                offset = end;
+            }
+            char_idx += logical_chars.len();
+            // Only add 1 for the newline separator if this is not the last part
+            if logical_idx < parts.len() - 1 {
+                char_idx += 1;
+            }
+        }
+        lines
+    }
+
     fn move_input_cursor_up(&mut self) {
+        // Fall back to logical-line navigation until the widget width is known
+        // (first render hasn't happened yet).
+        if self.input_area_width == 0 {
+            self.move_input_cursor_up_logical();
+            return;
+        }
+        let w = usize::from(self.input_area_width).max(10);
+        let vis = self.visual_line_info(w.saturating_sub(5).max(5));
+        if vis.is_empty() {
+            return;
+        }
+        let cur_char = self.input.cursor;
+        // Find which visual line the cursor is on
+        let mut cur_vis = 0usize;
+        for (i, _) in vis.iter().enumerate() {
+            let next_start = vis.get(i + 1).map_or(usize::MAX, |v| v.0);
+            if cur_char >= next_start {
+                continue;
+            }
+            cur_vis = i;
+            break;
+        }
+        if cur_vis == 0 {
+            let (start, _) = vis[0];
+            self.set_input_cursor_line_col_by_char(start);
+            self.input.preferred_col = self.input.preferred_col.or(Some(0));
+            return;
+        }
+        let cur_start = vis[cur_vis].0;
+        let cur_end = vis.get(cur_vis + 1).map_or(self.input_char_len(), |v| v.0);
+        let cur_offset = cur_char.saturating_sub(cur_start);
+        let clamped_offset = cur_offset.min(cur_end.saturating_sub(cur_start));
+        let cur_display_col = self
+            .input
+            .text
+            .chars()
+            .skip(cur_start)
+            .take(clamped_offset)
+            .map(char_display_width)
+            .sum::<usize>();
+        let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
+
+        let (prev_start, prev_width) = vis[cur_vis - 1];
+        let raw_prev_end = vis[cur_vis].0;
+        let prev_end = if raw_prev_end > 0
+            && self.input.text.chars().nth(raw_prev_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_prev_end.saturating_sub(1)
+        } else {
+            raw_prev_end
+        };
+        if prev_width == 0 {
+            self.set_input_cursor_line_col_by_char(prev_start);
+            self.input.preferred_col = Some(preferred_col);
+            return;
+        }
+        let target_col = preferred_col.min(prev_width);
+        let prev_text: String = self
+            .input
+            .text
+            .chars()
+            .skip(prev_start)
+            .take(prev_end.saturating_sub(prev_start))
+            .collect();
+        let col_chars = char_count_for_display_col(&prev_text, target_col);
+        self.set_input_cursor_line_col_by_char(prev_start + col_chars);
+        self.input.preferred_col = Some(preferred_col);
+    }
+
+    fn move_input_cursor_down(&mut self) {
+        // Fall back to logical-line navigation until the widget width is known.
+        if self.input_area_width == 0 {
+            self.move_input_cursor_down_logical();
+            return;
+        }
+        let w = usize::from(self.input_area_width).max(10);
+        let vis = self.visual_line_info(w.saturating_sub(5).max(5));
+        if vis.is_empty() {
+            return;
+        }
+        let cur_char = self.input.cursor;
+        let mut cur_vis = 0usize;
+        for (i, _) in vis.iter().enumerate() {
+            let next_start = vis.get(i + 1).map_or(usize::MAX, |v| v.0);
+            if cur_char >= next_start {
+                continue;
+            }
+            cur_vis = i;
+            break;
+        }
+        if cur_vis + 1 >= vis.len() {
+            // Already on the last visual line — go to end
+            let (start, width) = vis[cur_vis];
+            let line_text: String = self
+                .input
+                .text
+                .chars()
+                .skip(start)
+                .take(usize::MAX)
+                .collect();
+            self.set_input_cursor_line_col_by_char(
+                start + char_count_for_display_col(&line_text, width),
+            );
+            self.input.preferred_col = self.input.preferred_col.or(Some(width));
+            return;
+        }
+        let cur_start = vis[cur_vis].0;
+        let cur_end = vis[cur_vis + 1].0;
+        let cur_offset = cur_char.saturating_sub(cur_start);
+        let clamped_offset = cur_offset.min(cur_end.saturating_sub(cur_start));
+        let cur_display_col = self
+            .input
+            .text
+            .chars()
+            .skip(cur_start)
+            .take(clamped_offset)
+            .map(char_display_width)
+            .sum::<usize>();
+        // Resolve preferred column from current position (or previous nav).
+        let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
+
+        let (next_start, next_width) = vis[cur_vis + 1];
+        let raw_next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
+        let next_end = if raw_next_end > 0
+            && self.input.text.chars().nth(raw_next_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_next_end.saturating_sub(1)
+        } else {
+            raw_next_end
+        };
+        // Empty visual line → land at its start; keep preferred_col.
+        if next_width == 0 {
+            self.set_input_cursor_line_col_by_char(next_start);
+            self.input.preferred_col = Some(preferred_col);
+            return;
+        }
+        let target_col = preferred_col.min(next_width);
+        let next_text: String = self
+            .input
+            .text
+            .chars()
+            .skip(next_start)
+            .take(next_end.saturating_sub(next_start))
+            .collect();
+        let col_chars = char_count_for_display_col(&next_text, target_col);
+        self.set_input_cursor_line_col_by_char(next_start + col_chars);
+        self.input.preferred_col = Some(preferred_col);
+    }
+
+    /// Set cursor directly by character index (used by visual-line nav).
+    fn set_input_cursor_line_col_by_char(&mut self, char_idx: usize) {
+        self.input_scroll_manual = false;
+        self.input_selection = None;
+        self.input_click_anchor = None;
+        self.input.cursor = char_idx.min(self.input_char_len());
+        self.resync_byte_cursor();
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    /// Convert a mouse position (row, col) relative to the input widget into
+    /// a character index in `input.text`.  Returns `None` if the position
+    /// falls outside the text bounds.
+    fn char_index_at_mouse(&self, widget_row: usize, widget_col: usize) -> Option<usize> {
+        if widget_row == 0 {
+            return None;
+        }
+        let w = usize::from(self.input_area_width).max(10);
+        let safe_width = w.saturating_sub(5).max(5);
+        let vis = self.visual_line_info(safe_width);
+        let content_row = widget_row.saturating_sub(1);
+        let abs_row = self.input_scroll_offset + content_row;
+        let &(start, width) = vis.get(abs_row)?;
+        let is_first = abs_row == 0;
+        let prompt = if is_first { 2usize } else { 0 };
+        if widget_col < prompt {
+            return Some(start);
+        }
+        let target_col = widget_col.saturating_sub(prompt).min(width);
+        // Compute the char end of this visual line.  The next visual line's
+        // start gives the exclusive end; subtract 1 if the intervening char
+        // is \n (the line separator is not part of either visual line).
+        let raw_end = vis.get(abs_row + 1).map_or(self.input_char_len(), |v| v.0);
+        let line_end = if raw_end > start
+            && self.input.text.chars().nth(raw_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_end.saturating_sub(1)
+        } else {
+            raw_end
+        };
+        let mut char_idx = start;
+        let mut col = 0usize;
+        for ch in self
+            .input
+            .text
+            .chars()
+            .skip(start)
+            .take(line_end.saturating_sub(start))
+        {
+            let cw = char_display_width(ch);
+            if cw == 0 {
+                continue;
+            }
+            if col + cw > target_col {
+                break;
+            }
+            col += cw;
+            char_idx += 1;
+        }
+        Some(char_idx)
+    }
+
+    /// Logical-line up/down (jumps by `\n`, ignoring soft wraps).  Used as a
+    /// fallback before the widget width is known, and for Home/End which
+    /// operate on logical lines.
+    fn move_input_cursor_up_logical(&mut self) {
         let (line, col) = self.input_cursor_line_col();
         if line == 0 {
             self.set_input_cursor_line_col(0, 0);
@@ -494,7 +1033,7 @@ impl ReplTuiState {
         self.input.preferred_col = Some(target_col);
     }
 
-    fn move_input_cursor_down(&mut self) {
+    fn move_input_cursor_down_logical(&mut self) {
         let line_widths = self
             .input_lines()
             .into_iter()
@@ -571,6 +1110,7 @@ impl ReplTuiState {
         width: u16,
         model_label: &str,
     ) -> (u16, Vec<Line<'static>>, usize, Option<(u16, u16)>) {
+        self.input_area_width = width;
         self.clamp_input_cursor();
         let is_placeholder = self.input.text.is_empty();
         let placeholder_text = self.input_placeholder();
@@ -667,7 +1207,7 @@ impl ReplTuiState {
         } else {
             self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
         }
-        if !is_placeholder && seen_caret {
+        if !is_placeholder && seen_caret && !self.input_scroll_manual {
             if caret_row_idx < self.input_scroll_offset {
                 self.input_scroll_offset = caret_row_idx;
             } else if caret_row_idx >= self.input_scroll_offset + max_text_lines {
@@ -675,6 +1215,28 @@ impl ReplTuiState {
             }
         }
         self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
+
+        // Compute char-index range for each visual line using the original
+        // input text so embedded `\n` separators keep their real char indices.
+        let visual_ranges: Vec<(usize, usize)> = if is_placeholder {
+            vec![(0, 0); visual_lines.len()]
+        } else {
+            let vis = self.visual_line_info(safe_width);
+            vis.iter()
+                .enumerate()
+                .map(|(idx, &(start, _))| {
+                    let raw_end = vis.get(idx + 1).map_or(self.input_char_len(), |v| v.0);
+                    let line_end = if raw_end > start
+                        && self.input.text.chars().nth(raw_end.saturating_sub(1)) == Some('\n')
+                    {
+                        raw_end.saturating_sub(1)
+                    } else {
+                        raw_end
+                    };
+                    (start, line_end)
+                })
+                .collect()
+        };
 
         let skip = self.input_scroll_offset;
         let sliced = visual_lines
@@ -697,13 +1259,17 @@ impl ReplTuiState {
         render_lines.push(Line::from(""));
 
         for (i, (has_prompt, row)) in sliced.into_iter().enumerate() {
-            let mut spans = Vec::new();
+            let mut spans: Vec<Span<'static>> = Vec::new();
 
             if has_prompt {
                 spans.push(Span::styled("❯ ", Style::default().fg(Color::LightCyan)));
             } else if skip > 0 && i == 0 {
                 // If skipped first line with prompt, no visual space pad needed per standard terminal behavior
             }
+
+            // Absolute visual-line index before skipping.
+            let abs_i = skip + i;
+            let (line_start, line_end) = visual_ranges.get(abs_i).copied().unwrap_or((0, 0));
 
             if is_placeholder && i == 0 {
                 spans.push(Span::styled(row, text_style));
@@ -713,7 +1279,87 @@ impl ReplTuiState {
                     0
                 };
                 cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
+            } else if let Some((sel_a, sel_b)) = self.input_selection {
+                let sel_a = sel_a.max(line_start).min(line_end);
+                let sel_b = sel_b.max(line_start).min(line_end);
+                let sel_style = Style::default().fg(Color::White).bg(Color::DarkGray);
+                let mut marker_idx = None;
+                for (idx, ch) in row.chars().enumerate() {
+                    if ch == INPUT_CARET_MARKER {
+                        marker_idx = Some(idx);
+                        break;
+                    }
+                }
+                if let Some(marker_char_idx) = marker_idx {
+                    let left = row.chars().take(marker_char_idx).collect::<String>();
+                    let right = row.chars().skip(marker_char_idx + 1).collect::<String>();
+                    // Reconstruct the full text without the marker so we can
+                    // apply selection-splitting on the full visual line.
+                    let full: String = left.clone() + &right;
+                    let prompt_width = if has_prompt {
+                        u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX)
+                    } else {
+                        0
+                    };
+                    if sel_a < sel_b {
+                        let row_sel_start = sel_a - line_start;
+                        let row_sel_end = sel_b - line_start;
+                        let before_s: String = full.chars().take(row_sel_start).collect();
+                        let selected_s: String = full
+                            .chars()
+                            .skip(row_sel_start)
+                            .take(row_sel_end.saturating_sub(row_sel_start))
+                            .collect();
+                        let after_s: String = full.chars().skip(row_sel_end).collect();
+                        if !before_s.is_empty() {
+                            spans.push(Span::styled(before_s, text_style));
+                        }
+                        if !selected_s.is_empty() {
+                            spans.push(Span::styled(selected_s, sel_style));
+                        }
+                        if !after_s.is_empty() {
+                            spans.push(Span::styled(after_s, text_style));
+                        }
+                    } else {
+                        if !left.is_empty() {
+                            spans.push(Span::styled(left.clone(), text_style));
+                        }
+                        if !right.is_empty() {
+                            spans.push(Span::styled(right, text_style));
+                        }
+                    }
+                    if left.is_empty() {
+                        cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
+                    } else {
+                        let left_width = text_display_width(&left);
+                        let cursor_col =
+                            prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
+                        cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
+                    }
+                } else if sel_a < sel_b {
+                    let row_sel_start = sel_a - line_start;
+                    let row_sel_end = sel_b - line_start;
+                    let before: String = row.chars().take(row_sel_start).collect();
+                    let selected: String = row
+                        .chars()
+                        .skip(row_sel_start)
+                        .take(row_sel_end - row_sel_start)
+                        .collect();
+                    let after: String = row.chars().skip(row_sel_end).collect();
+                    if !before.is_empty() {
+                        spans.push(Span::styled(before, text_style));
+                    }
+                    if !selected.is_empty() {
+                        spans.push(Span::styled(selected, sel_style));
+                    }
+                    if !after.is_empty() {
+                        spans.push(Span::styled(after, text_style));
+                    }
+                } else {
+                    spans.push(Span::styled(row, text_style));
+                }
             } else {
+                // No active selection — plain rendering (existing logic).
                 let mut marker_idx = None;
                 for (idx, ch) in row.chars().enumerate() {
                     if ch == INPUT_CARET_MARKER {
@@ -1949,6 +2595,17 @@ fn run_loop(
             );
         }
 
+        // Auto-flush paste buffer when the burst has been idle longer than
+        // the threshold — handles the case where paste ends without a
+        // subsequent key event to trigger the flush.
+        if state.paste_buffer.is_some()
+            && state.last_key_time.is_some_and(|t| {
+                t.elapsed() > Duration::from_millis(ReplTuiState::PASTE_THRESHOLD_MS)
+            })
+        {
+            state.flush_paste_buffer();
+        }
+
         if state.exit {
             if state.persist_on_exit {
                 let mut g = cli.lock().expect("cli lock");
@@ -2054,7 +2711,7 @@ fn run_loop(
                             if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
                                 tab.follow_bottom = false;
                                 *tab.list_state.offset_mut() =
-                                    tab.list_state.offset().saturating_sub(3);
+                                    tab.list_state.offset().saturating_sub(6);
                             }
                         }
                         MouseEventKind::ScrollDown => {
@@ -2063,7 +2720,7 @@ fn run_loop(
                                     .last_wrapped_len
                                     .saturating_sub(tab.last_view_height.max(1));
                                 *tab.list_state.offset_mut() =
-                                    (tab.list_state.offset().saturating_add(3)).min(max);
+                                    (tab.list_state.offset().saturating_add(6)).min(max);
                                 tab.follow_bottom = tab.list_state.offset() >= max;
                             }
                         }
@@ -2132,7 +2789,7 @@ fn run_loop(
                     continue;
                 }
 
-                if state.ui_state == AppUiState::ChatMode && in_transcript {
+                if in_transcript {
                     let max_off = state
                         .last_wrapped_len
                         .saturating_sub(state.last_view_height.max(1));
@@ -2140,11 +2797,11 @@ fn run_loop(
                     let tr = state.last_transcript_rect;
                     match me.kind {
                         MouseEventKind::ScrollUp => {
-                            *state.list_state.offset_mut() = cur.saturating_sub(3);
+                            *state.list_state.offset_mut() = cur.saturating_sub(6);
                             state.follow_bottom = false;
                         }
                         MouseEventKind::ScrollDown => {
-                            *state.list_state.offset_mut() = (cur.saturating_add(3)).min(max_off);
+                            *state.list_state.offset_mut() = (cur.saturating_add(6)).min(max_off);
                             state.follow_bottom = state.list_state.offset() >= max_off;
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
@@ -2194,16 +2851,65 @@ fn run_loop(
                         _ => {}
                     }
                 } else if in_input || state.ui_state == AppUiState::WelcomeMode {
-                    state.selection.anchor = None;
-                    state.selection.end = None;
+                    // Map mouse position to a character index in the input text.
+                    let ir = state.last_input_rect;
+                    let widget_row = usize::from(me.row.saturating_sub(ir.y));
+                    let widget_col = usize::from(me.column.saturating_sub(ir.x));
+                    let char_idx = state.char_index_at_mouse(widget_row, widget_col);
+
                     match me.kind {
                         MouseEventKind::ScrollUp => {
                             state.input_scroll_offset = state.input_scroll_offset.saturating_sub(1);
+                            state.input_scroll_manual = true;
                         }
                         MouseEventKind::ScrollDown => {
                             state.input_scroll_offset = state.input_scroll_offset.saturating_add(1);
+                            state.input_scroll_manual = true;
                         }
-                        _ => {}
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if let Some(idx) = char_idx {
+                                state.set_input_cursor_line_col_by_char(idx);
+                                state.input_selection = Some((idx, idx));
+                                state.input_click_anchor = Some(idx);
+                                state.selection.anchor = None;
+                                state.selection.end = None;
+                            }
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            if let Some(idx) = char_idx {
+                                if let Some(anchor) = state.input_click_anchor {
+                                    let a = anchor.min(idx);
+                                    let b = anchor.max(idx);
+                                    state.input_selection = Some((a, b));
+                                }
+                                state.selection.anchor = None;
+                                state.selection.end = None;
+                            }
+                        }
+                        MouseEventKind::Down(MouseButton::Right)
+                            if state.input_selection.is_some() =>
+                        {
+                            // Copy selected text to clipboard.
+                            if let Some((a, b)) = state.input_selection {
+                                let sel_start = state.input_char_to_byte(a);
+                                let sel_end = state.input_char_to_byte(b);
+                                if let Some(text) = state.input.text.get(sel_start..sel_end) {
+                                    if let Ok(mut cb) = arboard::Clipboard::new() {
+                                        let _ = cb.set_text(text.to_string());
+                                    }
+                                }
+                            }
+                            state.input_selection = None;
+                            state.input_click_anchor = None;
+                        }
+                        _ => {
+                            // Mouse events that should clear the selection
+                            // (e.g. Up, Moved) should NOT clear it here —
+                            // doing so would wipe the anchor between Down
+                            // and the first Drag.  Selection is cleared
+                            // explicitly by cursor movement, new clicks,
+                            // or copy actions.
+                        }
                     }
                 }
             }
@@ -2218,6 +2924,9 @@ fn run_loop(
                     continue;
                 }
 
+                // Bracketed paste supersedes any ongoing burst accumulation
+                state.paste_buffer = None;
+                state.last_key_time = None;
                 state.insert_input_str(&normalize_pasted_text(&text));
                 state.wake_input_caret();
                 state.refresh_slash_overlay();
@@ -2255,11 +2964,81 @@ fn run_loop(
                         || (key.code == KeyCode::Insert
                             && key.modifiers.contains(KeyModifiers::SHIFT)))
                 {
+                    // Manual paste supersedes any ongoing burst accumulation
+                    state.paste_buffer = None;
+                    state.last_key_time = None;
                     if let Some(text) = read_clipboard_text() {
                         state.insert_input_str(&text);
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
+                    continue;
+                }
+
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('a')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.flush_paste_buffer();
+                    state.select_all_input();
+                    state.wake_input_caret();
+                    continue;
+                }
+
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('z')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.flush_paste_buffer();
+                    if state.undo_input_edit() {
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
+                    continue;
+                }
+
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('y')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.flush_paste_buffer();
+                    if state.redo_input_edit() {
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
+                    continue;
+                }
+
+                // Copy input selection (Ctrl+C / Ctrl+Insert).
+                if state.active_modal.is_none()
+                    && state.input_selection.is_some()
+                    && ((key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                        || (key.code == KeyCode::Insert && key.modifiers == KeyModifiers::CONTROL))
+                {
+                    if let Some(text) = state.selected_input_text() {
+                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                            let _ = cb.set_text(text.to_string());
+                        }
+                    }
+                    state.input_selection = None;
+                    state.selection.anchor = None;
+                    state.selection.end = None;
+                    continue;
+                }
+
+                if state.active_modal.is_none()
+                    && state.input_selection.is_some()
+                    && key.code == KeyCode::Char('x')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    if let Some(text) = state.cut_input_selection_text() {
+                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                            let _ = cb.set_text(text);
+                        }
+                    }
+                    state.wake_input_caret();
+                    state.refresh_slash_overlay();
                     continue;
                 }
 
@@ -2620,11 +3399,34 @@ fn run_loop(
 
                 match key.code {
                     KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                        state.flush_paste_buffer();
                         state.insert_input_char('\n');
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
+                        // Paste burst detection: if Enter arrives within the burst
+                        // threshold, treat it as a literal \n in the pasted text
+                        // instead of submitting.
+                        let now = Instant::now();
+                        let in_paste_burst = state.last_key_time.is_some()
+                            && state.paste_buffer.is_some()
+                            || state.last_key_time.is_some_and(|t| {
+                                now.duration_since(t)
+                                    <= Duration::from_millis(ReplTuiState::PASTE_THRESHOLD_MS)
+                            });
+                        state.last_key_time = Some(now);
+                        if in_paste_burst {
+                            state
+                                .paste_buffer
+                                .get_or_insert_with(|| (now, Vec::new()))
+                                .1
+                                .push('\n');
+                            state.wake_input_caret();
+                            continue;
+                        }
+                        state.flush_paste_buffer();
+
                         // Child tab resume (check before parent pause)
                         if state.child_tab_panel.active_tab_is_paused() {
                             if let Some(child_id) = state.child_tab_panel.active_child_id() {
@@ -2665,6 +3467,7 @@ fn run_loop(
                             let trimmed = state.input.text.trim().to_string();
                             if let Some(selected) = state.selected_slash_command() {
                                 if selected != trimmed {
+                                    state.record_input_undo_snapshot();
                                     state.input.text = selected;
                                     state.input.text.push(' ');
                                     state.input.cursor = state.input.text.chars().count();
@@ -2681,6 +3484,7 @@ fn run_loop(
                         state.input.cursor = 0;
                         state.input.preferred_col = None;
                         state.input_scroll_offset = 0;
+                        state.clear_input_history();
                         let trimmed = line.trim().to_string();
                         state.refresh_slash_overlay();
                         if trimmed.is_empty() {
@@ -2697,54 +3501,84 @@ fn run_loop(
                         state.wake_input_caret();
                     }
                     KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        state.flush_paste_buffer();
                         state.insert_input_char('\n');
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Char(c) => {
-                        state.insert_input_char(c);
+                        let now = Instant::now();
+                        let is_fast = state.last_key_time.is_some_and(|t| {
+                            now.duration_since(t)
+                                <= Duration::from_millis(ReplTuiState::PASTE_THRESHOLD_MS)
+                        });
+                        state.last_key_time = Some(now);
+
+                        if is_fast {
+                            // Burst detected — accumulate into paste buffer
+                            state
+                                .paste_buffer
+                                .get_or_insert_with(|| (now, Vec::new()))
+                                .1
+                                .push(c);
+                        } else {
+                            // Normal human-paced typing — flush any lingering
+                            // paste buffer, then insert immediately.
+                            state.flush_paste_buffer();
+                            state.insert_input_char(c);
+                        }
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Backspace => {
+                        state.flush_paste_buffer();
                         state.backspace_input_char();
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Delete => {
+                        state.flush_paste_buffer();
                         state.delete_input_char();
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Left => {
+                        state.flush_paste_buffer();
                         state.move_input_cursor_left();
                         state.wake_input_caret();
                     }
                     KeyCode::Right => {
+                        state.flush_paste_buffer();
                         state.move_input_cursor_right();
                         state.wake_input_caret();
                     }
                     KeyCode::Home => {
+                        state.flush_paste_buffer();
                         state.move_input_cursor_home();
                         state.wake_input_caret();
                     }
                     KeyCode::End => {
+                        state.flush_paste_buffer();
                         state.move_input_cursor_end();
                         state.wake_input_caret();
                     }
                     KeyCode::Up => {
+                        state.flush_paste_buffer();
                         state.move_input_cursor_up();
                         state.wake_input_caret();
                     }
                     KeyCode::Down => {
+                        state.flush_paste_buffer();
                         state.move_input_cursor_down();
                         state.wake_input_caret();
                     }
                     KeyCode::Tab => {
+                        state.flush_paste_buffer();
                         if state.busy || !state.input.text.trim_start().starts_with('/') {
                             continue;
                         }
                         if let Some(selected) = state.selected_slash_command() {
+                            state.record_input_undo_snapshot();
                             state.input.text = selected;
                             state.input.text.push(' ');
                             state.input.cursor = state.input.text.chars().count();
@@ -2760,6 +3594,7 @@ fn run_loop(
                                 .filter(|candidate| candidate.starts_with(&prefix))
                                 .collect();
                             if matches.len() == 1 {
+                                state.record_input_undo_snapshot();
                                 state.input.text.clone_from(&matches[0]);
                                 state.input.text.push(' ');
                                 state.input.cursor = state.input.text.chars().count();
@@ -2771,6 +3606,7 @@ fn run_loop(
                         }
                     }
                     KeyCode::Esc => {
+                        state.flush_paste_buffer();
                         if state.busy {
                             let now = Instant::now();
                             if state
@@ -2792,11 +3628,13 @@ fn run_loop(
                         }
                     }
                     KeyCode::PageUp => {
+                        state.flush_paste_buffer();
                         let cur = state.list_state.offset();
                         *state.list_state.offset_mut() = cur.saturating_sub(10);
                         state.follow_bottom = false;
                     }
                     KeyCode::PageDown => {
+                        state.flush_paste_buffer();
                         let max_off = state
                             .last_wrapped_len
                             .saturating_sub(state.last_view_height.max(1));
@@ -2824,12 +3662,21 @@ mod tests {
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::repl_render::{line_to_plain_text, render_tool_call_lines, wrap_ansi_line};
     use crate::tui::ReplTuiEvent;
+    use ratatui::style::Color;
     use ratatui::text::Line;
 
     use super::{ReplTuiState, ToolCallStatus, TranscriptEntry};
 
     fn assert_matching_lengths(items: &[ratatui::widgets::ListItem<'static>], text: &[String]) {
         assert_eq!(items.len(), text.len());
+    }
+
+    fn selected_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .filter(|span| span.style.bg == Some(Color::DarkGray))
+            .map(|span| span.content.as_ref())
+            .collect()
     }
 
     #[test]
@@ -3068,6 +3915,84 @@ mod tests {
         let prompt_width = u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX);
 
         assert_eq!(cursor_pos, Some((1, prompt_width + 2)));
+    }
+
+    #[test]
+    fn select_all_input_marks_entire_buffer() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd".to_string();
+        state.input.cursor = 1;
+        state.resync_byte_cursor();
+
+        state.select_all_input();
+
+        assert_eq!(state.input_selection, Some((0, 5)));
+        assert_eq!(state.input.cursor, 5);
+    }
+
+    #[test]
+    fn cut_input_selection_text_returns_text_and_removes_it() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd".to_string();
+        state.input.cursor = 5;
+        state.resync_byte_cursor();
+        state.input_selection = Some((0, 3));
+
+        let cut = state.cut_input_selection_text();
+
+        assert_eq!(cut.as_deref(), Some("ab\n"));
+        assert_eq!(state.input.text, "cd");
+        assert_eq!(state.input.cursor, 0);
+        assert_eq!(state.input_selection, None);
+    }
+
+    #[test]
+    fn undo_redo_input_insert_round_trip() {
+        let mut state = ReplTuiState::new();
+
+        state.insert_input_str("hello");
+        assert_eq!(state.input.text, "hello");
+
+        assert!(state.undo_input_edit());
+        assert_eq!(state.input.text, "");
+        assert_eq!(state.input.cursor, 0);
+
+        assert!(state.redo_input_edit());
+        assert_eq!(state.input.text, "hello");
+        assert_eq!(state.input.cursor, 5);
+    }
+
+    #[test]
+    fn undo_redo_restores_cut_input_selection() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd".to_string();
+        state.input.cursor = 5;
+        state.resync_byte_cursor();
+        state.input_selection = Some((0, 3));
+
+        let cut = state.cut_input_selection_text();
+
+        assert_eq!(cut.as_deref(), Some("ab\n"));
+        assert!(state.undo_input_edit());
+        assert_eq!(state.input.text, "ab\ncd");
+        assert_eq!(state.input_selection, Some((0, 3)));
+
+        assert!(state.redo_input_edit());
+        assert_eq!(state.input.text, "cd");
+        assert_eq!(state.input.cursor, 0);
+    }
+
+    #[test]
+    fn input_selection_preserves_newline_char_offsets_across_paragraphs() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd\nef".to_string();
+        state.input.cursor = state.input.text.chars().count();
+        state.input_selection = Some((3, 7));
+
+        let (_, render_lines, _, _) = state.calculate_input_dimensions(20, "model");
+
+        assert_eq!(selected_text(&render_lines[2]), "cd");
+        assert_eq!(selected_text(&render_lines[3]), "e");
     }
 
     #[test]
