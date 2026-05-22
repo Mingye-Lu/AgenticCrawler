@@ -2725,7 +2725,10 @@ fn run_loop(
                         MouseEventKind::Down(MouseButton::Left) => {
                             if let Some(idx) = char_idx {
                                 state.set_input_cursor_line_col_by_char(idx);
-                                state.input_selection = None;
+                                // Start a zero-width selection at the click
+                                // position so subsequent Drag events use the
+                                // click as the anchor, not the drag position.
+                                state.input_selection = Some((idx, idx));
                                 state.selection.anchor = None;
                                 state.selection.end = None;
                             }
