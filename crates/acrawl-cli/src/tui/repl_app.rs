@@ -660,46 +660,43 @@ impl ReplTuiState {
         // Find which visual line the cursor is on
         let mut cur_vis = 0usize;
         for (i, _) in vis.iter().enumerate() {
-            if i + 1 < vis.len() && cur_char >= vis[i + 1].0 {
+            let next_start = vis.get(i + 1).map_or(usize::MAX, |v| v.0);
+            if cur_char >= next_start {
                 continue;
             }
             cur_vis = i;
             break;
         }
-        if cur_char >= vis.last().unwrap().0 {
-            cur_vis = vis.len() - 1;
-        }
         if cur_vis == 0 {
-            // Already on the first visual line — go to column 0
             let (start, _) = vis[0];
             self.set_input_cursor_line_col_by_char(start);
             self.input.preferred_col = self.input.preferred_col.or(Some(0));
             return;
         }
-        let prev_start = vis[cur_vis - 1].0;
-        let prev_width = vis[cur_vis - 1].1;
-        let cur_offset = cur_char - vis[cur_vis].0;
-        // Compute current display column from the offset within the visual line
+        let (prev_start, prev_width) = vis[cur_vis - 1];
+        let prev_end = vis[cur_vis].0; // next visual line's start = this line's end
+        let cur_start = vis[cur_vis].0;
+        let cur_end = vis.get(cur_vis + 1).map_or(self.input_char_len(), |v| v.0);
+        let cur_offset = cur_char.saturating_sub(cur_start);
+        let clamped_offset = cur_offset.min(cur_end.saturating_sub(cur_start));
         let cur_display_col = self
             .input
             .text
             .chars()
-            .skip(vis[cur_vis].0)
-            .take(cur_offset)
+            .skip(cur_start)
+            .take(clamped_offset)
             .map(char_display_width)
             .sum::<usize>();
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
         let target_col = preferred_col.min(prev_width);
-        let col_chars = char_count_for_display_col(
-            &self
-                .input
-                .text
-                .chars()
-                .skip(prev_start)
-                .take(self.input.text.len().saturating_sub(prev_start))
-                .collect::<String>(),
-            target_col,
-        );
+        let prev_text: String = self
+            .input
+            .text
+            .chars()
+            .skip(prev_start)
+            .take(prev_end.saturating_sub(prev_start))
+            .collect();
+        let col_chars = char_count_for_display_col(&prev_text, target_col);
         self.set_input_cursor_line_col_by_char(prev_start + col_chars);
         self.input.preferred_col = Some(preferred_col);
     }
@@ -718,57 +715,53 @@ impl ReplTuiState {
         let cur_char = self.input.cursor;
         let mut cur_vis = 0usize;
         for (i, _) in vis.iter().enumerate() {
-            if i + 1 < vis.len() && cur_char >= vis[i + 1].0 {
+            let next_start = vis.get(i + 1).map_or(usize::MAX, |v| v.0);
+            if cur_char >= next_start {
                 continue;
             }
             cur_vis = i;
             break;
         }
-        if cur_char >= vis.last().unwrap().0 {
-            cur_vis = vis.len() - 1;
-        }
         if cur_vis + 1 >= vis.len() {
             // Already on the last visual line — go to end
             let (start, width) = vis[cur_vis];
+            let line_text: String = self
+                .input
+                .text
+                .chars()
+                .skip(start)
+                .take(usize::MAX)
+                .collect();
             self.set_input_cursor_line_col_by_char(
-                start
-                    + char_count_for_display_col(
-                        &self
-                            .input
-                            .text
-                            .chars()
-                            .skip(start)
-                            .take(self.input.text.len().saturating_sub(start))
-                            .collect::<String>(),
-                        width,
-                    ),
+                start + char_count_for_display_col(&line_text, width),
             );
             self.input.preferred_col = self.input.preferred_col.or(Some(width));
             return;
         }
-        let next_start = vis[cur_vis + 1].0;
-        let next_width = vis[cur_vis + 1].1;
-        let cur_offset = cur_char - vis[cur_vis].0;
+        let (next_start, next_width) = vis[cur_vis + 1];
+        let next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
+        let cur_start = vis[cur_vis].0;
+        let cur_end = vis[cur_vis + 1].0;
+        let cur_offset = cur_char.saturating_sub(cur_start);
+        let clamped_offset = cur_offset.min(cur_end.saturating_sub(cur_start));
         let cur_display_col = self
             .input
             .text
             .chars()
-            .skip(vis[cur_vis].0)
-            .take(cur_offset)
+            .skip(cur_start)
+            .take(clamped_offset)
             .map(char_display_width)
             .sum::<usize>();
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
         let target_col = preferred_col.min(next_width);
-        let col_chars = char_count_for_display_col(
-            &self
-                .input
-                .text
-                .chars()
-                .skip(next_start)
-                .take(self.input.text.len().saturating_sub(next_start))
-                .collect::<String>(),
-            target_col,
-        );
+        let next_text: String = self
+            .input
+            .text
+            .chars()
+            .skip(next_start)
+            .take(next_end.saturating_sub(next_start))
+            .collect();
+        let col_chars = char_count_for_display_col(&next_text, target_col);
         self.set_input_cursor_line_col_by_char(next_start + col_chars);
         self.input.preferred_col = Some(preferred_col);
     }
