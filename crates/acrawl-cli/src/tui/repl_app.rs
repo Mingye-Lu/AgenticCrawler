@@ -855,40 +855,67 @@ impl ReplTuiState {
     /// a character index in `input.text`.  Returns `None` if the position
     /// falls outside the text bounds.
     fn char_index_at_mouse(&self, widget_row: usize, widget_col: usize) -> Option<usize> {
-        // The render adds a blank padding line above (row 0) and below
-        // the content, so the first content visual line is at row 1.
         if widget_row == 0 {
             return None;
         }
-        let content_row = widget_row.saturating_sub(1);
         let w = usize::from(self.input_area_width).max(10);
         let safe_width = w.saturating_sub(5).max(5);
-        let vis = self.visual_line_info(safe_width);
-        if vis.is_empty() {
-            return None;
+        // Walk logical lines, applying the same word-wrap as the render,
+        // until we reach the target visual row.
+        let mut line_start = 0usize;
+        let mut visual_idx = self.input_scroll_offset.saturating_sub(1);
+        // Step 1: find which visual row we're on by simulating the
+        // word-wrap from the beginning of the text.
+        for (logical_idx, logical) in self.input.text.split('\n').enumerate() {
+            let first_cap = if logical_idx == 0 {
+                safe_width.saturating_sub(2)  // ❯  prompt
+            } else {
+                safe_width
+            };
+            let mut offset = 0usize;
+            let chars: Vec<char> = logical.chars().collect();
+            while offset < chars.len() || offset == 0 {
+                visual_idx += 1;
+                let cap = if offset == 0 { first_cap } else { safe_width };
+                let mut col = 0usize;
+                let mut end = offset;
+                while end < chars.len() {
+                    let cw = char_display_width(chars[end]);
+                    if col + cw > cap {
+                        break;
+                    }
+                    col += cw;
+                    end += 1;
+                }
+                if visual_idx == widget_row.saturating_sub(1) {
+                    line_start += offset;
+                    let visual_width = col;
+                    let is_first_vis = offset == 0 && logical_idx == 0;
+                    let prompt = if is_first_vis { 2usize } else { 0 };
+                    if widget_col < prompt {
+                        return Some(0);
+                    }
+                    let target_col = widget_col.saturating_sub(prompt).min(visual_width);
+                    let mut char_idx = line_start;
+                    let mut acc = 0usize;
+                    for ch in chars.iter().skip(offset).take(end - offset) {
+                        let cw = char_display_width(*ch);
+                        if acc + cw > target_col {
+                            break;
+                        }
+                        acc += cw;
+                        char_idx += 1;
+                    }
+                    return Some(char_idx);
+                }
+                if end == offset {
+                    end = offset + 1;
+                }
+                offset = end;
+            }
+            line_start += chars.len() + 1; // +1 for \n
         }
-        let abs_row = self.input_scroll_offset + content_row;
-        let &(start, width) = vis.get(abs_row)?;
-        // First visual line of the first logical line has a 2‑cell prompt prefix.
-        let is_first = abs_row == 0;
-        let prompt = if is_first { 2usize } else { 0 };
-        if widget_col < prompt {
-            return Some(start);
-        }
-        let target_col = widget_col.saturating_sub(prompt).min(width);
-        let line_text: String = self
-            .input
-            .text
-            .chars()
-            .skip(start)
-            .take(
-                vis.get(abs_row + 1)
-                    .map_or(self.input_char_len(), |v| v.0)
-                    .saturating_sub(start),
-            )
-            .collect();
-        let col_chars = char_count_for_display_col(&line_text, target_col);
-        Some(start + col_chars)
+        None
     }
 
     /// Logical-line up/down (jumps by `\n`, ignoring soft wraps).  Used as a
