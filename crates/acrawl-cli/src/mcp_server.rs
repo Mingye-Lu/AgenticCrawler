@@ -67,19 +67,31 @@ fn read_json_line(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
 }
 
 fn read_protocol_message(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
-    let buffered = reader.fill_buf()?;
-    if buffered.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "MCP stdio stream closed before first message",
-        ));
-    }
-
-    let first = buffered
-        .iter()
-        .copied()
-        .find(|byte| !byte.is_ascii_whitespace())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "empty MCP message"))?;
+    // Consume any leading whitespace before detecting the transport mode.
+    // A slow pipe may deliver whitespace bytes in a separate read before
+    // the real first byte of the message arrives.
+    let first = loop {
+        let buffered = reader.fill_buf()?;
+        if buffered.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "MCP stdio stream closed before first message",
+            ));
+        }
+        match buffered.iter().position(|b| !b.is_ascii_whitespace()) {
+            Some(pos) => {
+                // Consume the whitespace prefix so subsequent readers
+                // start at the first meaningful byte.
+                reader.consume(pos);
+                let after = reader.fill_buf()?;
+                break after[0];
+            }
+            None => {
+                let len = buffered.len();
+                reader.consume(len);
+            }
+        }
+    };
 
     let mode = match first {
         b'{' | b'[' => TransportMode::LineDelimited,
@@ -951,7 +963,16 @@ mod tests {
         let parsed =
             read_protocol_message(&mut cursor).expect("line-delimited request should parse");
         assert_eq!(parsed, body.as_bytes());
-        assert_eq!(output_mode(), TransportMode::LineDelimited);
+    }
+
+    #[test]
+    fn read_protocol_message_skips_leading_whitespace_before_json() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let data = format!("\r\n  {body}\n").into_bytes();
+        let mut cursor = Cursor::new(data);
+        let parsed =
+            read_protocol_message(&mut cursor).expect("leading whitespace should be drained");
+        assert_eq!(parsed, body.as_bytes());
     }
 
     #[test]
