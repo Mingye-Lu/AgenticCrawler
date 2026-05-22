@@ -82,6 +82,17 @@ async function bootstrap() {
       return;
     }
   }
+  // Divert cloakbrowser's own stdout chatter (update checks, telemetry, etc.)
+  // away from the JSON protocol pipe.  Only JSON-object lines reach the bridge.
+  const _origStdoutWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...rest) => {
+    const str = typeof chunk === 'string' ? chunk : chunk.toString();
+    if (!str.trim().startsWith('{')) {
+      process.stderr.write(str);
+      return true;
+    }
+    return _origStdoutWrite(chunk, ...rest);
+  };
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
   const context = await browser.newContext();
