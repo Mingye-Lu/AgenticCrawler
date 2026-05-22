@@ -606,9 +606,10 @@ impl ReplTuiState {
     fn visual_line_info(&self, safe_width: usize) -> Vec<(usize, usize)> {
         let mut lines = Vec::new();
         let mut char_idx = 0usize;
-        for logical_line in self.input.text.split('\n') {
+        for (logical_idx, logical_line) in self.input.text.split('\n').enumerate() {
             let logical_chars: Vec<char> = logical_line.chars().collect();
-            let first_cap = safe_width.saturating_sub(/* prompt */ 2);
+            let prompt_offset = if logical_idx == 0 { 2usize } else { 0 };
+            let first_cap = safe_width.saturating_sub(prompt_offset);
             let cap = safe_width;
             let mut offset = 0usize;
             loop {
