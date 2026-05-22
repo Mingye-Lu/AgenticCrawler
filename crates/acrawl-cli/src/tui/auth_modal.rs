@@ -72,8 +72,7 @@ pub(crate) enum AuthModalStep {
     },
     BaseUrlInput {
         provider: ProviderKind,
-        input: String,
-        cursor: usize,
+        input_field: crate::tui::input_field::InputField,
         error: Option<String>,
     },
     ApiKeyInput {
@@ -179,8 +178,7 @@ impl AuthModal {
                     },
                     crate::app::Provider::Other => AuthModalStep::BaseUrlInput {
                         provider: ProviderKind::Other,
-                        input: String::new(),
-                        cursor: 0,
+                        input_field: crate::tui::input_field::InputField::new(),
                         error: None,
                     },
                 },
@@ -198,8 +196,8 @@ impl AuthModal {
                     } else if preset.base_url.contains('{') {
                         AuthModalStep::BaseUrlInput {
                             provider: ProviderKind::Preset(preset),
-                            input: preset.base_url.to_string(),
-                            cursor: preset.base_url.chars().count(),
+                            input_field: crate::tui::input_field::InputField::new()
+                                .with_text(preset.base_url.to_string()),
                             error: Some(
                                 "Replace {placeholders} with your values, then press Enter"
                                     .to_string(),
@@ -610,8 +608,7 @@ impl Modal for AuthModal {
             }
             AuthModalStep::BaseUrlInput {
                 provider,
-                input,
-                cursor,
+                input_field,
                 error,
             } => {
                 let header = if matches!(provider, ProviderKind::Other) {
@@ -619,10 +616,15 @@ impl Modal for AuthModal {
                 } else {
                     "Base URL (replace placeholders):"
                 };
+                let cursor_col = u16::try_from(
+                    text_display_width("  > ")
+                        + prefix_display_width(input_field.text(), input_field.cursor()),
+                )
+                .unwrap_or(u16::MAX);
                 let mut lines = vec![
                     Line::from(header),
                     Line::default(),
-                    Line::from(format!("  > {input}")),
+                    Line::from(format!("  > {}", input_field.text())),
                     Line::default(),
                 ];
                 if let Some(message) = error {
@@ -635,13 +637,7 @@ impl Modal for AuthModal {
                     Color::Yellow,
                     lines,
                     Some(hint_line("←/→ move  Enter confirm  Esc back")),
-                    Some((
-                        3u16,
-                        u16::try_from(
-                            text_display_width("  > ") + prefix_display_width(input, *cursor),
-                        )
-                        .unwrap_or(u16::MAX),
-                    )),
+                    Some((3u16, cursor_col)),
                     None,
                 )
             }
@@ -736,7 +732,7 @@ impl Modal for AuthModal {
                 let mut lines = vec![
                     Line::from(format!("Select default model for {}:", provider.label())),
                     Line::default(),
-                    Line::from(format!("  Search: {}", state.filter)),
+                    Line::from(format!("  Search: {}", state.filter_field.text())),
                     Line::default(),
                 ];
 
@@ -783,7 +779,10 @@ impl Modal for AuthModal {
                         3u16,
                         u16::try_from(
                             text_display_width("  Search: ")
-                                + prefix_display_width(&state.filter, state.filter_cursor),
+                                + prefix_display_width(
+                                    state.filter_field.text(),
+                                    state.filter_field.cursor(),
+                                ),
                         )
                         .unwrap_or(u16::MAX),
                     )),
@@ -934,8 +933,7 @@ impl Modal for AuthModal {
                             "other" => {
                                 self.step = AuthModalStep::BaseUrlInput {
                                     provider: ProviderKind::Other,
-                                    input: String::new(),
-                                    cursor: 0,
+                                    input_field: crate::tui::input_field::InputField::new(),
                                     error: None,
                                 };
                             }
@@ -1024,46 +1022,45 @@ impl Modal for AuthModal {
             }
             AuthModalStep::BaseUrlInput {
                 provider,
-                input,
-                cursor,
+                input_field,
                 error,
             } => match key.code {
                 KeyCode::Char(ch) => {
-                    Self::insert_char_at(input, cursor, ch);
+                    input_field.insert_char(ch);
                     *error = None;
                     ModalAction::Consumed
                 }
                 KeyCode::Backspace => {
-                    Self::remove_prev_char(input, cursor);
+                    input_field.backspace();
                     ModalAction::Consumed
                 }
                 KeyCode::Delete => {
-                    Self::remove_current_char(input, *cursor);
+                    input_field.delete();
                     ModalAction::Consumed
                 }
                 KeyCode::Left => {
-                    *cursor = cursor.saturating_sub(1);
+                    input_field.move_cursor_left();
                     ModalAction::Consumed
                 }
                 KeyCode::Right => {
-                    *cursor = (*cursor + 1).min(Self::char_len(input));
+                    input_field.move_cursor_right();
                     ModalAction::Consumed
                 }
                 KeyCode::Home | KeyCode::Up => {
-                    *cursor = 0;
+                    input_field.move_cursor_home();
                     ModalAction::Consumed
                 }
                 KeyCode::End | KeyCode::Down => {
-                    *cursor = Self::char_len(input);
+                    input_field.move_cursor_end();
                     ModalAction::Consumed
                 }
                 KeyCode::Enter => {
-                    if input.is_empty() {
+                    if input_field.is_empty() {
                         *error = Some("Base URL cannot be empty".to_string());
                     } else {
                         self.step = AuthModalStep::ApiKeyInput {
                             provider: *provider,
-                            base_url: Some(input.clone()),
+                            base_url: Some(input_field.text().to_string()),
                             key_buffer: Zeroizing::new(String::new()),
                             cursor: 0,
                             masked: true,
@@ -1150,21 +1147,19 @@ impl Modal for AuthModal {
                 KeyCode::Esc => {
                     if *provider == ProviderKind::Other {
                         let previous = base_url.clone().unwrap_or_default();
-                        let previous_len = Self::char_len(&previous);
                         self.step = AuthModalStep::BaseUrlInput {
                             provider: ProviderKind::Other,
-                            input: previous,
-                            cursor: previous_len,
+                            input_field: crate::tui::input_field::InputField::new()
+                                .with_text(previous),
                             error: None,
                         };
                     } else if let ProviderKind::Preset(p) = provider {
                         if base_url.is_some() {
                             let previous = base_url.clone().unwrap_or_default();
-                            let previous_len = Self::char_len(&previous);
                             self.step = AuthModalStep::BaseUrlInput {
                                 provider: ProviderKind::Preset(*p),
-                                input: previous,
-                                cursor: previous_len,
+                                input_field: crate::tui::input_field::InputField::new()
+                                    .with_text(previous),
                                 error: None,
                             };
                         } else {
@@ -1245,11 +1240,9 @@ impl Modal for AuthModal {
                     } else if matches!(
                         *provider,
                         ProviderKind::OpenAi | ProviderKind::Other | ProviderKind::Preset(_)
-                    ) && !state.filter.trim().is_empty()
+                    ) && !state.filter_field.text().trim().is_empty()
                     {
-                        // Allow manual model entry for OpenAI-compatible providers
-                        // when remote model listing is not available.
-                        Self::save_default_model(*provider, &state.filter);
+                        Self::save_default_model(*provider, state.filter_field.text());
                     }
                     self.step = AuthModalStep::Success {
                         message: format!("Authenticated as {}", provider.label()),
@@ -1257,13 +1250,12 @@ impl Modal for AuthModal {
                     ModalAction::Consumed
                 }
                 KeyCode::Esc => {
-                    if state.filter.trim().is_empty() {
+                    if state.filter_field.text().trim().is_empty() {
                         self.step = AuthModalStep::Success {
                             message: format!("Authenticated as {}", provider.label()),
                         };
                     } else {
-                        state.filter.clear();
-                        state.filter_cursor = 0;
+                        state.filter_field.clear();
                         state.selected_idx = 0;
                     }
                     ModalAction::Consumed
@@ -1423,9 +1415,8 @@ mod tests {
                         display_name: None,
                     },
                 ],
-                filter: String::new(),
-                filter_cursor: 0,
                 selected_idx: 0,
+                ..Default::default()
             },
         });
 
@@ -1470,8 +1461,10 @@ mod tests {
         }
         assert_eq!(modal.handle_key(key(KeyCode::Enter)), ModalAction::Consumed);
         match &modal.step {
-            AuthModalStep::BaseUrlInput { input, error, .. } => {
-                assert!(input.is_empty());
+            AuthModalStep::BaseUrlInput {
+                input_field, error, ..
+            } => {
+                assert!(input_field.is_empty());
                 assert_eq!(error, &None);
             }
             _ => panic!("expected base url input step"),
@@ -1608,17 +1601,19 @@ mod tests {
             provider: ProviderKind::OpenAi,
             state: crate::tui::model_list::ModelListState {
                 models: vec![],
-                filter: "gpt-4.1".to_string(),
-                filter_cursor: 7,
                 selected_idx: 3,
+                ..Default::default()
             },
         });
+        for c in "gpt-4.1".chars() {
+            modal.handle_key(key(KeyCode::Char(c)));
+        }
 
         assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Consumed);
         match &modal.step {
             AuthModalStep::ModelSelect { state, .. } => {
-                assert!(state.filter.is_empty());
-                assert_eq!(state.filter_cursor, 0);
+                assert!(state.filter_field.is_empty());
+                assert_eq!(state.filter_field.cursor(), 0);
                 assert_eq!(state.selected_idx, 0);
             }
             _ => panic!("expected model select step"),

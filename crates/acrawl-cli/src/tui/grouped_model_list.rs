@@ -14,8 +14,7 @@ pub struct ProviderGroup {
 #[derive(Debug)]
 pub struct GroupedModelListState {
     pub groups: Vec<ProviderGroup>,
-    pub filter: String,
-    pub filter_cursor: usize,
+    pub filter_field: crate::tui::input_field::InputField,
     pub selected_idx: usize,
     pub current_model_id: Option<String>,
 }
@@ -45,30 +44,15 @@ impl GroupedModelListState {
     pub fn new(groups: Vec<ProviderGroup>, current_model_id: Option<String>) -> Self {
         Self {
             groups,
-            filter: String::new(),
-            filter_cursor: 0,
+            filter_field: crate::tui::input_field::InputField::new(),
             selected_idx: 0,
             current_model_id,
         }
     }
 
-    fn filter_len(&self) -> usize {
-        self.filter.chars().count()
-    }
-
-    fn cursor_byte_index(&self) -> usize {
-        self.filter
-            .char_indices()
-            .nth(self.filter_cursor)
-            .map_or(self.filter.len(), |(idx, _)| idx)
-    }
-
-    fn clamp_cursor(&mut self) {
-        self.filter_cursor = self.filter_cursor.min(self.filter_len());
-    }
-
     pub fn filtered_groups(&self) -> Vec<FilteredGroup<'_>> {
-        if self.filter.is_empty() {
+        let filter = self.filter_field.text();
+        if filter.is_empty() {
             return self
                 .groups
                 .iter()
@@ -80,7 +64,7 @@ impl GroupedModelListState {
                 .collect();
         }
 
-        let filter_lower = self.filter.to_lowercase();
+        let filter_lower = self.filter_field.text().to_lowercase();
         self.groups
             .iter()
             .filter_map(|g| {
@@ -130,52 +114,26 @@ impl GroupedModelListState {
     }
 
     pub fn handle_char(&mut self, c: char) {
-        let idx = self.cursor_byte_index();
-        self.filter.insert(idx, c);
-        self.filter_cursor = self.filter_cursor.saturating_add(1);
+        self.filter_field.insert_char(c);
         self.selected_idx = 0;
     }
 
     pub fn handle_backspace(&mut self) {
-        if self.filter_cursor == 0 {
-            return;
-        }
-        let remove_char = self.filter_cursor - 1;
-        if let Some((start, _)) = self.filter.char_indices().nth(remove_char) {
-            let end = self
-                .filter
-                .char_indices()
-                .nth(remove_char + 1)
-                .map_or(self.filter.len(), |(idx, _)| idx);
-            self.filter.replace_range(start..end, "");
-            self.filter_cursor -= 1;
-        }
-        self.clamp_cursor();
+        self.filter_field.backspace();
         self.selected_idx = 0;
     }
 
     pub fn handle_delete(&mut self) {
-        if self.filter_cursor >= self.filter_len() {
-            return;
-        }
-        if let Some((start, _)) = self.filter.char_indices().nth(self.filter_cursor) {
-            let end = self
-                .filter
-                .char_indices()
-                .nth(self.filter_cursor + 1)
-                .map_or(self.filter.len(), |(idx, _)| idx);
-            self.filter.replace_range(start..end, "");
-        }
-        self.clamp_cursor();
+        self.filter_field.delete();
         self.selected_idx = 0;
     }
 
     pub fn move_cursor_home(&mut self) {
-        self.filter_cursor = 0;
+        self.filter_field.move_cursor_home();
     }
 
     pub fn move_cursor_end(&mut self) {
-        self.filter_cursor = self.filter_len();
+        self.filter_field.move_cursor_end();
     }
 
     pub fn selected_model(&self) -> Option<(&str, &str)> {
@@ -276,7 +234,9 @@ mod tests {
     fn filter_by_provider_name() {
         let state = GroupedModelListState::new(make_groups(), None);
         let mut filtered_state = state;
-        filtered_state.filter = "anthropic".into();
+        for c in "anthropic".chars() {
+            filtered_state.handle_char(c);
+        }
 
         let filtered = filtered_state.filtered_groups();
         assert_eq!(filtered.len(), 1);
@@ -288,7 +248,9 @@ mod tests {
     fn filter_by_model_id() {
         let state = GroupedModelListState::new(make_groups(), None);
         let mut filtered_state = state;
-        filtered_state.filter = "sonnet".into();
+        for c in "sonnet".chars() {
+            filtered_state.handle_char(c);
+        }
 
         let filtered = filtered_state.filtered_groups();
         assert_eq!(filtered.len(), 1);
@@ -309,7 +271,9 @@ mod tests {
     fn nonsense_filter_returns_zero() {
         let state = GroupedModelListState::new(make_groups(), None);
         let mut filtered_state = state;
-        filtered_state.filter = "zzzzz".into();
+        for c in "zzzzz".chars() {
+            filtered_state.handle_char(c);
+        }
 
         assert_eq!(filtered_state.total_selectable(), 0);
     }
@@ -416,7 +380,9 @@ mod tests {
     fn empty_provider_group_omitted() {
         let state = GroupedModelListState::new(make_groups(), None);
         let mut filtered_state = state;
-        filtered_state.filter = "gpt".into();
+        for c in "gpt".chars() {
+            filtered_state.handle_char(c);
+        }
 
         let filtered = filtered_state.filtered_groups();
         assert_eq!(filtered.len(), 1);

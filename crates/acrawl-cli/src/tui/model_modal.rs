@@ -230,7 +230,9 @@ impl Modal for ModelModal {
         let list_area = sections[3];
         let hint_area = sections[5];
 
-        let filter_text = if self.list_state.filter.is_empty() {
+        let filter = self.list_state.filter_field.text();
+        let filter_cursor = self.list_state.filter_field.cursor();
+        let filter_text = if filter.is_empty() {
             Line::from(vec![
                 Span::raw("🔍 "),
                 Span::styled(
@@ -243,23 +245,20 @@ impl Modal for ModelModal {
         } else {
             Line::from(vec![
                 Span::raw("🔍 "),
-                Span::styled(
-                    self.list_state.filter.clone(),
-                    Style::default().fg(Color::White),
-                ),
+                Span::styled(filter.to_string(), Style::default().fg(Color::White)),
             ])
         };
         frame.render_widget(Paragraph::new(filter_text), filter_area);
 
-        if self.list_state.filter.is_empty() {
+        if filter.is_empty() {
             let cursor_x = filter_area
                 .x
                 .saturating_add(u16::try_from(text_display_width("🔍 ")).unwrap_or(u16::MAX))
                 .min(filter_area.right().saturating_sub(1));
             frame.set_cursor_position((cursor_x, filter_area.y));
         } else {
-            let cursor_col = text_display_width("🔍 ")
-                + prefix_display_width(&self.list_state.filter, self.list_state.filter_cursor);
+            let cursor_col =
+                text_display_width("🔍 ") + prefix_display_width(filter, filter_cursor);
             let cursor_x = filter_area
                 .x
                 .saturating_add(u16::try_from(cursor_col).unwrap_or(u16::MAX))
@@ -377,12 +376,11 @@ impl Modal for ModelModal {
 
         match key.code {
             KeyCode::Esc => {
-                if self.list_state.filter.is_empty() {
+                if self.list_state.filter_field.is_empty() {
                     self.outcome = ModelModalOutcome::None;
                     ModalAction::Dismiss
                 } else {
-                    self.list_state.filter.clear();
-                    self.list_state.filter_cursor = 0;
+                    self.list_state.filter_field.clear();
                     self.list_state.selected_idx = 0;
                     ModalAction::Consumed
                 }
