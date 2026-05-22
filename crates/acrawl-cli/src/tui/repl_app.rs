@@ -2658,6 +2658,20 @@ fn run_loop(
                     continue;
                 }
 
+                // Copy transcript selection (Ctrl+C / Ctrl+Insert) — delegates
+                // to the render path via `pending_copy`, same as right-click.
+                if state.selection.anchor.is_some()
+                    && ((key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                        || (key.code == KeyCode::Insert
+                            && key.modifiers == KeyModifiers::CONTROL))
+                {
+                    state.selection.pending_copy = Some(true);
+                    state.selection.suppress_paste_until =
+                        Some(Instant::now() + Duration::from_millis(800));
+                    continue;
+                }
+
                 if state.active_modal.is_none()
                     && state.input.has_selection()
                     && key.code == KeyCode::Char('x')
