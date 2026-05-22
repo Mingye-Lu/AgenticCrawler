@@ -2388,7 +2388,7 @@ fn run_loop(
                             if let Some(tab) = state.child_tab_panel.find_tab_mut(id) {
                                 tab.follow_bottom = false;
                                 *tab.list_state.offset_mut() =
-                                    tab.list_state.offset().saturating_sub(3);
+                                    tab.list_state.offset().saturating_sub(6);
                             }
                         }
                         MouseEventKind::ScrollDown => {
@@ -2397,7 +2397,7 @@ fn run_loop(
                                     .last_wrapped_len
                                     .saturating_sub(tab.last_view_height.max(1));
                                 *tab.list_state.offset_mut() =
-                                    (tab.list_state.offset().saturating_add(3)).min(max);
+                                    (tab.list_state.offset().saturating_add(6)).min(max);
                                 tab.follow_bottom = tab.list_state.offset() >= max;
                             }
                         }
@@ -2466,7 +2466,7 @@ fn run_loop(
                     continue;
                 }
 
-                if state.ui_state == AppUiState::ChatMode && in_transcript {
+                if in_transcript {
                     let max_off = state
                         .last_wrapped_len
                         .saturating_sub(state.last_view_height.max(1));
@@ -2474,11 +2474,11 @@ fn run_loop(
                     let tr = state.last_transcript_rect;
                     match me.kind {
                         MouseEventKind::ScrollUp => {
-                            *state.list_state.offset_mut() = cur.saturating_sub(3);
+                            *state.list_state.offset_mut() = cur.saturating_sub(6);
                             state.follow_bottom = false;
                         }
                         MouseEventKind::ScrollDown => {
-                            *state.list_state.offset_mut() = (cur.saturating_add(3)).min(max_off);
+                            *state.list_state.offset_mut() = (cur.saturating_add(6)).min(max_off);
                             state.follow_bottom = state.list_state.offset() >= max_off;
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
