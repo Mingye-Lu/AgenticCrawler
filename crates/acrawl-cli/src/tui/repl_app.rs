@@ -2586,6 +2586,21 @@ fn run_loop(
                     state.selection.suppress_paste_until = None;
                 }
 
+                // Copy transcript selection (Ctrl+C / Ctrl+Insert) — must
+                // check *before* clearing selection.anchor below, since every
+                // non-PageUp/Down keypress wipes it.
+                if state.selection.anchor.is_some()
+                    && ((key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL))
+                        || (key.code == KeyCode::Insert
+                            && key.modifiers == KeyModifiers::CONTROL))
+                {
+                    state.selection.pending_copy = Some(true);
+                    state.selection.suppress_paste_until =
+                        Some(Instant::now() + Duration::from_millis(800));
+                    continue;
+                }
+
                 if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
                     state.selection.anchor = None;
                     state.selection.end = None;
@@ -2655,20 +2670,6 @@ fn run_loop(
                     state.input.clear_selection();
                     state.selection.anchor = None;
                     state.selection.end = None;
-                    continue;
-                }
-
-                // Copy transcript selection (Ctrl+C / Ctrl+Insert) — delegates
-                // to the render path via `pending_copy`, same as right-click.
-                if state.selection.anchor.is_some()
-                    && ((key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL))
-                        || (key.code == KeyCode::Insert
-                            && key.modifiers == KeyModifiers::CONTROL))
-                {
-                    state.selection.pending_copy = Some(true);
-                    state.selection.suppress_paste_until =
-                        Some(Instant::now() + Duration::from_millis(800));
                     continue;
                 }
 
