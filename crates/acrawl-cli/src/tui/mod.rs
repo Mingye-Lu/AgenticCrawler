@@ -3,6 +3,7 @@ pub mod auth_modal;
 pub(super) mod child_tabs;
 pub mod events;
 pub mod grouped_model_list;
+pub mod input_field;
 pub mod modal;
 pub mod model_list;
 pub mod model_modal;
