@@ -117,8 +117,9 @@ fn detect_ides() -> Vec<DetectedIde> {
 }
 
 fn resolve_acrawl_path() -> String {
-    let exe = env::current_exe().ok().and_then(|p| {
-        match fs::canonicalize(&p) {
+    let exe = env::current_exe()
+        .ok()
+        .and_then(|p| match fs::canonicalize(&p) {
             Ok(canonical) => Some(canonical),
             Err(e) => {
                 eprintln!(
@@ -131,8 +132,7 @@ fn resolve_acrawl_path() -> String {
                 );
                 None
             }
-        }
-    });
+        });
     let exe = exe.unwrap_or_else(|| PathBuf::from("acrawl"));
 
     let path_str = exe.to_string_lossy().to_string();
@@ -242,7 +242,9 @@ fn install_claude_code_global(acrawl_path: &str) -> io::Result<String> {
                 eprintln!("note: `claude mcp remove acrawl` exited with {s} — retrying add anyway");
             }
             Err(e) => {
-                eprintln!("note: `claude mcp remove acrawl` failed to run: {e} — retrying add anyway");
+                eprintln!(
+                    "note: `claude mcp remove acrawl` failed to run: {e} — retrying add anyway"
+                );
             }
             Ok(_) => {}
         }

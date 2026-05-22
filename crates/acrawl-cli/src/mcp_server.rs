@@ -78,19 +78,13 @@ fn read_protocol_message(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
                 "MCP stdio stream closed before first message",
             ));
         }
-        match buffered.iter().position(|b| !b.is_ascii_whitespace()) {
-            Some(pos) => {
-                // Consume the whitespace prefix so subsequent readers
-                // start at the first meaningful byte.
-                reader.consume(pos);
-                let after = reader.fill_buf()?;
-                break after[0];
-            }
-            None => {
-                let len = buffered.len();
-                reader.consume(len);
-            }
+        if let Some(pos) = buffered.iter().position(|b| !b.is_ascii_whitespace()) {
+            reader.consume(pos);
+            let after = reader.fill_buf()?;
+            break after[0];
         }
+        let len = buffered.len();
+        reader.consume(len);
     };
 
     let mode = match first {
@@ -882,7 +876,7 @@ pub fn run() {
     let shared_bridge: SharedBridge = rt.block_on(async {
         match PlaywrightBridge::new().await {
             Ok(bridge) => std::sync::Arc::new(tokio::sync::Mutex::new(
-                Box::new(bridge) as Box<dyn BrowserBackend + Send>,
+                Box::new(bridge) as Box<dyn BrowserBackend + Send>
             )),
             Err(e) => {
                 eprintln!("error: failed to launch browser — {e}");

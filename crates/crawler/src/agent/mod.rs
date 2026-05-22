@@ -847,7 +847,10 @@ mod tests {
 
         // Verify the agent has the allowlist set (system prompt filtering
         // is derived from allowed_tools inside run(); we verify the field directly)
-        let tools = agent.allowed_tools.as_ref().expect("allowed_tools should be set");
+        let tools = agent
+            .allowed_tools
+            .as_ref()
+            .expect("allowed_tools should be set");
         assert!(tools.contains("navigate"));
         assert!(tools.contains("screenshot"));
         assert!(!tools.contains("click"));
