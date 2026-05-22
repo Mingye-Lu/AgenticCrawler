@@ -15,24 +15,13 @@ dependencies = [
  "ratatui",
  "reqwest 0.12.28",
  "runtime",
+ "serde",
  "serde_json",
  "sha2",
  "textwrap",
  "tokio",
  "unicode-width",
  "zeroize",
-]
-
-[[package]]
-name = "acrawl-mcp"
-version = "0.5.1"
-dependencies = [
- "api",
- "crawler",
- "runtime",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
