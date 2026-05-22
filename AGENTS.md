@@ -2,19 +2,21 @@
 
 ## Project
 
-`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 21-tool toolbox (18 browser + 2 agent-control + 1 human intervention). It ships as a single binary with two modes: an interactive Ratatui TUI REPL (requires a TTY) and non-interactive `prompt` (one-shot) / `--resume` (slash-command replay).
+`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 21-tool toolbox (18 browser + 2 agent-control + 1 human intervention). It ships as a single binary with three modes: an interactive Ratatui TUI REPL (requires a TTY), non-interactive `prompt` (one-shot) / `--resume` (slash-command replay), and `mcp` (built-in MCP server over stdio).
 
 ## Commands
 
 ```bash
 cargo build --release                                        # produce ./target/release/acrawl
-cargo test --workspace                                       # run full test suite (~688 tests)
+cargo test --workspace                                       # run full test suite (~770 tests)
 cargo test -p <crate> <test_name>                            # run a single test (e.g. -p crawler mvp_tool_specs_contains_expected_21_tools)
 cargo clippy --workspace --all-targets -- -D warnings        # lints must be clean (workspace lints set pedantic = warn)
 cargo fmt --check                                            # format check
 
 ./target/release/acrawl                                      # launch REPL
 ./target/release/acrawl prompt "scrape all titles from example.com"   # one-shot
+./target/release/acrawl mcp                                  # launch MCP server (stdio)
+./target/release/acrawl mcp install                          # interactive IDE installer
 ./target/release/acrawl --resume session.json /status /compact        # non-interactive session maintenance
 ```
 
@@ -24,7 +26,7 @@ The CLI reads LLM credentials from `~/.acrawl/credentials.json` (managed by `acr
 
 Five crates under `crates/`, compiled with `resolver = "2"`:
 
-- **acrawl-cli** — binary entry (`src/main.rs`), arg parsing, REPL (`src/tui/`), session management, provider selection. `src/app/` directory owns `LiveCli` and the provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`). `output_sink.rs` bridges runtime events to the UI. `markdown.rs` handles markdown/spinner rendering. `tool_format.rs` formats tool call output.
+- **acrawl-cli** — binary entry (`src/main.rs`), arg parsing, REPL (`src/tui/`), session management, provider selection. `src/app/` directory owns `LiveCli` and the provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`). `output_sink.rs` bridges runtime events to the UI. `markdown.rs` handles markdown/spinner rendering. `tool_format.rs` formats tool call output. `mcp_server.rs` is the built-in MCP server (JSON-RPC over stdio, 16 direct browser tools + `run_goal`). `mcp_install.rs` is the interactive IDE installer (`acrawl mcp install`).
 - **api** — HTTP + SSE clients for Anthropic (`client.rs`), OpenAI-compatible (`openai.rs`), and Codex OAuth (`codex.rs`). `sse.rs` is the shared streaming frame parser; `types.rs` holds the Anthropic message schema. `provider/registry.rs` and `provider/factory.rs` handle provider discovery and client construction.
 - **runtime** — `ConversationRuntime` (the core turn loop), `RuntimeObserver` trait for event callbacks, `Session` persistence, system-prompt builder, compaction, usage/pricing, OAuth PKCE, `observer.rs` for the observer trait, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/auth`, `/headed`, `/headless`, `/extension`, `/cloakbrowser`, `/debug`, `/version`, `/exit`). Knows which commands are safe to replay in `--resume`.

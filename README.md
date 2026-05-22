@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 21 tools. 25 LLM providers. CloakBrowser for the hard parts.
+  Single binary. No Python runtime. 21 tools. 25 LLM providers. MCP server built-in.
 </p>
 
 ---
@@ -36,7 +36,8 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 - **Smart fetching.** Static pages are served over HTTP (fast). When JavaScript or interaction is needed, acrawl detects JS framework markers (`__next_data__`, `__nuxt`, `__vue`, `ng-app`, React roots), auth redirects, and short `<noscript>` bodies — then transparently escalates to a headless browser.
 - **21 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
-- **MCP support.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
+- **MCP client.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
+- **MCP server.** `acrawl mcp` exposes all 16 browser tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code Copilot, OpenCode. Install with `acrawl mcp install`.
 
 ### How does it compare?
 
@@ -50,7 +51,8 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 | Form filling / interaction | Yes | Limited | Yes | Yes |
 | Sub-agent parallelism | Yes | N/A | No | No |
 | 25 provider support | Yes | N/A | N/A | Limited |
-| MCP extensibility | Yes | No | No | No |
+| MCP client (use external tools) | Yes | No | No | No |
+| MCP server (expose as tools) | Yes | No | No | No |
 
 ## Quick Start
 
@@ -316,7 +318,7 @@ Omit `--allowedTools` to allow all 21 tools. Useful for locking down a crawl to 
 
 ### MCP Extensibility
 
-acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 21.
+acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 21.
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
@@ -533,14 +535,14 @@ flowchart LR
 
 ```
 crates/
-  acrawl-cli/   CLI binary, TUI REPL, arg parsing, session management
+  acrawl-cli/   CLI binary, TUI REPL, MCP server (`mcp_server.rs`), MCP installer (`mcp_install.rs`), arg parsing, session management
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   commands/     17 slash commands with resume-safety annotations
   crawler/      21 tools, agent loop, FetchRouter, PlaywrightBridge, ExtensionBridge, sub-agent fork/join
   runtime/      ConversationRuntime, config, sessions, MCP server manager, OAuth PKCE
 ```
 
-5 crates, ~37K lines of Rust, 690 tests.
+5 crates, ~38K lines of Rust, 770 tests.
 
 ## Development
 
