@@ -1164,7 +1164,7 @@ impl PlaywrightBridge {
     }
 
     async fn read_bootstrap_message(&mut self) -> Result<(), BridgeError> {
-        let line = self.read_bridge_line().await?;
+        let line = self.read_bridge_json_line().await?;
         let message: BridgeBootstrapMessage = serde_json::from_str(&line)?;
 
         if message.event != "bridge_bootstrap" {
@@ -1210,7 +1210,7 @@ impl PlaywrightBridge {
         self.stdin.write_all(b"\n").await?;
         self.stdin.flush().await?;
 
-        let line = timeout(command_timeout, self.read_bridge_line())
+        let line = timeout(command_timeout, self.read_bridge_json_line())
             .await
             .map_err(|_| BridgeError::CommandTimeout {
                 timeout: command_timeout,
@@ -1232,6 +1232,19 @@ impl PlaywrightBridge {
             return Err(BridgeError::ChildClosed);
         }
         Ok(line)
+    }
+
+    /// Read the next JSON-object line from the bridge, skipping any non-JSON
+    /// chatter (e.g. CloakBrowser update notifications) that might have leaked
+    /// past the Node-side stdout filter.
+    async fn read_bridge_json_line(&mut self) -> Result<String, BridgeError> {
+        loop {
+            let line = self.read_bridge_line().await?;
+            if line.trim().starts_with('{') {
+                return Ok(line);
+            }
+            // Silently discard non-JSON lines.
+        }
     }
 
     async fn force_kill_child(&mut self) -> Result<(), BridgeError> {
