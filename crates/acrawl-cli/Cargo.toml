@@ -14,6 +14,7 @@ api = { path = "../api" }
 commands = { path = "../commands" }
 crawler = { path = "../crawler" }
 crossterm = "0.28"
+dialoguer = "0.12"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }

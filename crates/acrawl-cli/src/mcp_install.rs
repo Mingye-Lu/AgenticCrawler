@@ -1,9 +1,10 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use dialoguer::{theme::ColorfulTheme, MultiSelect, Select};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,68 +129,52 @@ fn resolve_acrawl_path() -> String {
         .replace('\\', "/")
 }
 
-fn read_line_trimmed() -> io::Result<String> {
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
-
 fn prompt_ide_selection(detected: &[DetectedIde]) -> io::Result<Vec<Ide>> {
-    let detected_set: Vec<Ide> = detected.iter().map(|d| d.ide).collect();
+    let items: Vec<String> = Ide::ALL
+        .iter()
+        .map(|ide| {
+            let reason = detected
+                .iter()
+                .find(|d| d.ide == *ide)
+                .map(|d| format!(" ({})", d.reason))
+                .unwrap_or_default();
+            format!("{}{reason}", ide.name())
+        })
+        .collect();
 
-    eprintln!("\nDetected IDEs:");
-    for (i, ide) in Ide::ALL.iter().enumerate() {
-        let is_detected = detected.iter().any(|d| d.ide == *ide);
-        let marker = if is_detected { "•" } else { " " };
-        let reason = detected
-            .iter()
-            .find(|d| d.ide == *ide)
-            .map(|d| format!(" ({})", d.reason))
-            .unwrap_or_default();
-        eprintln!("  {}) [{marker}] {}{reason}", i + 1, ide.name());
-    }
+    let defaults: Vec<bool> = Ide::ALL
+        .iter()
+        .map(|ide| detected.iter().any(|d| d.ide == *ide))
+        .collect();
 
-    eprint!("\nSelect IDEs (comma-separated numbers, 'all', or Enter for detected): ");
-    io::stderr().flush()?;
-    let input = read_line_trimmed()?;
+    let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select IDEs to configure (Space to toggle, Enter to confirm)")
+        .items(&items)
+        .defaults(&defaults)
+        .interact_opt()
+        .map_err(io::Error::other)?;
 
-    if input.is_empty() {
-        return Ok(detected_set);
+    match selections {
+        Some(indices) => Ok(indices.into_iter().map(|i| Ide::ALL[i]).collect()),
+        None => Ok(Vec::new()),
     }
-    if input.eq_ignore_ascii_case("all") {
-        return Ok(Ide::ALL.to_vec());
-    }
-
-    let mut selected = Vec::new();
-    for part in input.split(',') {
-        let trimmed = part.trim();
-        if let Ok(n) = trimmed.parse::<usize>() {
-            if n >= 1 && n <= Ide::ALL.len() {
-                let ide = Ide::ALL[n - 1];
-                if !selected.contains(&ide) {
-                    selected.push(ide);
-                }
-            } else {
-                eprintln!("  warning: ignoring invalid number {n}");
-            }
-        }
-    }
-
-    if selected.is_empty() {
-        return Ok(detected_set);
-    }
-    Ok(selected)
 }
 
 fn prompt_scope() -> io::Result<Scope> {
-    eprintln!("\nConfig scope:");
-    eprintln!("  1) Global (user-level, works across all projects)");
-    eprintln!("  2) Project (current directory, shareable via git)");
-    eprint!("\nChoice [1-2]: ");
-    io::stderr().flush()?;
-    let input = read_line_trimmed()?;
-    match input.as_str() {
-        "2" | "project" => Ok(Scope::Project),
+    let items = &[
+        "Global (user-level, works across all projects)",
+        "Project (current directory, shareable via git)",
+    ];
+
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Config scope")
+        .items(items)
+        .default(0)
+        .interact()
+        .map_err(io::Error::other)?;
+
+    match selection {
+        1 => Ok(Scope::Project),
         _ => Ok(Scope::Global),
     }
 }
