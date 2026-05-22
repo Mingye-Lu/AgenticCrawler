@@ -197,9 +197,13 @@ pub(super) struct ReplTuiState {
     /// `calculate_input_dimensions` so the scroll position is preserved until
     /// the cursor moves (typing, arrow keys, paste, etc.).
     input_scroll_manual: bool,
-    /// Active text selection within the input field: `(anchor_char, end_char)`
-    /// where anchor ≤ end.  `None` when no selection is active.
+    /// Active text selection within the input field: `(start_char, end_char)`
+    /// where start ≤ end.  `None` when no selection is active.
     pub(super) input_selection: Option<(usize, usize)>,
+    /// Immutable anchor set on mouse Down(Left); used by Drag to extend the
+    /// selection without ever being modified by other mouse events or key
+    /// handlers.  `None` between drags.
+    input_click_anchor: Option<usize>,
     /// Cached width (columns) of the input widget from the last render pass.
     /// Used by cursor up/down to compute soft-wrap boundaries.
     pub(super) input_area_width: u16,
@@ -260,6 +264,7 @@ impl ReplTuiState {
             input_scroll_offset: 0,
             input_scroll_manual: false,
             input_selection: None,
+            input_click_anchor: None,
             input_area_width: 0,
             input: InputEditorState {
                 text: String::new(),
@@ -467,6 +472,7 @@ impl ReplTuiState {
     /// selection was deleted.
     fn delete_selection_range(&mut self) -> bool {
         if let Some((a, b)) = self.input_selection.take() {
+            self.input_click_anchor = None;
             self.input.cursor = a;
             self.resync_byte_cursor();
             let end_byte = self.input_char_to_byte(b);
@@ -596,6 +602,7 @@ impl ReplTuiState {
     fn move_input_cursor_left(&mut self) {
         self.input_scroll_manual = false;
         self.input_selection = None;
+        self.input_click_anchor = None;
         if self.input.cursor == 0 {
             return;
         }
@@ -614,6 +621,7 @@ impl ReplTuiState {
     fn move_input_cursor_right(&mut self) {
         self.input_scroll_manual = false;
         self.input_selection = None;
+        self.input_click_anchor = None;
         if self.input.cursor >= self.input_char_len() {
             return;
         }
@@ -846,6 +854,7 @@ impl ReplTuiState {
     fn set_input_cursor_line_col_by_char(&mut self, char_idx: usize) {
         self.input_scroll_manual = false;
         self.input_selection = None;
+        self.input_click_anchor = None;
         self.input.cursor = char_idx.min(self.input_char_len());
         self.resync_byte_cursor();
         self.input_scroll_offset = usize::MAX;
@@ -860,62 +869,27 @@ impl ReplTuiState {
         }
         let w = usize::from(self.input_area_width).max(10);
         let safe_width = w.saturating_sub(5).max(5);
-        // Walk logical lines, applying the same word-wrap as the render,
-        // until we reach the target visual row.
-        let mut line_start = 0usize;
-        let mut visual_idx = self.input_scroll_offset.saturating_sub(1);
-        // Step 1: find which visual row we're on by simulating the
-        // word-wrap from the beginning of the text.
-        for (logical_idx, logical) in self.input.text.split('\n').enumerate() {
-            let first_cap = if logical_idx == 0 {
-                safe_width.saturating_sub(2)  // ❯  prompt
-            } else {
-                safe_width
-            };
-            let mut offset = 0usize;
-            let chars: Vec<char> = logical.chars().collect();
-            while offset < chars.len() || offset == 0 {
-                visual_idx += 1;
-                let cap = if offset == 0 { first_cap } else { safe_width };
-                let mut col = 0usize;
-                let mut end = offset;
-                while end < chars.len() {
-                    let cw = char_display_width(chars[end]);
-                    if col + cw > cap {
-                        break;
-                    }
-                    col += cw;
-                    end += 1;
-                }
-                if visual_idx == widget_row.saturating_sub(1) {
-                    line_start += offset;
-                    let visual_width = col;
-                    let is_first_vis = offset == 0 && logical_idx == 0;
-                    let prompt = if is_first_vis { 2usize } else { 0 };
-                    if widget_col < prompt {
-                        return Some(0);
-                    }
-                    let target_col = widget_col.saturating_sub(prompt).min(visual_width);
-                    let mut char_idx = line_start;
-                    let mut acc = 0usize;
-                    for ch in chars.iter().skip(offset).take(end - offset) {
-                        let cw = char_display_width(*ch);
-                        if acc + cw > target_col {
-                            break;
-                        }
-                        acc += cw;
-                        char_idx += 1;
-                    }
-                    return Some(char_idx);
-                }
-                if end == offset {
-                    end = offset + 1;
-                }
-                offset = end;
-            }
-            line_start += chars.len() + 1; // +1 for \n
+        let vis = self.visual_line_info(safe_width);
+        let content_row = widget_row.saturating_sub(1);
+        let abs_row = self.input_scroll_offset + content_row;
+        let &(start, width) = vis.get(abs_row)?;
+        let is_first = abs_row == 0;
+        let prompt = if is_first { 2usize } else { 0 };
+        if widget_col < prompt {
+            return Some(start);
         }
-        None
+        let target_col = widget_col.saturating_sub(prompt).min(width);
+        let mut char_idx = start;
+        let mut col = 0usize;
+        for ch in self.input.text.chars().skip(start) {
+            let cw = char_display_width(ch);
+            if col + cw > target_col {
+                break;
+            }
+            col += cw;
+            char_idx += 1;
+        }
+        Some(char_idx)
     }
 
     /// Logical-line up/down (jumps by `\n`, ignoring soft wraps).  Used as a
@@ -1185,39 +1159,48 @@ impl ReplTuiState {
                 if let Some(marker_char_idx) = marker_idx {
                     let left = row.chars().take(marker_char_idx).collect::<String>();
                     let right = row.chars().skip(marker_char_idx + 1).collect::<String>();
-                    let (left_sel, right_sel) = if sel_a < sel_b {
-                        let left_end = line_start + left.chars().count();
-                        let left_sel = sel_a.max(line_start).min(left_end)
-                            < sel_b.max(line_start).min(left_end);
-                        let right_start = line_start + left.chars().count();
-                        let right_sel = sel_a.max(right_start).min(line_end)
-                            < sel_b.max(right_start).min(line_end);
-                        (left_sel, right_sel)
-                    } else {
-                        (false, false)
-                    };
+                    // Reconstruct the full text without the marker so we can
+                    // apply selection-splitting on the full visual line.
+                    let full: String = left.clone() + &right;
                     let prompt_width = if has_prompt {
                         u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX)
                     } else {
                         0
                     };
+                    if sel_a < sel_b {
+                        let row_sel_start = sel_a - line_start;
+                        let row_sel_end = sel_b - line_start;
+                        let before_s: String = full.chars().take(row_sel_start).collect();
+                        let selected_s: String = full
+                            .chars()
+                            .skip(row_sel_start)
+                            .take(row_sel_end.saturating_sub(row_sel_start))
+                            .collect();
+                        let after_s: String = full.chars().skip(row_sel_end).collect();
+                        if !before_s.is_empty() {
+                            spans.push(Span::styled(before_s, text_style));
+                        }
+                        if !selected_s.is_empty() {
+                            spans.push(Span::styled(selected_s, sel_style));
+                        }
+                        if !after_s.is_empty() {
+                            spans.push(Span::styled(after_s, text_style));
+                        }
+                    } else {
+                        if !left.is_empty() {
+                            spans.push(Span::styled(left.clone(), text_style));
+                        }
+                        if !right.is_empty() {
+                            spans.push(Span::styled(right, text_style));
+                        }
+                    }
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
                     } else {
                         let left_width = text_display_width(&left);
-                        spans.push(Span::styled(
-                            left,
-                            if left_sel { sel_style } else { text_style },
-                        ));
                         let cursor_col =
                             prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
-                    }
-                    if !right.is_empty() {
-                        spans.push(Span::styled(
-                            right,
-                            if right_sel { sel_style } else { text_style },
-                        ));
                     }
                 } else if sel_a < sel_b {
                     let row_sel_start = sel_a - line_start;
@@ -2751,20 +2734,26 @@ fn run_loop(
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             if let Some(idx) = char_idx {
-                                state.set_input_cursor_line_col_by_char(idx);
-                                // Start a zero-width selection at the click
-                                // position so subsequent Drag events use the
-                                // click as the anchor, not the drag position.
-                                state.input_selection = Some((idx, idx));
+                                let cursor_idx = idx.saturating_sub(0);
+                                let anchor_idx = idx.saturating_sub(2);
+                                state.set_input_cursor_line_col_by_char(cursor_idx);
+                                state.input_selection = Some((anchor_idx, anchor_idx));
+                                state.input_click_anchor = Some(anchor_idx);
                                 state.selection.anchor = None;
                                 state.selection.end = None;
                             }
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
                             if let Some(idx) = char_idx {
-                                let anchor = state.input_selection.map_or(idx, |(a, _)| a.min(idx));
-                                let end = anchor.max(idx);
-                                state.input_selection = Some((anchor, end));
+                                let idx = idx.saturating_sub(1);
+                                // Use the immutable click anchor instead of
+                                // reading from input_selection, which might
+                                // have been modified by other event paths.
+                                if let Some(anchor) = state.input_click_anchor {
+                                    let a = anchor.min(idx);
+                                    let b = anchor.max(idx);
+                                    state.input_selection = Some((a, b));
+                                }
                                 state.selection.anchor = None;
                                 state.selection.end = None;
                             }
@@ -2783,10 +2772,15 @@ fn run_loop(
                                 }
                             }
                             state.input_selection = None;
+                            state.input_click_anchor = None;
                         }
                         _ => {
-                            // Any other click clears input selection.
-                            state.input_selection = None;
+                            // Mouse events that should clear the selection
+                            // (e.g. Up, Moved) should NOT clear it here —
+                            // doing so would wipe the anchor between Down
+                            // and the first Drag.  Selection is cleared
+                            // explicitly by cursor movement, new clicks,
+                            // or copy actions.
                         }
                     }
                 }
