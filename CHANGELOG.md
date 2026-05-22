@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-22
+
+### Added
+
+- **MCP server** (`acrawl mcp`) — built-in Model Context Protocol server over stdio. Replaces the old standalone `acrawl-mcp-server` binary; now a subcommand of the main `acrawl` binary following the `gopls mcp` / `docker mcp` / `nx mcp` convention.
+- **16 direct browser tools via MCP** — `navigate`, `click`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file` are callable directly by the MCP client. Each tool uses a persistent `BrowserContext` shared across the session.
+- **`run_goal` MCP tool** — autonomous agent mode: the MCP client hands off a natural-language crawl goal and acrawl drives it with its own internal LLM loop, returning structured results (summary, extracted data, step count). Requires LLM credentials.
+- **`acrawl mcp install`** — interactive IDE installer. Auto-detects installed IDEs (Claude Code, Cursor, Windsurf, VS Code/Copilot, OpenCode), presents a `dialoguer` checkbox picker (Space to toggle, Enter to confirm), and writes the correct MCP config for each. Supports global (user-level) and project-level config scopes. For Claude Code, delegates to `claude mcp add`; falls back to direct JSON merge for all other IDEs and as a fallback path.
+- **MCP startup banner** — `acrawl mcp` prints a human-readable "ready" message to stderr so users know the server is waiting for JSON-RPC when launched manually.
+
+### Fixed
+
+- **Blank `run_goal` goal rejected** — whitespace-only goal strings now return a `-32602` JSON-RPC error immediately instead of launching a crawl that would immediately fail (MCMR-JIM).
+- **`max_steps` range validated before clamping** — values above 200 were previously silently truncated by `.min(200)` before the range check, making it impossible to return an error for out-of-range inputs. The raw value is now validated first.
+- **Graceful browser startup failure** — on `acrawl mcp`, a Playwright launch failure now prints a human-readable error and `hint: run acrawl install-browser` instead of a raw Rust panic backtrace.
+- **Leading whitespace drained before transport detection** — pipes or proxies that flush whitespace bytes before the first MCP message byte no longer cause an `InvalidData` error. The reader now consumes whitespace-only fills in a loop before detecting framed vs line-delimited mode.
+- **`claude mcp remove` failures surfaced on re-install** — when `acrawl mcp install` retries a Claude Code entry (remove + re-add), errors from the remove step are now logged instead of silently discarded, preventing silent duplicate entries.
+- **Binary path canonicalization warning** — if `fs::canonicalize()` fails (dangling symlink, deleted binary, certain CI paths), the installer now warns that IDE configs will use the bare `acrawl` name and rely on PATH lookup.
+- **`allowed_tools` propagated to forked child agents** — when `run_goal` restricted an agent with `allowed_tools` and the LLM called `fork`, the child agent had no tool restrictions: it could call any tool and its system prompt advertised all 21 tools regardless. Both are now fixed: `fork.rs` propagates `allowed_tools` to the child and `CrawlerAgent::run()` filters `mvp_tool_specs()` by `allowed_tools` before building the system prompt.
+
+### Removed
+
+- **`list_builtin_tools` MCP tool** — exposed tool names that LLM clients would then hallucinate calling, causing wasted turns with `-32601` errors.
+- **`acrawl-mcp` workspace crate** — absorbed into `acrawl-cli` as the `mcp_server` and `mcp_install` modules. The release now ships one binary instead of two.
+
 ## [0.5.1] - 2026-05-21
 
 ### Removed
@@ -354,6 +379,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.6.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.0
 [0.5.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.1
 [0.5.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.0
 [0.4.9]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.4.9
