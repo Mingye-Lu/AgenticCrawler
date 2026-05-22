@@ -844,6 +844,8 @@ fn handle_tools_call(id: Option<Value>, params: Option<Value>) {
 /// Runs the MCP server over stdio, reading JSON-RPC requests from stdin and
 /// writing responses to stdout. Blocks until stdin is closed.
 pub fn run() {
+    eprintln!("{SERVER_NAME} v{SERVER_VERSION} ready (stdio transport, waiting for JSON-RPC)");
+
     let stdin = io::stdin().lock();
     let mut reader = BufReader::new(stdin);
 
