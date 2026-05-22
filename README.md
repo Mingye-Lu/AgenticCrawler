@@ -334,7 +334,26 @@ The server provides **17 tools** in two modes:
 
 **Transport:** stdio only (no SSE / HTTP / WebSocket in this release).
 
-**Example MCP client configuration** (e.g., `claude_desktop_config.json`, `.cursor/mcp.json`, or `.mcp.json`):
+#### Quick install
+
+```bash
+acrawl mcp install
+```
+
+Interactive installer that auto-detects your IDEs, lets you toggle which to configure (Space to select, Enter to confirm), and writes the correct config for each. Supports global (user-level) and project-level scopes.
+
+Supported IDEs: **Claude Code**, **Cursor**, **Windsurf**, **VS Code (Copilot)**, **OpenCode**.
+
+#### Manual configuration
+
+If you prefer to configure manually, add this to your IDE's MCP config file:
+
+<table>
+<tr><th>IDE</th><th>Config file</th><th>Configuration</th></tr>
+<tr>
+<td>Claude Code</td>
+<td><code>.mcp.json</code> (project)<br><code>~/.claude.json</code> (user)</td>
+<td rowspan="3">
 
 ```json
 {
@@ -345,6 +364,54 @@ The server provides **17 tools** in two modes:
     }
   }
 }
+```
+
+</td>
+</tr>
+<tr><td>Cursor</td><td><code>.cursor/mcp.json</code></td></tr>
+<tr><td>Windsurf</td><td><code>~/.codeium/windsurf/mcp_config.json</code></td></tr>
+<tr>
+<td>VS Code (Copilot)</td>
+<td><code>.vscode/mcp.json</code></td>
+<td>
+
+```json
+{
+  "servers": {
+    "acrawl": {
+      "command": "acrawl",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+</td>
+</tr>
+<tr>
+<td>OpenCode</td>
+<td><code>opencode.json</code></td>
+<td>
+
+```json
+{
+  "mcp": {
+    "acrawl": {
+      "type": "local",
+      "command": ["acrawl", "mcp"]
+    }
+  }
+}
+```
+
+</td>
+</tr>
+</table>
+
+Or via the Claude Code CLI directly:
+
+```bash
+claude mcp add acrawl -- acrawl mcp
 ```
 
 The browser tools share a persistent session across calls. `run_goal` creates its own isolated agent and browser.
@@ -359,6 +426,7 @@ acrawl [OPTIONS] [COMMAND]
 Commands:
   prompt <text>      Run a single goal non-interactively
   mcp                Start MCP server (stdio transport)
+  mcp install        Install MCP config into your IDEs interactively
   auth [provider]    Configure provider credentials
   system-prompt      Print the system prompt (for debugging)
 
