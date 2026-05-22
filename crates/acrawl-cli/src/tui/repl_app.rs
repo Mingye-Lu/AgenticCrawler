@@ -673,23 +673,6 @@ impl ReplTuiState {
             self.input.preferred_col = self.input.preferred_col.or(Some(0));
             return;
         }
-        let (prev_start, prev_width) = vis[cur_vis - 1];
-        let raw_prev_end = vis[cur_vis].0; // next visual line's start = this line's end
-        // If the char just before raw_prev_end is \n, the newline is a visual
-        // line separator, not part of this visual line's visible content.
-        let prev_end = if raw_prev_end > 0
-            && self.input.text.chars().nth(raw_prev_end.saturating_sub(1)) == Some('\n')
-        {
-            raw_prev_end.saturating_sub(1)
-        } else {
-            raw_prev_end
-        };
-        // Empty visual line (e.g. blank paragraph) → land at its start.
-        if prev_width == 0 {
-            self.set_input_cursor_line_col_by_char(prev_start);
-            self.input.preferred_col = self.input.preferred_col.or(Some(0));
-            return;
-        }
         let cur_start = vis[cur_vis].0;
         let cur_end = vis.get(cur_vis + 1).map_or(self.input_char_len(), |v| v.0);
         let cur_offset = cur_char.saturating_sub(cur_start);
@@ -703,6 +686,21 @@ impl ReplTuiState {
             .map(char_display_width)
             .sum::<usize>();
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
+
+        let (prev_start, prev_width) = vis[cur_vis - 1];
+        let raw_prev_end = vis[cur_vis].0;
+        let prev_end = if raw_prev_end > 0
+            && self.input.text.chars().nth(raw_prev_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_prev_end.saturating_sub(1)
+        } else {
+            raw_prev_end
+        };
+        if prev_width == 0 {
+            self.set_input_cursor_line_col_by_char(prev_start);
+            self.input.preferred_col = Some(preferred_col);
+            return;
+        }
         let target_col = preferred_col.min(prev_width);
         let prev_text: String = self
             .input
@@ -753,21 +751,6 @@ impl ReplTuiState {
             self.input.preferred_col = self.input.preferred_col.or(Some(width));
             return;
         }
-        let (next_start, next_width) = vis[cur_vis + 1];
-        let raw_next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
-        let next_end = if raw_next_end > 0
-            && self.input.text.chars().nth(raw_next_end.saturating_sub(1)) == Some('\n')
-        {
-            raw_next_end.saturating_sub(1)
-        } else {
-            raw_next_end
-        };
-        // Empty visual line → land at its start.
-        if next_width == 0 {
-            self.set_input_cursor_line_col_by_char(next_start);
-            self.input.preferred_col = self.input.preferred_col.or(Some(0));
-            return;
-        }
         let cur_start = vis[cur_vis].0;
         let cur_end = vis[cur_vis + 1].0;
         let cur_offset = cur_char.saturating_sub(cur_start);
@@ -780,7 +763,24 @@ impl ReplTuiState {
             .take(clamped_offset)
             .map(char_display_width)
             .sum::<usize>();
+        // Resolve preferred column from current position (or previous nav).
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
+
+        let (next_start, next_width) = vis[cur_vis + 1];
+        let raw_next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
+        let next_end = if raw_next_end > 0
+            && self.input.text.chars().nth(raw_next_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_next_end.saturating_sub(1)
+        } else {
+            raw_next_end
+        };
+        // Empty visual line → land at its start; keep preferred_col.
+        if next_width == 0 {
+            self.set_input_cursor_line_col_by_char(next_start);
+            self.input.preferred_col = Some(preferred_col);
+            return;
+        }
         let target_col = preferred_col.min(next_width);
         let next_text: String = self
             .input
