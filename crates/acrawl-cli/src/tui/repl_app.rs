@@ -674,7 +674,22 @@ impl ReplTuiState {
             return;
         }
         let (prev_start, prev_width) = vis[cur_vis - 1];
-        let prev_end = vis[cur_vis].0; // next visual line's start = this line's end
+        let raw_prev_end = vis[cur_vis].0; // next visual line's start = this line's end
+        // If the char just before raw_prev_end is \n, the newline is a visual
+        // line separator, not part of this visual line's visible content.
+        let prev_end = if raw_prev_end > 0
+            && self.input.text.chars().nth(raw_prev_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_prev_end.saturating_sub(1)
+        } else {
+            raw_prev_end
+        };
+        // Empty visual line (e.g. blank paragraph) → land at its start.
+        if prev_width == 0 {
+            self.set_input_cursor_line_col_by_char(prev_start);
+            self.input.preferred_col = self.input.preferred_col.or(Some(0));
+            return;
+        }
         let cur_start = vis[cur_vis].0;
         let cur_end = vis.get(cur_vis + 1).map_or(self.input_char_len(), |v| v.0);
         let cur_offset = cur_char.saturating_sub(cur_start);
@@ -739,7 +754,20 @@ impl ReplTuiState {
             return;
         }
         let (next_start, next_width) = vis[cur_vis + 1];
-        let next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
+        let raw_next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
+        let next_end = if raw_next_end > 0
+            && self.input.text.chars().nth(raw_next_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_next_end.saturating_sub(1)
+        } else {
+            raw_next_end
+        };
+        // Empty visual line → land at its start.
+        if next_width == 0 {
+            self.set_input_cursor_line_col_by_char(next_start);
+            self.input.preferred_col = self.input.preferred_col.or(Some(0));
+            return;
+        }
         let cur_start = vis[cur_vis].0;
         let cur_end = vis[cur_vis + 1].0;
         let cur_offset = cur_char.saturating_sub(cur_start);
@@ -767,18 +795,8 @@ impl ReplTuiState {
     }
 
     /// Set cursor directly by character index (used by visual-line nav).
-    /// Snaps back from `\n` so the cursor never lands on the invisible separator.
     fn set_input_cursor_line_col_by_char(&mut self, char_idx: usize) {
-        let mut target = char_idx.min(self.input_char_len());
-        if target > 0 {
-            // Check the character just before target; if _it_ is \n then the
-            // computed col_chars included the \n as a zero-width char — snap
-            // back one more position to stay before the newline.
-            if self.input.text.chars().nth(target) == Some('\n') {
-                target = target.saturating_sub(1);
-            }
-        }
-        self.input.cursor = target;
+        self.input.cursor = char_idx.min(self.input_char_len());
         self.resync_byte_cursor();
         self.input_scroll_offset = usize::MAX;
     }
