@@ -221,6 +221,15 @@ fn install_claude_code_global(acrawl_path: &str) -> io::Result<String> {
         if status.success() {
             return Ok("configured via `claude mcp add`".to_string());
         }
+        let _ = Command::new("claude")
+            .args(["mcp", "remove", "acrawl"])
+            .status();
+        let retry = Command::new("claude")
+            .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
+            .status()?;
+        if retry.success() {
+            return Ok("updated via `claude mcp add` (replaced existing)".to_string());
+        }
     }
     let home = home_dir()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine home dir"))?;
