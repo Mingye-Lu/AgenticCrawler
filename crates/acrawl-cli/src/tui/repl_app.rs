@@ -310,14 +310,19 @@ impl ReplTuiState {
         FRAMES[usize::from(self.spinner_tick) % FRAMES.len()]
     }
 
-    /// Context-aware placeholder shown when the input box is empty.
-    fn input_placeholder(&self) -> &'static str {
+    fn input_placeholder(&self) -> String {
         if self.busy {
-            "AgenticCrawler is working…  (you can queue your next prompt)"
-        } else if self.ui_state == AppUiState::WelcomeMode {
-            "What is our goal today?"
+            return "AgenticCrawler is working…  (you can queue your next prompt)".to_string();
+        }
+        if let Some(ref info) = self.update_info {
+            if info.is_outdated {
+                return format!("Update v{} available (you have v{})", info.latest_version, info.current_version);
+            }
+        }
+        if self.ui_state == AppUiState::WelcomeMode {
+            "What is our goal today?".to_string()
         } else {
-            "Any follow-up instructions?"
+            "Any follow-up instructions?".to_string()
         }
     }
 
@@ -766,7 +771,7 @@ impl ReplTuiState {
             input_with_caret.insert(caret_idx, INPUT_CARET_MARKER);
         }
         let source = if is_placeholder {
-            placeholder_text.to_owned()
+            placeholder_text
         } else {
             input_with_caret
         };
