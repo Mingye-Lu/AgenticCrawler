@@ -294,29 +294,17 @@ fn install_vscode(acrawl_path: &str, scope: Scope) -> io::Result<String> {
     Ok(format!("wrote {}", config_path.display()))
 }
 
+fn global_opencode_config_path() -> PathBuf {
+    home_dir()
+        .unwrap_or_default()
+        .join(".config")
+        .join("opencode")
+        .join("opencode.jsonc")
+}
+
 fn install_opencode(acrawl_path: &str, scope: Scope) -> io::Result<String> {
     let config_path = match scope {
-        Scope::Global => {
-            let config_dir = if cfg!(windows) {
-                env::var_os("APPDATA")
-                    .map_or_else(
-                        || {
-                            home_dir()
-                                .unwrap_or_default()
-                                .join("AppData")
-                                .join("Roaming")
-                        },
-                        PathBuf::from,
-                    )
-                    .join("opencode")
-            } else {
-                home_dir()
-                    .unwrap_or_default()
-                    .join(".config")
-                    .join("opencode")
-            };
-            config_dir.join("opencode.json")
-        }
+        Scope::Global => global_opencode_config_path(),
         Scope::Project => PathBuf::from("opencode.json"),
     };
 
@@ -477,6 +465,16 @@ mod tests {
         assert!(content["mcp"]["acrawl"]["command"].is_array());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opencode_global_config_path_matches_documented_location() {
+        let home = home_dir().expect("home dir should exist for test");
+        let expected = home.join(".config").join("opencode").join("opencode.jsonc");
+
+        let actual = global_opencode_config_path();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

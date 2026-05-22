@@ -294,13 +294,15 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             purge: rest.iter().any(|a| a == "--purge"),
         }),
         "install-browser" => Ok(CliAction::InstallBrowser),
-        "mcp" => {
-            if rest.get(1).map(String::as_str) == Some("install") {
-                Ok(CliAction::McpInstall)
-            } else {
-                Ok(CliAction::Mcp)
-            }
-        }
+        "mcp" => match rest.get(1).map(String::as_str) {
+            None => Ok(CliAction::Mcp),
+            Some("install") if rest.len() == 2 => Ok(CliAction::McpInstall),
+            Some("--help" | "-h" | "help") if rest.len() == 2 => Ok(CliAction::Help),
+            Some("install") => Err("`acrawl mcp install` does not accept extra arguments".to_string()),
+            Some(other) => Err(format!(
+                "unknown mcp subcommand: {other} (supported: install)"
+            )),
+        },
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {
@@ -652,6 +654,10 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "      Configure credentials for a provider interactively"
     )?;
     writeln!(out, "  acrawl update")?;
+    writeln!(out, "  acrawl mcp")?;
+    writeln!(out, "      Start the built-in MCP server over stdio")?;
+    writeln!(out, "  acrawl mcp install")?;
+    writeln!(out, "      Configure supported IDEs to launch `acrawl mcp`")?;
     writeln!(out, "  acrawl install-browser")?;
     writeln!(
         out,
@@ -1113,11 +1119,55 @@ mod tests {
     }
 
     #[test]
+    fn parses_mcp_subcommand() {
+        assert_eq!(
+            parse_args(&["mcp".to_string()]).expect("mcp"),
+            CliAction::Mcp
+        );
+    }
+
+    #[test]
+    fn parses_mcp_install_subcommand() {
+        assert_eq!(
+            parse_args(&["mcp".to_string(), "install".to_string()]).expect("mcp install"),
+            CliAction::McpInstall
+        );
+    }
+
+    #[test]
+    fn parses_mcp_help_as_global_help() {
+        assert_eq!(
+            parse_args(&["mcp".to_string(), "--help".to_string()]).expect("mcp help"),
+            CliAction::Help
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_mcp_subcommand() {
+        let err = parse_args(&["mcp".to_string(), "bogus".to_string()])
+            .expect_err("unknown mcp subcommand should fail");
+        assert!(err.contains("unknown mcp subcommand: bogus"));
+    }
+
+    #[test]
+    fn rejects_extra_args_for_mcp_install() {
+        let err = parse_args(&[
+            "mcp".to_string(),
+            "install".to_string(),
+            "extra".to_string(),
+        ])
+        .expect_err("mcp install extra args should fail");
+        assert!(err.contains("does not accept extra arguments"));
+    }
+
+    #[test]
     fn uninstall_help_mentions_purge() {
         let mut help = Vec::new();
         print_help_to(&mut help).expect("help should render");
         let help = String::from_utf8(help).expect("help should be utf8");
         assert!(help.contains("acrawl uninstall"));
         assert!(help.contains("--purge"));
+        assert!(help.contains("acrawl mcp"));
+        assert!(help.contains("acrawl mcp install"));
     }
 }
