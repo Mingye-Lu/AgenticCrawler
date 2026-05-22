@@ -167,6 +167,14 @@ struct InputEditorState {
     preferred_col: Option<usize>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InputUndoSnapshot {
+    text: String,
+    cursor: usize,
+    preferred_col: Option<usize>,
+    selection: Option<(usize, usize)>,
+}
+
 #[derive(Default)]
 pub(super) struct SelectionState {
     pub(super) anchor: Option<(u16, usize)>,
@@ -239,6 +247,8 @@ pub(super) struct ReplTuiState {
     /// treated as a paste newline).  Used together with `paste_buffer` above to
     /// detect burst boundaries.
     last_key_time: Option<Instant>,
+    input_undo_stack: Vec<InputUndoSnapshot>,
+    input_redo_stack: Vec<InputUndoSnapshot>,
     last_esc_at: Option<Instant>,
     pub(super) debug_mode: bool,
     pub(super) update_info: Option<runtime::update_check::UpdateInfo>,
@@ -299,6 +309,8 @@ impl ReplTuiState {
             selection: SelectionState::default(),
             paste_buffer: None,
             last_key_time: None,
+            input_undo_stack: Vec::new(),
+            input_redo_stack: Vec::new(),
             last_esc_at: None,
             debug_mode: false,
             update_info: None,
@@ -399,6 +411,57 @@ impl ReplTuiState {
     /// cleanly separates programmatic paste from even the fastest typists.
     const PASTE_THRESHOLD_MS: u64 = 30;
 
+    fn current_input_snapshot(&self) -> InputUndoSnapshot {
+        InputUndoSnapshot {
+            text: self.input.text.clone(),
+            cursor: self.input.cursor,
+            preferred_col: self.input.preferred_col,
+            selection: self.input_selection,
+        }
+    }
+
+    fn apply_input_snapshot(&mut self, snapshot: InputUndoSnapshot) {
+        self.input_scroll_manual = false;
+        self.input.text = snapshot.text;
+        self.input.cursor = snapshot.cursor.min(self.input_char_len());
+        self.input.preferred_col = snapshot.preferred_col;
+        self.input_selection = snapshot.selection;
+        self.input_click_anchor = None;
+        self.resync_byte_cursor();
+        self.input_scroll_offset = usize::MAX;
+    }
+
+    fn record_input_undo_snapshot(&mut self) {
+        let snapshot = self.current_input_snapshot();
+        if self.input_undo_stack.last() != Some(&snapshot) {
+            self.input_undo_stack.push(snapshot);
+        }
+        self.input_redo_stack.clear();
+    }
+
+    fn clear_input_history(&mut self) {
+        self.input_undo_stack.clear();
+        self.input_redo_stack.clear();
+    }
+
+    fn undo_input_edit(&mut self) -> bool {
+        let Some(snapshot) = self.input_undo_stack.pop() else {
+            return false;
+        };
+        self.input_redo_stack.push(self.current_input_snapshot());
+        self.apply_input_snapshot(snapshot);
+        true
+    }
+
+    fn redo_input_edit(&mut self) -> bool {
+        let Some(snapshot) = self.input_redo_stack.pop() else {
+            return false;
+        };
+        self.input_undo_stack.push(self.current_input_snapshot());
+        self.apply_input_snapshot(snapshot);
+        true
+    }
+
     /// If a paste burst is active, flush the accumulated characters into the
     /// input buffer by concatenating prefix + `pasted_text` + suffix directly
     /// (avoids the O(n) `insert_str` tail-shift and `text.chars().count()`).
@@ -410,6 +473,7 @@ impl ReplTuiState {
                 return;
             }
             self.clamp_input_cursor();
+            self.record_input_undo_snapshot();
             let prefix = &self.input.text[..self.input.byte_cursor];
             let suffix = &self.input.text[self.input.byte_cursor..];
             // Compute UTF-8 byte length of pasted chars while building the
@@ -496,12 +560,14 @@ impl ReplTuiState {
 
     fn cut_input_selection_text(&mut self) -> Option<String> {
         let text = self.selected_input_text()?.to_string();
+        self.record_input_undo_snapshot();
         self.delete_selection_range();
         Some(text)
     }
 
     fn insert_input_char(&mut self, ch: char) {
         self.input_scroll_manual = false;
+        self.record_input_undo_snapshot();
         self.delete_selection_range();
         self.clamp_input_cursor();
         self.input.text.insert(self.input.byte_cursor, ch);
@@ -513,6 +579,10 @@ impl ReplTuiState {
 
     fn insert_input_str(&mut self, text: &str) {
         self.input_scroll_manual = false;
+        if text.is_empty() {
+            return;
+        }
+        self.record_input_undo_snapshot();
         self.delete_selection_range();
         self.clamp_input_cursor();
         self.input.text.insert_str(self.input.byte_cursor, text);
@@ -525,12 +595,14 @@ impl ReplTuiState {
 
     fn backspace_input_char(&mut self) {
         self.input_scroll_manual = false;
-        // If selection is active, delete it instead of a single char.
-        if self.delete_selection_range() {
+        let had_selection = self.input_selection.is_some();
+        self.clamp_input_cursor();
+        if !had_selection && self.input.cursor == 0 {
             return;
         }
-        self.clamp_input_cursor();
-        if self.input.cursor == 0 {
+        self.record_input_undo_snapshot();
+        // If selection is active, delete it instead of a single char.
+        if self.delete_selection_range() {
             return;
         }
         // Find byte-offset of the character before cursor
@@ -556,11 +628,13 @@ impl ReplTuiState {
 
     fn delete_input_char(&mut self) {
         self.input_scroll_manual = false;
-        if self.delete_selection_range() {
+        let had_selection = self.input_selection.is_some();
+        self.clamp_input_cursor();
+        if !had_selection && self.input.cursor >= self.input_char_len() {
             return;
         }
-        self.clamp_input_cursor();
-        if self.input.cursor >= self.input_char_len() {
+        self.record_input_undo_snapshot();
+        if self.delete_selection_range() {
             return;
         }
         // Find byte-offset of the character after cursor
@@ -2905,8 +2979,33 @@ fn run_loop(
                     && key.code == KeyCode::Char('a')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
+                    state.flush_paste_buffer();
                     state.select_all_input();
                     state.wake_input_caret();
+                    continue;
+                }
+
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('z')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.flush_paste_buffer();
+                    if state.undo_input_edit() {
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
+                    continue;
+                }
+
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('y')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.flush_paste_buffer();
+                    if state.redo_input_edit() {
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    }
                     continue;
                 }
 
@@ -3368,6 +3467,7 @@ fn run_loop(
                             let trimmed = state.input.text.trim().to_string();
                             if let Some(selected) = state.selected_slash_command() {
                                 if selected != trimmed {
+                                    state.record_input_undo_snapshot();
                                     state.input.text = selected;
                                     state.input.text.push(' ');
                                     state.input.cursor = state.input.text.chars().count();
@@ -3384,6 +3484,7 @@ fn run_loop(
                         state.input.cursor = 0;
                         state.input.preferred_col = None;
                         state.input_scroll_offset = 0;
+                        state.clear_input_history();
                         let trimmed = line.trim().to_string();
                         state.refresh_slash_overlay();
                         if trimmed.is_empty() {
@@ -3477,6 +3578,7 @@ fn run_loop(
                             continue;
                         }
                         if let Some(selected) = state.selected_slash_command() {
+                            state.record_input_undo_snapshot();
                             state.input.text = selected;
                             state.input.text.push(' ');
                             state.input.cursor = state.input.text.chars().count();
@@ -3492,6 +3594,7 @@ fn run_loop(
                                 .filter(|candidate| candidate.starts_with(&prefix))
                                 .collect();
                             if matches.len() == 1 {
+                                state.record_input_undo_snapshot();
                                 state.input.text.clone_from(&matches[0]);
                                 state.input.text.push(' ');
                                 state.input.cursor = state.input.text.chars().count();
@@ -3841,6 +3944,42 @@ mod tests {
         assert_eq!(state.input.text, "cd");
         assert_eq!(state.input.cursor, 0);
         assert_eq!(state.input_selection, None);
+    }
+
+    #[test]
+    fn undo_redo_input_insert_round_trip() {
+        let mut state = ReplTuiState::new();
+
+        state.insert_input_str("hello");
+        assert_eq!(state.input.text, "hello");
+
+        assert!(state.undo_input_edit());
+        assert_eq!(state.input.text, "");
+        assert_eq!(state.input.cursor, 0);
+
+        assert!(state.redo_input_edit());
+        assert_eq!(state.input.text, "hello");
+        assert_eq!(state.input.cursor, 5);
+    }
+
+    #[test]
+    fn undo_redo_restores_cut_input_selection() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "ab\ncd".to_string();
+        state.input.cursor = 5;
+        state.resync_byte_cursor();
+        state.input_selection = Some((0, 3));
+
+        let cut = state.cut_input_selection_text();
+
+        assert_eq!(cut.as_deref(), Some("ab\n"));
+        assert!(state.undo_input_edit());
+        assert_eq!(state.input.text, "ab\ncd");
+        assert_eq!(state.input_selection, Some((0, 3)));
+
+        assert!(state.redo_input_edit());
+        assert_eq!(state.input.text, "cd");
+        assert_eq!(state.input.cursor, 0);
     }
 
     #[test]
