@@ -314,6 +314,13 @@ fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOu
             message: "missing required parameter: goal".to_string(),
         });
     };
+    let goal = goal.trim();
+    if goal.is_empty() {
+        return Err(RunGoalOutcome::JsonRpcError {
+            code: -32602,
+            message: "goal must not be empty".to_string(),
+        });
+    }
 
     let model = resolve_model(arguments.get("model").and_then(Value::as_str)).map_err(|error| {
         RunGoalOutcome::JsonRpcError {
@@ -1140,6 +1147,22 @@ mod tests {
         assert_eq!(request.model, "anthropic/claude-sonnet-4-6");
         assert_eq!(request.allowed_tools, vec!["navigate", "read_content"]);
         assert_eq!(request.max_steps, Some(7));
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_blank_goal() {
+        let outcome = parse_run_goal_request(&json!({
+            "goal": "   ",
+            "model": "anthropic/claude-sonnet-4-6"
+        }));
+
+        assert_eq!(
+            outcome,
+            Err(RunGoalOutcome::JsonRpcError {
+                code: -32602,
+                message: "goal must not be empty".to_string(),
+            })
+        );
     }
 
     #[test]
