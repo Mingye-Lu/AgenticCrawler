@@ -51,14 +51,12 @@ pub enum SessionModalOutcome {
 struct RenameState {
     id: String,
     path: PathBuf,
-    buffer: String,
-    cursor: usize,
+    buffer_field: crate::tui::input_field::InputField,
 }
 
 pub struct SessionModal {
     entries: Vec<SessionModalEntry>,
-    filter: String,
-    filter_cursor: usize,
+    filter_field: crate::tui::input_field::InputField,
     selected_idx: usize,
     pending_delete: Option<String>,
     rename_mode: Option<RenameState>,
@@ -71,8 +69,7 @@ impl SessionModal {
         entries.sort_by_key(|e| std::cmp::Reverse(e.modified_epoch_secs));
         Self {
             entries,
-            filter: String::new(),
-            filter_cursor: 0,
+            filter_field: crate::tui::input_field::InputField::new(),
             selected_idx: 0,
             pending_delete: None,
             rename_mode: None,
@@ -111,22 +108,12 @@ impl SessionModal {
         }
     }
 
-    fn filter_len(&self) -> usize {
-        self.filter.chars().count()
-    }
-
-    fn filter_cursor_byte(&self) -> usize {
-        self.filter
-            .char_indices()
-            .nth(self.filter_cursor)
-            .map_or(self.filter.len(), |(idx, _)| idx)
-    }
-
     fn filtered_indices(&self) -> Vec<usize> {
-        if self.filter.is_empty() {
+        let filter = self.filter_field.text();
+        if filter.is_empty() {
             return (0..self.entries.len()).collect();
         }
-        let needle = self.filter.to_lowercase();
+        let needle = self.filter_field.text().to_lowercase();
         self.entries
             .iter()
             .enumerate()
@@ -165,41 +152,17 @@ impl SessionModal {
     }
 
     fn filter_handle_char(&mut self, c: char) {
-        let byte = self.filter_cursor_byte();
-        self.filter.insert(byte, c);
-        self.filter_cursor = self.filter_cursor.saturating_add(1);
+        self.filter_field.insert_char(c);
         self.selected_idx = 0;
     }
 
     fn filter_backspace(&mut self) {
-        if self.filter_cursor == 0 {
-            return;
-        }
-        let remove = self.filter_cursor - 1;
-        if let Some((start, _)) = self.filter.char_indices().nth(remove) {
-            let end = self
-                .filter
-                .char_indices()
-                .nth(remove + 1)
-                .map_or(self.filter.len(), |(i, _)| i);
-            self.filter.replace_range(start..end, "");
-            self.filter_cursor -= 1;
-        }
+        self.filter_field.backspace();
         self.selected_idx = 0;
     }
 
     fn filter_delete(&mut self) {
-        if self.filter_cursor >= self.filter_len() {
-            return;
-        }
-        if let Some((start, _)) = self.filter.char_indices().nth(self.filter_cursor) {
-            let end = self
-                .filter
-                .char_indices()
-                .nth(self.filter_cursor + 1)
-                .map_or(self.filter.len(), |(i, _)| i);
-            self.filter.replace_range(start..end, "");
-        }
+        self.filter_field.delete();
         self.selected_idx = 0;
     }
 
@@ -208,55 +171,24 @@ impl SessionModal {
             return;
         };
         let buffer = entry.title.clone().unwrap_or_default();
-        let cursor = buffer.chars().count();
         self.rename_mode = Some(RenameState {
             id: entry.id.clone(),
             path: entry.path.clone(),
-            buffer,
-            cursor,
+            buffer_field: crate::tui::input_field::InputField::new().with_text(buffer),
         });
         self.pending_delete = None;
     }
 
     fn rename_handle_char(state: &mut RenameState, c: char) {
-        let byte = state
-            .buffer
-            .char_indices()
-            .nth(state.cursor)
-            .map_or(state.buffer.len(), |(i, _)| i);
-        state.buffer.insert(byte, c);
-        state.cursor = state.cursor.saturating_add(1);
+        state.buffer_field.insert_char(c);
     }
 
     fn rename_backspace(state: &mut RenameState) {
-        if state.cursor == 0 {
-            return;
-        }
-        let remove = state.cursor - 1;
-        if let Some((start, _)) = state.buffer.char_indices().nth(remove) {
-            let end = state
-                .buffer
-                .char_indices()
-                .nth(remove + 1)
-                .map_or(state.buffer.len(), |(i, _)| i);
-            state.buffer.replace_range(start..end, "");
-            state.cursor -= 1;
-        }
+        state.buffer_field.backspace();
     }
 
     fn rename_delete(state: &mut RenameState) {
-        let len = state.buffer.chars().count();
-        if state.cursor >= len {
-            return;
-        }
-        if let Some((start, _)) = state.buffer.char_indices().nth(state.cursor) {
-            let end = state
-                .buffer
-                .char_indices()
-                .nth(state.cursor + 1)
-                .map_or(state.buffer.len(), |(i, _)| i);
-            state.buffer.replace_range(start..end, "");
-        }
+        state.buffer_field.delete();
     }
 
     fn handle_rename_key(&mut self, key: KeyEvent) -> ModalAction {
@@ -272,7 +204,7 @@ impl SessionModal {
                 ModalAction::Consumed
             }
             KeyCode::Enter => {
-                let title = state.buffer.trim().to_string();
+                let title = state.buffer_field.text().trim().to_string();
                 let id = state.id.clone();
                 let path = state.path.clone();
                 self.rename_mode = None;
@@ -287,20 +219,19 @@ impl SessionModal {
                 ModalAction::Consumed
             }
             KeyCode::Left => {
-                state.cursor = state.cursor.saturating_sub(1);
+                state.buffer_field.move_cursor_left();
                 ModalAction::Consumed
             }
             KeyCode::Right => {
-                let len = state.buffer.chars().count();
-                state.cursor = state.cursor.saturating_add(1).min(len);
+                state.buffer_field.move_cursor_right();
                 ModalAction::Consumed
             }
             KeyCode::Home => {
-                state.cursor = 0;
+                state.buffer_field.move_cursor_home();
                 ModalAction::Consumed
             }
             KeyCode::End => {
-                state.cursor = state.buffer.chars().count();
+                state.buffer_field.move_cursor_end();
                 ModalAction::Consumed
             }
             KeyCode::Backspace => {
@@ -359,18 +290,23 @@ impl Modal for SessionModal {
             let prefix = "✏️  rename: ";
             let line = Line::from(vec![
                 Span::raw(prefix),
-                Span::styled(state.buffer.clone(), Style::default().fg(Color::White)),
+                Span::styled(
+                    state.buffer_field.text().to_string(),
+                    Style::default().fg(Color::White),
+                ),
             ]);
             frame.render_widget(Paragraph::new(line), input_area);
-            let cursor_col =
-                text_display_width(prefix) + prefix_display_width(&state.buffer, state.cursor);
+            let cursor_col = text_display_width(prefix)
+                + prefix_display_width(state.buffer_field.text(), state.buffer_field.cursor());
             let cursor_x = input_area
                 .x
                 .saturating_add(u16::try_from(cursor_col).unwrap_or(u16::MAX))
                 .min(input_area.right().saturating_sub(1));
             frame.set_cursor_position((cursor_x, input_area.y));
         } else {
-            let filter_text = if self.filter.is_empty() {
+            let filter = self.filter_field.text();
+            let filter_cursor = self.filter_field.cursor();
+            let filter_text = if filter.is_empty() {
                 Line::from(vec![
                     Span::raw("🔍 "),
                     Span::styled(
@@ -383,14 +319,14 @@ impl Modal for SessionModal {
             } else {
                 Line::from(vec![
                     Span::raw("🔍 "),
-                    Span::styled(self.filter.clone(), Style::default().fg(Color::White)),
+                    Span::styled(filter.to_string(), Style::default().fg(Color::White)),
                 ])
             };
             frame.render_widget(Paragraph::new(filter_text), input_area);
-            let cursor_col = if self.filter.is_empty() {
+            let cursor_col = if filter.is_empty() {
                 text_display_width("🔍 ")
             } else {
-                text_display_width("🔍 ") + prefix_display_width(&self.filter, self.filter_cursor)
+                text_display_width("🔍 ") + prefix_display_width(filter, filter_cursor)
             };
             let cursor_x = input_area
                 .x
@@ -507,11 +443,10 @@ impl Modal for SessionModal {
 
         match key.code {
             KeyCode::Esc => {
-                if self.filter.is_empty() && self.pending_delete.is_none() {
+                if self.filter_field.is_empty() && self.pending_delete.is_none() {
                     ModalAction::Dismiss
                 } else {
-                    self.filter.clear();
-                    self.filter_cursor = 0;
+                    self.filter_field.clear();
                     self.selected_idx = 0;
                     self.pending_delete = None;
                     ModalAction::Consumed
@@ -545,19 +480,19 @@ impl Modal for SessionModal {
                 ModalAction::Consumed
             }
             KeyCode::Left => {
-                self.filter_cursor = self.filter_cursor.saturating_sub(1);
+                self.filter_field.move_cursor_left();
                 ModalAction::Consumed
             }
             KeyCode::Right => {
-                self.filter_cursor = (self.filter_cursor + 1).min(self.filter_len());
+                self.filter_field.move_cursor_right();
                 ModalAction::Consumed
             }
             KeyCode::Home => {
-                self.filter_cursor = 0;
+                self.filter_field.move_cursor_home();
                 ModalAction::Consumed
             }
             KeyCode::End => {
-                self.filter_cursor = self.filter_len();
+                self.filter_field.move_cursor_end();
                 ModalAction::Consumed
             }
             KeyCode::Char('x') if ctrl => {
