@@ -662,7 +662,8 @@ impl ReplTuiState {
     fn visual_line_info(&self, safe_width: usize) -> Vec<(usize, usize)> {
         let mut lines = Vec::new();
         let mut char_idx = 0usize;
-        for (logical_idx, logical_line) in self.input.text.split('\n').enumerate() {
+        let parts: Vec<&str> = self.input.text.split('\n').collect();
+        for (logical_idx, logical_line) in parts.iter().enumerate() {
             let logical_chars: Vec<char> = logical_line.chars().collect();
             let prompt_offset = if logical_idx == 0 { 2usize } else { 0 };
             let first_cap = safe_width.saturating_sub(prompt_offset);
@@ -695,7 +696,11 @@ impl ReplTuiState {
                 }
                 offset = end;
             }
-            char_idx += logical_chars.len() + 1; // +1 for the \n separator
+            char_idx += logical_chars.len();
+            // Only add 1 for the newline separator if this is not the last part
+            if logical_idx < parts.len() - 1 {
+                char_idx += 1;
+            }
         }
         lines
     }
@@ -879,9 +884,26 @@ impl ReplTuiState {
             return Some(start);
         }
         let target_col = widget_col.saturating_sub(prompt).min(width);
+        // Compute the char end of this visual line.  The next visual line's
+        // start gives the exclusive end; subtract 1 if the intervening char
+        // is \n (the line separator is not part of either visual line).
+        let raw_end = vis.get(abs_row + 1).map_or(self.input_char_len(), |v| v.0);
+        let line_end = if raw_end > start
+            && self.input.text.chars().nth(raw_end.saturating_sub(1)) == Some('\n')
+        {
+            raw_end.saturating_sub(1)
+        } else {
+            raw_end
+        };
         let mut char_idx = start;
         let mut col = 0usize;
-        for ch in self.input.text.chars().skip(start) {
+        for ch in self
+            .input
+            .text
+            .chars()
+            .skip(start)
+            .take(line_end.saturating_sub(start))
+        {
             let cw = char_display_width(ch);
             if col + cw > target_col {
                 break;
@@ -2734,21 +2756,15 @@ fn run_loop(
                         }
                         MouseEventKind::Down(MouseButton::Left) => {
                             if let Some(idx) = char_idx {
-                                let cursor_idx = idx.saturating_sub(0);
-                                let anchor_idx = idx.saturating_sub(2);
-                                state.set_input_cursor_line_col_by_char(cursor_idx);
-                                state.input_selection = Some((anchor_idx, anchor_idx));
-                                state.input_click_anchor = Some(anchor_idx);
+                                state.set_input_cursor_line_col_by_char(idx);
+                                state.input_selection = Some((idx, idx));
+                                state.input_click_anchor = Some(idx);
                                 state.selection.anchor = None;
                                 state.selection.end = None;
                             }
                         }
                         MouseEventKind::Drag(MouseButton::Left) => {
                             if let Some(idx) = char_idx {
-                                let idx = idx.saturating_sub(1);
-                                // Use the immutable click anchor instead of
-                                // reading from input_selection, which might
-                                // have been modified by other event paths.
                                 if let Some(anchor) = state.input_click_anchor {
                                     let a = anchor.min(idx);
                                     let b = anchor.max(idx);
