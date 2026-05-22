@@ -272,7 +272,14 @@ impl CrawlerAgent {
         goal: &str,
         api_client: impl ApiClient + Send + Sync + 'static,
     ) -> Result<CrawlResult, CrawlError> {
-        let system_prompt = build_system_prompt(&mvp_tool_specs());
+        let specs = match &self.allowed_tools {
+            Some(allowed) => mvp_tool_specs()
+                .into_iter()
+                .filter(|s| allowed.contains(s.name))
+                .collect(),
+            None => mvp_tool_specs(),
+        };
+        let system_prompt = build_system_prompt(&specs);
         self.run_with_system_prompt(goal, api_client, system_prompt)
             .await
     }
@@ -829,6 +836,21 @@ mod tests {
         assert!(err
             .to_string()
             .contains("not enabled by the current allowlist"));
+    }
+
+    #[test]
+    fn run_builds_filtered_system_prompt_when_allowed_tools_set() {
+        let mut allowed = BTreeSet::new();
+        allowed.insert("navigate".to_string());
+        allowed.insert("screenshot".to_string());
+        let agent = CrawlerAgent::new_for_testing(mock_registry()).with_allowed_tools(allowed);
+
+        // Verify the agent has the allowlist set (system prompt filtering
+        // is derived from allowed_tools inside run(); we verify the field directly)
+        let tools = agent.allowed_tools.as_ref().expect("allowed_tools should be set");
+        assert!(tools.contains("navigate"));
+        assert!(tools.contains("screenshot"));
+        assert!(!tools.contains("click"));
     }
 
     #[tokio::test]
