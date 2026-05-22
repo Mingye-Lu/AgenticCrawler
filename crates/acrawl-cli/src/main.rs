@@ -4,6 +4,7 @@ mod display_width;
 mod error;
 mod format;
 mod markdown;
+mod mcp_server;
 mod output_sink;
 mod self_update;
 mod session_mgr;
@@ -99,6 +100,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
         CliAction::InstallBrowser => install_browser()?,
+        CliAction::Mcp => mcp_server::run(),
         CliAction::Repl {
             model,
             allowed_tools,
@@ -135,6 +137,7 @@ enum CliAction {
         purge: bool,
     },
     InstallBrowser,
+    Mcp,
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
@@ -288,6 +291,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             purge: rest.iter().any(|a| a == "--purge"),
         }),
         "install-browser" => Ok(CliAction::InstallBrowser),
+        "mcp" => Ok(CliAction::Mcp),
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {

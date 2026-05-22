@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/acrawl-cli",
-    "crates/acrawl-mcp",
     "crates/runtime",
     "crates/api",
     "crates/commands",

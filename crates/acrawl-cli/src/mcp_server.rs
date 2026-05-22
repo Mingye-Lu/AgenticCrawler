@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::env;
 use std::io::{self, BufRead, BufReader, Write};
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -301,10 +300,8 @@ fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<crawler::ToolSpec> {
         .collect()
 }
 
-fn build_run_goal_system_prompt(allowed_tools: &[String]) -> Result<Vec<String>, String> {
-    Ok(crawler::build_system_prompt(&filtered_tool_specs(
-        allowed_tools,
-    )))
+fn build_run_goal_system_prompt(allowed_tools: &[String]) -> Vec<String> {
+    crawler::build_system_prompt(&filtered_tool_specs(allowed_tools))
 }
 
 fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOutcome> {
@@ -341,7 +338,7 @@ fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOu
     let max_steps = arguments
         .get("max_steps")
         .and_then(Value::as_u64)
-        .map(|value| value as usize);
+        .map(|value| value.min(200) as usize);
     if let Some(max_steps) = max_steps {
         if !(1..=200).contains(&max_steps) {
             return Err(RunGoalOutcome::JsonRpcError {
@@ -361,7 +358,7 @@ fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOu
 
 fn build_run_goal_success_response(
     request: &RunGoalRequest,
-    result: crawler::CrawlResult,
+    result: &crawler::CrawlResult,
 ) -> Value {
     let structured = json!({
         "summary": result.summary,
@@ -414,7 +411,9 @@ fn execute_run_goal<E: GoalExecutor>(executor: &E, arguments: &Value) -> RunGoal
     };
 
     match executor.execute(&request) {
-        Ok(result) => RunGoalOutcome::ToolResult(build_run_goal_success_response(&request, result)),
+        Ok(result) => {
+            RunGoalOutcome::ToolResult(build_run_goal_success_response(&request, &result))
+        }
         Err(RunGoalExecutionError::Internal(message)) => RunGoalOutcome::JsonRpcError {
             code: -32603,
             message,
@@ -605,6 +604,7 @@ fn push_output_block(
 }
 
 impl ApiClient for CrawlApiClient {
+    #[allow(clippy::too_many_lines)]
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         let tools = self.build_tool_defs();
         let message_request = MessageRequest {
@@ -729,8 +729,7 @@ impl GoalExecutor for RealGoalExecutor {
         let provider = build_provider(&request.model).map_err(RunGoalExecutionError::Internal)?;
         let api_client =
             CrawlApiClient::new(provider, &request.model, request.allowed_tools.clone());
-        let system_prompt = build_run_goal_system_prompt(&request.allowed_tools)
-            .map_err(RunGoalExecutionError::Internal)?;
+        let system_prompt = build_run_goal_system_prompt(&request.allowed_tools);
 
         let registry = ToolRegistry::new_with_options(false);
         let mut agent = CrawlerAgent::new_lazy(registry);
@@ -759,11 +758,7 @@ impl GoalExecutor for RealGoalExecutor {
     }
 }
 
-#[allow(
-    clippy::too_many_lines,
-    clippy::needless_pass_by_value,
-    clippy::cast_possible_truncation
-)]
+#[allow(clippy::needless_pass_by_value)]
 fn handle_run_goal(id: Option<Value>, arguments: Value) {
     match execute_run_goal(&RealGoalExecutor, &arguments) {
         RunGoalOutcome::ToolResult(response) => send_response(&JsonRpcResponse {
@@ -844,23 +839,11 @@ fn handle_tools_call(id: Option<Value>, params: Option<Value>) {
     }
 }
 
-fn main() {
-    let settings = runtime::load_settings();
-    env::set_var(
-        "ACRAWL_OUTPUT_DIR",
-        runtime::settings_get_output_dir(&settings),
-    );
-    if env::var("HEADLESS").is_err() {
-        env::set_var(
-            "HEADLESS",
-            if runtime::settings_get_headless(&settings) {
-                "true"
-            } else {
-                "false"
-            },
-        );
-    }
-
+/// Entry point for the `acrawl mcp` subcommand.
+///
+/// Runs the MCP server over stdio, reading JSON-RPC requests from stdin and
+/// writing responses to stdout. Blocks until stdin is closed.
+pub fn run() {
     let stdin = io::stdin().lock();
     let mut reader = BufReader::new(stdin);
 
@@ -1236,8 +1219,7 @@ mod tests {
 
     #[test]
     fn build_run_goal_system_prompt_filters_tool_listing() {
-        let prompt = build_run_goal_system_prompt(&["navigate".to_string()])
-            .expect("system prompt should build");
+        let prompt = build_run_goal_system_prompt(&["navigate".to_string()]);
         let first_section = prompt.first().expect("prompt should have first section");
         assert!(first_section.contains("**navigate**"));
         assert!(!first_section.contains("**click**"));
@@ -1276,18 +1258,18 @@ mod tests {
         let _guard = env_lock();
         let temp_dir = std::env::temp_dir().join(format!("acrawl-mcp-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let saved_home = env::var_os("ACRAWL_CONFIG_HOME");
-        let saved_headless = env::var("HEADLESS").ok();
-        env::remove_var("HEADLESS");
-        env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+        let saved_home = std::env::var_os("ACRAWL_CONFIG_HOME");
+        let saved_headless = std::env::var("HEADLESS").ok();
+        std::env::remove_var("HEADLESS");
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
         runtime::update_settings(|s| {
             s.headless = Some(true);
         })
         .expect("update settings");
 
         let settings = runtime::load_settings();
-        if env::var("HEADLESS").is_err() {
-            env::set_var(
+        if std::env::var("HEADLESS").is_err() {
+            std::env::set_var(
                 "HEADLESS",
                 if runtime::settings_get_headless(&settings) {
                     "true"
@@ -1296,18 +1278,18 @@ mod tests {
                 },
             );
         }
-        assert_eq!(env::var("HEADLESS").unwrap(), "true");
+        assert_eq!(std::env::var("HEADLESS").unwrap(), "true");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         if let Some(h) = saved_home {
-            env::set_var("ACRAWL_CONFIG_HOME", h);
+            std::env::set_var("ACRAWL_CONFIG_HOME", h);
         } else {
-            env::remove_var("ACRAWL_CONFIG_HOME");
+            std::env::remove_var("ACRAWL_CONFIG_HOME");
         }
         if let Some(h) = saved_headless {
-            env::set_var("HEADLESS", h);
+            std::env::set_var("HEADLESS", h);
         } else {
-            env::remove_var("HEADLESS");
+            std::env::remove_var("HEADLESS");
         }
     }
 
@@ -1317,19 +1299,19 @@ mod tests {
         let temp_dir =
             std::env::temp_dir().join(format!("acrawl-mcp-overwrite-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let saved_home = env::var_os("ACRAWL_CONFIG_HOME");
-        let saved_headless = env::var("HEADLESS").ok();
+        let saved_home = std::env::var_os("ACRAWL_CONFIG_HOME");
+        let saved_headless = std::env::var("HEADLESS").ok();
 
-        env::set_var("HEADLESS", "overridden-by-parent");
-        env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+        std::env::set_var("HEADLESS", "overridden-by-parent");
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
         runtime::update_settings(|s| {
             s.headless = Some(true);
         })
         .expect("update settings");
 
         let settings = runtime::load_settings();
-        if env::var("HEADLESS").is_err() {
-            env::set_var(
+        if std::env::var("HEADLESS").is_err() {
+            std::env::set_var(
                 "HEADLESS",
                 if runtime::settings_get_headless(&settings) {
                     "true"
@@ -1338,18 +1320,18 @@ mod tests {
                 },
             );
         }
-        assert_eq!(env::var("HEADLESS").unwrap(), "overridden-by-parent");
+        assert_eq!(std::env::var("HEADLESS").unwrap(), "overridden-by-parent");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         if let Some(h) = saved_home {
-            env::set_var("ACRAWL_CONFIG_HOME", h);
+            std::env::set_var("ACRAWL_CONFIG_HOME", h);
         } else {
-            env::remove_var("ACRAWL_CONFIG_HOME");
+            std::env::remove_var("ACRAWL_CONFIG_HOME");
         }
         if let Some(h) = saved_headless {
-            env::set_var("HEADLESS", h);
+            std::env::set_var("HEADLESS", h);
         } else {
-            env::remove_var("HEADLESS");
+            std::env::remove_var("HEADLESS");
         }
     }
 }

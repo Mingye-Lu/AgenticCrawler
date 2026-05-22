@@ -322,22 +322,23 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 ### MCP Server (expose acrawl as a tool)
 
-Starting from v0.4.7, acrawl also ships an MCP server binary (`acrawl-mcp-server`) that exposes high-level crawl capabilities to external agents like Claude Code, Cursor, or any MCP-compatible client.
+`acrawl mcp` starts a built-in MCP server that exposes high-level crawl capabilities to external agents like Claude Code, Cursor, Windsurf, or any MCP-compatible client.
 
 The server provides two tools:
 
 - **`run_goal`** — Execute a high-level crawl goal and return structured results (summary, extracted data, step count, etc.)
-- **`list_builtin_tools`** — Query acrawl's 19 built-in crawl tools as read-only metadata (not directly callable — informational only)
+- **`list_builtin_tools`** — Query acrawl's 21 built-in crawl tools as read-only metadata (not directly callable — informational only)
 
 **Transport:** stdio only (no SSE / HTTP / WebSocket in this release).
 
-**Example MCP client configuration** (e.g., `claude_desktop_config.json` or `.cursor/mcp.json`):
+**Example MCP client configuration** (e.g., `claude_desktop_config.json`, `.cursor/mcp.json`, or `.mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "acrawl": {
-      "command": "/absolute/path/to/acrawl-mcp-server"
+      "command": "acrawl",
+      "args": ["mcp"]
     }
   }
 }
@@ -345,7 +346,7 @@ The server provides two tools:
 
 The server serializes requests — only one crawl job runs at a time. Errors include actionable messages (e.g., "run `acrawl auth` to configure a default model").
 
-**Requirements:** `acrawl-mcp-server` uses the same `~/.acrawl/credentials.json` as the `acrawl` CLI for provider/model configuration.
+**Requirements:** Uses the same `~/.acrawl/credentials.json` as the rest of the CLI for provider/model configuration.
 
 ## Usage
 
@@ -354,6 +355,7 @@ acrawl [OPTIONS] [COMMAND]
 
 Commands:
   prompt <text>      Run a single goal non-interactively
+  mcp                Start MCP server (stdio transport)
   auth [provider]    Configure provider credentials
   system-prompt      Print the system prompt (for debugging)
 

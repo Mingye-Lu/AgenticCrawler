@@ -25,7 +25,8 @@ impl TestServer {
         )
         .expect("write settings.json");
 
-        let mut child = Command::new(env!("CARGO_BIN_EXE_acrawl-mcp-server"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_acrawl"))
+            .arg("mcp")
             .env("ACRAWL_CONFIG_HOME", &config_home)
             .env_remove("HEADLESS")
             .env_remove("ACRAWL_OUTPUT_DIR")
@@ -33,7 +34,7 @@ impl TestServer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn acrawl-mcp-server");
+            .expect("spawn acrawl mcp");
 
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = BufReader::new(child.stdout.take().expect("child stdout"));
