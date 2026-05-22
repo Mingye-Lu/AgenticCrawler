@@ -868,12 +868,16 @@ pub fn run() {
         .expect("failed to create tokio runtime");
 
     let shared_bridge: SharedBridge = rt.block_on(async {
-        let bridge = PlaywrightBridge::new()
-            .await
-            .expect("failed to launch browser");
-        std::sync::Arc::new(tokio::sync::Mutex::new(
-            Box::new(bridge) as Box<dyn BrowserBackend + Send>
-        ))
+        match PlaywrightBridge::new().await {
+            Ok(bridge) => std::sync::Arc::new(tokio::sync::Mutex::new(
+                Box::new(bridge) as Box<dyn BrowserBackend + Send>,
+            )),
+            Err(e) => {
+                eprintln!("error: failed to launch browser — {e}");
+                eprintln!("hint: run `acrawl install-browser` to install Playwright");
+                std::process::exit(1);
+            }
+        }
     });
 
     let mut browser = BrowserContext::new(shared_bridge);
