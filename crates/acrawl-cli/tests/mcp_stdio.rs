@@ -104,15 +104,6 @@ fn tool_names(response: &Value) -> Vec<&str> {
         .collect()
 }
 
-fn builtin_tool_names(response: &Value) -> Vec<&str> {
-    response["result"]["structuredContent"]["tools"]
-        .as_array()
-        .expect("builtin tools array")
-        .iter()
-        .map(|tool| tool["name"].as_str().expect("builtin tool name"))
-        .collect()
-}
-
 fn assert_jsonrpc_error(response: &Value, id: i64, code: i64, message_fragment: &str) {
     assert_eq!(response["jsonrpc"], "2.0");
     assert_eq!(response["id"], id);
@@ -164,7 +155,13 @@ fn stdio_server_handles_initialize_list_and_tool_call() {
     }));
     let list = server.read_response();
     let names = tool_names(&list);
-    assert_eq!(names, vec!["run_goal", "list_builtin_tools"]);
+    assert!(names.contains(&"navigate"));
+    assert!(names.contains(&"click"));
+    assert!(names.contains(&"screenshot"));
+    assert!(names.contains(&"run_goal"));
+    assert!(!names.contains(&"fork"));
+    assert!(!names.contains(&"list_builtin_tools"));
+    assert_eq!(names.len(), 17);
 
     server.send(&json!({
         "jsonrpc": "2.0",
@@ -178,17 +175,7 @@ fn stdio_server_handles_initialize_list_and_tool_call() {
     let tool_call = server.read_response();
     assert_eq!(tool_call["jsonrpc"], "2.0");
     assert_eq!(tool_call["id"], 3);
-    assert_eq!(tool_call["result"]["isError"], false);
-    assert_eq!(tool_call["result"]["structuredContent"]["tool_count"], 21);
-    let text = tool_call["result"]["content"][0]["text"]
-        .as_str()
-        .expect("tool text payload");
-    assert!(text.contains("Structured result:"));
-    assert!(text.contains("\"navigate\""));
-
-    let builtin_names = builtin_tool_names(&tool_call);
-    assert!(builtin_names.contains(&"navigate"));
-    assert!(builtin_names.contains(&"wait_for_human"));
+    assert_eq!(tool_call["error"]["code"], -32601);
 
     server.shutdown();
 }
@@ -271,7 +258,9 @@ fn stdio_server_supports_line_delimited_jsonrpc() {
     let names = tool_names(&response);
     assert_eq!(response["jsonrpc"], "2.0");
     assert_eq!(response["id"], 21);
-    assert_eq!(names, vec!["run_goal", "list_builtin_tools"]);
+    assert!(names.contains(&"navigate"));
+    assert!(names.contains(&"run_goal"));
+    assert_eq!(names.len(), 17);
 
     server.shutdown();
 }

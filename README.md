@@ -322,12 +322,15 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 ### MCP Server (expose acrawl as a tool)
 
-`acrawl mcp` starts a built-in MCP server that exposes high-level crawl capabilities to external agents like Claude Code, Cursor, Windsurf, or any MCP-compatible client.
+`acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, Windsurf, or any MCP-compatible client.
 
-The server provides two tools:
+The server provides **17 tools** in two modes:
 
-- **`run_goal`** — Execute a high-level crawl goal and return structured results (summary, extracted data, step count, etc.)
-- **`list_builtin_tools`** — Query acrawl's 21 built-in crawl tools as read-only metadata (not directly callable — informational only)
+**Direct browser tools (16)** — fine-grained control for clients that orchestrate themselves:
+`navigate`, `click`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`
+
+**Autonomous agent (1)** — delegate a full crawl task:
+- **`run_goal`** — Execute a high-level crawl goal autonomously. The agent plans, navigates, and extracts data using its own LLM loop. Requires `~/.acrawl/credentials.json` configured with a model.
 
 **Transport:** stdio only (no SSE / HTTP / WebSocket in this release).
 
@@ -344,9 +347,9 @@ The server provides two tools:
 }
 ```
 
-The server serializes requests — only one crawl job runs at a time. Errors include actionable messages (e.g., "run `acrawl auth` to configure a default model").
+The browser tools share a persistent session across calls. `run_goal` creates its own isolated agent and browser.
 
-**Requirements:** Uses the same `~/.acrawl/credentials.json` as the rest of the CLI for provider/model configuration.
+**Requirements:** The 16 browser tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
 
 ## Usage
 
