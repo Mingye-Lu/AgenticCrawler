@@ -234,9 +234,18 @@ fn install_claude_code_global(acrawl_path: &str) -> io::Result<String> {
         if status.success() {
             return Ok("configured via `claude mcp add`".to_string());
         }
-        let _ = Command::new("claude")
+        match Command::new("claude")
             .args(["mcp", "remove", "acrawl"])
-            .status();
+            .status()
+        {
+            Ok(s) if !s.success() => {
+                eprintln!("note: `claude mcp remove acrawl` exited with {s} — retrying add anyway");
+            }
+            Err(e) => {
+                eprintln!("note: `claude mcp remove acrawl` failed to run: {e} — retrying add anyway");
+            }
+            Ok(_) => {}
+        }
         let retry = Command::new("claude")
             .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
             .status()?;
