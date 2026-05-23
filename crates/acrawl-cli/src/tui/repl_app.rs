@@ -294,14 +294,6 @@ pub(super) struct ReplTuiState {
     spinner_deadline: Instant,
     pub(super) typewriter: TypewriterState,
     pub(super) selection: SelectionState,
-    /// Accumulates characters arriving faster than a human can type (≤30 ms
-    /// apart) so they can be flushed as a single `insert_input_str` call instead
-    /// of being inserted one-by-one.  `None` = not currently in a burst.
-    paste_buffer: Option<(Instant, Vec<char>)>,
-    /// Timestamp of the most-recently processed `KeyCode::Char` (or `Enter`
-    /// treated as a paste newline).  Used together with `paste_buffer` above to
-    /// detect burst boundaries.
-    last_key_time: Option<Instant>,
     input_undo_stack: Vec<InputUndoSnapshot>,
     input_redo_stack: Vec<InputUndoSnapshot>,
     last_esc_at: Option<Instant>,
@@ -364,8 +356,6 @@ impl ReplTuiState {
                 live: String::new(),
             },
             selection: SelectionState::default(),
-            paste_buffer: None,
-            last_key_time: None,
             input_undo_stack: Vec::new(),
             input_redo_stack: Vec::new(),
             last_esc_at: None,
@@ -463,11 +453,6 @@ impl ReplTuiState {
         self.cursor_blink_deadline = Instant::now() + Duration::from_millis(530);
     }
 
-    /// Maximum gap (ms) between consecutive keystrokes to be considered a
-    /// paste burst.  Human typing at 120 WPM averages ≈100 ms/char, so 30 ms
-    /// cleanly separates programmatic paste from even the fastest typists.
-    const PASTE_THRESHOLD_MS: u64 = 30;
-
     fn current_input_snapshot(&self) -> InputUndoSnapshot {
         InputUndoSnapshot {
             text: self.input.text.clone(),
@@ -526,42 +511,6 @@ impl ReplTuiState {
         self.input_undo_stack.push(self.current_input_snapshot());
         self.apply_input_snapshot(snapshot);
         true
-    }
-
-    /// If a paste burst is active, flush the accumulated characters into the
-    /// input buffer by concatenating prefix + `pasted_text` + suffix directly
-    /// (avoids the O(n) `insert_str` tail-shift and `text.chars().count()`).
-    fn flush_paste_buffer(&mut self) {
-        self.input_scroll_manual = false;
-        if let Some((_, chars)) = self.paste_buffer.take() {
-            let n = chars.len();
-            if n == 0 {
-                return;
-            }
-            self.record_input_undo_snapshot();
-            self.delete_selection_range();
-            self.clamp_input_cursor();
-            let prefix = &self.input.text[..self.input.byte_cursor];
-            let suffix = &self.input.text[self.input.byte_cursor..];
-            // Compute UTF-8 byte length of pasted chars while building the
-            // replacement string — one pass instead of two.
-            let mut pasted_len = 0usize;
-            let cap = prefix.len() + suffix.len() + n; // n ≤ actual UTF-8 bytes
-            let mut text = String::with_capacity(cap);
-            text.push_str(prefix);
-            for c in chars {
-                pasted_len += c.len_utf8();
-                text.push(c);
-            }
-            text.push_str(suffix);
-            self.input.byte_cursor = self.input.byte_cursor.saturating_add(pasted_len);
-            self.input.cursor = self.input.cursor.saturating_add(n);
-            self.input.text = text;
-            self.input.preferred_col = None;
-            self.input_scroll_offset = usize::MAX;
-            self.wake_input_caret();
-            self.refresh_slash_overlay();
-        }
     }
 
     fn input_char_len(&self) -> usize {
@@ -2971,17 +2920,6 @@ fn run_loop(
             );
         }
 
-        // Auto-flush paste buffer when the burst has been idle longer than
-        // the threshold — handles the case where paste ends without a
-        // subsequent key event to trigger the flush.
-        if state.paste_buffer.is_some()
-            && state.last_key_time.is_some_and(|t| {
-                t.elapsed() > Duration::from_millis(ReplTuiState::PASTE_THRESHOLD_MS)
-            })
-        {
-            state.flush_paste_buffer();
-        }
-
         if state.exit {
             if state.persist_on_exit {
                 let mut g = cli.lock().expect("cli lock");
@@ -3296,9 +3234,6 @@ fn run_loop(
                     continue;
                 }
 
-                // Bracketed paste supersedes any ongoing burst accumulation
-                state.paste_buffer = None;
-                state.last_key_time = None;
                 state.handle_paste_event(&text);
                 state.wake_input_caret();
                 state.refresh_slash_overlay();
@@ -3336,9 +3271,6 @@ fn run_loop(
                         || (key.code == KeyCode::Insert
                             && key.modifiers.contains(KeyModifiers::SHIFT)))
                 {
-                    // Manual paste supersedes any ongoing burst accumulation
-                    state.paste_buffer = None;
-                    state.last_key_time = None;
                     if let Some(text) = read_clipboard_text() {
                         state.handle_paste_event(&text);
                         state.wake_input_caret();
@@ -3351,7 +3283,6 @@ fn run_loop(
                     && key.code == KeyCode::Char('a')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
-                    state.flush_paste_buffer();
                     state.select_all_input();
                     state.wake_input_caret();
                     continue;
@@ -3361,7 +3292,6 @@ fn run_loop(
                     && key.code == KeyCode::Char('z')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
-                    state.flush_paste_buffer();
                     if state.undo_input_edit() {
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
@@ -3373,7 +3303,6 @@ fn run_loop(
                     && key.code == KeyCode::Char('y')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
-                    state.flush_paste_buffer();
                     if state.redo_input_edit() {
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
@@ -3771,33 +3700,11 @@ fn run_loop(
 
                 match key.code {
                     KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                        state.flush_paste_buffer();
                         state.insert_input_char('\n');
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
-                        // Paste burst detection: if Enter arrives within the burst
-                        // threshold, treat it as a literal \n in the pasted text
-                        // instead of submitting.
-                        let now = Instant::now();
-                        let in_paste_burst = state.paste_buffer.is_some()
-                            && state.last_key_time.is_some_and(|t| {
-                                now.duration_since(t)
-                                    <= Duration::from_millis(ReplTuiState::PASTE_THRESHOLD_MS)
-                            });
-                        state.last_key_time = Some(now);
-                        if in_paste_burst {
-                            state
-                                .paste_buffer
-                                .get_or_insert_with(|| (now, Vec::new()))
-                                .1
-                                .push('\n');
-                            state.wake_input_caret();
-                            continue;
-                        }
-                        state.flush_paste_buffer();
-
                         // Child tab resume (check before parent pause)
                         if state.child_tab_panel.active_tab_is_paused() {
                             if let Some(child_id) = state.child_tab_panel.active_child_id() {
@@ -3878,79 +3785,50 @@ fn run_loop(
                         state.wake_input_caret();
                     }
                     KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        state.flush_paste_buffer();
                         state.insert_input_char('\n');
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Char(c) => {
-                        let now = Instant::now();
-                        let is_fast = state.last_key_time.is_some_and(|t| {
-                            now.duration_since(t)
-                                <= Duration::from_millis(ReplTuiState::PASTE_THRESHOLD_MS)
-                        });
-                        state.last_key_time = Some(now);
-
-                        if is_fast {
-                            // Burst detected — accumulate into paste buffer
-                            state
-                                .paste_buffer
-                                .get_or_insert_with(|| (now, Vec::new()))
-                                .1
-                                .push(c);
-                        } else {
-                            // Normal human-paced typing — flush any lingering
-                            // paste buffer, then insert immediately.
-                            state.flush_paste_buffer();
-                            state.insert_input_char(c);
-                        }
+                        state.insert_input_char(c);
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Backspace => {
-                        state.flush_paste_buffer();
                         state.backspace_input_char();
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Delete => {
-                        state.flush_paste_buffer();
                         state.delete_input_char();
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Left => {
-                        state.flush_paste_buffer();
                         state.move_input_cursor_left();
                         state.wake_input_caret();
                     }
                     KeyCode::Right => {
-                        state.flush_paste_buffer();
                         state.move_input_cursor_right();
                         state.wake_input_caret();
                     }
                     KeyCode::Home => {
-                        state.flush_paste_buffer();
                         state.move_input_cursor_home();
                         state.wake_input_caret();
                     }
                     KeyCode::End => {
-                        state.flush_paste_buffer();
                         state.move_input_cursor_end();
                         state.wake_input_caret();
                     }
                     KeyCode::Up => {
-                        state.flush_paste_buffer();
                         state.move_input_cursor_up();
                         state.wake_input_caret();
                     }
                     KeyCode::Down => {
-                        state.flush_paste_buffer();
                         state.move_input_cursor_down();
                         state.wake_input_caret();
                     }
                     KeyCode::Tab => {
-                        state.flush_paste_buffer();
                         if state.busy || !state.input.text.trim_start().starts_with('/') {
                             continue;
                         }
@@ -3983,7 +3861,6 @@ fn run_loop(
                         }
                     }
                     KeyCode::Esc => {
-                        state.flush_paste_buffer();
                         if state.busy {
                             let now = Instant::now();
                             if state
@@ -4005,13 +3882,11 @@ fn run_loop(
                         }
                     }
                     KeyCode::PageUp => {
-                        state.flush_paste_buffer();
                         let cur = state.list_state.offset();
                         *state.list_state.offset_mut() = cur.saturating_sub(10);
                         state.follow_bottom = false;
                     }
                     KeyCode::PageDown => {
-                        state.flush_paste_buffer();
                         let max_off = state
                             .last_wrapped_len
                             .saturating_sub(state.last_view_height.max(1));
