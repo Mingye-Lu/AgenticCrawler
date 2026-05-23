@@ -165,6 +165,11 @@ struct InputEditorState {
     /// when the cursor is set directly (clamp / `set_line_col`).
     byte_cursor: usize,
     preferred_col: Option<usize>,
+    /// Active paste masks, in insertion order.  Empty when no pastes are masked.
+    pastes: Vec<PasteEntry>,
+    /// Monotonically increases as masks are inserted within one prompt; reset to
+    /// 1 on submit, clear, or new-prompt boundary.
+    next_paste_id: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -173,6 +178,19 @@ struct InputUndoSnapshot {
     cursor: usize,
     preferred_col: Option<usize>,
     selection: Option<(usize, usize)>,
+    pastes: Vec<PasteEntry>,
+    next_paste_id: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PasteEntry {
+    /// 1-based, per-prompt index. Resets to 1 on submit / clear.
+    id: u32,
+    /// Visible placeholder, e.g. "[#1 Pasted ~42 lines]".
+    /// Uniqueness is guaranteed by `id`, so `text.find(&placeholder)` is safe.
+    placeholder: String,
+    /// Original pasted content (after newline normalisation).
+    content: String,
 }
 
 #[derive(Default)]
@@ -281,6 +299,8 @@ impl ReplTuiState {
                 cursor: 0,
                 byte_cursor: 0,
                 preferred_col: None,
+                pastes: Vec::new(),
+                next_paste_id: 1,
             },
             status_line: String::new(),
             busy: false,
@@ -417,6 +437,8 @@ impl ReplTuiState {
             cursor: self.input.cursor,
             preferred_col: self.input.preferred_col,
             selection: self.input_selection,
+            pastes: self.input.pastes.clone(),
+            next_paste_id: self.input.next_paste_id,
         }
     }
 
@@ -427,6 +449,8 @@ impl ReplTuiState {
         self.input.preferred_col = snapshot.preferred_col;
         self.input_selection = snapshot.selection;
         self.input_click_anchor = None;
+        self.input.pastes = snapshot.pastes;
+        self.input.next_paste_id = snapshot.next_paste_id;
         self.resync_byte_cursor();
         self.input_scroll_offset = usize::MAX;
     }
@@ -3666,7 +3690,37 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::text::Line;
 
-    use super::{ReplTuiState, ToolCallStatus, TranscriptEntry};
+    use super::{PasteEntry, ReplTuiState, ToolCallStatus, TranscriptEntry};
+
+    /// Smallest valid `ReplTuiState` for paste-masking unit tests.
+    fn test_state() -> ReplTuiState {
+        ReplTuiState::new()
+    }
+
+    #[test]
+    fn snapshot_roundtrip_preserves_pastes() {
+        let mut s = test_state();
+        s.input.text = "hello [#1 Pasted ~3 lines] world".to_string();
+        s.input.cursor = s.input.text.chars().count();
+        s.resync_byte_cursor();
+        s.input.pastes.push(PasteEntry {
+            id: 1,
+            placeholder: "[#1 Pasted ~3 lines]".to_string(),
+            content: "line1\nline2\nline3".to_string(),
+        });
+        s.input.next_paste_id = 2;
+
+        let snap = s.current_input_snapshot();
+        s.input.text.clear();
+        s.input.pastes.clear();
+        s.input.next_paste_id = 1;
+        s.apply_input_snapshot(snap);
+
+        assert_eq!(s.input.text, "hello [#1 Pasted ~3 lines] world");
+        assert_eq!(s.input.pastes.len(), 1);
+        assert_eq!(s.input.pastes[0].content, "line1\nline2\nline3");
+        assert_eq!(s.input.next_paste_id, 2);
+    }
 
     fn assert_matching_lengths(items: &[ratatui::widgets::ListItem<'static>], text: &[String]) {
         assert_eq!(items.len(), text.len());
