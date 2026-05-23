@@ -84,6 +84,17 @@ fn format_paste_placeholder(id: u32, line_count: usize) -> String {
     format!("[#{id} Pasted ~{line_count} lines]")
 }
 
+/// Replace each paste mask's placeholder with its original content.  Used at
+/// submit time so the model receives the full pasted text, and at clipboard
+/// yank time so copying the input bar produces the original content.
+fn expand_masks(text: &str, pastes: &[PasteEntry]) -> String {
+    let mut out = text.to_string();
+    for p in pastes {
+        out = out.replace(&p.placeholder, &p.content);
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AppUiState {
     WelcomeMode,
@@ -3674,11 +3685,14 @@ fn run_loop(
                             }
                         }
 
-                        let line = std::mem::take(&mut state.input.text);
+                        let raw_line = std::mem::take(&mut state.input.text);
+                        let line = expand_masks(&raw_line, &state.input.pastes);
                         state.input.cursor = 0;
                         state.input.byte_cursor = 0;
                         state.input.preferred_col = None;
                         state.input_scroll_offset = 0;
+                        state.input.pastes.clear();
+                        state.input.next_paste_id = 1;
                         state.clear_input_history();
                         let trimmed = line.trim().to_string();
                         state.refresh_slash_overlay();
@@ -3861,8 +3875,8 @@ mod tests {
     use ratatui::text::Line;
 
     use super::{
-        count_lines, format_paste_placeholder, normalize_pasted_text, should_mask_paste,
-        PasteEntry, ReplTuiState, ToolCallStatus, TranscriptEntry,
+        count_lines, expand_masks, format_paste_placeholder, normalize_pasted_text,
+        should_mask_paste, PasteEntry, ReplTuiState, ToolCallStatus, TranscriptEntry,
     };
 
     /// Smallest valid `ReplTuiState` for paste-masking unit tests.
@@ -3899,6 +3913,47 @@ mod tests {
     fn format_paste_placeholder_matches_format() {
         assert_eq!(format_paste_placeholder(1, 1), "[#1 Pasted ~1 lines]");
         assert_eq!(format_paste_placeholder(42, 137), "[#42 Pasted ~137 lines]");
+    }
+
+    #[test]
+    fn expand_masks_substitutes_original_content() {
+        let pastes = vec![
+            PasteEntry {
+                id: 1,
+                placeholder: "[#1 Pasted ~3 lines]".to_string(),
+                content: "alpha\nbeta\ngamma".to_string(),
+            },
+            PasteEntry {
+                id: 2,
+                placeholder: "[#2 Pasted ~2 lines]".to_string(),
+                content: "x\ny".to_string(),
+            },
+        ];
+        let visible = "hi [#1 Pasted ~3 lines] and [#2 Pasted ~2 lines] ok";
+        assert_eq!(
+            expand_masks(visible, &pastes),
+            "hi alpha\nbeta\ngamma and x\ny ok"
+        );
+    }
+
+    #[test]
+    fn expand_masks_is_idempotent_for_no_pastes() {
+        assert_eq!(expand_masks("plain text", &[]), "plain text");
+    }
+
+    #[test]
+    fn submit_expands_masks_before_dispatch() {
+        let mut s = test_state();
+        s.insert_input_str("please summarise: ");
+        let body = "x".repeat(600);
+        s.insert_paste_mask(&body);
+
+        // Simulate the submit-path text-extraction logic.
+        let raw_line = std::mem::take(&mut s.input.text);
+        let line = expand_masks(&raw_line, &s.input.pastes);
+
+        assert!(line.contains(&body));
+        assert!(!line.contains("[#1 Pasted"));
     }
 
     #[test]
