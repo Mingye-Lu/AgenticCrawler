@@ -824,16 +824,11 @@ impl ReplTuiState {
             return;
         }
         let cur_char = self.input.cursor;
-        // Find which visual line the cursor is on
-        let mut cur_vis = 0usize;
-        for (i, _) in vis.iter().enumerate() {
-            let next_start = vis.get(i + 1).map_or(usize::MAX, |v| v.0);
-            if cur_char >= next_start {
-                continue;
-            }
-            cur_vis = i;
-            break;
-        }
+        // Find which visual line the cursor is on.
+        // partition_point gives the last line whose start <= cur_char.
+        let cur_vis = vis
+            .partition_point(|(start, _)| *start <= cur_char)
+            .saturating_sub(1);
         if cur_vis == 0 {
             let (start, _) = vis[0];
             self.set_input_cursor_line_col_by_char(start);
@@ -893,15 +888,9 @@ impl ReplTuiState {
             return;
         }
         let cur_char = self.input.cursor;
-        let mut cur_vis = 0usize;
-        for (i, _) in vis.iter().enumerate() {
-            let next_start = vis.get(i + 1).map_or(usize::MAX, |v| v.0);
-            if cur_char >= next_start {
-                continue;
-            }
-            cur_vis = i;
-            break;
-        }
+        let cur_vis = vis
+            .partition_point(|(start, _)| *start <= cur_char)
+            .saturating_sub(1);
         if cur_vis + 1 >= vis.len() {
             // Already on the last visual line — go to end
             let (start, width) = vis[cur_vis];
