@@ -679,6 +679,43 @@ impl ReplTuiState {
         });
     }
 
+    /// Locate every active paste mask's current byte range in `self.input.text`.
+    ///
+    /// Returns `(paste_index, byte_range)` pairs sorted by `byte_range.start`.
+    /// Because placeholders include a unique per-prompt `#N` index, `str::find`
+    /// returns at most one position per placeholder; no overlap handling needed.
+    /// Orphaned entries (placeholder absent from text) are silently skipped.
+    fn compute_mask_ranges(&self) -> Vec<(usize, std::ops::Range<usize>)> {
+        let mut out: Vec<(usize, std::ops::Range<usize>)> = self
+            .input
+            .pastes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                self.input
+                    .text
+                    .find(&p.placeholder)
+                    .map(|s| (i, s..s + p.placeholder.len()))
+            })
+            .collect();
+        out.sort_by_key(|(_, r)| r.start);
+        out
+    }
+
+    /// Returns the mask range that strictly contains `byte_pos`, or `None` if the
+    /// position is at a boundary or outside any mask.  Boundaries are valid cursor
+    /// positions; only interior positions need to be snapped.
+    fn mask_containing(
+        &self,
+        byte_pos: usize,
+        ranges: &[(usize, std::ops::Range<usize>)],
+    ) -> Option<std::ops::Range<usize>> {
+        ranges
+            .iter()
+            .find(|(_, r)| byte_pos > r.start && byte_pos < r.end)
+            .map(|(_, r)| r.clone())
+    }
+
     fn backspace_input_char(&mut self) {
         self.input_scroll_manual = false;
         let had_selection = self.input_selection.is_some();
@@ -3848,6 +3885,55 @@ mod tests {
         assert_eq!(s.input.pastes[1].id, 2);
         assert!(s.input.text.contains("[#1 Pasted"));
         assert!(s.input.text.contains("[#2 Pasted"));
+    }
+
+    #[test]
+    fn compute_mask_ranges_finds_all_placeholders() {
+        let mut s = test_state();
+        let big = "x".repeat(600);
+        s.insert_paste_mask(&big);
+        s.insert_input_str(" middle ");
+        s.insert_paste_mask(&big);
+
+        let ranges = s.compute_mask_ranges();
+        assert_eq!(ranges.len(), 2);
+        // Ranges sorted by start position.
+        assert!(ranges[0].1.start < ranges[1].1.start);
+        // Each range slices to exactly the placeholder string.
+        assert_eq!(
+            &s.input.text[ranges[0].1.clone()],
+            s.input.pastes[ranges[0].0].placeholder
+        );
+    }
+
+    #[test]
+    fn mask_containing_returns_none_at_boundaries_or_outside() {
+        let mut s = test_state();
+        let big = "x".repeat(600);
+        s.insert_paste_mask(&big);
+        let ranges = s.compute_mask_ranges();
+        let r = ranges[0].1.clone();
+
+        assert!(s.mask_containing(r.start, &ranges).is_none());
+        assert!(s.mask_containing(r.end, &ranges).is_none());
+        assert!(s.mask_containing(r.start + 1, &ranges).is_some());
+        assert!(s.mask_containing(r.start + 5, &ranges).is_some());
+    }
+
+    #[test]
+    fn compute_mask_ranges_skips_orphaned_entries() {
+        // If a placeholder is no longer present in `text` (e.g. after manual edits
+        // that removed it without going through atomic delete), the entry is
+        // silently skipped.
+        let mut s = test_state();
+        s.input.pastes.push(PasteEntry {
+            id: 1,
+            placeholder: "[#1 Pasted ~5 lines]".to_string(),
+            content: "x".repeat(600),
+        });
+        // text is empty — no occurrences of the placeholder.
+        let ranges = s.compute_mask_ranges();
+        assert!(ranges.is_empty());
     }
 
     fn assert_matching_lengths(items: &[ratatui::widgets::ListItem<'static>], text: &[String]) {
