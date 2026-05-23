@@ -87,6 +87,12 @@ fn format_paste_placeholder(id: u32, line_count: usize) -> String {
 /// Replace each paste mask's placeholder with its original content.  Used at
 /// submit time so the model receives the full pasted text, and at clipboard
 /// yank time so copying the input bar produces the original content.
+///
+/// Known limitation: if the user manually types text that exactly matches a
+/// live placeholder (e.g. `[#1 Pasted ~5 lines]` character-for-character), that
+/// typed text will also be replaced with the paste content.  This is rare in
+/// practice — the per-prompt `#N` index and the specific bracket+tilde format
+/// make accidental collisions unlikely.
 fn expand_masks(text: &str, pastes: &[PasteEntry]) -> String {
     let mut out = text.to_string();
     for p in pastes {
@@ -684,7 +690,7 @@ impl ReplTuiState {
         // inserted mid-placeholder which would break later text.find lookups for
         // the first mask.
         let ranges = self.compute_mask_ranges();
-        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
             let snap_to = if self.input.byte_cursor - r.start < r.end - self.input.byte_cursor {
                 r.start
             } else {
@@ -782,7 +788,6 @@ impl ReplTuiState {
     /// position is at a boundary or outside any mask.  Boundaries are valid cursor
     /// positions; only interior positions need to be snapped.
     fn mask_containing(
-        &self,
         byte_pos: usize,
         ranges: &[(usize, std::ops::Range<usize>)],
     ) -> Option<std::ops::Range<usize>> {
@@ -937,7 +942,7 @@ impl ReplTuiState {
         self.input_scroll_offset = usize::MAX;
         // Atomic-mask snap: if we landed strictly inside any mask, jump to its start.
         let ranges = self.compute_mask_ranges();
-        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
             self.input.byte_cursor = r.start;
             self.input.cursor = self.input.text[..r.start].chars().count();
         }
@@ -962,7 +967,7 @@ impl ReplTuiState {
         self.input_scroll_offset = usize::MAX;
         // Atomic-mask snap: if we landed strictly inside any mask, jump to its end.
         let ranges = self.compute_mask_ranges();
-        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
             self.input.byte_cursor = r.end;
             self.input.cursor = self.input.text[..r.end].chars().count();
         }
@@ -1065,7 +1070,7 @@ impl ReplTuiState {
         self.move_input_cursor_up_inner();
         // Atomic-mask snap: up = treat like left = snap to start.
         let ranges = self.compute_mask_ranges();
-        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
             self.input.byte_cursor = r.start;
             self.input.cursor = self.input.text[..r.start].chars().count();
         }
@@ -1140,7 +1145,7 @@ impl ReplTuiState {
         self.move_input_cursor_down_inner();
         // Atomic-mask snap: down = treat like right = snap to end.
         let ranges = self.compute_mask_ranges();
-        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
             self.input.byte_cursor = r.end;
             self.input.cursor = self.input.text[..r.end].chars().count();
         }
@@ -4209,10 +4214,72 @@ mod tests {
         let ranges = s.compute_mask_ranges();
         let r = ranges[0].1.clone();
 
-        assert!(s.mask_containing(r.start, &ranges).is_none());
-        assert!(s.mask_containing(r.end, &ranges).is_none());
-        assert!(s.mask_containing(r.start + 1, &ranges).is_some());
-        assert!(s.mask_containing(r.start + 5, &ranges).is_some());
+        assert!(ReplTuiState::mask_containing(r.start, &ranges).is_none());
+        assert!(ReplTuiState::mask_containing(r.end, &ranges).is_none());
+        assert!(ReplTuiState::mask_containing(r.start + 1, &ranges).is_some());
+        assert!(ReplTuiState::mask_containing(r.start + 5, &ranges).is_some());
+    }
+
+    #[test]
+    fn next_paste_id_resets_to_one_after_submit() {
+        let mut s = test_state();
+        s.insert_paste_mask(&"x".repeat(600));
+        s.insert_paste_mask(&"y".repeat(600));
+        assert_eq!(s.input.next_paste_id, 3);
+
+        // Simulate submit-path reset (mirrors the production code).
+        let raw_line = std::mem::take(&mut s.input.text);
+        let _line = expand_masks(&raw_line, &s.input.pastes);
+        s.input.pastes.clear();
+        s.input.next_paste_id = 1;
+
+        assert!(s.input.pastes.is_empty());
+        assert_eq!(s.input.next_paste_id, 1);
+
+        // A fresh paste should now get id #1 again.
+        s.insert_paste_mask(&"z".repeat(600));
+        assert_eq!(s.input.pastes[0].id, 1);
+    }
+
+    #[test]
+    fn up_arrow_into_mask_snaps_to_mask_start() {
+        let mut s = test_state();
+        // Build a multi-line input so up-arrow has somewhere to go.
+        s.insert_input_str("first line\n");
+        s.insert_paste_mask(&"y".repeat(600));
+        // Cursor is past the trailing space after the placeholder; up-arrow from
+        // here lands on the previous (first) line if mask isn't on its own line,
+        // OR if the mask spans where up would land, it must snap to mask start.
+        // Position cursor at the END of the input text and press up.
+        s.move_input_cursor_up();
+
+        // After up, byte_cursor should not fall strictly inside the mask.
+        let ranges = s.compute_mask_ranges();
+        for (_, r) in &ranges {
+            assert!(
+                !(s.input.byte_cursor > r.start && s.input.byte_cursor < r.end),
+                "cursor should not land strictly inside a mask after up-arrow"
+            );
+        }
+    }
+
+    #[test]
+    fn down_arrow_into_mask_snaps_to_mask_end() {
+        let mut s = test_state();
+        s.insert_input_str("first line\n");
+        s.insert_paste_mask(&"y".repeat(600));
+        // Move cursor up to the first line, then back down — it should not land
+        // inside the mask either way.
+        s.move_input_cursor_up();
+        s.move_input_cursor_down();
+
+        let ranges = s.compute_mask_ranges();
+        for (_, r) in &ranges {
+            assert!(
+                !(s.input.byte_cursor > r.start && s.input.byte_cursor < r.end),
+                "cursor should not land strictly inside a mask after up+down round-trip"
+            );
+        }
     }
 
     #[test]
