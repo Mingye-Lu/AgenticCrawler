@@ -384,53 +384,72 @@ pub(crate) fn interactive_login_prompt(
 
 pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::error::Error>> {
     use api::ProviderCategory;
+    use dialoguer::{theme::ColorfulTheme, FuzzySelect};
+
+    fn category_short(cat: ProviderCategory) -> &'static str {
+        match cat {
+            ProviderCategory::Popular => "Popular",
+            ProviderCategory::OssHosting => "Open Source",
+            ProviderCategory::Specialized => "Specialized",
+            ProviderCategory::Enterprise => "Enterprise",
+            ProviderCategory::Gateway => "Gateway",
+            ProviderCategory::Other => "Other",
+        }
+    }
 
     let all_presets = api::builtin_presets();
-    let mut counter = 1_usize;
-    let mut indexed: Vec<api::ProviderPreset> = Vec::new();
 
-    let categories: &[(ProviderCategory, &str)] = &[
-        (ProviderCategory::Popular, "=== Popular ==="),
-        (ProviderCategory::OssHosting, "=== Open Source Hosting ==="),
-        (ProviderCategory::Specialized, "=== Specialized ==="),
-        (ProviderCategory::Enterprise, "=== Enterprise ==="),
-        (ProviderCategory::Gateway, "=== Routing/Gateway ==="),
-        (ProviderCategory::Other, "=== Other ==="),
+    // Build list in the canonical category order
+    let category_order: &[ProviderCategory] = &[
+        ProviderCategory::Popular,
+        ProviderCategory::OssHosting,
+        ProviderCategory::Specialized,
+        ProviderCategory::Enterprise,
+        ProviderCategory::Gateway,
+        ProviderCategory::Other,
     ];
-
-    eprintln!("\nSelect a provider to authenticate:");
-    for (cat, label) in categories {
-        let presets_in_cat: Vec<_> = all_presets.iter().filter(|p| p.category == *cat).collect();
-        if presets_in_cat.is_empty() {
-            continue;
-        }
-        eprintln!("\n{label}");
-        for p in presets_in_cat {
-            eprintln!("  {counter}) {}", p.display_name);
+    let mut indexed: Vec<api::ProviderPreset> = Vec::new();
+    for cat in category_order {
+        for p in all_presets.iter().filter(|p| p.category == *cat) {
             indexed.push(*p);
-            counter += 1;
         }
     }
 
-    eprint!("\nChoice [1-{}]: ", indexed.len());
-    io::stderr().flush()?;
-    let mut choice = String::new();
-    io::stdin().read_line(&mut choice)?;
-    let trimmed = choice.trim();
+    let col_width = category_order
+        .iter()
+        .map(|c| category_short(*c).len())
+        .max()
+        .unwrap_or(0);
 
-    if let Ok(n) = trimmed.parse::<usize>() {
-        if n >= 1 && n <= indexed.len() {
-            let preset = indexed[n - 1];
-            return Ok(ProviderChoice::Preset(preset));
-        }
+    let mut items: Vec<String> = indexed
+        .iter()
+        .map(|p| {
+            format!(
+                "{:<width$}  {}",
+                category_short(p.category),
+                p.display_name,
+                width = col_width
+            )
+        })
+        .collect();
+    // Let users reach Provider::Other (custom base URL + API key) from the menu.
+    items.push(format!(
+        "{:<width$}  Custom (enter base URL + API key manually)",
+        "Other",
+        width = col_width
+    ));
+
+    let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select a provider (type to filter, Esc to cancel)")
+        .items(&items)
+        .default(0)
+        .interact_opt()?;
+
+    match selection {
+        Some(i) if i == indexed.len() => Ok(ProviderChoice::Legacy(Provider::Other)),
+        Some(i) => Ok(ProviderChoice::Preset(indexed[i])),
+        None => Err("no provider selected".into()),
     }
-
-    // Try by id
-    if let Some(p) = indexed.iter().find(|p| p.id == trimmed) {
-        return Ok(ProviderChoice::Preset(*p));
-    }
-
-    Err(format!("invalid choice '{trimmed}'").into())
 }
 
 pub(crate) fn open_browser(url: &str) -> io::Result<()> {

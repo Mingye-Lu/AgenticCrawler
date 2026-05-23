@@ -1,16 +1,31 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
+use indicatif::{ProgressBar, ProgressStyle};
 use runtime::{check_for_update_force, config_home_dir};
 
 const REPO: &str = "Mingye-Lu/AgenticCrawler";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Checking for updates...");
+fn make_spinner(msg: impl Into<String>) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.cyan} {msg}")
+            .unwrap(),
+    );
+    pb.set_message(msg.into());
+    pb.enable_steady_tick(Duration::from_millis(100));
+    pb
+}
 
+pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
+    let pb = make_spinner("Checking for updates...");
     let update_info = check_for_update_force().await;
+    pb.finish_and_clear();
+
     let update_info = match update_info {
         Some(info) if info.is_outdated => info,
         Some(info) => {
@@ -33,7 +48,7 @@ pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = reqwest::Client::builder().user_agent("acrawl").build()?;
 
-    println!("Downloading {artifact_name}...");
+    let pb = make_spinner(format!("Downloading {artifact_name}..."));
     let binary_bytes = client
         .get(&binary_url)
         .send()
@@ -41,7 +56,13 @@ pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
         .error_for_status()?
         .bytes()
         .await?;
+    pb.finish_and_clear();
+    println!(
+        "Downloaded {artifact_name} ({} KB).",
+        binary_bytes.len() / 1024
+    );
 
+    let pb = make_spinner("Downloading checksums...");
     let checksums_text = client
         .get(&checksums_url)
         .send()
@@ -49,9 +70,12 @@ pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
         .error_for_status()?
         .text()
         .await?;
+    pb.finish_and_clear();
 
-    println!("Verifying checksum...");
+    let pb = make_spinner("Verifying checksum...");
     verify_checksum(&binary_bytes, &checksums_text, artifact_name)?;
+    pb.finish_and_clear();
+    println!("Checksum verified.");
 
     let current_exe = env::current_exe()?;
     replace_binary(&current_exe, &binary_bytes)?;
@@ -141,7 +165,7 @@ fn replace_binary(
 async fn install_cloakbrowser_if_needed() {
     let config_home = config_home_dir();
 
-    println!("Updating CloakBrowser...");
+    let pb = make_spinner("Updating CloakBrowser package...");
     let npm_result = tokio::process::Command::new("npm")
         .args(["install", "--prefix"])
         .arg(&config_home)
@@ -150,6 +174,7 @@ async fn install_cloakbrowser_if_needed() {
         .stderr(std::process::Stdio::null())
         .status()
         .await;
+    pb.finish_and_clear();
 
     if !npm_result.is_ok_and(|s| s.success()) {
         println!("WARNING: CloakBrowser package update failed.");
@@ -157,7 +182,7 @@ async fn install_cloakbrowser_if_needed() {
     }
     println!("CloakBrowser package updated.");
 
-    println!("Ensuring browser binary is downloaded...");
+    let pb = make_spinner("Downloading browser binary...");
     let browser_dl = tokio::process::Command::new("npx")
         .args(["--prefix"])
         .arg(&config_home)
@@ -166,6 +191,7 @@ async fn install_cloakbrowser_if_needed() {
         .stderr(std::process::Stdio::null())
         .status()
         .await;
+    pb.finish_and_clear();
 
     if browser_dl.is_ok_and(|s| s.success()) {
         println!("Browser binary ready.");

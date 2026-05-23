@@ -1,8 +1,8 @@
 use std::env;
 use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
 
+use dialoguer::{theme::ColorfulTheme, Confirm};
 use runtime::config_home_dir;
 
 pub fn run_uninstall(purge: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -28,11 +28,12 @@ pub fn run_uninstall(purge: bool) -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    print!("Uninstall acrawl? (y/N): ");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    if !matches!(input.trim(), "y" | "Y") {
+    let confirmed = Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Uninstall acrawl?")
+        .default(false)
+        .interact_opt()?
+        .unwrap_or(false);
+    if !confirmed {
         println!("Aborted.");
         return Ok(());
     }
