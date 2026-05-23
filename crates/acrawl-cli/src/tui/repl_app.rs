@@ -3455,6 +3455,7 @@ fn run_loop(
                             state.persist_on_exit = true;
                             state.input.text.clear();
                             state.input.cursor = 0;
+                            state.input.byte_cursor = 0;
                             continue;
                         }
                         if state.busy {
@@ -3471,6 +3472,7 @@ fn run_loop(
                                     state.input.text = selected;
                                     state.input.text.push(' ');
                                     state.input.cursor = state.input.text.chars().count();
+                                    state.resync_byte_cursor();
                                     state.input.preferred_col = None;
                                     state.input_scroll_offset = usize::MAX;
                                     state.wake_input_caret();
@@ -3482,6 +3484,7 @@ fn run_loop(
 
                         let line = std::mem::take(&mut state.input.text);
                         state.input.cursor = 0;
+                        state.input.byte_cursor = 0;
                         state.input.preferred_col = None;
                         state.input_scroll_offset = 0;
                         state.clear_input_history();
