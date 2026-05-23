@@ -619,8 +619,16 @@ impl ReplTuiState {
         self.input.text.get(sel_start..sel_end)
     }
 
+    /// Returns the currently selected input slice with paste masks expanded back
+    /// to their original content.  Used by clipboard copy/cut so the OS clipboard
+    /// receives real text, not the placeholder.
+    fn selected_input_text_expanded(&self) -> Option<String> {
+        let raw = self.selected_input_text()?.to_string();
+        Some(expand_masks(&raw, &self.input.pastes))
+    }
+
     fn cut_input_selection_text(&mut self) -> Option<String> {
-        let text = self.selected_input_text()?.to_string();
+        let text = self.selected_input_text_expanded()?;
         self.record_input_undo_snapshot();
         self.delete_selection_range();
         Some(text)
@@ -3094,13 +3102,9 @@ fn run_loop(
                             if state.input_selection.is_some() =>
                         {
                             // Copy selected text to clipboard.
-                            if let Some((a, b)) = state.input_selection {
-                                let sel_start = state.input_char_to_byte(a);
-                                let sel_end = state.input_char_to_byte(b);
-                                if let Some(text) = state.input.text.get(sel_start..sel_end) {
-                                    if let Ok(mut cb) = arboard::Clipboard::new() {
-                                        let _ = cb.set_text(text.to_string());
-                                    }
+                            if let Some(text) = state.selected_input_text_expanded() {
+                                if let Ok(mut cb) = arboard::Clipboard::new() {
+                                    let _ = cb.set_text(text);
                                 }
                             }
                             state.input_selection = None;
@@ -3220,9 +3224,9 @@ fn run_loop(
                         && key.modifiers.contains(KeyModifiers::CONTROL))
                         || (key.code == KeyCode::Insert && key.modifiers == KeyModifiers::CONTROL))
                 {
-                    if let Some(text) = state.selected_input_text() {
+                    if let Some(text) = state.selected_input_text_expanded() {
                         if let Ok(mut cb) = arboard::Clipboard::new() {
-                            let _ = cb.set_text(text.to_string());
+                            let _ = cb.set_text(text);
                         }
                     }
                     state.input_selection = None;
@@ -4395,6 +4399,22 @@ mod tests {
 
         assert_eq!(state.input_selection, Some((0, 5)));
         assert_eq!(state.input.cursor, 5);
+    }
+
+    #[test]
+    fn copy_selection_yanks_expanded_content() {
+        let mut s = test_state();
+        s.insert_input_str("a ");
+        s.insert_paste_mask(&"z".repeat(600));
+        s.insert_input_str(" b");
+
+        // Select the whole input.
+        let total = s.input.text.chars().count();
+        s.input_selection = Some((0, total));
+
+        let yanked = s.selected_input_text_expanded().unwrap();
+        assert!(yanked.contains(&"z".repeat(600)));
+        assert!(!yanked.contains("[#1 Pasted"));
     }
 
     #[test]
