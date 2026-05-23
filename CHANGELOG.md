@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-05-23
+
+### Added
+
+- **Input undo / redo** (`Ctrl+Z` / `Ctrl+Y`) — stack-based, capped at 100 entries. Every text mutation (insert, delete, paste, cut) pushes a snapshot; undo pops the previous state and redo walks forward. Stack is trimmed on new edits after an undo (MCMR-JIM).
+- **Select-all and cut** (`Ctrl+A` / `Ctrl+X`) — select-all marks the entire buffer; cut copies the selection to the clipboard and removes it (MCMR-JIM).
+- **Mouse click-to-position, drag-select, and copy** — clicking in the input area moves the cursor to the character under the pointer; dragging extends a selection with inverted highlight rendering; `Ctrl+C` / `Ctrl+Insert` / right-click copies the selected text to the system clipboard (MCMR-JIM).
+- **Paste burst detection** — characters arriving within 30 ms are accumulated and flushed as a single insert instead of being processed one-by-one, preventing `Enter` at the end of a paste from submitting prematurely (MCMR-JIM).
+- **Byte-cursor cache** (`byte_cursor` field) — maintains a byte-level cursor alongside the char-level cursor so `insert_input_char`, `insert_input_str`, `backspace`, `delete`, and `move_left/right` are all O(1) instead of O(n) (MCMR-JIM).
+- **Visual-line-aware Up/Down navigation** — cursor up/down now respects soft-wrapped lines, keeping the preferred horizontal column across empty paragraphs and line-width changes (MCMR-JIM).
+
+### Fixed
+
+- **`byte_cursor` not reset on submit** — the `/exit` branch, the main Enter submit path, and the slash-command Tab-completion path all cleared or replaced `input.text` without zeroing `byte_cursor`. On the next keystroke `insert_input_char` would index into a fresh empty string using the stale offset, causing a panic or silent text corruption.
+- **Paste burst Enter detection swallowed submissions** — an operator-precedence bug (`&&` / `||`) meant that a fast typist pressing Enter within 30 ms of the previous character had the submission silently treated as a literal newline even when no paste buffer was active. The guard now requires `paste_buffer.is_some()` before activating burst mode.
+- **Undo history was unbounded** — `record_input_undo_snapshot` pushed snapshots without trimming. Typing a long message character-by-character accumulated one full-text clone per keystroke. History is now capped at 100 entries.
+- **Up-arrow from last visual line jumped to line 0** — the loop that located the current visual line never `break`ed when the cursor was on the last line, leaving `cur_vis = 0`. Replaced with `partition_point` (O(log n)) which correctly identifies the last line.
+- **Paste over a selection left duplicate content** — `flush_paste_buffer` inserted pasted text without first removing the selected range, unlike `insert_input_char` and `insert_input_str`. Pasting over a selection now replaces it.
+- **O(n) `chars().nth()` in visual-line boundary checks** — four call sites called `chars().nth(boundary − 1)` to detect `\n` separators on every Up/Down keystroke and render pass. `visual_line_info` now embeds a `starts_paragraph` flag in its return type, eliminating all four O(n) scans.
+
 ## [0.6.0] - 2026-05-22
 
 ### Added
@@ -379,6 +399,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.6.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.0
 [0.5.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.1
 [0.5.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.0
