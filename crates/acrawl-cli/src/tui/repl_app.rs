@@ -716,7 +716,7 @@ impl ReplTuiState {
     /// Because placeholders include a unique per-prompt `#N` index, `str::find`
     /// returns at most one position per placeholder; no overlap handling needed.
     /// Orphaned entries (placeholder absent from text) are silently skipped.
-    fn compute_mask_ranges(&self) -> Vec<(usize, std::ops::Range<usize>)> {
+    pub(super) fn compute_mask_ranges(&self) -> Vec<(usize, std::ops::Range<usize>)> {
         let mut out: Vec<(usize, std::ops::Range<usize>)> = self
             .input
             .pastes
@@ -731,6 +731,36 @@ impl ReplTuiState {
             .collect();
         out.sort_by_key(|(_, r)| r.start);
         out
+    }
+
+    /// Returns mask ranges in CHAR-index space.  Used by the input renderer to
+    /// style placeholder text (`[#N Pasted ~K lines]`) with a meta-token
+    /// modifier (dim + italic) so it visually reads as a token rather than
+    /// user-typed content.  Sorted by `start` (matches `compute_mask_ranges`).
+    fn compute_mask_char_ranges(&self) -> Vec<(usize, usize)> {
+        let byte_ranges = self.compute_mask_ranges();
+        if byte_ranges.is_empty() {
+            return Vec::new();
+        }
+        // Build a (byte_offset, char_index) map in one pass to avoid scanning
+        // the string per range.  Sentinel at the end maps text.len() -> char_count.
+        let text = &self.input.text;
+        let mut byte_to_char: Vec<(usize, usize)> =
+            text.char_indices().enumerate().map(|(ci, (bi, _))| (bi, ci)).collect();
+        let total_chars = byte_to_char.len();
+        byte_to_char.push((text.len(), total_chars));
+
+        let lookup = |byte_pos: usize| -> usize {
+            byte_to_char
+                .iter()
+                .find(|(bi, _)| *bi >= byte_pos)
+                .map_or(total_chars, |(_, ci)| *ci)
+        };
+
+        byte_ranges
+            .iter()
+            .map(|(_, r)| (lookup(r.start), lookup(r.end)))
+            .collect()
     }
 
     /// Returns the mask range that strictly contains `byte_pos`, or `None` if the
@@ -1318,6 +1348,52 @@ impl ReplTuiState {
     }
 
     #[allow(clippy::too_many_lines)]
+    /// Push spans for `text` whose characters start at absolute char index
+    /// `text_char_start` within `self.input.text`, applying `mask_style` for
+    /// any chars overlapping a mask range and `base_style` otherwise.  Mask
+    /// ranges are absolute (input-text char indices) and assumed sorted.
+    fn push_input_text_spans(
+        spans: &mut Vec<Span<'static>>,
+        text: &str,
+        text_char_start: usize,
+        base_style: Style,
+        mask_style: Style,
+        masks: &[(usize, usize)],
+    ) {
+        if text.is_empty() {
+            return;
+        }
+        if masks.is_empty() {
+            spans.push(Span::styled(text.to_string(), base_style));
+            return;
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let text_char_end = text_char_start + chars.len();
+        // Find masks that overlap [text_char_start, text_char_end).
+        let mut cursor = 0usize; // char index within `text`
+        for &(m_start, m_end) in masks {
+            if m_end <= text_char_start || m_start >= text_char_end {
+                continue;
+            }
+            let local_start = m_start.saturating_sub(text_char_start);
+            let local_end = (m_end - text_char_start).min(chars.len());
+            if local_start > cursor {
+                let pre: String = chars[cursor..local_start].iter().collect();
+                spans.push(Span::styled(pre, base_style));
+            }
+            if local_end > local_start {
+                let inside: String = chars[local_start..local_end].iter().collect();
+                spans.push(Span::styled(inside, mask_style));
+            }
+            cursor = local_end;
+        }
+        if cursor < chars.len() {
+            let tail: String = chars[cursor..].iter().collect();
+            spans.push(Span::styled(tail, base_style));
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
     pub(super) fn calculate_input_dimensions(
         &mut self,
         width: u16,
@@ -1466,6 +1542,12 @@ impl ReplTuiState {
         } else {
             Style::default()
         };
+        let mask_style = text_style.add_modifier(Modifier::DIM | Modifier::ITALIC);
+        let mask_char_ranges = if is_placeholder {
+            Vec::new()
+        } else {
+            self.compute_mask_char_ranges()
+        };
 
         let mut render_lines = Vec::new();
         render_lines.push(Line::from(""));
@@ -1523,22 +1605,42 @@ impl ReplTuiState {
                             .take(row_sel_end.saturating_sub(row_sel_start))
                             .collect();
                         let after_s: String = full.chars().skip(row_sel_end).collect();
-                        if !before_s.is_empty() {
-                            spans.push(Span::styled(before_s, text_style));
-                        }
+                        Self::push_input_text_spans(
+                            &mut spans,
+                            &before_s,
+                            line_start,
+                            text_style,
+                            mask_style,
+                            &mask_char_ranges,
+                        );
                         if !selected_s.is_empty() {
                             spans.push(Span::styled(selected_s, sel_style));
                         }
-                        if !after_s.is_empty() {
-                            spans.push(Span::styled(after_s, text_style));
-                        }
+                        Self::push_input_text_spans(
+                            &mut spans,
+                            &after_s,
+                            line_start + row_sel_end,
+                            text_style,
+                            mask_style,
+                            &mask_char_ranges,
+                        );
                     } else {
-                        if !left.is_empty() {
-                            spans.push(Span::styled(left.clone(), text_style));
-                        }
-                        if !right.is_empty() {
-                            spans.push(Span::styled(right, text_style));
-                        }
+                        Self::push_input_text_spans(
+                            &mut spans,
+                            &left,
+                            line_start,
+                            text_style,
+                            mask_style,
+                            &mask_char_ranges,
+                        );
+                        Self::push_input_text_spans(
+                            &mut spans,
+                            &right,
+                            line_start + left.chars().count(),
+                            text_style,
+                            mask_style,
+                            &mask_char_ranges,
+                        );
                     }
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
@@ -1558,17 +1660,34 @@ impl ReplTuiState {
                         .take(row_sel_end - row_sel_start)
                         .collect();
                     let after: String = row.chars().skip(row_sel_end).collect();
-                    if !before.is_empty() {
-                        spans.push(Span::styled(before, text_style));
-                    }
+                    Self::push_input_text_spans(
+                        &mut spans,
+                        &before,
+                        line_start,
+                        text_style,
+                        mask_style,
+                        &mask_char_ranges,
+                    );
                     if !selected.is_empty() {
                         spans.push(Span::styled(selected, sel_style));
                     }
-                    if !after.is_empty() {
-                        spans.push(Span::styled(after, text_style));
-                    }
+                    Self::push_input_text_spans(
+                        &mut spans,
+                        &after,
+                        line_start + row_sel_end,
+                        text_style,
+                        mask_style,
+                        &mask_char_ranges,
+                    );
                 } else {
-                    spans.push(Span::styled(row, text_style));
+                    Self::push_input_text_spans(
+                        &mut spans,
+                        &row,
+                        line_start,
+                        text_style,
+                        mask_style,
+                        &mask_char_ranges,
+                    );
                 }
             } else {
                 // No active selection — plain rendering (existing logic).
@@ -1587,20 +1706,40 @@ impl ReplTuiState {
                     } else {
                         0
                     };
+                    let left_char_len = left.chars().count();
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
                     } else {
                         let left_width = text_display_width(&left);
-                        spans.push(Span::styled(left, text_style));
+                        Self::push_input_text_spans(
+                            &mut spans,
+                            &left,
+                            line_start,
+                            text_style,
+                            mask_style,
+                            &mask_char_ranges,
+                        );
                         let cursor_col =
                             prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
                     }
-                    if !right.is_empty() {
-                        spans.push(Span::styled(right, text_style));
-                    }
+                    Self::push_input_text_spans(
+                        &mut spans,
+                        &right,
+                        line_start + left_char_len,
+                        text_style,
+                        mask_style,
+                        &mask_char_ranges,
+                    );
                 } else {
-                    spans.push(Span::styled(row, text_style));
+                    Self::push_input_text_spans(
+                        &mut spans,
+                        &row,
+                        line_start,
+                        text_style,
+                        mask_style,
+                        &mask_char_ranges,
+                    );
                 }
             }
             render_lines.push(Line::from(spans));
@@ -4136,6 +4275,59 @@ mod tests {
         // text is empty — no occurrences of the placeholder.
         let ranges = s.compute_mask_ranges();
         assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn compute_mask_char_ranges_handles_multibyte_prefix() {
+        let mut s = test_state();
+        // Multi-byte prefix shifts byte positions relative to char positions.
+        s.insert_input_str("héllo ");
+        s.insert_paste_mask(&"x".repeat(600));
+
+        let byte_ranges = s.compute_mask_ranges();
+        let char_ranges = s.compute_mask_char_ranges();
+        assert_eq!(char_ranges.len(), 1);
+
+        let (c_start, c_end) = char_ranges[0];
+        let r = &byte_ranges[0].1;
+        assert_eq!(c_start, s.input.text[..r.start].chars().count());
+        assert_eq!(c_end, s.input.text[..r.end].chars().count());
+        // Placeholder is ASCII so char-length equals byte-length within the range.
+        assert_eq!(c_end - c_start, r.end - r.start);
+    }
+
+    #[test]
+    fn input_render_styles_mask_as_dim_italic() {
+        use ratatui::style::Modifier;
+
+        let mut s = test_state();
+        s.insert_input_str("hi ");
+        s.insert_paste_mask(&"x".repeat(600));
+
+        let (_h, lines, _max_scroll, _cursor) = s.calculate_input_dimensions(80, "model");
+        // First line is a blank padding; the input row is at index 1.
+        let input_line = &lines[1];
+        let mut found_mask_span = false;
+        for span in &input_line.spans {
+            if span.content.contains("[#1 Pasted") {
+                let mods = span.style.add_modifier;
+                assert!(
+                    mods.contains(Modifier::DIM) && mods.contains(Modifier::ITALIC),
+                    "mask span missing DIM/ITALIC modifiers (got {mods:?}) for content {:?}",
+                    span.content
+                );
+                found_mask_span = true;
+            }
+        }
+        assert!(
+            found_mask_span,
+            "expected at least one span carrying the placeholder text, got spans {:?}",
+            input_line
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<Vec<_>>()
+        );
     }
 
     fn assert_matching_lengths(items: &[ratatui::widgets::ListItem<'static>], text: &[String]) {
