@@ -679,6 +679,18 @@ impl ReplTuiState {
         });
     }
 
+    /// Single entry point for any pasted text, regardless of source (bracketed
+    /// paste, Ctrl+V, Shift+Insert).  Normalises newlines and either masks the
+    /// paste (>= threshold) or inserts it raw.
+    fn handle_paste_event(&mut self, raw: &str) {
+        let normalised = normalize_pasted_text(raw);
+        if should_mask_paste(&normalised) {
+            self.insert_paste_mask(&normalised);
+        } else {
+            self.insert_input_str(&normalised);
+        }
+    }
+
     /// Locate every active paste mask's current byte range in `self.input.text`.
     ///
     /// Returns `(paste_index, byte_range)` pairs sorted by `byte_range.start`.
@@ -3043,7 +3055,7 @@ fn run_loop(
                 // Bracketed paste supersedes any ongoing burst accumulation
                 state.paste_buffer = None;
                 state.last_key_time = None;
-                state.insert_input_str(&normalize_pasted_text(&text));
+                state.handle_paste_event(&text);
                 state.wake_input_caret();
                 state.refresh_slash_overlay();
             }
@@ -3084,7 +3096,7 @@ fn run_loop(
                     state.paste_buffer = None;
                     state.last_key_time = None;
                     if let Some(text) = read_clipboard_text() {
-                        state.insert_input_str(&text);
+                        state.handle_paste_event(&text);
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
@@ -3918,6 +3930,39 @@ mod tests {
         assert!(s.mask_containing(r.end, &ranges).is_none());
         assert!(s.mask_containing(r.start + 1, &ranges).is_some());
         assert!(s.mask_containing(r.start + 5, &ranges).is_some());
+    }
+
+    #[test]
+    fn large_paste_event_creates_mask_not_raw_text() {
+        let mut s = test_state();
+        let big = "y".repeat(600);
+        s.handle_paste_event(&big);
+
+        assert!(s.input.text.contains("[#1 Pasted ~"));
+        assert!(!s.input.text.contains(&big));
+        assert_eq!(s.input.pastes.len(), 1);
+    }
+
+    #[test]
+    fn small_paste_event_inserts_raw_text() {
+        let mut s = test_state();
+        let small = "short paste".to_string();
+        s.handle_paste_event(&small);
+
+        assert_eq!(s.input.text, "short paste");
+        assert!(s.input.pastes.is_empty());
+    }
+
+    #[test]
+    fn crlf_paste_normalises_to_lf_in_stored_content() {
+        let mut s = test_state();
+        let mut crlf = "a\r\n".repeat(300);
+        crlf.push_str("end");
+        s.handle_paste_event(&crlf);
+
+        assert_eq!(s.input.pastes.len(), 1);
+        assert!(!s.input.pastes[0].content.contains('\r'));
+        assert!(s.input.pastes[0].content.contains('\n'));
     }
 
     #[test]
