@@ -3409,9 +3409,8 @@ fn run_loop(
                         // threshold, treat it as a literal \n in the pasted text
                         // instead of submitting.
                         let now = Instant::now();
-                        let in_paste_burst = state.last_key_time.is_some()
-                            && state.paste_buffer.is_some()
-                            || state.last_key_time.is_some_and(|t| {
+                        let in_paste_burst = state.paste_buffer.is_some()
+                            && state.last_key_time.is_some_and(|t| {
                                 now.duration_since(t)
                                     <= Duration::from_millis(ReplTuiState::PASTE_THRESHOLD_MS)
                             });
