@@ -838,6 +838,12 @@ impl ReplTuiState {
         self.input.cursor -= 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
+        // Atomic-mask snap: if we landed strictly inside any mask, jump to its start.
+        let ranges = self.compute_mask_ranges();
+        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+            self.input.byte_cursor = r.start;
+            self.input.cursor = self.input.text[..r.start].chars().count();
+        }
     }
 
     fn move_input_cursor_right(&mut self) {
@@ -857,6 +863,12 @@ impl ReplTuiState {
         self.input.cursor += 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
+        // Atomic-mask snap: if we landed strictly inside any mask, jump to its end.
+        let ranges = self.compute_mask_ranges();
+        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+            self.input.byte_cursor = r.end;
+            self.input.cursor = self.input.text[..r.end].chars().count();
+        }
     }
 
     fn move_input_cursor_home(&mut self) {
@@ -953,6 +965,16 @@ impl ReplTuiState {
     }
 
     fn move_input_cursor_up(&mut self) {
+        self.move_input_cursor_up_inner();
+        // Atomic-mask snap: up = treat like left = snap to start.
+        let ranges = self.compute_mask_ranges();
+        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+            self.input.byte_cursor = r.start;
+            self.input.cursor = self.input.text[..r.start].chars().count();
+        }
+    }
+
+    fn move_input_cursor_up_inner(&mut self) {
         // Fall back to logical-line navigation until the widget width is known
         // (first render hasn't happened yet).
         if self.input_area_width == 0 {
@@ -1018,6 +1040,16 @@ impl ReplTuiState {
     }
 
     fn move_input_cursor_down(&mut self) {
+        self.move_input_cursor_down_inner();
+        // Atomic-mask snap: down = treat like right = snap to end.
+        let ranges = self.compute_mask_ranges();
+        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+            self.input.byte_cursor = r.end;
+            self.input.cursor = self.input.text[..r.end].chars().count();
+        }
+    }
+
+    fn move_input_cursor_down_inner(&mut self) {
         // Fall back to logical-line navigation until the widget width is known.
         if self.input_area_width == 0 {
             self.move_input_cursor_down_logical();
@@ -3963,6 +3995,39 @@ mod tests {
         assert_eq!(s.input.pastes.len(), 1);
         assert!(!s.input.pastes[0].content.contains('\r'));
         assert!(s.input.pastes[0].content.contains('\n'));
+    }
+
+    #[test]
+    fn left_arrow_at_mask_end_snaps_to_mask_start() {
+        let mut s = test_state();
+        s.insert_paste_mask(&"x".repeat(600));
+        let ranges = s.compute_mask_ranges();
+        let r = ranges[0].1.clone();
+
+        // Position cursor exactly at mask end (it currently sits past the trailing space).
+        s.input.byte_cursor = r.end;
+        s.input.cursor = s.input.text[..r.end].chars().count();
+
+        s.move_input_cursor_left();
+
+        assert_eq!(s.input.byte_cursor, r.start);
+        assert_eq!(s.input.cursor, s.input.text[..r.start].chars().count());
+    }
+
+    #[test]
+    fn right_arrow_at_mask_start_snaps_to_mask_end() {
+        let mut s = test_state();
+        s.insert_input_str("hi ");
+        s.insert_paste_mask(&"x".repeat(600));
+        let ranges = s.compute_mask_ranges();
+        let r = ranges[0].1.clone();
+
+        s.input.byte_cursor = r.start;
+        s.input.cursor = s.input.text[..r.start].chars().count();
+
+        s.move_input_cursor_right();
+
+        assert_eq!(s.input.byte_cursor, r.end);
     }
 
     #[test]
