@@ -643,6 +643,42 @@ impl ReplTuiState {
         self.input_scroll_offset = usize::MAX;
     }
 
+    /// Insert a paste as an atomic masked token.
+    ///
+    /// The pasted text has already been normalised by the caller.  This method:
+    ///   1. Records an undo snapshot.
+    ///   2. Generates a `[#N Pasted ~K lines]` placeholder and appends a trailing
+    ///      space so subsequent typing doesn't visually fuse with the mask.
+    ///   3. Stores the original content in `pastes` for later expansion on submit
+    ///      or clipboard yank.
+    fn insert_paste_mask(&mut self, raw: &str) {
+        self.input_scroll_manual = false;
+        if raw.is_empty() {
+            return;
+        }
+        self.record_input_undo_snapshot();
+        self.delete_selection_range();
+        self.clamp_input_cursor();
+
+        let id = self.input.next_paste_id;
+        self.input.next_paste_id = self.input.next_paste_id.saturating_add(1);
+        let placeholder = format_paste_placeholder(id, count_lines(raw));
+        let to_insert = format!("{placeholder} ");
+
+        self.input.text.insert_str(self.input.byte_cursor, &to_insert);
+        let char_count = to_insert.chars().count();
+        self.input.cursor = self.input.cursor.saturating_add(char_count);
+        self.input.byte_cursor = self.input.byte_cursor.saturating_add(to_insert.len());
+        self.input.preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+
+        self.input.pastes.push(PasteEntry {
+            id,
+            placeholder,
+            content: raw.to_string(),
+        });
+    }
+
     fn backspace_input_char(&mut self) {
         self.input_scroll_manual = false;
         let had_selection = self.input_selection.is_some();
@@ -3774,6 +3810,44 @@ mod tests {
         assert_eq!(s.input.pastes.len(), 1);
         assert_eq!(s.input.pastes[0].content, "line1\nline2\nline3");
         assert_eq!(s.input.next_paste_id, 2);
+    }
+
+    #[test]
+    fn insert_paste_mask_inserts_placeholder_and_records_entry() {
+        let mut s = test_state();
+        s.input.text = "prefix ".to_string();
+        s.input.cursor = s.input.text.chars().count();
+        s.resync_byte_cursor();
+
+        let content = "line1\nline2\nline3\n".repeat(40); // > 500 bytes, many lines
+        s.insert_paste_mask(&content);
+
+        assert_eq!(s.input.pastes.len(), 1);
+        let entry = &s.input.pastes[0];
+        assert_eq!(entry.id, 1);
+        assert!(entry.placeholder.starts_with("[#1 Pasted ~"));
+        assert_eq!(entry.content, content);
+        assert!(s.input.text.starts_with("prefix "));
+        assert!(s.input.text.contains(&entry.placeholder));
+        // Trailing space appended after the placeholder.
+        assert!(s.input.text.ends_with(' '));
+        // Cursor sits past the trailing space.
+        assert_eq!(s.input.cursor, s.input.text.chars().count());
+        assert_eq!(s.input.byte_cursor, s.input.text.len());
+        assert_eq!(s.input.next_paste_id, 2);
+    }
+
+    #[test]
+    fn insert_paste_mask_increments_id_for_consecutive_pastes() {
+        let mut s = test_state();
+        let big = "x".repeat(600);
+        s.insert_paste_mask(&big);
+        s.insert_paste_mask(&big);
+        assert_eq!(s.input.pastes.len(), 2);
+        assert_eq!(s.input.pastes[0].id, 1);
+        assert_eq!(s.input.pastes[1].id, 2);
+        assert!(s.input.text.contains("[#1 Pasted"));
+        assert!(s.input.text.contains("[#2 Pasted"));
     }
 
     fn assert_matching_lengths(items: &[ratatui::widgets::ListItem<'static>], text: &[String]) {
