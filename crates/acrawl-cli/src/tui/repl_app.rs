@@ -895,13 +895,7 @@ impl ReplTuiState {
         if cur_vis + 1 >= vis.len() {
             // Already on the last visual line — go to end
             let (start, width) = vis[cur_vis];
-            let line_text: String = self
-                .input
-                .text
-                .chars()
-                .skip(start)
-                .take(usize::MAX)
-                .collect();
+            let line_text: String = self.input.text.chars().skip(start).collect();
             self.set_input_cursor_line_col_by_char(
                 start + char_count_for_display_col(&line_text, width),
             );
