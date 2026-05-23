@@ -477,8 +477,9 @@ impl ReplTuiState {
             if n == 0 {
                 return;
             }
-            self.clamp_input_cursor();
             self.record_input_undo_snapshot();
+            self.delete_selection_range();
+            self.clamp_input_cursor();
             let prefix = &self.input.text[..self.input.byte_cursor];
             let suffix = &self.input.text[self.input.byte_cursor..];
             // Compute UTF-8 byte length of pasted chars while building the
