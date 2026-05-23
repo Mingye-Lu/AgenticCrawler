@@ -431,10 +431,15 @@ impl ReplTuiState {
         self.input_scroll_offset = usize::MAX;
     }
 
+    const MAX_UNDO_HISTORY: usize = 100;
+
     fn record_input_undo_snapshot(&mut self) {
         let snapshot = self.current_input_snapshot();
         if self.input_undo_stack.last() != Some(&snapshot) {
             self.input_undo_stack.push(snapshot);
+            if self.input_undo_stack.len() > Self::MAX_UNDO_HISTORY {
+                self.input_undo_stack.remove(0);
+            }
         }
         self.input_redo_stack.clear();
     }
