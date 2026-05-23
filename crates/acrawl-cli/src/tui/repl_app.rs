@@ -64,6 +64,26 @@ fn read_clipboard_text() -> Option<String> {
     Some(normalize_pasted_text(&text))
 }
 
+/// Mask any paste at or above this byte length.
+const PASTE_MASK_THRESHOLD_BYTES: usize = 500;
+
+/// Count logical lines in `text` by physical newline count plus one.  O(n) byte
+/// scan, no UTF-8 decoding — `\n` is ASCII so this is safe on any UTF-8 string.
+fn count_lines(text: &str) -> usize {
+    text.bytes().filter(|&b| b == b'\n').count() + 1
+}
+
+/// Whether a paste should be replaced by a placeholder mask.
+/// Inclusive at the threshold: returns true when `text.len() >= PASTE_MASK_THRESHOLD_BYTES`.
+fn should_mask_paste(text: &str) -> bool {
+    text.len() >= PASTE_MASK_THRESHOLD_BYTES
+}
+
+/// Format the visible placeholder for a masked paste.
+fn format_paste_placeholder(id: u32, line_count: usize) -> String {
+    format!("[#{id} Pasted ~{line_count} lines]")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AppUiState {
     WelcomeMode,
@@ -3690,11 +3710,45 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::text::Line;
 
-    use super::{PasteEntry, ReplTuiState, ToolCallStatus, TranscriptEntry};
+    use super::{
+        count_lines, format_paste_placeholder, normalize_pasted_text, should_mask_paste,
+        PasteEntry, ReplTuiState, ToolCallStatus, TranscriptEntry,
+    };
 
     /// Smallest valid `ReplTuiState` for paste-masking unit tests.
     fn test_state() -> ReplTuiState {
         ReplTuiState::new()
+    }
+
+    #[test]
+    fn normalize_pasted_text_handles_crlf_and_cr() {
+        assert_eq!(normalize_pasted_text("a\r\nb"), "a\nb");
+        assert_eq!(normalize_pasted_text("a\rb"), "a\nb");
+        assert_eq!(normalize_pasted_text("a\r\nb\rc"), "a\nb\nc");
+        assert_eq!(normalize_pasted_text("plain"), "plain");
+    }
+
+    #[test]
+    fn count_lines_counts_newlines_plus_one() {
+        assert_eq!(count_lines(""), 1);
+        assert_eq!(count_lines("one"), 1);
+        assert_eq!(count_lines("a\nb"), 2);
+        assert_eq!(count_lines("a\nb\nc"), 3);
+        assert_eq!(count_lines("trailing\n"), 2);
+    }
+
+    #[test]
+    fn should_mask_paste_uses_byte_threshold() {
+        assert!(!should_mask_paste(""));
+        assert!(!should_mask_paste(&"x".repeat(499)));
+        assert!(should_mask_paste(&"x".repeat(500)));
+        assert!(should_mask_paste(&"x".repeat(10_000)));
+    }
+
+    #[test]
+    fn format_paste_placeholder_matches_format() {
+        assert_eq!(format_paste_placeholder(1, 1), "[#1 Pasted ~1 lines]");
+        assert_eq!(format_paste_placeholder(42, 137), "[#42 Pasted ~137 lines]");
     }
 
     #[test]
