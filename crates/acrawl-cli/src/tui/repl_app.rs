@@ -740,6 +740,23 @@ impl ReplTuiState {
         if self.delete_selection_range() {
             return;
         }
+        // Atomic-mask deletion: cursor at a mask's end byte -> drop whole mask.
+        if !had_selection {
+            let ranges = self.compute_mask_ranges();
+            if let Some((idx, r)) = ranges
+                .iter()
+                .find(|(_, r)| r.end == self.input.byte_cursor)
+                .map(|(i, r)| (*i, r.clone()))
+            {
+                self.input.text.replace_range(r.clone(), "");
+                self.input.pastes.remove(idx);
+                self.input.byte_cursor = r.start;
+                self.input.cursor = self.input.text[..r.start].chars().count();
+                self.input.preferred_col = None;
+                self.input_scroll_offset = usize::MAX;
+                return;
+            }
+        }
         // Find byte-offset of the character before cursor
         let prev_byte = if self.input.byte_cursor > 0 {
             // Walk backwards from byte_cursor to the previous char boundary
@@ -771,6 +788,22 @@ impl ReplTuiState {
         self.record_input_undo_snapshot();
         if self.delete_selection_range() {
             return;
+        }
+        // Atomic-mask deletion: cursor at a mask's start byte -> drop whole mask.
+        if !had_selection {
+            let ranges = self.compute_mask_ranges();
+            if let Some((idx, r)) = ranges
+                .iter()
+                .find(|(_, r)| r.start == self.input.byte_cursor)
+                .map(|(i, r)| (*i, r.clone()))
+            {
+                self.input.text.replace_range(r.clone(), "");
+                self.input.pastes.remove(idx);
+                // byte_cursor stays at r.start; char cursor stays the same.
+                self.input.preferred_col = None;
+                self.input_scroll_offset = usize::MAX;
+                return;
+            }
         }
         // Find byte-offset of the character after cursor
         let bytes = self.input.text.as_bytes();
@@ -4540,6 +4573,44 @@ mod tests {
             .join("\n");
 
         assert!(content.contains("Update available: v9.9.9 (you have v1.0.0)"));
+    }
+
+    #[test]
+    fn backspace_at_mask_end_deletes_entire_mask() {
+        let mut s = test_state();
+        s.insert_input_str("hi ");
+        let big = "y".repeat(600);
+        s.insert_paste_mask(&big);
+        // Cursor sits past the trailing space.  Move it back one char to land on
+        // mask end (the boundary between placeholder and the trailing space).
+        let trailing_space_byte = s.input.byte_cursor - 1;
+        s.input.byte_cursor = trailing_space_byte;
+        s.input.cursor -= 1;
+
+        let before_len = s.input.text.len();
+        s.backspace_input_char();
+
+        assert!(!s.input.text.contains("[#1 Pasted"));
+        assert!(s.input.text.len() < before_len);
+        assert!(s.input.pastes.is_empty());
+        // "hi " + trailing space that originally followed the (now-deleted) mask.
+        assert_eq!(s.input.text, "hi  ");
+    }
+
+    #[test]
+    fn delete_at_mask_start_deletes_entire_mask() {
+        let mut s = test_state();
+        s.insert_paste_mask(&"y".repeat(600));
+        // Position cursor at mask start.
+        let ranges = s.compute_mask_ranges();
+        let r = ranges[0].1.clone();
+        s.input.byte_cursor = r.start;
+        s.input.cursor = s.input.text[..r.start].chars().count();
+
+        s.delete_input_char();
+
+        assert!(!s.input.text.contains("[#1 Pasted"));
+        assert!(s.input.pastes.is_empty());
     }
 
     #[test]
