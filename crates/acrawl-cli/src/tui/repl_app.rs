@@ -762,11 +762,18 @@ impl ReplTuiState {
 
     /// Compute visual line boundaries for the input text.
     ///
-    /// Returns `Vec<(char_start, display_width)>` — the char-index of each
-    /// visual line's first character and its display width in terminal cells.
-    /// The first visual line of the first logical line has a 2‑cell offset
-    /// (the `"> "` prompt prefix); all others wrap at `safe_width` columns.
-    fn visual_line_info(&self, safe_width: usize) -> Vec<(usize, usize)> {
+    /// Returns `Vec<(char_start, display_width, starts_paragraph)>`.
+    ///
+    /// - `char_start`: char-index of the first character on this visual line.
+    /// - `display_width`: width of the visual line in terminal cells.
+    /// - `starts_paragraph`: `true` iff this is the first visual line of a
+    ///   logical paragraph after a `\n` separator (i.e. the char immediately
+    ///   before `char_start` in the text is `\n`). Always `false` for the
+    ///   very first visual line and for soft-wrapped continuation lines.
+    ///
+    /// Callers use `starts_paragraph` instead of re-scanning the text with
+    /// `chars().nth()` to check for a trailing `\n` at a line boundary.
+    fn visual_line_info(&self, safe_width: usize) -> Vec<(usize, usize, bool)> {
         let mut lines = Vec::new();
         let mut char_idx = 0usize;
         let parts: Vec<&str> = self.input.text.split('\n').collect();
@@ -780,7 +787,9 @@ impl ReplTuiState {
                 let remaining = logical_chars.len().saturating_sub(offset);
                 if remaining == 0 {
                     if offset == 0 {
-                        lines.push((char_idx, 0));
+                        // First visual line of a new paragraph starts after \n
+                        // (except the very first logical line which has no preceding \n).
+                        lines.push((char_idx, 0, logical_idx > 0));
                     }
                     break;
                 }
@@ -796,7 +805,9 @@ impl ReplTuiState {
                     col += cw;
                     end += 1;
                 }
-                lines.push((char_idx + offset, col));
+                // starts_paragraph: first soft-wrap line of a new logical paragraph
+                let starts_paragraph = offset == 0 && logical_idx > 0;
+                lines.push((char_idx + offset, col, starts_paragraph));
                 if end == offset {
                     // Zero-width char at start — force advance
                     end = offset + 1;
@@ -828,10 +839,10 @@ impl ReplTuiState {
         // Find which visual line the cursor is on.
         // partition_point gives the last line whose start <= cur_char.
         let cur_vis = vis
-            .partition_point(|(start, _)| *start <= cur_char)
+            .partition_point(|(start, _, _)| *start <= cur_char)
             .saturating_sub(1);
         if cur_vis == 0 {
-            let (start, _) = vis[0];
+            let (start, _, _) = vis[0];
             self.set_input_cursor_line_col_by_char(start);
             self.input.preferred_col = self.input.preferred_col.or(Some(0));
             return;
@@ -850,11 +861,11 @@ impl ReplTuiState {
             .sum::<usize>();
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
 
-        let (prev_start, prev_width) = vis[cur_vis - 1];
+        let (prev_start, prev_width, _) = vis[cur_vis - 1];
+        // vis[cur_vis].2 is true when cur_vis starts a new logical paragraph,
+        // meaning the char before it is a \n separator to exclude from the range.
         let raw_prev_end = vis[cur_vis].0;
-        let prev_end = if raw_prev_end > 0
-            && self.input.text.chars().nth(raw_prev_end.saturating_sub(1)) == Some('\n')
-        {
+        let prev_end = if vis[cur_vis].2 {
             raw_prev_end.saturating_sub(1)
         } else {
             raw_prev_end
@@ -890,11 +901,11 @@ impl ReplTuiState {
         }
         let cur_char = self.input.cursor;
         let cur_vis = vis
-            .partition_point(|(start, _)| *start <= cur_char)
+            .partition_point(|(start, _, _)| *start <= cur_char)
             .saturating_sub(1);
         if cur_vis + 1 >= vis.len() {
             // Already on the last visual line — go to end
-            let (start, width) = vis[cur_vis];
+            let (start, width, _) = vis[cur_vis];
             let line_text: String = self.input.text.chars().skip(start).collect();
             self.set_input_cursor_line_col_by_char(
                 start + char_count_for_display_col(&line_text, width),
@@ -917,11 +928,12 @@ impl ReplTuiState {
         // Resolve preferred column from current position (or previous nav).
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
 
-        let (next_start, next_width) = vis[cur_vis + 1];
+        let (next_start, next_width, _) = vis[cur_vis + 1];
         let raw_next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
-        let next_end = if raw_next_end > 0
-            && self.input.text.chars().nth(raw_next_end.saturating_sub(1)) == Some('\n')
-        {
+        // vis[cur_vis + 2].2 tells us whether the line after next starts a new
+        // paragraph, meaning next's last char is the \n separator to exclude.
+        let next_ends_with_nl = vis.get(cur_vis + 2).map_or(false, |v| v.2);
+        let next_end = if next_ends_with_nl {
             raw_next_end.saturating_sub(1)
         } else {
             raw_next_end
@@ -967,7 +979,7 @@ impl ReplTuiState {
         let vis = self.visual_line_info(safe_width);
         let content_row = widget_row.saturating_sub(1);
         let abs_row = self.input_scroll_offset + content_row;
-        let &(start, width) = vis.get(abs_row)?;
+        let &(start, width, _) = vis.get(abs_row)?;
         let is_first = abs_row == 0;
         let prompt = if is_first { 2usize } else { 0 };
         if widget_col < prompt {
@@ -975,12 +987,11 @@ impl ReplTuiState {
         }
         let target_col = widget_col.saturating_sub(prompt).min(width);
         // Compute the char end of this visual line.  The next visual line's
-        // start gives the exclusive end; subtract 1 if the intervening char
-        // is \n (the line separator is not part of either visual line).
+        // start gives the exclusive end; subtract 1 if it starts a new paragraph
+        // (meaning the intervening char is a \n separator not part of either line).
         let raw_end = vis.get(abs_row + 1).map_or(self.input_char_len(), |v| v.0);
-        let line_end = if raw_end > start
-            && self.input.text.chars().nth(raw_end.saturating_sub(1)) == Some('\n')
-        {
+        let next_starts_paragraph = vis.get(abs_row + 1).map_or(false, |v| v.2);
+        let line_end = if next_starts_paragraph {
             raw_end.saturating_sub(1)
         } else {
             raw_end
@@ -1213,11 +1224,10 @@ impl ReplTuiState {
             let vis = self.visual_line_info(safe_width);
             vis.iter()
                 .enumerate()
-                .map(|(idx, &(start, _))| {
+                .map(|(idx, &(start, _, _))| {
                     let raw_end = vis.get(idx + 1).map_or(self.input_char_len(), |v| v.0);
-                    let line_end = if raw_end > start
-                        && self.input.text.chars().nth(raw_end.saturating_sub(1)) == Some('\n')
-                    {
+                    let next_starts_paragraph = vis.get(idx + 1).map_or(false, |v| v.2);
+                    let line_end = if next_starts_paragraph {
                         raw_end.saturating_sub(1)
                     } else {
                         raw_end
