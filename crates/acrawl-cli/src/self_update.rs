@@ -9,14 +9,14 @@ use runtime::{check_for_update_force, config_home_dir};
 const REPO: &str = "Mingye-Lu/AgenticCrawler";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn make_spinner(msg: impl Into<std::borrow::Cow<'static, str>>) -> ProgressBar {
+fn make_spinner(msg: impl Into<String>) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.cyan} {msg}")
             .unwrap(),
     );
-    pb.set_message(msg);
+    pb.set_message(msg.into());
     pb.enable_steady_tick(Duration::from_millis(100));
     pb
 }

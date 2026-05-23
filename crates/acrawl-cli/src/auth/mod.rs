@@ -388,12 +388,12 @@ pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::er
 
     fn category_short(cat: ProviderCategory) -> &'static str {
         match cat {
-            ProviderCategory::Popular => "Popular     ",
-            ProviderCategory::OssHosting => "Open Source ",
-            ProviderCategory::Specialized => "Specialized ",
-            ProviderCategory::Enterprise => "Enterprise  ",
-            ProviderCategory::Gateway => "Gateway     ",
-            ProviderCategory::Other => "Other       ",
+            ProviderCategory::Popular => "Popular",
+            ProviderCategory::OssHosting => "Open Source",
+            ProviderCategory::Specialized => "Specialized",
+            ProviderCategory::Enterprise => "Enterprise",
+            ProviderCategory::Gateway => "Gateway",
+            ProviderCategory::Other => "Other",
         }
     }
 
@@ -415,18 +415,38 @@ pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::er
         }
     }
 
-    let items: Vec<String> = indexed
+    let col_width = category_order
         .iter()
-        .map(|p| format!("{}  {}", category_short(p.category), p.display_name))
+        .map(|c| category_short(*c).len())
+        .max()
+        .unwrap_or(0);
+
+    let mut items: Vec<String> = indexed
+        .iter()
+        .map(|p| {
+            format!(
+                "{:<width$}  {}",
+                category_short(p.category),
+                p.display_name,
+                width = col_width
+            )
+        })
         .collect();
+    // Let users reach Provider::Other (custom base URL + API key) from the menu.
+    items.push(format!(
+        "{:<width$}  Custom (enter base URL + API key manually)",
+        "Other",
+        width = col_width
+    ));
 
     let selection = FuzzySelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("Select a provider (type to filter)")
+        .with_prompt("Select a provider (type to filter, Esc to cancel)")
         .items(&items)
         .default(0)
         .interact_opt()?;
 
     match selection {
+        Some(i) if i == indexed.len() => Ok(ProviderChoice::Legacy(Provider::Other)),
         Some(i) => Ok(ProviderChoice::Preset(indexed[i])),
         None => Err("no provider selected".into()),
     }

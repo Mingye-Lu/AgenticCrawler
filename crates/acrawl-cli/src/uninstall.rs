@@ -31,7 +31,8 @@ pub fn run_uninstall(purge: bool) -> Result<(), Box<dyn std::error::Error>> {
     let confirmed = Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Uninstall acrawl?")
         .default(false)
-        .interact()?;
+        .interact_opt()?
+        .unwrap_or(false);
     if !confirmed {
         println!("Aborted.");
         return Ok(());
