@@ -679,6 +679,21 @@ impl ReplTuiState {
         self.delete_selection_range();
         self.clamp_input_cursor();
 
+        // Edge case: if cursor is strictly inside any existing mask, snap to the
+        // nearer boundary before inserting.  Prevents the placeholder from being
+        // inserted mid-placeholder which would break later text.find lookups for
+        // the first mask.
+        let ranges = self.compute_mask_ranges();
+        if let Some(r) = self.mask_containing(self.input.byte_cursor, &ranges) {
+            let snap_to = if self.input.byte_cursor - r.start < r.end - self.input.byte_cursor {
+                r.start
+            } else {
+                r.end
+            };
+            self.input.byte_cursor = snap_to;
+            self.input.cursor = self.input.text[..snap_to].chars().count();
+        }
+
         let id = self.input.next_paste_id;
         self.input.next_paste_id = self.input.next_paste_id.saturating_add(1);
         let placeholder = format_paste_placeholder(id, count_lines(raw));
@@ -4198,6 +4213,24 @@ mod tests {
         assert!(s.mask_containing(r.end, &ranges).is_none());
         assert!(s.mask_containing(r.start + 1, &ranges).is_some());
         assert!(s.mask_containing(r.start + 5, &ranges).is_some());
+    }
+
+    #[test]
+    fn paste_while_cursor_inside_mask_snaps_first() {
+        let mut s = test_state();
+        s.insert_paste_mask(&"a".repeat(600));
+        let ranges = s.compute_mask_ranges();
+        let r = ranges[0].1.clone();
+        // Place cursor strictly inside the first mask.
+        s.input.byte_cursor = r.start + 3;
+        s.input.cursor = s.input.text[..r.start + 3].chars().count();
+
+        s.insert_paste_mask(&"b".repeat(600));
+
+        // Both masks present, neither nested.
+        let ranges = s.compute_mask_ranges();
+        assert_eq!(ranges.len(), 2);
+        assert!(ranges[0].1.end <= ranges[1].1.start);
     }
 
     #[test]
