@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-05-23
+
+### Added
+
+- **Styled auth and uninstall prompts** — `acrawl auth` and `acrawl uninstall` now use `dialoguer` Confirm/FuzzySelect widgets instead of raw stdin reads. Auth presents a searchable provider picker with dynamic category-column padding; uninstall shows a styled confirmation prompt that degrades gracefully when stdin is not a TTY (`interact_opt`).
+- **Progress spinners in `acrawl update`** — long-running network fetch and `npm install` steps now show animated `indicatif` spinners so the terminal is not silently blocked during updates.
+
+### Fixed
+
+- **MCP server opened `about:blank` on IDE launch** — the browser (CloakBrowser/Playwright) was launched eagerly at MCP server startup, causing a blank browser window to appear whenever an IDE loaded the MCP configuration. The browser is now initialized on the first tool call; launch failures surface as a tool-level error response instead of a process exit.
+
 ## [0.6.1] - 2026-05-23
 
 ### Added
