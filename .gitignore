@@ -38,3 +38,6 @@ opencode/
 .graphify_*
 graphify-out/
 crates/graphify-out/
+
+# Superpowers specs (local, not committed)
+docs/superpowers/
