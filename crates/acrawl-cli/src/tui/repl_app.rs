@@ -1787,6 +1787,11 @@ impl ReplTuiState {
     }
 
     fn refresh_slash_overlay(&mut self) {
+        if !self.input.text.trim_start().starts_with('/') {
+            self.slash_overlay = None;
+            self.last_slash_overlay_rect = None;
+            return;
+        }
         let trimmed = self.input.text.trim();
         if !trimmed.starts_with('/') || trimmed.contains(char::is_whitespace) {
             self.slash_overlay = None;
