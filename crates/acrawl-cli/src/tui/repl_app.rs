@@ -932,7 +932,7 @@ impl ReplTuiState {
         let raw_next_end = vis.get(cur_vis + 2).map_or(self.input_char_len(), |v| v.0);
         // vis[cur_vis + 2].2 tells us whether the line after next starts a new
         // paragraph, meaning next's last char is the \n separator to exclude.
-        let next_ends_with_nl = vis.get(cur_vis + 2).map_or(false, |v| v.2);
+        let next_ends_with_nl = vis.get(cur_vis + 2).is_some_and(|v| v.2);
         let next_end = if next_ends_with_nl {
             raw_next_end.saturating_sub(1)
         } else {
@@ -990,7 +990,7 @@ impl ReplTuiState {
         // start gives the exclusive end; subtract 1 if it starts a new paragraph
         // (meaning the intervening char is a \n separator not part of either line).
         let raw_end = vis.get(abs_row + 1).map_or(self.input_char_len(), |v| v.0);
-        let next_starts_paragraph = vis.get(abs_row + 1).map_or(false, |v| v.2);
+        let next_starts_paragraph = vis.get(abs_row + 1).is_some_and(|v| v.2);
         let line_end = if next_starts_paragraph {
             raw_end.saturating_sub(1)
         } else {
@@ -1226,7 +1226,7 @@ impl ReplTuiState {
                 .enumerate()
                 .map(|(idx, &(start, _, _))| {
                     let raw_end = vis.get(idx + 1).map_or(self.input_char_len(), |v| v.0);
-                    let next_starts_paragraph = vis.get(idx + 1).map_or(false, |v| v.2);
+                    let next_starts_paragraph = vis.get(idx + 1).is_some_and(|v| v.2);
                     let line_end = if next_starts_paragraph {
                         raw_end.saturating_sub(1)
                     } else {
