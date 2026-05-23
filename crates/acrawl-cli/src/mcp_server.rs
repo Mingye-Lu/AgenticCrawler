@@ -10,8 +10,8 @@ use api::{
 };
 use api::{ImageSource, OutputContentBlock, ToolChoice, ToolDefinition};
 use crawler::{
-    mvp_tool_specs, BrowserBackend, BrowserContext, CrawlerAgent, PlaywrightBridge, SharedBridge,
-    ToolEffect, ToolRegistry,
+    mvp_tool_specs, BrowserBackend, BrowserContext, CrawlerAgent, PlaywrightBridge, ToolEffect,
+    ToolRegistry,
 };
 use runtime::{encode_mcp_frame, read_mcp_frame};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage};
@@ -798,7 +798,7 @@ fn handle_tools_call(
     id: Option<Value>,
     params: Option<Value>,
     registry: &ToolRegistry,
-    browser: &mut BrowserContext,
+    browser: &mut Option<BrowserContext>,
     rt: &tokio::runtime::Runtime,
 ) {
     let Some(params) = params else {
@@ -837,7 +837,31 @@ fn handle_tools_call(
         return;
     }
 
-    match execute_browser_tool(name, &arguments, registry, browser, rt) {
+    if browser.is_none() {
+        match rt.block_on(PlaywrightBridge::new()) {
+            Ok(bridge) => {
+                let shared = std::sync::Arc::new(tokio::sync::Mutex::new(
+                    Box::new(bridge) as Box<dyn BrowserBackend + Send>,
+                ));
+                *browser = Some(BrowserContext::new(shared));
+            }
+            Err(e) => {
+                let result = json!({
+                    "content": [{ "type": "text", "text": format!("Error: failed to launch browser — {e}") }],
+                    "isError": true,
+                });
+                send_response(&JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(result),
+                    error: None,
+                });
+                return;
+            }
+        }
+    }
+
+    match execute_browser_tool(name, &arguments, registry, browser.as_mut().unwrap(), rt) {
         Ok(output) => {
             let result = json!({
                 "content": [{ "type": "text", "text": output }],
@@ -873,20 +897,7 @@ pub fn run() {
         .build()
         .expect("failed to create tokio runtime");
 
-    let shared_bridge: SharedBridge = rt.block_on(async {
-        match PlaywrightBridge::new().await {
-            Ok(bridge) => std::sync::Arc::new(tokio::sync::Mutex::new(
-                Box::new(bridge) as Box<dyn BrowserBackend + Send>
-            )),
-            Err(e) => {
-                eprintln!("error: failed to launch browser — {e}");
-                eprintln!("hint: run `acrawl install-browser` to install Playwright");
-                std::process::exit(1);
-            }
-        }
-    });
-
-    let mut browser = BrowserContext::new(shared_bridge);
+    let mut browser: Option<BrowserContext> = None;
     let registry = ToolRegistry::new_with_options(false);
 
     let stdin = io::stdin().lock();
