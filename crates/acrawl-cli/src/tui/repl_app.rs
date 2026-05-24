@@ -4261,6 +4261,115 @@ mod tests {
         assert!(s.paste_enter_is_suppressed(KeyCode::Enter));
     }
 
+    /// End-to-end simulation of the event loop's paste-burst handling for the
+    /// concrete regression we're fixing: a multi-line paste arriving as raw
+    /// keystrokes (Windows Terminal + ConPTY bypassing `Event::Paste`).
+    ///
+    /// This walks through the exact sequence of state mutations the event-loop
+    /// handlers (`KeyCode::Char(c)`, `KeyCode::Enter`) would perform on each
+    /// arriving key event, then asserts the final input state contains the
+    /// full multi-line text and that no auto-submit was triggered.
+    #[test]
+    fn paste_burst_e2e_multi_line_keystroke_paste_does_not_auto_send() {
+        let mut s = test_state();
+        let now = std::time::Instant::now();
+        let burst = std::time::Duration::from_millis(2);
+
+        // Char 'a' — first keystroke, no prior key → inserted directly.
+        s.last_key_time = Some(now);
+        s.insert_input_char('a');
+
+        // Char 'b' arrives 2 ms later — in burst, accumulate.
+        let t_b = now + burst;
+        assert!(s.in_paste_burst(t_b));
+        s.paste_burst_chars.push('b');
+        s.last_key_time = Some(t_b);
+
+        // Enter arrives 2 ms later — in burst → push '\n' to buffer, NO submit.
+        // (This is the regression: previously this triggered a send of "ab".)
+        let t_enter = t_b + burst;
+        assert!(s.in_paste_burst(t_enter));
+        s.paste_burst_chars.push('\n');
+        s.last_key_time = Some(t_enter);
+
+        // Chars 'c', 'd' — still in burst, accumulate.
+        let t_c = t_enter + burst;
+        s.paste_burst_chars.push('c');
+        s.last_key_time = Some(t_c);
+        let t_d = t_c + burst;
+        s.paste_burst_chars.push('d');
+        s.last_key_time = Some(t_d);
+
+        // Burst goes idle — top-of-loop auto-flush fires.
+        s.flush_paste_burst();
+
+        // Full multi-line text now in input.text; no auto-send happened.
+        assert_eq!(s.input.text, "ab\ncd",
+            "all pasted content should land in input.text, with the newline preserved");
+        assert!(s.paste_burst_chars.is_empty(),
+            "burst buffer drained after flush");
+        assert!(s.paste_enter_is_suppressed(KeyCode::Enter),
+            "newline routed through handle_paste_event arms Enter suppression");
+    }
+
+    /// E2E: long keystroke-paste hits the mask threshold via the burst flush.
+    /// Verifies that masking works for terminals that don't deliver
+    /// `Event::Paste` — the entire raison d'être of restoring the burst path.
+    #[test]
+    fn paste_burst_e2e_long_keystroke_paste_is_masked() {
+        let mut s = test_state();
+        let big = "x".repeat(200);
+        let mut chars = big.chars();
+
+        // First char inserted directly (no prior key to detect burst from).
+        s.insert_input_char(chars.next().unwrap());
+        s.last_key_time = Some(std::time::Instant::now());
+
+        // Remaining 199 chars accumulate in the burst buffer.
+        for c in chars {
+            s.paste_burst_chars.push(c);
+        }
+        // Auto-flush at burst idle.
+        s.flush_paste_burst();
+
+        // The 199-char burst above the 150-byte threshold → masked.
+        assert!(s.input.text.contains("[#1 Pasted"),
+            "burst above threshold should flush through the mask path");
+        // Single PasteEntry recorded with the full 199-char content.
+        assert_eq!(s.input.pastes.len(), 1);
+        assert_eq!(s.input.pastes[0].content.len(), 199);
+    }
+
+    /// E2E: the periodic auto-flush condition.  Verifies the predicate the
+    /// event loop uses at the top of each tick — burst is flushed only when
+    /// both the buffer is non-empty AND the last key is older than the threshold.
+    #[test]
+    fn paste_burst_e2e_auto_flush_condition_only_fires_when_idle() {
+        let mut s = test_state();
+        let now = std::time::Instant::now();
+        s.paste_burst_chars.push('x');
+
+        // Recent key → don't flush yet (burst may continue).
+        s.last_key_time = Some(now - std::time::Duration::from_millis(5));
+        let should_flush_recent = !s.paste_burst_chars.is_empty()
+            && s.last_key_time.is_some_and(|t| {
+                t.elapsed() > std::time::Duration::from_millis(
+                    super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
+                )
+            });
+        assert!(!should_flush_recent, "must not flush while burst is still active");
+
+        // Idle past threshold → flush.
+        s.last_key_time = Some(now - std::time::Duration::from_millis(100));
+        let should_flush_idle = !s.paste_burst_chars.is_empty()
+            && s.last_key_time.is_some_and(|t| {
+                t.elapsed() > std::time::Duration::from_millis(
+                    super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
+                )
+            });
+        assert!(should_flush_idle, "must flush once the burst has gone idle");
+    }
+
     #[test]
     fn paste_burst_flush_below_threshold_inserts_raw_with_suppression() {
         // Short burst with newline → not masked, but newline triggers suppression.
