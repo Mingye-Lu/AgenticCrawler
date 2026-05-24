@@ -54,14 +54,18 @@ pub(super) const SLASH_OVERLAY_VISIBLE_ITEMS: usize = 7;
 pub(super) const SLASH_OVERLAY_HINT_TEXT: &str =
     "Up/Down move  Enter accept  Tab complete  Esc close";
 
-fn normalize_pasted_text(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
+fn normalize_pasted_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.as_bytes().contains(&b'\r') {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
 }
 
 fn read_clipboard_text() -> Option<String> {
     let mut clipboard = arboard::Clipboard::new().ok()?;
     let text = clipboard.get_text().ok()?;
-    Some(normalize_pasted_text(&text))
+    Some(normalize_pasted_text(&text).into_owned())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -973,6 +977,46 @@ impl ReplTuiState {
                 }
                 total += 1;
             } else {
+                if part.is_ascii() {
+                    let len = part.len();
+
+                    let caret_at_end = caret_char_idx == char_cursor + len;
+                    let (n_visual, ends_on_wrap_boundary) = if len <= first_cap {
+                        (1usize, len == first_cap)
+                    } else {
+                        let remaining = len - first_cap;
+                        let full_tail_chunks = remaining / safe_width;
+                        let tail_remainder = remaining % safe_width;
+                        (
+                            1 + full_tail_chunks + usize::from(tail_remainder > 0),
+                            tail_remainder == 0,
+                        )
+                    };
+
+                    if !caret_found
+                        && caret_char_idx >= char_cursor
+                        && caret_char_idx <= char_cursor + len
+                    {
+                        let offset = caret_char_idx - char_cursor;
+                        caret_line = if offset < first_cap {
+                            total
+                        } else {
+                            total + 1 + (offset - first_cap) / safe_width
+                        };
+                        caret_found = true;
+                    }
+
+                    total += n_visual + usize::from(caret_at_end && ends_on_wrap_boundary);
+                    char_cursor += len;
+
+                    if has_more {
+                        char_cursor += 1;
+                    }
+
+                    logical_idx += 1;
+                    continue;
+                }
+
                 let mut col = 0usize;
                 let mut is_first_chunk = true;
                 let mut has_chars = false;
@@ -1494,6 +1538,25 @@ impl ReplTuiState {
                             *is_first_chunk = false;
                         }
                     };
+
+                if !line.is_empty() && line.is_ascii() {
+                    let len = line.len();
+                    let n_visual = if len <= first_line_width {
+                        1usize
+                    } else {
+                        1 + (len - first_line_width).div_ceil(safe_width)
+                    };
+
+                    if visual_line_idx + n_visual <= skip {
+                        visual_line_idx += n_visual;
+                        char_cursor += len;
+                        if has_more {
+                            char_cursor += 1;
+                        }
+                        logical_idx += 1;
+                        continue 'outer;
+                    }
+                }
 
                 if line.is_empty() {
                     if char_cursor == caret_char_idx {
@@ -4037,6 +4100,108 @@ mod tests {
         assert_eq!(normalize_pasted_text("a\rb"), "a\nb");
         assert_eq!(normalize_pasted_text("a\r\nb\rc"), "a\nb\nc");
         assert_eq!(normalize_pasted_text("plain"), "plain");
+    }
+
+    #[test]
+    fn normalize_pasted_text_borrows_clean_input() {
+        assert!(matches!(
+            normalize_pasted_text("plain"),
+            std::borrow::Cow::Borrowed("plain")
+        ));
+    }
+
+    fn count_visual_lines_with_caret_baseline(
+        text: &str,
+        safe_width: usize,
+        caret_char_idx: usize,
+    ) -> (usize, usize) {
+        let mut total = 0usize;
+        let mut caret_line = 0usize;
+        let mut char_cursor = 0usize;
+        let mut caret_found = false;
+        let mut parts = text.split('\n').peekable();
+        let mut logical_idx = 0usize;
+
+        while let Some(part) = parts.next() {
+            let has_more = parts.peek().is_some();
+            let first_cap = safe_width.saturating_sub(if logical_idx == 0 { 2 } else { 0 });
+
+            if part.is_empty() {
+                if !caret_found && char_cursor == caret_char_idx {
+                    caret_line = total;
+                    caret_found = true;
+                }
+                total += 1;
+            } else {
+                let mut col = 0usize;
+                let mut is_first_chunk = true;
+                let mut has_chars = false;
+
+                for c in part.chars() {
+                    if !caret_found && char_cursor == caret_char_idx {
+                        caret_line = total;
+                        caret_found = true;
+                    }
+
+                    let target = if is_first_chunk { first_cap } else { safe_width };
+                    let cw = super::char_display_width(c);
+
+                    if has_chars && col + cw > target {
+                        total += 1;
+                        col = 0;
+                        is_first_chunk = false;
+                    }
+
+                    col += cw;
+                    char_cursor += 1;
+                    has_chars = true;
+
+                    if col >= target {
+                        total += 1;
+                        col = 0;
+                        is_first_chunk = false;
+                        has_chars = false;
+                    }
+                }
+
+                if !caret_found && char_cursor == caret_char_idx {
+                    caret_line = total;
+                    caret_found = true;
+                }
+
+                if has_chars || char_cursor == caret_char_idx {
+                    total += 1;
+                }
+            }
+
+            if has_more {
+                char_cursor += 1;
+            }
+
+            logical_idx += 1;
+        }
+
+        if !caret_found {
+            caret_line = total.saturating_sub(1);
+        }
+
+        (total.max(1), caret_line)
+    }
+
+    #[test]
+    fn count_visual_lines_with_caret_matches_baseline_for_ascii_wraps() {
+        let mut state = ReplTuiState::new();
+        let safe_width = 8;
+        state.input.text = "abcdefghijk\nlmnopqrstuv\nxyz\n123456\nabcdefghi".to_string();
+        let caret_limit = state.input.text.chars().count();
+
+        for caret in 0..=caret_limit {
+            let expected =
+                count_visual_lines_with_caret_baseline(&state.input.text, safe_width, caret);
+            let actual = state.count_visual_lines_with_caret(safe_width, caret);
+
+            assert_eq!(actual, expected, "caret {caret}");
+        }
     }
 
     // ── paste-newline suppression e2e tests ───────────────────────────────────
