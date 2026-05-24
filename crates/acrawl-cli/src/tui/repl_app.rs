@@ -215,6 +215,11 @@ pub(super) struct ReplTuiState {
     /// Cached width (columns) of the input widget from the last render pass.
     /// Used by cursor up/down to compute soft-wrap boundaries.
     pub(super) input_area_width: u16,
+    /// Cached result of `visual_line_info` for the current self.input.text.
+    /// None means stale; recomputed on next access.
+    vis_cache: Option<Vec<(usize, usize, bool)>>,
+    /// The `safe_width` at which `vis_cache` was last computed.
+    vis_cache_width: usize,
     input: InputEditorState,
     status_line: String,
     pub(super) busy: bool,
@@ -276,6 +281,8 @@ impl ReplTuiState {
             input_selection: None,
             input_click_anchor: None,
             input_area_width: 0,
+            vis_cache: None,
+            vis_cache_width: 0,
             input: InputEditorState {
                 text: String::new(),
                 cursor: 0,
@@ -418,6 +425,7 @@ impl ReplTuiState {
     fn apply_input_snapshot(&mut self, snapshot: InputUndoSnapshot) {
         self.input_scroll_manual = false;
         self.input.text = snapshot.text;
+        self.vis_cache = None;
         self.input.cursor = snapshot.cursor.min(self.input_char_len());
         self.input.preferred_col = snapshot.preferred_col;
         self.input_selection = snapshot.selection;
@@ -446,6 +454,7 @@ impl ReplTuiState {
 
     fn reset_input(&mut self) {
         self.input.text.clear();
+        self.vis_cache = None;
         self.input.cursor = 0;
         self.input.byte_cursor = 0;
         self.input.preferred_col = None;
@@ -484,6 +493,7 @@ impl ReplTuiState {
             return;
         }
         self.input.text.replace_range(del_start..bc, "");
+        self.vis_cache = None;
         self.input.byte_cursor = del_start;
         self.input.cursor = self.input.text[..del_start].chars().count();
         self.input.preferred_col = None;
@@ -554,6 +564,7 @@ impl ReplTuiState {
             self.input
                 .text
                 .replace_range(self.input.byte_cursor..end_byte, "");
+            self.vis_cache = None;
             self.input.preferred_col = None;
             self.input_scroll_offset = usize::MAX;
             true
@@ -586,6 +597,7 @@ impl ReplTuiState {
         self.delete_selection_range();
         self.clamp_input_cursor();
         self.input.text.insert(self.input.byte_cursor, ch);
+        self.vis_cache = None;
         self.input.cursor = self.input.cursor.saturating_add(1);
         self.input.byte_cursor = self.input.byte_cursor.saturating_add(ch.len_utf8());
         self.input.preferred_col = None;
@@ -601,6 +613,7 @@ impl ReplTuiState {
         self.delete_selection_range();
         self.clamp_input_cursor();
         self.input.text.insert_str(self.input.byte_cursor, text);
+        self.vis_cache = None;
         let char_count = text.chars().count();
         self.input.cursor = self.input.cursor.saturating_add(char_count);
         self.input.byte_cursor = self.input.byte_cursor.saturating_add(text.len());
@@ -695,6 +708,7 @@ impl ReplTuiState {
         let start = prev_byte;
         let end = self.input.byte_cursor;
         self.input.text.replace_range(start..end, "");
+        self.vis_cache = None;
         self.input.cursor -= 1;
         self.input.byte_cursor = start;
         self.input.preferred_col = None;
@@ -720,6 +734,7 @@ impl ReplTuiState {
         self.input
             .text
             .replace_range(self.input.byte_cursor..end, "");
+        self.vis_cache = None;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
     }
@@ -841,8 +856,16 @@ impl ReplTuiState {
     ///
     /// Callers use `starts_paragraph` instead of re-scanning the text with
     /// `chars().nth()` to check for a trailing `\n` at a line boundary.
-    fn visual_line_info(&self, safe_width: usize) -> Vec<(usize, usize, bool)> {
-        self.visual_line_info_capped(safe_width, usize::MAX)
+    fn visual_line_info(&mut self, safe_width: usize) -> Vec<(usize, usize, bool)> {
+        if self.vis_cache_width == safe_width {
+            if let Some(ref cached) = self.vis_cache {
+                return cached.clone();
+            }
+        }
+        let vis = self.visual_line_info_capped(safe_width, usize::MAX);
+        self.vis_cache_width = safe_width;
+        self.vis_cache = Some(vis.clone());
+        vis
     }
 
     fn visual_line_info_capped(
@@ -921,88 +944,6 @@ impl ReplTuiState {
             logical_idx += 1;
         }
         lines
-    }
-
-    fn count_visual_lines_with_caret(
-        &self,
-        safe_width: usize,
-        caret_char_idx: usize,
-    ) -> (usize, usize) {
-        let mut total = 0usize;
-        let mut caret_line = 0usize;
-        let mut char_cursor = 0usize;
-        let mut caret_found = false;
-        let mut parts = self.input.text.split('\n').peekable();
-        let mut logical_idx = 0usize;
-
-        while let Some(part) = parts.next() {
-            let has_more = parts.peek().is_some();
-            let first_cap = safe_width.saturating_sub(if logical_idx == 0 { 2 } else { 0 });
-
-            if part.is_empty() {
-                if !caret_found && char_cursor == caret_char_idx {
-                    caret_line = total;
-                    caret_found = true;
-                }
-                total += 1;
-            } else {
-                let mut col = 0usize;
-                let mut is_first_chunk = true;
-                let mut has_chars = false;
-
-                for c in part.chars() {
-                    if !caret_found && char_cursor == caret_char_idx {
-                        caret_line = total;
-                        caret_found = true;
-                    }
-
-                    let target = if is_first_chunk {
-                        first_cap
-                    } else {
-                        safe_width
-                    };
-                    let cw = char_display_width(c);
-
-                    if has_chars && col + cw > target {
-                        total += 1;
-                        col = 0;
-                        is_first_chunk = false;
-                    }
-
-                    col += cw;
-                    char_cursor += 1;
-                    has_chars = true;
-
-                    if col >= target {
-                        total += 1;
-                        col = 0;
-                        is_first_chunk = false;
-                        has_chars = false;
-                    }
-                }
-
-                if !caret_found && char_cursor == caret_char_idx {
-                    caret_line = total;
-                    caret_found = true;
-                }
-
-                if has_chars || char_cursor == caret_char_idx {
-                    total += 1;
-                }
-            }
-
-            if has_more {
-                char_cursor += 1;
-            }
-
-            logical_idx += 1;
-        }
-
-        if !caret_found {
-            caret_line = total.saturating_sub(1);
-        }
-
-        (total.max(1), caret_line)
     }
 
     fn move_input_cursor_up(&mut self) {
@@ -1160,7 +1101,7 @@ impl ReplTuiState {
     /// Convert a mouse position (row, col) relative to the input widget into
     /// a character index in `input.text`.  Returns `None` if the position
     /// falls outside the text bounds.
-    fn char_index_at_mouse(&self, widget_row: usize, widget_col: usize) -> Option<usize> {
+    fn char_index_at_mouse(&mut self, widget_row: usize, widget_col: usize) -> Option<usize> {
         if widget_row == 0 {
             return None;
         }
@@ -1307,10 +1248,19 @@ impl ReplTuiState {
         let safe_width = width.saturating_sub(5).max(5) as usize;
         let max_text_lines = MAX_INPUT_LINES;
 
-        let (total_visual, caret_visual_line) = if is_placeholder {
-            (1usize, 0usize)
+        let vis_for_count = if is_placeholder {
+            Vec::new()
         } else {
-            self.count_visual_lines_with_caret(safe_width, self.input.cursor)
+            self.visual_line_info(safe_width)
+        };
+        let total_visual = vis_for_count.len().max(1);
+        let caret_cursor = self.input.cursor;
+        let caret_visual_line = if is_placeholder || vis_for_count.is_empty() {
+            0
+        } else {
+            vis_for_count
+                .partition_point(|(s, _, _)| *s <= caret_cursor)
+                .saturating_sub(1)
         };
 
         let max_scroll = total_visual.saturating_sub(max_text_lines);
@@ -3805,6 +3755,7 @@ fn run_loop(
                                     state.record_input_undo_snapshot();
                                     state.input.text = selected;
                                     state.input.text.push(' ');
+                                    state.vis_cache = None;
                                     state.input.cursor = state.input.text.chars().count();
                                     state.resync_byte_cursor();
                                     state.input.preferred_col = None;
@@ -3895,6 +3846,7 @@ fn run_loop(
                             state.record_input_undo_snapshot();
                             state.input.text = selected;
                             state.input.text.push(' ');
+                            state.vis_cache = None;
                             state.input.cursor = state.input.text.chars().count();
                             state.input.preferred_col = None;
                             state.input_scroll_offset = usize::MAX;
@@ -3911,6 +3863,7 @@ fn run_loop(
                                 state.record_input_undo_snapshot();
                                 state.input.text.clone_from(&matches[0]);
                                 state.input.text.push(' ');
+                                state.vis_cache = None;
                                 state.input.cursor = state.input.text.chars().count();
                                 state.input.preferred_col = None;
                                 state.input_scroll_offset = usize::MAX;
