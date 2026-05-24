@@ -731,12 +731,20 @@ mod tests {
         // anywhere near that many bytes.
         let server = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
+                use tokio::io::AsyncReadExt;
+                // Drain the request so Windows doesn't RST the connection
+                // before the client can read the response headers.
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
                 let _ = socket
                     .write_all(
                         b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\nConnection: close\r\n\r\n",
                     )
                     .await;
-                let _ = socket.shutdown().await;
+                // Let the socket drop naturally; an immediate shutdown() sends a
+                // TCP RST on Windows, aborting the client read before it sees
+                // the Content-Length header.
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             }
         });
 
