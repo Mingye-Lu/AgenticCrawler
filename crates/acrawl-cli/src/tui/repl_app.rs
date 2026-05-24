@@ -64,43 +64,6 @@ fn read_clipboard_text() -> Option<String> {
     Some(normalize_pasted_text(&text))
 }
 
-/// Mask any paste at or above this byte length.
-const PASTE_MASK_THRESHOLD_BYTES: usize = 150;
-
-/// Count logical lines in `text` by physical newline count plus one.  O(n) byte
-/// scan, no UTF-8 decoding — `\n` is ASCII so this is safe on any UTF-8 string.
-fn count_lines(text: &str) -> usize {
-    text.bytes().filter(|&b| b == b'\n').count() + 1
-}
-
-/// Whether a paste should be replaced by a placeholder mask.
-/// Inclusive at the threshold: returns true when `text.len() >= PASTE_MASK_THRESHOLD_BYTES`.
-fn should_mask_paste(text: &str) -> bool {
-    text.len() >= PASTE_MASK_THRESHOLD_BYTES
-}
-
-/// Format the visible placeholder for a masked paste.
-fn format_paste_placeholder(id: u32, line_count: usize) -> String {
-    format!("[#{id} Pasted ~{line_count} lines]")
-}
-
-/// Replace each paste mask's placeholder with its original content.  Used at
-/// submit time so the model receives the full pasted text, and at clipboard
-/// yank time so copying the input bar produces the original content.
-///
-/// Known limitation: if the user manually types text that exactly matches a
-/// live placeholder (e.g. `[#1 Pasted ~5 lines]` character-for-character), that
-/// typed text will also be replaced with the paste content.  This is rare in
-/// practice — the per-prompt `#N` index and the specific bracket+tilde format
-/// make accidental collisions unlikely.
-fn expand_masks(text: &str, pastes: &[PasteEntry]) -> String {
-    let mut out = text.to_string();
-    for p in pastes {
-        out = out.replace(&p.placeholder, &p.content);
-    }
-    out
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AppUiState {
     WelcomeMode,
@@ -202,11 +165,6 @@ struct InputEditorState {
     /// when the cursor is set directly (clamp / `set_line_col`).
     byte_cursor: usize,
     preferred_col: Option<usize>,
-    /// Active paste masks, in insertion order.  Empty when no pastes are masked.
-    pastes: Vec<PasteEntry>,
-    /// Monotonically increases as masks are inserted within one prompt; reset to
-    /// 1 on submit, clear, or new-prompt boundary.
-    next_paste_id: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -215,19 +173,6 @@ struct InputUndoSnapshot {
     cursor: usize,
     preferred_col: Option<usize>,
     selection: Option<(usize, usize)>,
-    pastes: Vec<PasteEntry>,
-    next_paste_id: u32,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PasteEntry {
-    /// 1-based, per-prompt index. Resets to 1 on submit / clear.
-    id: u32,
-    /// Visible placeholder, e.g. "[#1 Pasted ~42 lines]".
-    /// Uniqueness is guaranteed by `id`, so `text.find(&placeholder)` is safe.
-    placeholder: String,
-    /// Original pasted content (after newline normalisation).
-    content: String,
 }
 
 #[derive(Default)]
@@ -336,8 +281,6 @@ impl ReplTuiState {
                 cursor: 0,
                 byte_cursor: 0,
                 preferred_col: None,
-                pastes: Vec::new(),
-                next_paste_id: 1,
             },
             status_line: String::new(),
             busy: false,
@@ -469,8 +412,6 @@ impl ReplTuiState {
             cursor: self.input.cursor,
             preferred_col: self.input.preferred_col,
             selection: self.input_selection,
-            pastes: self.input.pastes.clone(),
-            next_paste_id: self.input.next_paste_id,
         }
     }
 
@@ -481,8 +422,6 @@ impl ReplTuiState {
         self.input.preferred_col = snapshot.preferred_col;
         self.input_selection = snapshot.selection;
         self.input_click_anchor = None;
-        self.input.pastes = snapshot.pastes;
-        self.input.next_paste_id = snapshot.next_paste_id;
         self.resync_byte_cursor();
         self.input_scroll_offset = usize::MAX;
     }
@@ -505,21 +444,14 @@ impl ReplTuiState {
         self.input_redo_stack.clear();
     }
 
-    /// Reset all input editor fields atomically. Ensures `text`, cursors,
-    /// `pastes`, and `next_paste_id` always move together so no stale mask
-    /// entries survive a prompt boundary.
     fn reset_input(&mut self) {
         self.input.text.clear();
         self.input.cursor = 0;
         self.input.byte_cursor = 0;
         self.input.preferred_col = None;
-        self.input.pastes.clear();
-        self.input.next_paste_id = 1;
     }
 
-    /// Ctrl-W: delete backward to the previous word boundary, treating each
-    /// paste mask as a single atomic unit (stops at the mask boundary rather
-    /// than scanning inside it).
+    /// Ctrl-W: delete backward to the previous word boundary.
     fn word_backspace(&mut self) {
         self.input_scroll_manual = false;
         self.clamp_input_cursor();
@@ -530,30 +462,6 @@ impl ReplTuiState {
         if self.delete_selection_range() {
             return;
         }
-        let ranges = self.compute_mask_ranges();
-        // Cursor at a mask's end → delete the whole mask atom (same as backspace).
-        if let Some((idx, r)) = ranges
-            .iter()
-            .find(|(_, r)| r.end == self.input.byte_cursor)
-            .map(|(i, r)| (*i, r.clone()))
-        {
-            let del_end = if self.input.text.len() > r.end
-                && self.input.text.as_bytes()[r.end] == b' '
-            {
-                r.end + 1
-            } else {
-                r.end
-            };
-            self.input.text.replace_range(r.start..del_end, "");
-            self.input.pastes.remove(idx);
-            self.input.byte_cursor = r.start;
-            self.input.cursor = self.input.text[..r.start].chars().count();
-            self.input.preferred_col = None;
-            self.input_scroll_offset = usize::MAX;
-            return;
-        }
-        // Walk backward: skip trailing whitespace, then skip word chars.
-        // Stop at any mask-end boundary so masks are deleted atomically.
         let bc = self.input.byte_cursor;
         let chars_before: Vec<(usize, char)> = self.input.text[..bc].char_indices().collect();
         let mut i = chars_before.len();
@@ -561,16 +469,17 @@ impl ReplTuiState {
             i -= 1;
         }
         while i > 0 {
-            let (byte_pos, ch) = chars_before[i - 1];
+            let (_, ch) = chars_before[i - 1];
             if ch.is_whitespace() {
-                break;
-            }
-            if ranges.iter().any(|(_, r)| r.end == byte_pos) {
                 break;
             }
             i -= 1;
         }
-        let del_start = if i < chars_before.len() { chars_before[i].0 } else { bc };
+        let del_start = if i < chars_before.len() {
+            chars_before[i].0
+        } else {
+            bc
+        };
         if del_start == bc {
             return;
         }
@@ -660,16 +569,12 @@ impl ReplTuiState {
         self.input.text.get(sel_start..sel_end)
     }
 
-    /// Returns the currently selected input slice with paste masks expanded back
-    /// to their original content.  Used by clipboard copy/cut so the OS clipboard
-    /// receives real text, not the placeholder.
-    fn selected_input_text_expanded(&self) -> Option<String> {
-        let raw = self.selected_input_text()?.to_string();
-        Some(expand_masks(&raw, &self.input.pastes))
+    fn selected_input_text_string(&self) -> Option<String> {
+        Some(self.selected_input_text()?.to_string())
     }
 
     fn cut_input_selection_text(&mut self) -> Option<String> {
-        let text = self.selected_input_text_expanded()?;
+        let text = self.selected_input_text_string()?;
         self.record_input_undo_snapshot();
         self.delete_selection_range();
         Some(text)
@@ -703,60 +608,9 @@ impl ReplTuiState {
         self.input_scroll_offset = usize::MAX;
     }
 
-    /// Insert a paste as an atomic masked token.
-    ///
-    /// The pasted text has already been normalised by the caller.  This method:
-    ///   1. Records an undo snapshot.
-    ///   2. Generates a `[#N Pasted ~K lines]` placeholder and appends a trailing
-    ///      space so subsequent typing doesn't visually fuse with the mask.
-    ///   3. Stores the original content in `pastes` for later expansion on submit
-    ///      or clipboard yank.
-    fn insert_paste_mask(&mut self, raw: &str) {
-        self.input_scroll_manual = false;
-        if raw.is_empty() {
-            return;
-        }
-        self.record_input_undo_snapshot();
-        self.delete_selection_range();
-        self.clamp_input_cursor();
-
-        // Edge case: if cursor is strictly inside any existing mask, snap to the
-        // nearer boundary before inserting.  Prevents the placeholder from being
-        // inserted mid-placeholder which would break later text.find lookups for
-        // the first mask.
-        let ranges = self.compute_mask_ranges();
-        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
-            let snap_to = if self.input.byte_cursor - r.start < r.end - self.input.byte_cursor {
-                r.start
-            } else {
-                r.end
-            };
-            self.input.byte_cursor = snap_to;
-            self.input.cursor = self.input.text[..snap_to].chars().count();
-        }
-
-        let id = self.input.next_paste_id;
-        self.input.next_paste_id += 1;
-        let placeholder = format_paste_placeholder(id, count_lines(raw));
-        let to_insert = format!("{placeholder} ");
-
-        self.input.text.insert_str(self.input.byte_cursor, &to_insert);
-        let char_count = to_insert.chars().count();
-        self.input.cursor = self.input.cursor.saturating_add(char_count);
-        self.input.byte_cursor = self.input.byte_cursor.saturating_add(to_insert.len());
-        self.input.preferred_col = None;
-        self.input_scroll_offset = usize::MAX;
-
-        self.input.pastes.push(PasteEntry {
-            id,
-            placeholder,
-            content: raw.to_string(),
-        });
-    }
-
     /// Single entry point for any pasted text, regardless of source (bracketed
     /// paste, Ctrl+V, Shift+Insert, burst flush).  Normalises newlines and
-    /// either masks the paste (>= threshold) or inserts it raw.
+    /// inserts the result directly into the input.
     ///
     /// Note: this does NOT set `suppress_paste_until` — that suppression is
     /// only appropriate for the bracketed-paste / Ctrl+V paths (where stray
@@ -766,11 +620,7 @@ impl ReplTuiState {
     /// Callers that need post-paste suppression set it themselves.
     fn handle_paste_event(&mut self, raw: &str) {
         let normalised = normalize_pasted_text(raw);
-        if should_mask_paste(&normalised) {
-            self.insert_paste_mask(&normalised);
-        } else {
-            self.insert_input_str(&normalised);
-        }
+        self.insert_input_str(&normalised);
     }
 
     /// Arm the post-paste suppression window used by the bracketed-paste and
@@ -778,8 +628,7 @@ impl ReplTuiState {
     /// for each `\n` in a paste are discarded for the next 100 ms so they
     /// don't trigger an accidental send.
     fn arm_paste_enter_suppression(&mut self) {
-        self.selection.suppress_paste_until =
-            Some(Instant::now() + Duration::from_millis(100));
+        self.selection.suppress_paste_until = Some(Instant::now() + Duration::from_millis(100));
     }
 
     /// Maximum gap (ms) between consecutive keystrokes considered a paste burst.
@@ -795,7 +644,7 @@ impl ReplTuiState {
     }
 
     /// If the burst accumulator has any chars, drain it into the input via
-    /// `handle_paste_event` (which applies masking and newline suppression).
+    /// `handle_paste_event`.
     /// Called when the burst ends, or before any non-burst-compatible key.
     fn flush_paste_burst(&mut self) {
         if self.paste_burst_chars.is_empty() {
@@ -819,70 +668,6 @@ impl ReplTuiState {
             )
     }
 
-    /// Locate every active paste mask's current byte range in `self.input.text`.
-    ///
-    /// Returns `(paste_index, byte_range)` pairs sorted by `byte_range.start`.
-    /// Because placeholders include a unique per-prompt `#N` index, `str::find`
-    /// returns at most one position per placeholder; no overlap handling needed.
-    /// Orphaned entries (placeholder absent from text) are silently skipped.
-    fn compute_mask_ranges(&self) -> Vec<(usize, std::ops::Range<usize>)> {
-        let mut out: Vec<(usize, std::ops::Range<usize>)> = self
-            .input
-            .pastes
-            .iter()
-            .enumerate()
-            .filter_map(|(i, p)| {
-                self.input
-                    .text
-                    .find(&p.placeholder)
-                    .map(|s| (i, s..s + p.placeholder.len()))
-            })
-            .collect();
-        out.sort_by_key(|(_, r)| r.start);
-        out
-    }
-
-    /// Returns mask ranges in CHAR-index space.  Used by the input renderer to
-    /// style placeholder text (`[#N Pasted ~K lines]`) with a meta-token
-    /// modifier (dim + italic) so it visually reads as a token rather than
-    /// user-typed content.  Sorted by `start` (matches `compute_mask_ranges`).
-    fn compute_mask_char_ranges(&self) -> Vec<(usize, usize)> {
-        let byte_ranges = self.compute_mask_ranges();
-        if byte_ranges.is_empty() {
-            return Vec::new();
-        }
-        // Build a sorted (byte_offset, char_index) table in one pass; then use
-        // binary search per range — O(n) build, O(log n) per lookup.
-        let text = &self.input.text;
-        let mut byte_to_char: Vec<(usize, usize)> =
-            text.char_indices().enumerate().map(|(ci, (bi, _))| (bi, ci)).collect();
-        let total_chars = byte_to_char.len();
-        byte_to_char.push((text.len(), total_chars));
-
-        let lookup = |byte_pos: usize| -> usize {
-            let idx = byte_to_char.partition_point(|(bi, _)| *bi < byte_pos);
-            byte_to_char.get(idx).map_or(total_chars, |(_, ci)| *ci)
-        };
-
-        byte_ranges
-            .iter()
-            .map(|(_, r)| (lookup(r.start), lookup(r.end)))
-            .collect()
-    }
-
-    /// Returns the mask range that strictly contains `byte_pos`, or `None` if the
-    /// position is at a boundary or outside any mask.  Boundaries are valid cursor
-    /// positions; only interior positions need to be snapped.
-    fn mask_containing(
-        byte_pos: usize,
-        ranges: &[(usize, std::ops::Range<usize>)],
-    ) -> Option<std::ops::Range<usize>> {
-        ranges
-            .iter()
-            .find(|(_, r)| byte_pos > r.start && byte_pos < r.end)
-            .map(|(_, r)| r.clone())
-    }
-
     fn backspace_input_char(&mut self) {
         self.input_scroll_manual = false;
         let had_selection = self.input_selection.is_some();
@@ -894,31 +679,6 @@ impl ReplTuiState {
         // If selection is active, delete it instead of a single char.
         if self.delete_selection_range() {
             return;
-        }
-        // Atomic-mask deletion: cursor at a mask's end byte -> drop whole mask
-        // plus its trailing separator space.
-        if !had_selection {
-            let ranges = self.compute_mask_ranges();
-            if let Some((idx, r)) = ranges
-                .iter()
-                .find(|(_, r)| r.end == self.input.byte_cursor)
-                .map(|(i, r)| (*i, r.clone()))
-            {
-                let del_end = if self.input.text.len() > r.end
-                    && self.input.text.as_bytes()[r.end] == b' '
-                {
-                    r.end + 1
-                } else {
-                    r.end
-                };
-                self.input.text.replace_range(r.start..del_end, "");
-                self.input.pastes.remove(idx);
-                self.input.byte_cursor = r.start;
-                self.input.cursor = self.input.text[..r.start].chars().count();
-                self.input.preferred_col = None;
-                self.input_scroll_offset = usize::MAX;
-                return;
-            }
         }
         // Find byte-offset of the character before cursor
         let prev_byte = if self.input.byte_cursor > 0 {
@@ -943,38 +703,13 @@ impl ReplTuiState {
 
     fn delete_input_char(&mut self) {
         self.input_scroll_manual = false;
-        let had_selection = self.input_selection.is_some();
         self.clamp_input_cursor();
-        if !had_selection && self.input.cursor >= self.input_char_len() {
+        if self.input_selection.is_none() && self.input.cursor >= self.input_char_len() {
             return;
         }
         self.record_input_undo_snapshot();
         if self.delete_selection_range() {
             return;
-        }
-        // Atomic-mask deletion: cursor at a mask's start byte -> drop whole mask
-        // plus its trailing separator space.
-        if !had_selection {
-            let ranges = self.compute_mask_ranges();
-            if let Some((idx, r)) = ranges
-                .iter()
-                .find(|(_, r)| r.start == self.input.byte_cursor)
-                .map(|(i, r)| (*i, r.clone()))
-            {
-                let del_end = if self.input.text.len() > r.end
-                    && self.input.text.as_bytes()[r.end] == b' '
-                {
-                    r.end + 1
-                } else {
-                    r.end
-                };
-                self.input.text.replace_range(r.start..del_end, "");
-                self.input.pastes.remove(idx);
-                // byte_cursor stays at r.start; char cursor stays the same.
-                self.input.preferred_col = None;
-                self.input_scroll_offset = usize::MAX;
-                return;
-            }
         }
         // Find byte-offset of the character after cursor
         let bytes = self.input.text.as_bytes();
@@ -1042,12 +777,6 @@ impl ReplTuiState {
         self.input.cursor -= 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
-        // Atomic-mask snap: if we landed strictly inside any mask, jump to its start.
-        let ranges = self.compute_mask_ranges();
-        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
-            self.input.byte_cursor = r.start;
-            self.input.cursor = self.input.text[..r.start].chars().count();
-        }
     }
 
     fn move_input_cursor_right(&mut self) {
@@ -1067,12 +796,6 @@ impl ReplTuiState {
         self.input.cursor += 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
-        // Atomic-mask snap: if we landed strictly inside any mask, jump to its end.
-        let ranges = self.compute_mask_ranges();
-        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
-            self.input.byte_cursor = r.end;
-            self.input.cursor = self.input.text[..r.end].chars().count();
-        }
     }
 
     fn move_input_cursor_home(&mut self) {
@@ -1119,63 +842,171 @@ impl ReplTuiState {
     /// Callers use `starts_paragraph` instead of re-scanning the text with
     /// `chars().nth()` to check for a trailing `\n` at a line boundary.
     fn visual_line_info(&self, safe_width: usize) -> Vec<(usize, usize, bool)> {
+        self.visual_line_info_capped(safe_width, usize::MAX)
+    }
+
+    fn visual_line_info_capped(
+        &self,
+        safe_width: usize,
+        max_lines: usize,
+    ) -> Vec<(usize, usize, bool)> {
+        if max_lines == 0 {
+            return Vec::new();
+        }
+
         let mut lines = Vec::new();
         let mut char_idx = 0usize;
-        let parts: Vec<&str> = self.input.text.split('\n').collect();
-        for (logical_idx, logical_line) in parts.iter().enumerate() {
-            let logical_chars: Vec<char> = logical_line.chars().collect();
+        let mut parts = self.input.text.split('\n').peekable();
+        let mut logical_idx = 0usize;
+        while let Some(logical_line) = parts.next() {
+            let has_more = parts.peek().is_some();
             let prompt_offset = if logical_idx == 0 { 2usize } else { 0 };
             let first_cap = safe_width.saturating_sub(prompt_offset);
-            let cap = safe_width;
-            let mut offset = 0usize;
-            loop {
-                let remaining = logical_chars.len().saturating_sub(offset);
-                if remaining == 0 {
-                    if offset == 0 {
-                        // First visual line of a new paragraph starts after \n
-                        // (except the very first logical line which has no preceding \n).
-                        lines.push((char_idx, 0, logical_idx > 0));
-                    }
-                    break;
+            let mut line_start = char_idx;
+            let mut col = 0usize;
+            let mut is_first_chunk = true;
+            let mut has_chars = false;
+
+            if logical_line.is_empty() {
+                lines.push((char_idx, 0, logical_idx > 0));
+                if lines.len() >= max_lines {
+                    return lines;
                 }
-                let w = if offset == 0 { first_cap } else { cap };
-                // Walk forward up to `w` display cells
-                let mut col = 0usize;
-                let mut end = offset;
-                while end < logical_chars.len() {
-                    let cw = char_display_width(logical_chars[end]);
-                    if col + cw > w {
-                        break;
+            } else {
+                for ch in logical_line.chars() {
+                    let target = if is_first_chunk {
+                        first_cap
+                    } else {
+                        safe_width
+                    };
+                    let cw = char_display_width(ch);
+                    if has_chars && col + cw > target {
+                        lines.push((line_start, col, is_first_chunk && logical_idx > 0));
+                        if lines.len() >= max_lines {
+                            return lines;
+                        }
+                        line_start = char_idx;
+                        col = 0;
+                        is_first_chunk = false;
                     }
+
                     col += cw;
-                    end += 1;
+                    char_idx += 1;
+                    has_chars = true;
+
+                    if col >= target {
+                        lines.push((line_start, col, is_first_chunk && logical_idx > 0));
+                        if lines.len() >= max_lines {
+                            return lines;
+                        }
+                        line_start = char_idx;
+                        col = 0;
+                        is_first_chunk = false;
+                        has_chars = false;
+                    }
                 }
-                // starts_paragraph: first soft-wrap line of a new logical paragraph
-                let starts_paragraph = offset == 0 && logical_idx > 0;
-                lines.push((char_idx + offset, col, starts_paragraph));
-                if end == offset {
-                    // Zero-width char at start — force advance
-                    end = offset + 1;
+
+                if has_chars {
+                    lines.push((line_start, col, is_first_chunk && logical_idx > 0));
+                    if lines.len() >= max_lines {
+                        return lines;
+                    }
                 }
-                offset = end;
             }
-            char_idx += logical_chars.len();
-            // Only add 1 for the newline separator if this is not the last part
-            if logical_idx < parts.len() - 1 {
+
+            if has_more {
                 char_idx += 1;
             }
+
+            logical_idx += 1;
         }
         lines
     }
 
+    fn count_visual_lines_with_caret(
+        &self,
+        safe_width: usize,
+        caret_char_idx: usize,
+    ) -> (usize, usize) {
+        let mut total = 0usize;
+        let mut caret_line = 0usize;
+        let mut char_cursor = 0usize;
+        let mut caret_found = false;
+        let mut parts = self.input.text.split('\n').peekable();
+        let mut logical_idx = 0usize;
+
+        while let Some(part) = parts.next() {
+            let has_more = parts.peek().is_some();
+            let first_cap = safe_width.saturating_sub(if logical_idx == 0 { 2 } else { 0 });
+
+            if part.is_empty() {
+                if !caret_found && char_cursor == caret_char_idx {
+                    caret_line = total;
+                    caret_found = true;
+                }
+                total += 1;
+            } else {
+                let mut col = 0usize;
+                let mut is_first_chunk = true;
+                let mut has_chars = false;
+
+                for c in part.chars() {
+                    if !caret_found && char_cursor == caret_char_idx {
+                        caret_line = total;
+                        caret_found = true;
+                    }
+
+                    let target = if is_first_chunk {
+                        first_cap
+                    } else {
+                        safe_width
+                    };
+                    let cw = char_display_width(c);
+
+                    if has_chars && col + cw > target {
+                        total += 1;
+                        col = 0;
+                        is_first_chunk = false;
+                    }
+
+                    col += cw;
+                    char_cursor += 1;
+                    has_chars = true;
+
+                    if col >= target {
+                        total += 1;
+                        col = 0;
+                        is_first_chunk = false;
+                        has_chars = false;
+                    }
+                }
+
+                if !caret_found && char_cursor == caret_char_idx {
+                    caret_line = total;
+                    caret_found = true;
+                }
+
+                if has_chars || char_cursor == caret_char_idx {
+                    total += 1;
+                }
+            }
+
+            if has_more {
+                char_cursor += 1;
+            }
+
+            logical_idx += 1;
+        }
+
+        if !caret_found {
+            caret_line = total.saturating_sub(1);
+        }
+
+        (total.max(1), caret_line)
+    }
+
     fn move_input_cursor_up(&mut self) {
         self.move_input_cursor_up_inner();
-        // Atomic-mask snap: up = treat like left = snap to start.
-        let ranges = self.compute_mask_ranges();
-        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
-            self.input.byte_cursor = r.start;
-            self.input.cursor = self.input.text[..r.start].chars().count();
-        }
     }
 
     fn move_input_cursor_up_inner(&mut self) {
@@ -1245,12 +1076,6 @@ impl ReplTuiState {
 
     fn move_input_cursor_down(&mut self) {
         self.move_input_cursor_down_inner();
-        // Atomic-mask snap: down = treat like right = snap to end.
-        let ranges = self.compute_mask_ranges();
-        if let Some(r) = Self::mask_containing(self.input.byte_cursor, &ranges) {
-            self.input.byte_cursor = r.end;
-            self.input.cursor = self.input.text[..r.end].chars().count();
-        }
     }
 
     fn move_input_cursor_down_inner(&mut self) {
@@ -1470,52 +1295,6 @@ impl ReplTuiState {
     }
 
     #[allow(clippy::too_many_lines)]
-    /// Push spans for `text` whose characters start at absolute char index
-    /// `text_char_start` within `self.input.text`, applying `mask_style` for
-    /// any chars overlapping a mask range and `base_style` otherwise.  Mask
-    /// ranges are absolute (input-text char indices) and assumed sorted.
-    fn push_input_text_spans(
-        spans: &mut Vec<Span<'static>>,
-        text: &str,
-        text_char_start: usize,
-        base_style: Style,
-        mask_style: Style,
-        masks: &[(usize, usize)],
-    ) {
-        if text.is_empty() {
-            return;
-        }
-        if masks.is_empty() {
-            spans.push(Span::styled(text.to_string(), base_style));
-            return;
-        }
-        let chars: Vec<char> = text.chars().collect();
-        let text_char_end = text_char_start + chars.len();
-        // Find masks that overlap [text_char_start, text_char_end).
-        let mut cursor = 0usize; // char index within `text`
-        for &(m_start, m_end) in masks {
-            if m_end <= text_char_start || m_start >= text_char_end {
-                continue;
-            }
-            let local_start = m_start.saturating_sub(text_char_start);
-            let local_end = (m_end - text_char_start).min(chars.len());
-            if local_start > cursor {
-                let pre: String = chars[cursor..local_start].iter().collect();
-                spans.push(Span::styled(pre, base_style));
-            }
-            if local_end > local_start {
-                let inside: String = chars[local_start..local_end].iter().collect();
-                spans.push(Span::styled(inside, mask_style));
-            }
-            cursor = local_end;
-        }
-        if cursor < chars.len() {
-            let tail: String = chars[cursor..].iter().collect();
-            spans.push(Span::styled(tail, base_style));
-        }
-    }
-
-    #[allow(clippy::too_many_lines)]
     pub(super) fn calculate_input_dimensions(
         &mut self,
         width: u16,
@@ -1525,28 +1304,33 @@ impl ReplTuiState {
         self.clamp_input_cursor();
         let is_placeholder = self.input.text.is_empty();
         let placeholder_text = self.input_placeholder();
-        let mut input_with_caret = self.input.text.clone();
-        if !is_placeholder {
-            let caret_idx = self.input_char_to_byte(self.input.cursor);
-            input_with_caret.insert(caret_idx, INPUT_CARET_MARKER);
-        }
-        let source = if is_placeholder {
-            placeholder_text.to_owned()
-        } else {
-            input_with_caret
-        };
-        let mut lines_data = source
-            .split('\n')
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        if lines_data.is_empty() {
-            lines_data.push(String::new());
-        }
-
         let safe_width = width.saturating_sub(5).max(5) as usize;
-        let mut visual_lines = Vec::new();
-        let mut caret_row_idx = 0usize;
-        let mut seen_caret = false;
+        let max_text_lines = MAX_INPUT_LINES;
+
+        let (total_visual, caret_visual_line) = if is_placeholder {
+            (1usize, 0usize)
+        } else {
+            self.count_visual_lines_with_caret(safe_width, self.input.cursor)
+        };
+
+        let max_scroll = total_visual.saturating_sub(max_text_lines);
+        if self.input_scroll_offset == usize::MAX {
+            self.input_scroll_offset = max_scroll;
+        } else {
+            self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
+        }
+        if !is_placeholder && !self.input_scroll_manual {
+            if caret_visual_line < self.input_scroll_offset {
+                self.input_scroll_offset = caret_visual_line;
+            } else if caret_visual_line >= self.input_scroll_offset + max_text_lines {
+                self.input_scroll_offset = caret_visual_line.saturating_sub(max_text_lines - 1);
+            }
+        }
+        self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
+
+        let skip = self.input_scroll_offset;
+        let visible_end = skip + max_text_lines;
+        let mut visual_lines = Vec::with_capacity(max_text_lines);
 
         let input_char_width = |ch: char| {
             if ch == INPUT_CARET_MARKER {
@@ -1556,83 +1340,225 @@ impl ReplTuiState {
             }
         };
 
-        for (logical_idx, line) in lines_data.into_iter().enumerate() {
-            let offset = if logical_idx == 0 { 2 } else { 0 };
-            let first_line_width = safe_width.saturating_sub(offset);
-
-            if line.is_empty() {
-                visual_lines.push((logical_idx == 0, String::new()));
-                continue;
+        if is_placeholder {
+            let mut lines_data = placeholder_text
+                .split('\n')
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+            if lines_data.is_empty() {
+                lines_data.push(String::new());
             }
 
-            let mut current = String::new();
-            let mut w = 0;
-            let mut is_first_chunk = true;
+            for (logical_idx, line) in lines_data.into_iter().enumerate() {
+                let offset = if logical_idx == 0 { 2 } else { 0 };
+                let first_line_width = safe_width.saturating_sub(offset);
 
-            for c in line.chars() {
-                let char_width = input_char_width(c);
-                let target = if is_first_chunk {
-                    first_line_width
-                } else {
-                    safe_width
-                };
-                if !current.is_empty() && w + char_width > target {
-                    if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
-                        caret_row_idx = visual_lines.len();
-                        seen_caret = true;
+                if line.is_empty() {
+                    if visual_lines.len() < max_text_lines {
+                        visual_lines.push((logical_idx == 0, String::new()));
                     }
-                    visual_lines.push((logical_idx == 0 && is_first_chunk, current));
-                    current = String::new();
-                    w = 0;
-                    is_first_chunk = false;
+                    continue;
                 }
 
-                current.push(c);
-                w += char_width;
+                let mut current = String::new();
+                let mut w = 0;
+                let mut is_first_chunk = true;
 
-                if w >= target && !current.is_empty() {
-                    if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
-                        caret_row_idx = visual_lines.len();
-                        seen_caret = true;
+                for c in line.chars() {
+                    let char_width = input_char_width(c);
+                    let target = if is_first_chunk {
+                        first_line_width
+                    } else {
+                        safe_width
+                    };
+                    if !current.is_empty() && w + char_width > target {
+                        if visual_lines.len() < max_text_lines {
+                            visual_lines.push((logical_idx == 0 && is_first_chunk, current));
+                        }
+                        current = String::new();
+                        w = 0;
+                        is_first_chunk = false;
                     }
-                    visual_lines.push((logical_idx == 0 && is_first_chunk, current));
-                    current = String::new();
-                    w = 0;
-                    is_first_chunk = false;
-                }
-            }
-            if !current.is_empty() {
-                if !is_placeholder && !seen_caret && current.contains(INPUT_CARET_MARKER) {
-                    caret_row_idx = visual_lines.len();
-                    seen_caret = true;
-                }
-                visual_lines.push((logical_idx == 0 && is_first_chunk, current));
-            }
-        }
 
-        let max_text_lines = MAX_INPUT_LINES;
-        let total_visual = visual_lines.len();
-        let max_scroll = total_visual.saturating_sub(max_text_lines);
-        if self.input_scroll_offset == usize::MAX {
-            self.input_scroll_offset = max_scroll;
+                    current.push(c);
+                    w += char_width;
+
+                    if w >= target && !current.is_empty() {
+                        if visual_lines.len() < max_text_lines {
+                            visual_lines.push((logical_idx == 0 && is_first_chunk, current));
+                        }
+                        current = String::new();
+                        w = 0;
+                        is_first_chunk = false;
+                    }
+                }
+                if !current.is_empty() && visual_lines.len() < max_text_lines {
+                    visual_lines.push((logical_idx == 0 && is_first_chunk, current));
+                }
+                if visual_lines.len() >= max_text_lines {
+                    break;
+                }
+            }
         } else {
-            self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
-        }
-        if !is_placeholder && seen_caret && !self.input_scroll_manual {
-            if caret_row_idx < self.input_scroll_offset {
-                self.input_scroll_offset = caret_row_idx;
-            } else if caret_row_idx >= self.input_scroll_offset + max_text_lines {
-                self.input_scroll_offset = caret_row_idx.saturating_sub(max_text_lines - 1);
+            let mut visual_line_idx = 0usize;
+            let mut char_cursor = 0usize;
+            let caret_char_idx = self.input.cursor;
+            let mut parts = self.input.text.split('\n').peekable();
+            let mut logical_idx = 0usize;
+
+            'outer: while let Some(line) = parts.next() {
+                let has_more = parts.peek().is_some();
+                let offset = if logical_idx == 0 { 2 } else { 0 };
+                let first_line_width = safe_width.saturating_sub(offset);
+                let mut current = String::new();
+                let mut w = 0usize;
+                let mut is_first_chunk = true;
+
+                let push_current =
+                    |current: &mut String,
+                     is_first_chunk: bool,
+                     visual_line_idx: &mut usize,
+                     visual_lines: &mut Vec<(bool, String)>| {
+                        if *visual_line_idx >= skip && *visual_line_idx < visible_end {
+                            visual_lines.push((
+                                logical_idx == 0 && is_first_chunk,
+                                std::mem::take(current),
+                            ));
+                        } else {
+                            current.clear();
+                        }
+                        *visual_line_idx += 1;
+                    };
+
+                let push_char =
+                    |c: char,
+                     current: &mut String,
+                     w: &mut usize,
+                     is_first_chunk: &mut bool,
+                     visual_line_idx: &mut usize,
+                     visual_lines: &mut Vec<(bool, String)>| {
+                        let char_width = input_char_width(c);
+                        let target = if *is_first_chunk {
+                            first_line_width
+                        } else {
+                            safe_width
+                        };
+
+                        if !current.is_empty() && *w + char_width > target {
+                            push_current(current, *is_first_chunk, visual_line_idx, visual_lines);
+                            *w = 0;
+                            *is_first_chunk = false;
+                        }
+
+                        current.push(c);
+                        *w += char_width;
+
+                        if *w >= target && !current.is_empty() {
+                            push_current(current, *is_first_chunk, visual_line_idx, visual_lines);
+                            *w = 0;
+                            *is_first_chunk = false;
+                        }
+                    };
+
+                if line.is_empty() {
+                    if char_cursor == caret_char_idx {
+                        push_char(
+                            INPUT_CARET_MARKER,
+                            &mut current,
+                            &mut w,
+                            &mut is_first_chunk,
+                            &mut visual_line_idx,
+                            &mut visual_lines,
+                        );
+                    }
+
+                    if current.is_empty() {
+                        if visual_line_idx >= skip && visual_line_idx < visible_end {
+                            visual_lines.push((logical_idx == 0, String::new()));
+                        }
+                        visual_line_idx += 1;
+                    } else {
+                        push_current(
+                            &mut current,
+                            is_first_chunk,
+                            &mut visual_line_idx,
+                            &mut visual_lines,
+                        );
+                    }
+
+                    if visual_line_idx >= visible_end {
+                        break;
+                    }
+                } else {
+                    for c in line.chars() {
+                        if char_cursor == caret_char_idx {
+                            push_char(
+                                INPUT_CARET_MARKER,
+                                &mut current,
+                                &mut w,
+                                &mut is_first_chunk,
+                                &mut visual_line_idx,
+                                &mut visual_lines,
+                            );
+                            if visual_line_idx >= visible_end {
+                                break 'outer;
+                            }
+                        }
+
+                        push_char(
+                            c,
+                            &mut current,
+                            &mut w,
+                            &mut is_first_chunk,
+                            &mut visual_line_idx,
+                            &mut visual_lines,
+                        );
+                        char_cursor += 1;
+
+                        if visual_line_idx >= visible_end {
+                            break 'outer;
+                        }
+                    }
+
+                    if char_cursor == caret_char_idx {
+                        push_char(
+                            INPUT_CARET_MARKER,
+                            &mut current,
+                            &mut w,
+                            &mut is_first_chunk,
+                            &mut visual_line_idx,
+                            &mut visual_lines,
+                        );
+                    }
+
+                    if !current.is_empty() {
+                        push_current(
+                            &mut current,
+                            is_first_chunk,
+                            &mut visual_line_idx,
+                            &mut visual_lines,
+                        );
+                    }
+
+                    if visual_line_idx >= visible_end {
+                        break;
+                    }
+                }
+
+                if has_more {
+                    char_cursor += 1;
+                }
+
+                logical_idx += 1;
             }
         }
-        self.input_scroll_offset = self.input_scroll_offset.clamp(0, max_scroll);
 
         // Compute char-index range for each visual line using the original
         // input text so embedded `\n` separators keep their real char indices.
         let visual_ranges: Vec<(usize, usize)> = if is_placeholder {
             vec![(0, 0); visual_lines.len()]
         } else {
-            let vis = self.visual_line_info(safe_width);
+            let vis = self.visual_line_info_capped(safe_width, skip + max_text_lines + 1);
             vis.iter()
                 .enumerate()
                 .map(|(idx, &(start, _, _))| {
@@ -1648,13 +1574,7 @@ impl ReplTuiState {
                 .collect()
         };
 
-        let skip = self.input_scroll_offset;
-        let sliced = visual_lines
-            .into_iter()
-            .skip(skip)
-            .take(max_text_lines)
-            .collect::<Vec<_>>();
-        let total_sliced = sliced.len();
+        let total_sliced = visual_lines.len();
         let mut cursor_pos: Option<(u16, u16)> = None;
 
         let text_style = if is_placeholder {
@@ -1664,17 +1584,11 @@ impl ReplTuiState {
         } else {
             Style::default()
         };
-        let mask_style = text_style.add_modifier(Modifier::DIM | Modifier::ITALIC);
-        let mask_char_ranges = if is_placeholder {
-            Vec::new()
-        } else {
-            self.compute_mask_char_ranges()
-        };
 
         let mut render_lines = Vec::new();
         render_lines.push(Line::from(""));
 
-        for (i, (has_prompt, row)) in sliced.into_iter().enumerate() {
+        for (i, (has_prompt, row)) in visual_lines.into_iter().enumerate() {
             let mut spans: Vec<Span<'static>> = Vec::new();
 
             if has_prompt {
@@ -1727,51 +1641,22 @@ impl ReplTuiState {
                             .take(row_sel_end.saturating_sub(row_sel_start))
                             .collect();
                         let after_s: String = full.chars().skip(row_sel_end).collect();
-                        Self::push_input_text_spans(
-                            &mut spans,
-                            &before_s,
-                            line_start,
-                            text_style,
-                            mask_style,
-                            &mask_char_ranges,
-                        );
-                        if !selected_s.is_empty() {
-                            let sel_mask_style =
-                                sel_style.add_modifier(Modifier::DIM | Modifier::ITALIC);
-                            Self::push_input_text_spans(
-                                &mut spans,
-                                &selected_s,
-                                line_start + row_sel_start,
-                                sel_style,
-                                sel_mask_style,
-                                &mask_char_ranges,
-                            );
+                        if !before_s.is_empty() {
+                            spans.push(Span::styled(before_s, text_style));
                         }
-                        Self::push_input_text_spans(
-                            &mut spans,
-                            &after_s,
-                            line_start + row_sel_end,
-                            text_style,
-                            mask_style,
-                            &mask_char_ranges,
-                        );
+                        if !selected_s.is_empty() {
+                            spans.push(Span::styled(selected_s, sel_style));
+                        }
+                        if !after_s.is_empty() {
+                            spans.push(Span::styled(after_s, text_style));
+                        }
                     } else {
-                        Self::push_input_text_spans(
-                            &mut spans,
-                            &left,
-                            line_start,
-                            text_style,
-                            mask_style,
-                            &mask_char_ranges,
-                        );
-                        Self::push_input_text_spans(
-                            &mut spans,
-                            &right,
-                            line_start + left.chars().count(),
-                            text_style,
-                            mask_style,
-                            &mask_char_ranges,
-                        );
+                        if !left.is_empty() {
+                            spans.push(Span::styled(left.clone(), text_style));
+                        }
+                        if !right.is_empty() {
+                            spans.push(Span::styled(right.clone(), text_style));
+                        }
                     }
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
@@ -1791,43 +1676,17 @@ impl ReplTuiState {
                         .take(row_sel_end - row_sel_start)
                         .collect();
                     let after: String = row.chars().skip(row_sel_end).collect();
-                    Self::push_input_text_spans(
-                        &mut spans,
-                        &before,
-                        line_start,
-                        text_style,
-                        mask_style,
-                        &mask_char_ranges,
-                    );
-                    if !selected.is_empty() {
-                        let sel_mask_style =
-                            sel_style.add_modifier(Modifier::DIM | Modifier::ITALIC);
-                        Self::push_input_text_spans(
-                            &mut spans,
-                            &selected,
-                            line_start + row_sel_start,
-                            sel_style,
-                            sel_mask_style,
-                            &mask_char_ranges,
-                        );
+                    if !before.is_empty() {
+                        spans.push(Span::styled(before, text_style));
                     }
-                    Self::push_input_text_spans(
-                        &mut spans,
-                        &after,
-                        line_start + row_sel_end,
-                        text_style,
-                        mask_style,
-                        &mask_char_ranges,
-                    );
-                } else {
-                    Self::push_input_text_spans(
-                        &mut spans,
-                        &row,
-                        line_start,
-                        text_style,
-                        mask_style,
-                        &mask_char_ranges,
-                    );
+                    if !selected.is_empty() {
+                        spans.push(Span::styled(selected, sel_style));
+                    }
+                    if !after.is_empty() {
+                        spans.push(Span::styled(after, text_style));
+                    }
+                } else if !row.is_empty() {
+                    spans.push(Span::styled(row, text_style));
                 }
             } else {
                 // No active selection — plain rendering (existing logic).
@@ -1846,40 +1705,20 @@ impl ReplTuiState {
                     } else {
                         0
                     };
-                    let left_char_len = left.chars().count();
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
                     } else {
                         let left_width = text_display_width(&left);
-                        Self::push_input_text_spans(
-                            &mut spans,
-                            &left,
-                            line_start,
-                            text_style,
-                            mask_style,
-                            &mask_char_ranges,
-                        );
+                        spans.push(Span::styled(left, text_style));
                         let cursor_col =
                             prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
                     }
-                    Self::push_input_text_spans(
-                        &mut spans,
-                        &right,
-                        line_start + left_char_len,
-                        text_style,
-                        mask_style,
-                        &mask_char_ranges,
-                    );
-                } else {
-                    Self::push_input_text_spans(
-                        &mut spans,
-                        &row,
-                        line_start,
-                        text_style,
-                        mask_style,
-                        &mask_char_ranges,
-                    );
+                    if !right.is_empty() {
+                        spans.push(Span::styled(right, text_style));
+                    }
+                } else if !row.is_empty() {
+                    spans.push(Span::styled(row, text_style));
                 }
             }
             render_lines.push(Line::from(spans));
@@ -3385,7 +3224,7 @@ fn run_loop(
                             if state.input_selection.is_some() =>
                         {
                             // Copy selected text to clipboard.
-                            if let Some(text) = state.selected_input_text_expanded() {
+                            if let Some(text) = state.selected_input_text_string() {
                                 if let Ok(mut cb) = arboard::Clipboard::new() {
                                     let _ = cb.set_text(text);
                                 }
@@ -3521,7 +3360,7 @@ fn run_loop(
                         && key.modifiers.contains(KeyModifiers::CONTROL))
                         || (key.code == KeyCode::Insert && key.modifiers == KeyModifiers::CONTROL))
                 {
-                    if let Some(text) = state.selected_input_text_expanded() {
+                    if let Some(text) = state.selected_input_text_string() {
                         if let Ok(mut cb) = arboard::Clipboard::new() {
                             let _ = cb.set_text(text);
                         }
@@ -3978,7 +3817,7 @@ fn run_loop(
                         }
 
                         let raw_line = std::mem::take(&mut state.input.text);
-                        let line = expand_masks(&raw_line, &state.input.pastes);
+                        let line = raw_line;
                         state.reset_input();
                         state.input_scroll_offset = 0;
                         state.clear_input_history();
@@ -4138,12 +3977,8 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::text::Line;
 
-    use super::{
-        count_lines, expand_masks, format_paste_placeholder, normalize_pasted_text,
-        should_mask_paste, PasteEntry, ReplTuiState, ToolCallStatus, TranscriptEntry,
-    };
+    use super::{normalize_pasted_text, ReplTuiState, ToolCallStatus, TranscriptEntry};
 
-    /// Smallest valid `ReplTuiState` for paste-masking unit tests.
     fn test_state() -> ReplTuiState {
         ReplTuiState::new()
     }
@@ -4154,23 +3989,6 @@ mod tests {
         assert_eq!(normalize_pasted_text("a\rb"), "a\nb");
         assert_eq!(normalize_pasted_text("a\r\nb\rc"), "a\nb\nc");
         assert_eq!(normalize_pasted_text("plain"), "plain");
-    }
-
-    #[test]
-    fn count_lines_counts_newlines_plus_one() {
-        assert_eq!(count_lines(""), 1);
-        assert_eq!(count_lines("one"), 1);
-        assert_eq!(count_lines("a\nb"), 2);
-        assert_eq!(count_lines("a\nb\nc"), 3);
-        assert_eq!(count_lines("trailing\n"), 2);
-    }
-
-    #[test]
-    fn should_mask_paste_uses_byte_threshold() {
-        assert!(!should_mask_paste(""));
-        assert!(!should_mask_paste(&"x".repeat(149)));
-        assert!(should_mask_paste(&"x".repeat(150)));
-        assert!(should_mask_paste(&"x".repeat(10_000)));
     }
 
     // ── paste-newline suppression e2e tests ───────────────────────────────────
@@ -4209,7 +4027,7 @@ mod tests {
         let mut s = test_state();
         // Open a suppression window that expired 1 ms ago.
         s.selection.suppress_paste_until =
-            Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+            std::time::Instant::now().checked_sub(std::time::Duration::from_millis(1));
         assert!(
             !s.paste_enter_is_suppressed(KeyCode::Enter),
             "Enter must not be suppressed once the window has expired"
@@ -4230,27 +4048,16 @@ mod tests {
     }
 
     #[test]
-    fn multiline_paste_below_byte_threshold_is_not_masked() {
-        // "a\nb" is 3 bytes — far below the 150-byte threshold, so it is
-        // inserted raw (no mask placeholder).  Suppression is not handle_paste_event's
-        // responsibility — callers (bracketed paste / Ctrl+V) arm it explicitly.
+    fn handle_paste_event_inserts_multiline_text_directly() {
         let mut s = test_state();
         s.handle_paste_event("a\nb");
-        assert!(
-            !s.input.text.contains("[#1 Pasted"),
-            "short multi-line paste must not be masked"
-        );
+        assert_eq!(s.input.text, "a\nb");
         assert!(s.input.text.contains('\n'), "newline must appear in input");
     }
 
     #[test]
     fn paste_burst_helpers_buffer_then_flush_through_handle_paste_event() {
-        // Simulates a raw-keystroke paste from terminals that don't deliver
-        // `Event::Paste`.  We push chars into the burst buffer directly and
-        // verify that flush routes them through handle_paste_event so the
-        // long-paste mask applies.
         let mut s = test_state();
-        // Push a 200-char "paste" with a newline in the middle.
         for ch in "a".repeat(99).chars() {
             s.paste_burst_chars.push(ch);
         }
@@ -4260,16 +4067,9 @@ mod tests {
         }
         assert_eq!(s.paste_burst_chars.len(), 200);
         s.flush_paste_burst();
-        // Buffer is drained.
         assert!(s.paste_burst_chars.is_empty());
-        // Length ≥ 150 → masked (text shows the placeholder, not raw chars).
-        assert!(
-            s.input.text.contains("[#1 Pasted"),
-            "burst above threshold must flush through the mask path"
-        );
-        // CRITICAL: the burst flush must NOT arm suppression — doing so would
-        // eat the next paste characters arriving in the 100 ms window, which
-        // is exactly the truncation regression we're guarding against.
+        assert_eq!(s.input.text.len(), 200);
+        assert!(s.input.text.contains('\n'));
         assert!(
             s.selection.suppress_paste_until.is_none(),
             "burst flush must not arm post-paste suppression"
@@ -4278,7 +4078,7 @@ mod tests {
 
     /// End-to-end simulation of the event loop's paste-burst handling for the
     /// concrete regression we're fixing: a multi-line paste arriving as raw
-    /// keystrokes (Windows Terminal + ConPTY bypassing `Event::Paste`).
+    /// keystrokes (Windows Terminal + `ConPTY` bypassing `Event::Paste`).
     ///
     /// This walks through the exact sequence of state mutations the event-loop
     /// handlers (`KeyCode::Char(c)`, `KeyCode::Enter`) would perform on each
@@ -4319,43 +4119,21 @@ mod tests {
         s.flush_paste_burst();
 
         // Full multi-line text now in input.text; no auto-send happened.
-        assert_eq!(s.input.text, "ab\ncd",
-            "all pasted content should land in input.text, with the newline preserved");
-        assert!(s.paste_burst_chars.is_empty(),
-            "burst buffer drained after flush");
+        assert_eq!(
+            s.input.text, "ab\ncd",
+            "all pasted content should land in input.text, with the newline preserved"
+        );
+        assert!(
+            s.paste_burst_chars.is_empty(),
+            "burst buffer drained after flush"
+        );
         // CRITICAL: post-paste suppression must NOT be armed by the burst flush.
         // If it were, the 100 ms window would eat subsequent paste characters,
         // truncating long multi-line pastes (the bug this regression covers).
-        assert!(s.selection.suppress_paste_until.is_none(),
-            "burst flush must not arm Enter suppression");
-    }
-
-    /// E2E: long keystroke-paste hits the mask threshold via the burst flush.
-    /// Verifies that masking works for terminals that don't deliver
-    /// `Event::Paste` — the entire raison d'être of restoring the burst path.
-    #[test]
-    fn paste_burst_e2e_long_keystroke_paste_is_masked() {
-        let mut s = test_state();
-        let big = "x".repeat(200);
-        let mut chars = big.chars();
-
-        // First char inserted directly (no prior key to detect burst from).
-        s.insert_input_char(chars.next().unwrap());
-        s.last_key_time = Some(std::time::Instant::now());
-
-        // Remaining 199 chars accumulate in the burst buffer.
-        for c in chars {
-            s.paste_burst_chars.push(c);
-        }
-        // Auto-flush at burst idle.
-        s.flush_paste_burst();
-
-        // The 199-char burst above the 150-byte threshold → masked.
-        assert!(s.input.text.contains("[#1 Pasted"),
-            "burst above threshold should flush through the mask path");
-        // Single PasteEntry recorded with the full 199-char content.
-        assert_eq!(s.input.pastes.len(), 1);
-        assert_eq!(s.input.pastes[0].content.len(), 199);
+        assert!(
+            s.selection.suppress_paste_until.is_none(),
+            "burst flush must not arm Enter suppression"
+        );
     }
 
     /// Regression test for paste-truncation bug: when a slow render cycle
@@ -4412,22 +4190,27 @@ mod tests {
         s.paste_burst_chars.push('x');
 
         // Recent key → don't flush yet (burst may continue).
-        s.last_key_time = Some(now - std::time::Duration::from_millis(5));
+        s.last_key_time = now.checked_sub(std::time::Duration::from_millis(5));
         let should_flush_recent = !s.paste_burst_chars.is_empty()
             && s.last_key_time.is_some_and(|t| {
-                t.elapsed() > std::time::Duration::from_millis(
-                    super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
-                )
+                t.elapsed()
+                    > std::time::Duration::from_millis(
+                        super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
+                    )
             });
-        assert!(!should_flush_recent, "must not flush while burst is still active");
+        assert!(
+            !should_flush_recent,
+            "must not flush while burst is still active"
+        );
 
         // Idle past threshold → flush.
-        s.last_key_time = Some(now - std::time::Duration::from_millis(100));
+        s.last_key_time = now.checked_sub(std::time::Duration::from_millis(100));
         let should_flush_idle = !s.paste_burst_chars.is_empty()
             && s.last_key_time.is_some_and(|t| {
-                t.elapsed() > std::time::Duration::from_millis(
-                    super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
-                )
+                t.elapsed()
+                    > std::time::Duration::from_millis(
+                        super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
+                    )
             });
         assert!(should_flush_idle, "must flush once the burst has gone idle");
     }
@@ -4457,7 +4240,10 @@ mod tests {
         s.input.cursor = 5;
         s.input.byte_cursor = 5;
         s.flush_paste_burst();
-        assert_eq!(s.input.text, "hello", "empty buffer flush must not modify text");
+        assert_eq!(
+            s.input.text, "hello",
+            "empty buffer flush must not modify text"
+        );
     }
 
     #[test]
@@ -4467,17 +4253,16 @@ mod tests {
         // No previous key recorded → not in burst.
         assert!(!s.in_paste_burst(now));
         // Previous key within threshold → in burst.
-        s.last_key_time = Some(now - std::time::Duration::from_millis(10));
+        s.last_key_time = now.checked_sub(std::time::Duration::from_millis(10));
         assert!(s.in_paste_burst(now));
         // Previous key beyond threshold → not in burst.
-        s.last_key_time = Some(now - std::time::Duration::from_millis(100));
+        s.last_key_time = now.checked_sub(std::time::Duration::from_millis(100));
         assert!(!s.in_paste_burst(now));
     }
 
     #[test]
     fn crlf_paste_normalises_to_lf_in_input() {
-        // normalize_pasted_text converts \r\n → \n so masking / display
-        // logic only ever has to consider \n.
+        // normalize_pasted_text converts \r\n → \n so the input always stores LF.
         let mut s = test_state();
         s.handle_paste_event("line1\r\nline2");
         assert!(
@@ -4487,364 +4272,6 @@ mod tests {
         assert!(
             !s.input.text.contains('\r'),
             "raw \\r should not survive normalisation"
-        );
-    }
-
-    #[test]
-    fn format_paste_placeholder_matches_format() {
-        assert_eq!(format_paste_placeholder(1, 1), "[#1 Pasted ~1 lines]");
-        assert_eq!(format_paste_placeholder(42, 137), "[#42 Pasted ~137 lines]");
-    }
-
-    #[test]
-    fn expand_masks_substitutes_original_content() {
-        let pastes = vec![
-            PasteEntry {
-                id: 1,
-                placeholder: "[#1 Pasted ~3 lines]".to_string(),
-                content: "alpha\nbeta\ngamma".to_string(),
-            },
-            PasteEntry {
-                id: 2,
-                placeholder: "[#2 Pasted ~2 lines]".to_string(),
-                content: "x\ny".to_string(),
-            },
-        ];
-        let visible = "hi [#1 Pasted ~3 lines] and [#2 Pasted ~2 lines] ok";
-        assert_eq!(
-            expand_masks(visible, &pastes),
-            "hi alpha\nbeta\ngamma and x\ny ok"
-        );
-    }
-
-    #[test]
-    fn expand_masks_is_idempotent_for_no_pastes() {
-        assert_eq!(expand_masks("plain text", &[]), "plain text");
-    }
-
-    #[test]
-    fn submit_expands_masks_before_dispatch() {
-        let mut s = test_state();
-        s.insert_input_str("please summarise: ");
-        let body = "x".repeat(600);
-        s.insert_paste_mask(&body);
-
-        // Simulate the submit-path text-extraction logic.
-        let raw_line = std::mem::take(&mut s.input.text);
-        let line = expand_masks(&raw_line, &s.input.pastes);
-
-        assert!(line.contains(&body));
-        assert!(!line.contains("[#1 Pasted"));
-    }
-
-    #[test]
-    fn snapshot_roundtrip_preserves_pastes() {
-        let mut s = test_state();
-        s.input.text = "hello [#1 Pasted ~3 lines] world".to_string();
-        s.input.cursor = s.input.text.chars().count();
-        s.resync_byte_cursor();
-        s.input.pastes.push(PasteEntry {
-            id: 1,
-            placeholder: "[#1 Pasted ~3 lines]".to_string(),
-            content: "line1\nline2\nline3".to_string(),
-        });
-        s.input.next_paste_id = 2;
-
-        let snap = s.current_input_snapshot();
-        s.input.text.clear();
-        s.input.pastes.clear();
-        s.input.next_paste_id = 1;
-        s.apply_input_snapshot(snap);
-
-        assert_eq!(s.input.text, "hello [#1 Pasted ~3 lines] world");
-        assert_eq!(s.input.pastes.len(), 1);
-        assert_eq!(s.input.pastes[0].content, "line1\nline2\nline3");
-        assert_eq!(s.input.next_paste_id, 2);
-    }
-
-    #[test]
-    fn insert_paste_mask_inserts_placeholder_and_records_entry() {
-        let mut s = test_state();
-        s.input.text = "prefix ".to_string();
-        s.input.cursor = s.input.text.chars().count();
-        s.resync_byte_cursor();
-
-        let content = "line1\nline2\nline3\n".repeat(40); // > 500 bytes, many lines
-        s.insert_paste_mask(&content);
-
-        assert_eq!(s.input.pastes.len(), 1);
-        let entry = &s.input.pastes[0];
-        assert_eq!(entry.id, 1);
-        assert!(entry.placeholder.starts_with("[#1 Pasted ~"));
-        assert_eq!(entry.content, content);
-        assert!(s.input.text.starts_with("prefix "));
-        assert!(s.input.text.contains(&entry.placeholder));
-        // Trailing space appended after the placeholder.
-        assert!(s.input.text.ends_with(' '));
-        // Cursor sits past the trailing space.
-        assert_eq!(s.input.cursor, s.input.text.chars().count());
-        assert_eq!(s.input.byte_cursor, s.input.text.len());
-        assert_eq!(s.input.next_paste_id, 2);
-    }
-
-    #[test]
-    fn insert_paste_mask_increments_id_for_consecutive_pastes() {
-        let mut s = test_state();
-        let big = "x".repeat(600);
-        s.insert_paste_mask(&big);
-        s.insert_paste_mask(&big);
-        assert_eq!(s.input.pastes.len(), 2);
-        assert_eq!(s.input.pastes[0].id, 1);
-        assert_eq!(s.input.pastes[1].id, 2);
-        assert!(s.input.text.contains("[#1 Pasted"));
-        assert!(s.input.text.contains("[#2 Pasted"));
-    }
-
-    #[test]
-    fn compute_mask_ranges_finds_all_placeholders() {
-        let mut s = test_state();
-        let big = "x".repeat(600);
-        s.insert_paste_mask(&big);
-        s.insert_input_str(" middle ");
-        s.insert_paste_mask(&big);
-
-        let ranges = s.compute_mask_ranges();
-        assert_eq!(ranges.len(), 2);
-        // Ranges sorted by start position.
-        assert!(ranges[0].1.start < ranges[1].1.start);
-        // Each range slices to exactly the placeholder string.
-        assert_eq!(
-            &s.input.text[ranges[0].1.clone()],
-            s.input.pastes[ranges[0].0].placeholder
-        );
-    }
-
-    #[test]
-    fn mask_containing_returns_none_at_boundaries_or_outside() {
-        let mut s = test_state();
-        let big = "x".repeat(600);
-        s.insert_paste_mask(&big);
-        let ranges = s.compute_mask_ranges();
-        let r = ranges[0].1.clone();
-
-        assert!(ReplTuiState::mask_containing(r.start, &ranges).is_none());
-        assert!(ReplTuiState::mask_containing(r.end, &ranges).is_none());
-        assert!(ReplTuiState::mask_containing(r.start + 1, &ranges).is_some());
-        assert!(ReplTuiState::mask_containing(r.start + 5, &ranges).is_some());
-    }
-
-    #[test]
-    fn next_paste_id_resets_to_one_after_submit() {
-        let mut s = test_state();
-        s.insert_paste_mask(&"x".repeat(600));
-        s.insert_paste_mask(&"y".repeat(600));
-        assert_eq!(s.input.next_paste_id, 3);
-
-        // Simulate submit-path reset (mirrors the production code).
-        let raw_line = std::mem::take(&mut s.input.text);
-        let _line = expand_masks(&raw_line, &s.input.pastes);
-        s.input.pastes.clear();
-        s.input.next_paste_id = 1;
-
-        assert!(s.input.pastes.is_empty());
-        assert_eq!(s.input.next_paste_id, 1);
-
-        // A fresh paste should now get id #1 again.
-        s.insert_paste_mask(&"z".repeat(600));
-        assert_eq!(s.input.pastes[0].id, 1);
-    }
-
-    #[test]
-    fn up_arrow_into_mask_snaps_to_mask_start() {
-        let mut s = test_state();
-        // Build a multi-line input so up-arrow has somewhere to go.
-        s.insert_input_str("first line\n");
-        s.insert_paste_mask(&"y".repeat(600));
-        // Cursor is past the trailing space after the placeholder; up-arrow from
-        // here lands on the previous (first) line if mask isn't on its own line,
-        // OR if the mask spans where up would land, it must snap to mask start.
-        // Position cursor at the END of the input text and press up.
-        s.move_input_cursor_up();
-
-        // After up, byte_cursor should not fall strictly inside the mask.
-        let ranges = s.compute_mask_ranges();
-        for (_, r) in &ranges {
-            assert!(
-                !(s.input.byte_cursor > r.start && s.input.byte_cursor < r.end),
-                "cursor should not land strictly inside a mask after up-arrow"
-            );
-        }
-    }
-
-    #[test]
-    fn down_arrow_into_mask_snaps_to_mask_end() {
-        let mut s = test_state();
-        s.insert_input_str("first line\n");
-        s.insert_paste_mask(&"y".repeat(600));
-        // Move cursor up to the first line, then back down — it should not land
-        // inside the mask either way.
-        s.move_input_cursor_up();
-        s.move_input_cursor_down();
-
-        let ranges = s.compute_mask_ranges();
-        for (_, r) in &ranges {
-            assert!(
-                !(s.input.byte_cursor > r.start && s.input.byte_cursor < r.end),
-                "cursor should not land strictly inside a mask after up+down round-trip"
-            );
-        }
-    }
-
-    #[test]
-    fn paste_while_cursor_inside_mask_snaps_first() {
-        let mut s = test_state();
-        s.insert_paste_mask(&"a".repeat(600));
-        let ranges = s.compute_mask_ranges();
-        let r = ranges[0].1.clone();
-        // Place cursor strictly inside the first mask.
-        s.input.byte_cursor = r.start + 3;
-        s.input.cursor = s.input.text[..r.start + 3].chars().count();
-
-        s.insert_paste_mask(&"b".repeat(600));
-
-        // Both masks present, neither nested.
-        let ranges = s.compute_mask_ranges();
-        assert_eq!(ranges.len(), 2);
-        assert!(ranges[0].1.end <= ranges[1].1.start);
-    }
-
-    #[test]
-    fn large_paste_event_creates_mask_not_raw_text() {
-        let mut s = test_state();
-        let big = "y".repeat(600);
-        s.handle_paste_event(&big);
-
-        assert!(s.input.text.contains("[#1 Pasted ~"));
-        assert!(!s.input.text.contains(&big));
-        assert_eq!(s.input.pastes.len(), 1);
-    }
-
-    #[test]
-    fn small_paste_event_inserts_raw_text() {
-        let mut s = test_state();
-        let small = "short paste".to_string();
-        s.handle_paste_event(&small);
-
-        assert_eq!(s.input.text, "short paste");
-        assert!(s.input.pastes.is_empty());
-    }
-
-    #[test]
-    fn crlf_paste_normalises_to_lf_in_stored_content() {
-        let mut s = test_state();
-        let mut crlf = "a\r\n".repeat(300);
-        crlf.push_str("end");
-        s.handle_paste_event(&crlf);
-
-        assert_eq!(s.input.pastes.len(), 1);
-        assert!(!s.input.pastes[0].content.contains('\r'));
-        assert!(s.input.pastes[0].content.contains('\n'));
-    }
-
-    #[test]
-    fn left_arrow_at_mask_end_snaps_to_mask_start() {
-        let mut s = test_state();
-        s.insert_paste_mask(&"x".repeat(600));
-        let ranges = s.compute_mask_ranges();
-        let r = ranges[0].1.clone();
-
-        // Position cursor exactly at mask end (it currently sits past the trailing space).
-        s.input.byte_cursor = r.end;
-        s.input.cursor = s.input.text[..r.end].chars().count();
-
-        s.move_input_cursor_left();
-
-        assert_eq!(s.input.byte_cursor, r.start);
-        assert_eq!(s.input.cursor, s.input.text[..r.start].chars().count());
-    }
-
-    #[test]
-    fn right_arrow_at_mask_start_snaps_to_mask_end() {
-        let mut s = test_state();
-        s.insert_input_str("hi ");
-        s.insert_paste_mask(&"x".repeat(600));
-        let ranges = s.compute_mask_ranges();
-        let r = ranges[0].1.clone();
-
-        s.input.byte_cursor = r.start;
-        s.input.cursor = s.input.text[..r.start].chars().count();
-
-        s.move_input_cursor_right();
-
-        assert_eq!(s.input.byte_cursor, r.end);
-    }
-
-    #[test]
-    fn compute_mask_ranges_skips_orphaned_entries() {
-        // If a placeholder is no longer present in `text` (e.g. after manual edits
-        // that removed it without going through atomic delete), the entry is
-        // silently skipped.
-        let mut s = test_state();
-        s.input.pastes.push(PasteEntry {
-            id: 1,
-            placeholder: "[#1 Pasted ~5 lines]".to_string(),
-            content: "x".repeat(600),
-        });
-        // text is empty — no occurrences of the placeholder.
-        let ranges = s.compute_mask_ranges();
-        assert!(ranges.is_empty());
-    }
-
-    #[test]
-    fn compute_mask_char_ranges_handles_multibyte_prefix() {
-        let mut s = test_state();
-        // Multi-byte prefix shifts byte positions relative to char positions.
-        s.insert_input_str("héllo ");
-        s.insert_paste_mask(&"x".repeat(600));
-
-        let byte_ranges = s.compute_mask_ranges();
-        let char_ranges = s.compute_mask_char_ranges();
-        assert_eq!(char_ranges.len(), 1);
-
-        let (c_start, c_end) = char_ranges[0];
-        let r = &byte_ranges[0].1;
-        assert_eq!(c_start, s.input.text[..r.start].chars().count());
-        assert_eq!(c_end, s.input.text[..r.end].chars().count());
-        // Placeholder is ASCII so char-length equals byte-length within the range.
-        assert_eq!(c_end - c_start, r.end - r.start);
-    }
-
-    #[test]
-    fn input_render_styles_mask_as_dim_italic() {
-        use ratatui::style::Modifier;
-
-        let mut s = test_state();
-        s.insert_input_str("hi ");
-        s.insert_paste_mask(&"x".repeat(600));
-
-        let (_h, lines, _max_scroll, _cursor) = s.calculate_input_dimensions(80, "model");
-        // First line is a blank padding; the input row is at index 1.
-        let input_line = &lines[1];
-        let mut found_mask_span = false;
-        for span in &input_line.spans {
-            if span.content.contains("[#1 Pasted") {
-                let mods = span.style.add_modifier;
-                assert!(
-                    mods.contains(Modifier::DIM) && mods.contains(Modifier::ITALIC),
-                    "mask span missing DIM/ITALIC modifiers (got {mods:?}) for content {:?}",
-                    span.content
-                );
-                found_mask_span = true;
-            }
-        }
-        assert!(
-            found_mask_span,
-            "expected at least one span carrying the placeholder text, got spans {:?}",
-            input_line
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect::<Vec<_>>()
         );
     }
 
@@ -5099,6 +4526,24 @@ mod tests {
     }
 
     #[test]
+    fn calculate_input_dimensions_limits_large_paste_to_viewport_lines() {
+        let mut state = ReplTuiState::new();
+        state.input.text = (0..1000)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        state.input.cursor = state.input.text.chars().count();
+        state.resync_byte_cursor();
+
+        let (_, render_lines, max_scroll, cursor_pos) =
+            state.calculate_input_dimensions(20, "model");
+
+        assert!(render_lines.len() <= super::MAX_INPUT_LINES + 3);
+        assert!(max_scroll > 0);
+        assert!(cursor_pos.is_some());
+    }
+
+    #[test]
     fn select_all_input_marks_entire_buffer() {
         let mut state = ReplTuiState::new();
         state.input.text = "ab\ncd".to_string();
@@ -5112,19 +4557,16 @@ mod tests {
     }
 
     #[test]
-    fn copy_selection_yanks_expanded_content() {
+    fn copy_selection_yanks_raw_content() {
         let mut s = test_state();
-        s.insert_input_str("a ");
-        s.insert_paste_mask(&"z".repeat(600));
-        s.insert_input_str(" b");
+        s.insert_input_str("a zzz b");
 
         // Select the whole input.
         let total = s.input.text.chars().count();
         s.input_selection = Some((0, total));
 
-        let yanked = s.selected_input_text_expanded().unwrap();
-        assert!(yanked.contains(&"z".repeat(600)));
-        assert!(!yanked.contains("[#1 Pasted"));
+        let yanked = s.selected_input_text_string().unwrap();
+        assert_eq!(yanked, "a zzz b");
     }
 
     #[test]
@@ -5358,44 +4800,6 @@ mod tests {
             .join("\n");
 
         assert!(content.contains("Update available: v9.9.9 (you have v1.0.0)"));
-    }
-
-    #[test]
-    fn backspace_at_mask_end_deletes_entire_mask() {
-        let mut s = test_state();
-        s.insert_input_str("hi ");
-        let big = "y".repeat(600);
-        s.insert_paste_mask(&big);
-        // Cursor sits past the trailing space.  Move it back one char to land on
-        // mask end (the boundary between placeholder and the trailing space).
-        let trailing_space_byte = s.input.byte_cursor - 1;
-        s.input.byte_cursor = trailing_space_byte;
-        s.input.cursor -= 1;
-
-        let before_len = s.input.text.len();
-        s.backspace_input_char();
-
-        assert!(!s.input.text.contains("[#1 Pasted"));
-        assert!(s.input.text.len() < before_len);
-        assert!(s.input.pastes.is_empty());
-        // Trailing separator space is deleted atomically with the mask.
-        assert_eq!(s.input.text, "hi ");
-    }
-
-    #[test]
-    fn delete_at_mask_start_deletes_entire_mask() {
-        let mut s = test_state();
-        s.insert_paste_mask(&"y".repeat(600));
-        // Position cursor at mask start.
-        let ranges = s.compute_mask_ranges();
-        let r = ranges[0].1.clone();
-        s.input.byte_cursor = r.start;
-        s.input.cursor = s.input.text[..r.start].chars().count();
-
-        s.delete_input_char();
-
-        assert!(!s.input.text.contains("[#1 Pasted"));
-        assert!(s.input.pastes.is_empty());
     }
 
     #[test]
