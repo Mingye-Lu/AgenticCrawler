@@ -755,23 +755,31 @@ impl ReplTuiState {
     }
 
     /// Single entry point for any pasted text, regardless of source (bracketed
-    /// paste, Ctrl+V, Shift+Insert).  Normalises newlines and either masks the
-    /// paste (>= threshold) or inserts it raw.
+    /// paste, Ctrl+V, Shift+Insert, burst flush).  Normalises newlines and
+    /// either masks the paste (>= threshold) or inserts it raw.
     ///
-    /// If the paste contains newlines, a 100 ms suppression window is opened so
-    /// that stray `KeyCode::Enter` events emitted by some terminals for each `\n`
-    /// in the pasted text are discarded rather than triggering an accidental send.
+    /// Note: this does NOT set `suppress_paste_until` — that suppression is
+    /// only appropriate for the bracketed-paste / Ctrl+V paths (where stray
+    /// Enter events from the terminal can follow a paste).  The burst-flush
+    /// path manages newlines via its own in-burst check on `KeyCode::Enter`,
+    /// and adding suppression there would eat subsequent paste characters.
+    /// Callers that need post-paste suppression set it themselves.
     fn handle_paste_event(&mut self, raw: &str) {
         let normalised = normalize_pasted_text(raw);
-        if normalised.contains('\n') {
-            self.selection.suppress_paste_until =
-                Some(Instant::now() + Duration::from_millis(100));
-        }
         if should_mask_paste(&normalised) {
             self.insert_paste_mask(&normalised);
         } else {
             self.insert_input_str(&normalised);
         }
+    }
+
+    /// Arm the post-paste suppression window used by the bracketed-paste and
+    /// Ctrl+V paths.  Stray `KeyCode::Enter` events that some terminals emit
+    /// for each `\n` in a paste are discarded for the next 100 ms so they
+    /// don't trigger an accidental send.
+    fn arm_paste_enter_suppression(&mut self) {
+        self.selection.suppress_paste_until =
+            Some(Instant::now() + Duration::from_millis(100));
     }
 
     /// Maximum gap (ms) between consecutive keystrokes considered a paste burst.
@@ -3411,6 +3419,9 @@ fn run_loop(
                 state.flush_paste_burst();
                 state.last_key_time = None;
                 state.handle_paste_event(&text);
+                if text.contains('\n') {
+                    state.arm_paste_enter_suppression();
+                }
                 state.wake_input_caret();
                 state.refresh_slash_overlay();
             }
@@ -3453,6 +3464,9 @@ fn run_loop(
                     state.last_key_time = None;
                     if let Some(text) = read_clipboard_text() {
                         state.handle_paste_event(&text);
+                        if text.contains('\n') {
+                            state.arm_paste_enter_suppression();
+                        }
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
@@ -4162,31 +4176,31 @@ mod tests {
     // ── paste-newline suppression e2e tests ───────────────────────────────────
 
     #[test]
-    fn paste_with_newline_opens_suppression_window() {
+    fn arm_paste_enter_suppression_opens_suppression_window() {
         let mut s = test_state();
         assert!(s.selection.suppress_paste_until.is_none());
-        s.handle_paste_event("line1\nline2");
+        s.arm_paste_enter_suppression();
         assert!(
             s.selection.suppress_paste_until.is_some(),
-            "a multi-line paste must open a suppression window"
+            "arming must open the suppression window"
         );
         assert!(
             s.paste_enter_is_suppressed(KeyCode::Enter),
-            "Enter must be suppressed immediately after a multi-line paste"
+            "Enter must be suppressed once the window is armed"
         );
     }
 
     #[test]
-    fn paste_without_newline_does_not_open_suppression_window() {
+    fn handle_paste_event_does_not_arm_suppression() {
+        // Suppression is armed by the bracketed-paste / Ctrl+V call sites only,
+        // never by handle_paste_event itself.  This guarantees the burst-flush
+        // path (which also goes through handle_paste_event) doesn't accidentally
+        // suppress subsequent paste keystrokes.
         let mut s = test_state();
-        s.handle_paste_event("single line");
+        s.handle_paste_event("line1\nline2");
         assert!(
             s.selection.suppress_paste_until.is_none(),
-            "a single-line paste must not open any suppression window"
-        );
-        assert!(
-            !s.paste_enter_is_suppressed(KeyCode::Enter),
-            "Enter must not be suppressed after a single-line paste"
+            "handle_paste_event must not arm suppression on its own"
         );
     }
 
@@ -4205,7 +4219,7 @@ mod tests {
     #[test]
     fn suppression_covers_enter_tab_backspace_and_chars_not_other_keys() {
         let mut s = test_state();
-        s.handle_paste_event("hello\nworld");
+        s.arm_paste_enter_suppression();
         assert!(s.paste_enter_is_suppressed(KeyCode::Enter));
         assert!(s.paste_enter_is_suppressed(KeyCode::Tab));
         assert!(s.paste_enter_is_suppressed(KeyCode::Backspace));
@@ -4216,10 +4230,10 @@ mod tests {
     }
 
     #[test]
-    fn multiline_paste_below_byte_threshold_is_not_masked_but_enter_is_suppressed() {
+    fn multiline_paste_below_byte_threshold_is_not_masked() {
         // "a\nb" is 3 bytes — far below the 150-byte threshold, so it is
-        // inserted raw (no mask placeholder).  The suppression window must still
-        // be opened so the terminal's stray Enter for the \n is discarded.
+        // inserted raw (no mask placeholder).  Suppression is not handle_paste_event's
+        // responsibility — callers (bracketed paste / Ctrl+V) arm it explicitly.
         let mut s = test_state();
         s.handle_paste_event("a\nb");
         assert!(
@@ -4227,18 +4241,14 @@ mod tests {
             "short multi-line paste must not be masked"
         );
         assert!(s.input.text.contains('\n'), "newline must appear in input");
-        assert!(
-            s.paste_enter_is_suppressed(KeyCode::Enter),
-            "Enter must still be suppressed even though paste was not masked"
-        );
     }
 
     #[test]
     fn paste_burst_helpers_buffer_then_flush_through_handle_paste_event() {
         // Simulates a raw-keystroke paste from terminals that don't deliver
         // `Event::Paste`.  We push chars into the burst buffer directly and
-        // verify that flush routes them through handle_paste_event — meaning
-        // the long-paste mask and newline suppression both apply.
+        // verify that flush routes them through handle_paste_event so the
+        // long-paste mask applies.
         let mut s = test_state();
         // Push a 200-char "paste" with a newline in the middle.
         for ch in "a".repeat(99).chars() {
@@ -4257,8 +4267,13 @@ mod tests {
             s.input.text.contains("[#1 Pasted"),
             "burst above threshold must flush through the mask path"
         );
-        // Newline in burst content triggers the Enter-suppression window.
-        assert!(s.paste_enter_is_suppressed(KeyCode::Enter));
+        // CRITICAL: the burst flush must NOT arm suppression — doing so would
+        // eat the next paste characters arriving in the 100 ms window, which
+        // is exactly the truncation regression we're guarding against.
+        assert!(
+            s.selection.suppress_paste_until.is_none(),
+            "burst flush must not arm post-paste suppression"
+        );
     }
 
     /// End-to-end simulation of the event loop's paste-burst handling for the
@@ -4308,8 +4323,11 @@ mod tests {
             "all pasted content should land in input.text, with the newline preserved");
         assert!(s.paste_burst_chars.is_empty(),
             "burst buffer drained after flush");
-        assert!(s.paste_enter_is_suppressed(KeyCode::Enter),
-            "newline routed through handle_paste_event arms Enter suppression");
+        // CRITICAL: post-paste suppression must NOT be armed by the burst flush.
+        // If it were, the 100 ms window would eat subsequent paste characters,
+        // truncating long multi-line pastes (the bug this regression covers).
+        assert!(s.selection.suppress_paste_until.is_none(),
+            "burst flush must not arm Enter suppression");
     }
 
     /// E2E: long keystroke-paste hits the mask threshold via the burst flush.
@@ -4338,6 +4356,50 @@ mod tests {
         // Single PasteEntry recorded with the full 199-char content.
         assert_eq!(s.input.pastes.len(), 1);
         assert_eq!(s.input.pastes[0].content.len(), 199);
+    }
+
+    /// Regression test for paste-truncation bug: when a slow render cycle
+    /// causes the top-of-loop auto-flush to fire MID-paste, the flush must
+    /// not arm `suppress_paste_until` — otherwise the 100 ms window eats the
+    /// remaining paste characters and the user sees a truncated input.
+    ///
+    /// Concrete symptom that motivated this test: pasting a ~300-byte Rust
+    /// test function only showed the first ~26 characters in the input bar.
+    #[test]
+    fn paste_burst_mid_paste_flush_does_not_eat_subsequent_keystrokes() {
+        let mut s = test_state();
+        let t0 = std::time::Instant::now();
+
+        // First "half" of the paste accumulates in the burst buffer.
+        for ch in "    #[test]\n    fn render_".chars() {
+            s.paste_burst_chars.push(ch);
+        }
+        s.last_key_time = Some(t0);
+
+        // Simulate the top-of-loop auto-flush firing because a slow render
+        // cycle pushed last_key_time past the burst threshold.
+        // (In real life this happens when a draw cycle blocks > 30 ms.)
+        s.flush_paste_burst();
+
+        // The flushed text is now in input.text.  Buffer drained.
+        assert!(s.input.text.starts_with("    #[test]\n    fn render_"));
+        assert!(s.paste_burst_chars.is_empty());
+
+        // CRITICAL: suppression window must NOT be armed.  The next
+        // paste-burst keystroke (the 't' from "tool_call_...") MUST NOT
+        // be suppressed.
+        assert!(
+            s.selection.suppress_paste_until.is_none(),
+            "mid-paste flush must not arm suppression — that's the bug"
+        );
+        assert!(
+            !s.paste_enter_is_suppressed(KeyCode::Char('t')),
+            "subsequent paste chars must not be eaten by a suppression window"
+        );
+        assert!(
+            !s.paste_enter_is_suppressed(KeyCode::Enter),
+            "subsequent Enter (handled by burst path) must not be suppressed by handle_paste_event"
+        );
     }
 
     /// E2E: the periodic auto-flush condition.  Verifies the predicate the
@@ -4371,8 +4433,9 @@ mod tests {
     }
 
     #[test]
-    fn paste_burst_flush_below_threshold_inserts_raw_with_suppression() {
-        // Short burst with newline → not masked, but newline triggers suppression.
+    fn paste_burst_flush_below_threshold_inserts_raw_without_arming_suppression() {
+        // Short burst with newline → not masked, and suppression is NOT armed
+        // (burst path manages its own newlines via the Enter-in-burst handler).
         let mut s = test_state();
         for ch in "ab\ncd".chars() {
             s.paste_burst_chars.push(ch);
@@ -4382,8 +4445,8 @@ mod tests {
         assert!(!s.input.text.contains("[#1 Pasted"));
         assert_eq!(s.input.text, "ab\ncd");
         assert!(
-            s.paste_enter_is_suppressed(KeyCode::Enter),
-            "newline in burst content must still arm Enter suppression"
+            s.selection.suppress_paste_until.is_none(),
+            "burst flush must not arm post-paste suppression"
         );
     }
 
@@ -4412,14 +4475,18 @@ mod tests {
     }
 
     #[test]
-    fn crlf_paste_also_opens_suppression_window() {
-        // normalize_pasted_text converts \r\n → \n; the suppression check runs
-        // on the normalised text so CRLF pastes are covered too.
+    fn crlf_paste_normalises_to_lf_in_input() {
+        // normalize_pasted_text converts \r\n → \n so masking / display
+        // logic only ever has to consider \n.
         let mut s = test_state();
         s.handle_paste_event("line1\r\nline2");
         assert!(
-            s.paste_enter_is_suppressed(KeyCode::Enter),
-            "CRLF paste must open the suppression window after normalisation"
+            s.input.text.contains('\n'),
+            "CRLF should be normalised to LF in input.text"
+        );
+        assert!(
+            !s.input.text.contains('\r'),
+            "raw \\r should not survive normalisation"
         );
     }
 
