@@ -228,31 +228,15 @@ fn merge_json_config(
 
 fn install_claude_code_global(acrawl_path: &str) -> io::Result<String> {
     if command_exists("claude") {
+        // Always remove first (ignore errors — may not exist) to guarantee override.
+        let _ = Command::new("claude")
+            .args(["mcp", "remove", "acrawl"])
+            .output();
         let status = Command::new("claude")
             .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
             .status()?;
         if status.success() {
             return Ok("configured via `claude mcp add`".to_string());
-        }
-        match Command::new("claude")
-            .args(["mcp", "remove", "acrawl"])
-            .status()
-        {
-            Ok(s) if !s.success() => {
-                eprintln!("note: `claude mcp remove acrawl` exited with {s} — retrying add anyway");
-            }
-            Err(e) => {
-                eprintln!(
-                    "note: `claude mcp remove acrawl` failed to run: {e} — retrying add anyway"
-                );
-            }
-            Ok(_) => {}
-        }
-        let retry = Command::new("claude")
-            .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
-            .status()?;
-        if retry.success() {
-            return Ok("updated via `claude mcp add` (replaced existing)".to_string());
         }
     }
     let home = home_dir()
@@ -360,6 +344,176 @@ fn install_for_ide(ide: Ide, scope: Scope, acrawl_path: &str) -> io::Result<Stri
         Ide::VsCode => install_vscode(acrawl_path, scope),
         Ide::OpenCode => install_opencode(acrawl_path, scope),
     }
+}
+
+fn remove_json_config(path: &Path, root_key: &str, server_name: &str) -> io::Result<bool> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path)?;
+    let existing: Value = serde_json::from_str(&content).unwrap_or_else(|_| json!({}));
+    let mut doc = existing.as_object().cloned().unwrap_or_default();
+
+    let removed = doc
+        .get_mut(root_key)
+        .and_then(|v| v.as_object_mut())
+        .is_some_and(|servers| servers.remove(server_name).is_some());
+
+    if removed {
+        let formatted =
+            serde_json::to_string_pretty(&Value::Object(doc)).map_err(io::Error::other)?;
+        fs::write(path, formatted.as_bytes())?;
+    }
+
+    Ok(removed)
+}
+
+fn uninstall_claude_code_global() -> io::Result<String> {
+    if command_exists("claude") {
+        let status = Command::new("claude")
+            .args(["mcp", "remove", "acrawl"])
+            .status()?;
+        if status.success() {
+            return Ok("removed via `claude mcp remove`".to_string());
+        }
+    }
+    let home = home_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine home dir"))?;
+    let config_path = home.join(".claude.json");
+    if remove_json_config(&config_path, "mcpServers", "acrawl")? {
+        Ok(format!("removed from {}", config_path.display()))
+    } else {
+        Ok(format!("not found in {}", config_path.display()))
+    }
+}
+
+fn uninstall_claude_code_project() -> io::Result<String> {
+    let config_path = PathBuf::from(".mcp.json");
+    if remove_json_config(&config_path, "mcpServers", "acrawl")? {
+        Ok(format!("removed from {}", config_path.display()))
+    } else {
+        Ok(format!("not found in {}", config_path.display()))
+    }
+}
+
+fn uninstall_cursor(scope: Scope) -> io::Result<String> {
+    let config_path = match scope {
+        Scope::Global => {
+            let home = home_dir().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "cannot determine home dir")
+            })?;
+            home.join(".cursor").join("mcp.json")
+        }
+        Scope::Project => PathBuf::from(".cursor").join("mcp.json"),
+    };
+    if remove_json_config(&config_path, "mcpServers", "acrawl")? {
+        Ok(format!("removed from {}", config_path.display()))
+    } else {
+        Ok(format!("not found in {}", config_path.display()))
+    }
+}
+
+fn uninstall_windsurf() -> io::Result<String> {
+    let home = home_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine home dir"))?;
+    let config_path = home
+        .join(".codeium")
+        .join("windsurf")
+        .join("mcp_config.json");
+    if remove_json_config(&config_path, "mcpServers", "acrawl")? {
+        Ok(format!("removed from {}", config_path.display()))
+    } else {
+        Ok(format!("not found in {}", config_path.display()))
+    }
+}
+
+fn uninstall_vscode(scope: Scope) -> io::Result<String> {
+    let config_path = match scope {
+        Scope::Global => {
+            let home = home_dir().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "cannot determine home dir")
+            })?;
+            home.join(".vscode").join("mcp.json")
+        }
+        Scope::Project => PathBuf::from(".vscode").join("mcp.json"),
+    };
+    if remove_json_config(&config_path, "servers", "acrawl")? {
+        Ok(format!("removed from {}", config_path.display()))
+    } else {
+        Ok(format!("not found in {}", config_path.display()))
+    }
+}
+
+fn uninstall_opencode(scope: Scope) -> io::Result<String> {
+    let config_path = match scope {
+        Scope::Global => global_opencode_config_path(),
+        Scope::Project => PathBuf::from("opencode.json"),
+    };
+    if remove_json_config(&config_path, "mcp", "acrawl")? {
+        Ok(format!("removed from {}", config_path.display()))
+    } else {
+        Ok(format!("not found in {}", config_path.display()))
+    }
+}
+
+fn uninstall_for_ide(ide: Ide, scope: Scope) -> io::Result<String> {
+    match ide {
+        Ide::ClaudeCode => match scope {
+            Scope::Global => uninstall_claude_code_global(),
+            Scope::Project => uninstall_claude_code_project(),
+        },
+        Ide::Cursor => uninstall_cursor(scope),
+        Ide::Windsurf => uninstall_windsurf(),
+        Ide::VsCode => uninstall_vscode(scope),
+        Ide::OpenCode => uninstall_opencode(scope),
+    }
+}
+
+pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
+    let detected = detect_ides();
+
+    if detected.is_empty() {
+        eprintln!("No supported IDEs detected on this system.");
+        eprintln!("Supported: Claude Code, Cursor, Windsurf, VS Code, OpenCode");
+        eprintln!("\nYou can still select IDEs to unconfigure manually.");
+    }
+
+    let selected = prompt_ide_selection(&detected)?;
+    if selected.is_empty() {
+        eprintln!("No IDEs selected. Nothing to do.");
+        return Ok(());
+    }
+
+    let scope = prompt_scope()?;
+
+    eprintln!("\nRemoving acrawl MCP server configuration...\n");
+
+    let mut success_count = 0u32;
+    for ide in &selected {
+        if scope == Scope::Project && !ide.supports_project_scope() {
+            eprintln!("  ⚠ {} — skipped (global config only)", ide.name());
+            continue;
+        }
+        match uninstall_for_ide(*ide, scope) {
+            Ok(detail) => {
+                eprintln!("  ✓ {} — {detail}", ide.name());
+                success_count += 1;
+            }
+            Err(e) => {
+                eprintln!("  ✗ {} — error: {e}", ide.name());
+            }
+        }
+    }
+
+    if success_count > 0 {
+        eprintln!(
+            "\nDone. acrawl MCP server removed from {success_count} IDE{}.",
+            if success_count == 1 { "" } else { "s" }
+        );
+    } else {
+        eprintln!("\nNo configurations were removed.");
+    }
+    Ok(())
 }
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
