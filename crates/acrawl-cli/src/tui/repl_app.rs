@@ -1576,15 +1576,13 @@ impl ReplTuiState {
             }
         }
 
-        // Compute char-index range for each visual line using the original
-        // input text so embedded `\n` separators keep their real char indices.
-        let visual_ranges: Vec<(usize, usize)> = if is_placeholder {
-            vec![(0, 0); visual_lines.len()]
+        // Only needed when a selection is active; line_start/line_end are
+        // consumed exclusively in the input_selection branch below.
+        let visual_ranges: Vec<(usize, usize)> = if is_placeholder
+            || self.input_selection.is_none()
+        {
+            Vec::new()
         } else {
-            // Fast path: if vis_cache is warm (populated by a navigation event),
-            // slice the needed entries directly — O(1).
-            // Cold path (e.g. right after paste, before any navigation): fall back
-            // to the early-exit capped scan — O(chars up to skip+max_text_lines).
             let vis = if self.vis_cache_width == safe_width {
                 if let Some(ref cached) = self.vis_cache {
                     cached.clone()
