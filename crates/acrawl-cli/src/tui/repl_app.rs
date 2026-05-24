@@ -65,7 +65,7 @@ fn read_clipboard_text() -> Option<String> {
 }
 
 /// Mask any paste at or above this byte length.
-const PASTE_MASK_THRESHOLD_BYTES: usize = 500;
+const PASTE_MASK_THRESHOLD_BYTES: usize = 150;
 
 /// Count logical lines in `text` by physical newline count plus one.  O(n) byte
 /// scan, no UTF-8 decoding — `\n` is ASCII so this is safe on any UTF-8 string.
@@ -747,13 +747,34 @@ impl ReplTuiState {
     /// Single entry point for any pasted text, regardless of source (bracketed
     /// paste, Ctrl+V, Shift+Insert).  Normalises newlines and either masks the
     /// paste (>= threshold) or inserts it raw.
+    ///
+    /// If the paste contains newlines, a 100 ms suppression window is opened so
+    /// that stray `KeyCode::Enter` events emitted by some terminals for each `\n`
+    /// in the pasted text are discarded rather than triggering an accidental send.
     fn handle_paste_event(&mut self, raw: &str) {
         let normalised = normalize_pasted_text(raw);
+        if normalised.contains('\n') {
+            self.selection.suppress_paste_until =
+                Some(Instant::now() + Duration::from_millis(100));
+        }
         if should_mask_paste(&normalised) {
             self.insert_paste_mask(&normalised);
         } else {
             self.insert_input_str(&normalised);
         }
+    }
+
+    /// Returns true if `key_code` should be suppressed because a paste that
+    /// contained newlines was processed recently.  Used by the event loop and
+    /// by tests to verify suppression without running the full event loop.
+    fn paste_enter_is_suppressed(&self, key_code: KeyCode) -> bool {
+        self.selection
+            .suppress_paste_until
+            .is_some_and(|deadline| Instant::now() <= deadline)
+            && matches!(
+                key_code,
+                KeyCode::Char(_) | KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace
+            )
     }
 
     /// Locate every active paste mask's current byte range in `self.input.text`.
@@ -3347,14 +3368,7 @@ fn run_loop(
                 state.refresh_slash_overlay();
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
-                let suppress_paste_key = state
-                    .selection
-                    .suppress_paste_until
-                    .is_some_and(|deadline| Instant::now() <= deadline)
-                    && matches!(
-                        key.code,
-                        KeyCode::Char(_) | KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace
-                    );
+                let suppress_paste_key = state.paste_enter_is_suppressed(key.code);
                 if suppress_paste_key {
                     state.selection.suppress_paste_until =
                         Some(Instant::now() + Duration::from_millis(150));
@@ -4026,6 +4040,7 @@ mod tests {
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::repl_render::{line_to_plain_text, render_tool_call_lines, wrap_ansi_line};
     use crate::tui::ReplTuiEvent;
+    use crossterm::event::KeyCode;
     use ratatui::style::Color;
     use ratatui::text::Line;
 
@@ -4059,9 +4074,95 @@ mod tests {
     #[test]
     fn should_mask_paste_uses_byte_threshold() {
         assert!(!should_mask_paste(""));
-        assert!(!should_mask_paste(&"x".repeat(499)));
-        assert!(should_mask_paste(&"x".repeat(500)));
+        assert!(!should_mask_paste(&"x".repeat(149)));
+        assert!(should_mask_paste(&"x".repeat(150)));
         assert!(should_mask_paste(&"x".repeat(10_000)));
+    }
+
+    // ── paste-newline suppression e2e tests ───────────────────────────────────
+
+    #[test]
+    fn paste_with_newline_opens_suppression_window() {
+        let mut s = test_state();
+        assert!(s.selection.suppress_paste_until.is_none());
+        s.handle_paste_event("line1\nline2");
+        assert!(
+            s.selection.suppress_paste_until.is_some(),
+            "a multi-line paste must open a suppression window"
+        );
+        assert!(
+            s.paste_enter_is_suppressed(KeyCode::Enter),
+            "Enter must be suppressed immediately after a multi-line paste"
+        );
+    }
+
+    #[test]
+    fn paste_without_newline_does_not_open_suppression_window() {
+        let mut s = test_state();
+        s.handle_paste_event("single line");
+        assert!(
+            s.selection.suppress_paste_until.is_none(),
+            "a single-line paste must not open any suppression window"
+        );
+        assert!(
+            !s.paste_enter_is_suppressed(KeyCode::Enter),
+            "Enter must not be suppressed after a single-line paste"
+        );
+    }
+
+    #[test]
+    fn suppression_blocks_enter_but_not_after_window_expires() {
+        let mut s = test_state();
+        // Open a suppression window that expired 1 ms ago.
+        s.selection.suppress_paste_until =
+            Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+        assert!(
+            !s.paste_enter_is_suppressed(KeyCode::Enter),
+            "Enter must not be suppressed once the window has expired"
+        );
+    }
+
+    #[test]
+    fn suppression_covers_enter_tab_backspace_and_chars_not_other_keys() {
+        let mut s = test_state();
+        s.handle_paste_event("hello\nworld");
+        assert!(s.paste_enter_is_suppressed(KeyCode::Enter));
+        assert!(s.paste_enter_is_suppressed(KeyCode::Tab));
+        assert!(s.paste_enter_is_suppressed(KeyCode::Backspace));
+        assert!(s.paste_enter_is_suppressed(KeyCode::Char('a')));
+        // Non-suppressed keys — arrow keys and Esc pass through.
+        assert!(!s.paste_enter_is_suppressed(KeyCode::Left));
+        assert!(!s.paste_enter_is_suppressed(KeyCode::Esc));
+    }
+
+    #[test]
+    fn multiline_paste_below_byte_threshold_is_not_masked_but_enter_is_suppressed() {
+        // "a\nb" is 3 bytes — far below the 150-byte threshold, so it is
+        // inserted raw (no mask placeholder).  The suppression window must still
+        // be opened so the terminal's stray Enter for the \n is discarded.
+        let mut s = test_state();
+        s.handle_paste_event("a\nb");
+        assert!(
+            !s.input.text.contains("[#1 Pasted"),
+            "short multi-line paste must not be masked"
+        );
+        assert!(s.input.text.contains('\n'), "newline must appear in input");
+        assert!(
+            s.paste_enter_is_suppressed(KeyCode::Enter),
+            "Enter must still be suppressed even though paste was not masked"
+        );
+    }
+
+    #[test]
+    fn crlf_paste_also_opens_suppression_window() {
+        // normalize_pasted_text converts \r\n → \n; the suppression check runs
+        // on the normalised text so CRLF pastes are covered too.
+        let mut s = test_state();
+        s.handle_paste_event("line1\r\nline2");
+        assert!(
+            s.paste_enter_is_suppressed(KeyCode::Enter),
+            "CRLF paste must open the suppression window after normalisation"
+        );
     }
 
     #[test]
