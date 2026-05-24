@@ -357,8 +357,7 @@ fn remove_json_config(path: &Path, root_key: &str, server_name: &str) -> io::Res
     let removed = doc
         .get_mut(root_key)
         .and_then(|v| v.as_object_mut())
-        .map(|servers| servers.remove(server_name).is_some())
-        .unwrap_or(false);
+        .is_some_and(|servers| servers.remove(server_name).is_some());
 
     if removed {
         let formatted =
