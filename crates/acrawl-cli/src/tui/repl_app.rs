@@ -1332,6 +1332,16 @@ impl ReplTuiState {
 
         let (total_visual, caret_visual_line) = if is_placeholder {
             (1usize, 0usize)
+        } else if self.vis_cache_width == safe_width {
+            if let Some(ref cached) = self.vis_cache {
+                let total = cached.len().max(1);
+                let caret = cached
+                    .partition_point(|(s, _, _)| *s <= self.input.cursor)
+                    .saturating_sub(1);
+                (total, caret)
+            } else {
+                self.count_visual_lines_with_caret(safe_width, self.input.cursor)
+            }
         } else {
             self.count_visual_lines_with_caret(safe_width, self.input.cursor)
         };
@@ -1467,16 +1477,18 @@ impl ReplTuiState {
                             safe_width
                         };
 
-                        if !current.is_empty() && *w + char_width > target {
+                        if *w > 0 && *w + char_width > target {
                             push_current(current, *is_first_chunk, visual_line_idx, visual_lines);
                             *w = 0;
                             *is_first_chunk = false;
                         }
 
-                        current.push(c);
+                        if *visual_line_idx >= skip {
+                            current.push(c);
+                        }
                         *w += char_width;
 
-                        if *w >= target && !current.is_empty() {
+                        if *w >= target && *w > 0 {
                             push_current(current, *is_first_chunk, visual_line_idx, visual_lines);
                             *w = 0;
                             *is_first_chunk = false;
@@ -1554,7 +1566,7 @@ impl ReplTuiState {
                         );
                     }
 
-                    if !current.is_empty() {
+                    if !current.is_empty() || w > 0 {
                         push_current(
                             &mut current,
                             is_first_chunk,
