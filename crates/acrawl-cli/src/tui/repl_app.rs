@@ -294,6 +294,14 @@ pub(super) struct ReplTuiState {
     spinner_deadline: Instant,
     pub(super) typewriter: TypewriterState,
     pub(super) selection: SelectionState,
+    /// Accumulator for chars/newlines arriving faster than a human can type
+    /// (≤ 30 ms apart). Flushed via `handle_paste_event` so masking and the
+    /// paste-newline suppression window apply uniformly even on terminals that
+    /// deliver pastes as raw keystrokes instead of `Event::Paste`.
+    paste_burst_chars: Vec<char>,
+    /// Timestamp of the most-recent `KeyCode::Char` or `KeyCode::Enter` event.
+    /// Used to decide whether the next keystroke is part of the same burst.
+    last_key_time: Option<Instant>,
     input_undo_stack: Vec<InputUndoSnapshot>,
     input_redo_stack: Vec<InputUndoSnapshot>,
     last_esc_at: Option<Instant>,
@@ -355,6 +363,8 @@ impl ReplTuiState {
                 chars: VecDeque::new(),
                 live: String::new(),
             },
+            paste_burst_chars: Vec::new(),
+            last_key_time: None,
             selection: SelectionState::default(),
             input_undo_stack: Vec::new(),
             input_redo_stack: Vec::new(),
@@ -762,6 +772,30 @@ impl ReplTuiState {
         } else {
             self.insert_input_str(&normalised);
         }
+    }
+
+    /// Maximum gap (ms) between consecutive keystrokes considered a paste burst.
+    /// Human typing at 150 WPM averages ≈ 80 ms/char; 30 ms is well below
+    /// what any human can sustain.
+    const PASTE_BURST_THRESHOLD_MS: u64 = 30;
+
+    /// True if the previous key event arrived within the paste-burst threshold.
+    fn in_paste_burst(&self, now: Instant) -> bool {
+        self.last_key_time.is_some_and(|t| {
+            now.duration_since(t) <= Duration::from_millis(Self::PASTE_BURST_THRESHOLD_MS)
+        })
+    }
+
+    /// If the burst accumulator has any chars, drain it into the input via
+    /// `handle_paste_event` (which applies masking and newline suppression).
+    /// Called when the burst ends, or before any non-burst-compatible key.
+    fn flush_paste_burst(&mut self) {
+        if self.paste_burst_chars.is_empty() {
+            return;
+        }
+        let chars = std::mem::take(&mut self.paste_burst_chars);
+        let text: String = chars.iter().collect();
+        self.handle_paste_event(&text);
     }
 
     /// Returns true if `key_code` should be suppressed because a paste that
@@ -3024,6 +3058,16 @@ fn run_loop(
     }
 
     loop {
+        // Flush paste-burst buffer when the burst has been idle longer than
+        // the threshold — covers pastes that end without a subsequent key.
+        if !state.paste_burst_chars.is_empty()
+            && state.last_key_time.is_some_and(|t| {
+                t.elapsed() > Duration::from_millis(ReplTuiState::PASTE_BURST_THRESHOLD_MS)
+            })
+        {
+            state.flush_paste_burst();
+        }
+
         state.drain_events(ui_rx);
         state.reconcile_child_view_mode();
 
@@ -3363,6 +3407,9 @@ fn run_loop(
                     continue;
                 }
 
+                // Bracketed paste supersedes any in-flight burst accumulation.
+                state.flush_paste_burst();
+                state.last_key_time = None;
                 state.handle_paste_event(&text);
                 state.wake_input_caret();
                 state.refresh_slash_overlay();
@@ -3373,6 +3420,14 @@ fn run_loop(
                     state.selection.suppress_paste_until =
                         Some(Instant::now() + Duration::from_millis(150));
                     continue;
+                }
+                // Any key that isn't bare Char/Enter ends a paste burst — flush
+                // the buffer here so command handlers (Ctrl-A/Z/Y/W/C/X, etc.)
+                // see a consistent input state.
+                if !matches!(key.code, KeyCode::Char(_) | KeyCode::Enter)
+                    || !key.modifiers.is_empty()
+                {
+                    state.flush_paste_burst();
                 }
                 if state
                     .selection
@@ -3393,6 +3448,9 @@ fn run_loop(
                         || (key.code == KeyCode::Insert
                             && key.modifiers.contains(KeyModifiers::SHIFT)))
                 {
+                    // Manual paste supersedes any in-flight burst accumulation.
+                    state.flush_paste_burst();
+                    state.last_key_time = None;
                     if let Some(text) = read_clipboard_text() {
                         state.handle_paste_event(&text);
                         state.wake_input_caret();
@@ -3833,10 +3891,25 @@ fn run_loop(
                 match key.code {
                     KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
                         state.insert_input_char('\n');
+                        state.last_key_time = Some(Instant::now());
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
+                        // Paste-burst Enter: if the previous keystroke arrived
+                        // within the burst threshold, treat this Enter as a
+                        // pasted `\n` (accumulate, don't submit).  Handles
+                        // terminals that deliver pastes as raw keystrokes
+                        // instead of `Event::Paste`.
+                        let now = Instant::now();
+                        if state.in_paste_burst(now) {
+                            state.paste_burst_chars.push('\n');
+                            state.last_key_time = Some(now);
+                            state.wake_input_caret();
+                            continue;
+                        }
+                        state.flush_paste_burst();
+                        state.last_key_time = Some(now);
                         // Child tab resume (check before parent pause)
                         if state.child_tab_panel.active_tab_is_paused() {
                             if let Some(child_id) = state.child_tab_panel.active_child_id() {
@@ -3912,11 +3985,18 @@ fn run_loop(
                     }
                     KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         state.insert_input_char('\n');
+                        state.last_key_time = Some(Instant::now());
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Char(c) => {
-                        state.insert_input_char(c);
+                        let now = Instant::now();
+                        if state.in_paste_burst(now) || !state.paste_burst_chars.is_empty() {
+                            state.paste_burst_chars.push(c);
+                        } else {
+                            state.insert_input_char(c);
+                        }
+                        state.last_key_time = Some(now);
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
@@ -4151,6 +4231,75 @@ mod tests {
             s.paste_enter_is_suppressed(KeyCode::Enter),
             "Enter must still be suppressed even though paste was not masked"
         );
+    }
+
+    #[test]
+    fn paste_burst_helpers_buffer_then_flush_through_handle_paste_event() {
+        // Simulates a raw-keystroke paste from terminals that don't deliver
+        // `Event::Paste`.  We push chars into the burst buffer directly and
+        // verify that flush routes them through handle_paste_event — meaning
+        // the long-paste mask and newline suppression both apply.
+        let mut s = test_state();
+        // Push a 200-char "paste" with a newline in the middle.
+        for ch in "a".repeat(99).chars() {
+            s.paste_burst_chars.push(ch);
+        }
+        s.paste_burst_chars.push('\n');
+        for ch in "b".repeat(100).chars() {
+            s.paste_burst_chars.push(ch);
+        }
+        assert_eq!(s.paste_burst_chars.len(), 200);
+        s.flush_paste_burst();
+        // Buffer is drained.
+        assert!(s.paste_burst_chars.is_empty());
+        // Length ≥ 150 → masked (text shows the placeholder, not raw chars).
+        assert!(
+            s.input.text.contains("[#1 Pasted"),
+            "burst above threshold must flush through the mask path"
+        );
+        // Newline in burst content triggers the Enter-suppression window.
+        assert!(s.paste_enter_is_suppressed(KeyCode::Enter));
+    }
+
+    #[test]
+    fn paste_burst_flush_below_threshold_inserts_raw_with_suppression() {
+        // Short burst with newline → not masked, but newline triggers suppression.
+        let mut s = test_state();
+        for ch in "ab\ncd".chars() {
+            s.paste_burst_chars.push(ch);
+        }
+        s.flush_paste_burst();
+        assert!(s.paste_burst_chars.is_empty());
+        assert!(!s.input.text.contains("[#1 Pasted"));
+        assert_eq!(s.input.text, "ab\ncd");
+        assert!(
+            s.paste_enter_is_suppressed(KeyCode::Enter),
+            "newline in burst content must still arm Enter suppression"
+        );
+    }
+
+    #[test]
+    fn flush_paste_burst_is_a_noop_when_buffer_is_empty() {
+        let mut s = test_state();
+        s.input.text = "hello".to_string();
+        s.input.cursor = 5;
+        s.input.byte_cursor = 5;
+        s.flush_paste_burst();
+        assert_eq!(s.input.text, "hello", "empty buffer flush must not modify text");
+    }
+
+    #[test]
+    fn in_paste_burst_respects_threshold() {
+        let mut s = test_state();
+        let now = std::time::Instant::now();
+        // No previous key recorded → not in burst.
+        assert!(!s.in_paste_burst(now));
+        // Previous key within threshold → in burst.
+        s.last_key_time = Some(now - std::time::Duration::from_millis(10));
+        assert!(s.in_paste_burst(now));
+        // Previous key beyond threshold → not in burst.
+        s.last_key_time = Some(now - std::time::Duration::from_millis(100));
+        assert!(!s.in_paste_burst(now));
     }
 
     #[test]
