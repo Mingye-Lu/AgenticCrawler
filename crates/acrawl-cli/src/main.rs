@@ -103,6 +103,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::InstallBrowser => install_browser()?,
         CliAction::Mcp => mcp_server::run(),
         CliAction::McpInstall => mcp_install::run()?,
+        CliAction::McpUninstall => mcp_install::run_uninstall()?,
         CliAction::Repl {
             model,
             allowed_tools,
@@ -141,6 +142,7 @@ enum CliAction {
     InstallBrowser,
     Mcp,
     McpInstall,
+    McpUninstall,
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
@@ -297,10 +299,12 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         "mcp" => match rest.get(1).map(String::as_str) {
             None => Ok(CliAction::Mcp),
             Some("install") if rest.len() == 2 => Ok(CliAction::McpInstall),
+            Some("uninstall") if rest.len() == 2 => Ok(CliAction::McpUninstall),
             Some("--help" | "-h" | "help") if rest.len() == 2 => Ok(CliAction::Help),
             Some("install") => Err("`acrawl mcp install` does not accept extra arguments".to_string()),
+            Some("uninstall") => Err("`acrawl mcp uninstall` does not accept extra arguments".to_string()),
             Some(other) => Err(format!(
-                "unknown mcp subcommand: {other} (supported: install)"
+                "unknown mcp subcommand: {other} (supported: install, uninstall)"
             )),
         },
         "prompt" => {
@@ -658,6 +662,8 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     writeln!(out, "      Start the built-in MCP server over stdio")?;
     writeln!(out, "  acrawl mcp install")?;
     writeln!(out, "      Configure supported IDEs to launch `acrawl mcp`")?;
+    writeln!(out, "  acrawl mcp uninstall")?;
+    writeln!(out, "      Remove acrawl from IDE MCP configurations")?;
     writeln!(out, "  acrawl install-browser")?;
     writeln!(
         out,

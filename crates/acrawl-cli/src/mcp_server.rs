@@ -841,7 +841,7 @@ fn handle_tools_call(
         match rt.block_on(PlaywrightBridge::new()) {
             Ok(bridge) => {
                 let shared = std::sync::Arc::new(tokio::sync::Mutex::new(
-                    Box::new(bridge) as Box<dyn BrowserBackend + Send>,
+                    Box::new(bridge) as Box<dyn BrowserBackend + Send>
                 ));
                 *browser = Some(BrowserContext::new(shared));
             }
