@@ -228,6 +228,11 @@ fn merge_json_config(
 
 fn install_claude_code_global(acrawl_path: &str) -> io::Result<String> {
     if command_exists("claude") {
+        // Try `add` first (idempotent on first install).  If it fails — e.g.
+        // because an existing entry with a different path is registered — fall
+        // back to remove-then-add so upgrades stay idempotent.  The standalone
+        // `acrawl mcp uninstall` subcommand was removed; users should use the
+        // IDE's native MCP management UI to remove the server.
         let status = Command::new("claude")
             .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
             .status()?;

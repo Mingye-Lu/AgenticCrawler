@@ -495,6 +495,82 @@ impl ReplTuiState {
         self.input_redo_stack.clear();
     }
 
+    /// Reset all input editor fields atomically. Ensures `text`, cursors,
+    /// `pastes`, and `next_paste_id` always move together so no stale mask
+    /// entries survive a prompt boundary.
+    fn reset_input(&mut self) {
+        self.input.text.clear();
+        self.input.cursor = 0;
+        self.input.byte_cursor = 0;
+        self.input.preferred_col = None;
+        self.input.pastes.clear();
+        self.input.next_paste_id = 1;
+    }
+
+    /// Ctrl-W: delete backward to the previous word boundary, treating each
+    /// paste mask as a single atomic unit (stops at the mask boundary rather
+    /// than scanning inside it).
+    fn word_backspace(&mut self) {
+        self.input_scroll_manual = false;
+        self.clamp_input_cursor();
+        if self.input.cursor == 0 {
+            return;
+        }
+        self.record_input_undo_snapshot();
+        if self.delete_selection_range() {
+            return;
+        }
+        let ranges = self.compute_mask_ranges();
+        // Cursor at a mask's end → delete the whole mask atom (same as backspace).
+        if let Some((idx, r)) = ranges
+            .iter()
+            .find(|(_, r)| r.end == self.input.byte_cursor)
+            .map(|(i, r)| (*i, r.clone()))
+        {
+            let del_end = if self.input.text.len() > r.end
+                && self.input.text.as_bytes()[r.end] == b' '
+            {
+                r.end + 1
+            } else {
+                r.end
+            };
+            self.input.text.replace_range(r.start..del_end, "");
+            self.input.pastes.remove(idx);
+            self.input.byte_cursor = r.start;
+            self.input.cursor = self.input.text[..r.start].chars().count();
+            self.input.preferred_col = None;
+            self.input_scroll_offset = usize::MAX;
+            return;
+        }
+        // Walk backward: skip trailing whitespace, then skip word chars.
+        // Stop at any mask-end boundary so masks are deleted atomically.
+        let bc = self.input.byte_cursor;
+        let chars_before: Vec<(usize, char)> = self.input.text[..bc].char_indices().collect();
+        let mut i = chars_before.len();
+        while i > 0 && chars_before[i - 1].1.is_whitespace() {
+            i -= 1;
+        }
+        while i > 0 {
+            let (byte_pos, ch) = chars_before[i - 1];
+            if ch.is_whitespace() {
+                break;
+            }
+            if ranges.iter().any(|(_, r)| r.end == byte_pos) {
+                break;
+            }
+            i -= 1;
+        }
+        let del_start = if i < chars_before.len() { chars_before[i].0 } else { bc };
+        if del_start == bc {
+            return;
+        }
+        self.input.text.replace_range(del_start..bc, "");
+        self.input.byte_cursor = del_start;
+        self.input.cursor = self.input.text[..del_start].chars().count();
+        self.input.preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+    }
+
     fn undo_input_edit(&mut self) -> bool {
         let Some(snapshot) = self.input_undo_stack.pop() else {
             return false;
@@ -650,7 +726,7 @@ impl ReplTuiState {
         }
 
         let id = self.input.next_paste_id;
-        self.input.next_paste_id = self.input.next_paste_id.saturating_add(1);
+        self.input.next_paste_id += 1;
         let placeholder = format_paste_placeholder(id, count_lines(raw));
         let to_insert = format!("{placeholder} ");
 
@@ -686,7 +762,7 @@ impl ReplTuiState {
     /// Because placeholders include a unique per-prompt `#N` index, `str::find`
     /// returns at most one position per placeholder; no overlap handling needed.
     /// Orphaned entries (placeholder absent from text) are silently skipped.
-    pub(super) fn compute_mask_ranges(&self) -> Vec<(usize, std::ops::Range<usize>)> {
+    fn compute_mask_ranges(&self) -> Vec<(usize, std::ops::Range<usize>)> {
         let mut out: Vec<(usize, std::ops::Range<usize>)> = self
             .input
             .pastes
@@ -712,8 +788,8 @@ impl ReplTuiState {
         if byte_ranges.is_empty() {
             return Vec::new();
         }
-        // Build a (byte_offset, char_index) map in one pass to avoid scanning
-        // the string per range.  Sentinel at the end maps text.len() -> char_count.
+        // Build a sorted (byte_offset, char_index) table in one pass; then use
+        // binary search per range — O(n) build, O(log n) per lookup.
         let text = &self.input.text;
         let mut byte_to_char: Vec<(usize, usize)> =
             text.char_indices().enumerate().map(|(ci, (bi, _))| (bi, ci)).collect();
@@ -721,10 +797,8 @@ impl ReplTuiState {
         byte_to_char.push((text.len(), total_chars));
 
         let lookup = |byte_pos: usize| -> usize {
-            byte_to_char
-                .iter()
-                .find(|(bi, _)| *bi >= byte_pos)
-                .map_or(total_chars, |(_, ci)| *ci)
+            let idx = byte_to_char.partition_point(|(bi, _)| *bi < byte_pos);
+            byte_to_char.get(idx).map_or(total_chars, |(_, ci)| *ci)
         };
 
         byte_ranges
@@ -758,7 +832,8 @@ impl ReplTuiState {
         if self.delete_selection_range() {
             return;
         }
-        // Atomic-mask deletion: cursor at a mask's end byte -> drop whole mask.
+        // Atomic-mask deletion: cursor at a mask's end byte -> drop whole mask
+        // plus its trailing separator space.
         if !had_selection {
             let ranges = self.compute_mask_ranges();
             if let Some((idx, r)) = ranges
@@ -766,7 +841,14 @@ impl ReplTuiState {
                 .find(|(_, r)| r.end == self.input.byte_cursor)
                 .map(|(i, r)| (*i, r.clone()))
             {
-                self.input.text.replace_range(r.clone(), "");
+                let del_end = if self.input.text.len() > r.end
+                    && self.input.text.as_bytes()[r.end] == b' '
+                {
+                    r.end + 1
+                } else {
+                    r.end
+                };
+                self.input.text.replace_range(r.start..del_end, "");
                 self.input.pastes.remove(idx);
                 self.input.byte_cursor = r.start;
                 self.input.cursor = self.input.text[..r.start].chars().count();
@@ -807,7 +889,8 @@ impl ReplTuiState {
         if self.delete_selection_range() {
             return;
         }
-        // Atomic-mask deletion: cursor at a mask's start byte -> drop whole mask.
+        // Atomic-mask deletion: cursor at a mask's start byte -> drop whole mask
+        // plus its trailing separator space.
         if !had_selection {
             let ranges = self.compute_mask_ranges();
             if let Some((idx, r)) = ranges
@@ -815,7 +898,14 @@ impl ReplTuiState {
                 .find(|(_, r)| r.start == self.input.byte_cursor)
                 .map(|(i, r)| (*i, r.clone()))
             {
-                self.input.text.replace_range(r.clone(), "");
+                let del_end = if self.input.text.len() > r.end
+                    && self.input.text.as_bytes()[r.end] == b' '
+                {
+                    r.end + 1
+                } else {
+                    r.end
+                };
+                self.input.text.replace_range(r.start..del_end, "");
                 self.input.pastes.remove(idx);
                 // byte_cursor stays at r.start; char cursor stays the same.
                 self.input.preferred_col = None;
@@ -1583,7 +1673,16 @@ impl ReplTuiState {
                             &mask_char_ranges,
                         );
                         if !selected_s.is_empty() {
-                            spans.push(Span::styled(selected_s, sel_style));
+                            let sel_mask_style =
+                                sel_style.add_modifier(Modifier::DIM | Modifier::ITALIC);
+                            Self::push_input_text_spans(
+                                &mut spans,
+                                &selected_s,
+                                line_start + row_sel_start,
+                                sel_style,
+                                sel_mask_style,
+                                &mask_char_ranges,
+                            );
                         }
                         Self::push_input_text_spans(
                             &mut spans,
@@ -1638,7 +1737,16 @@ impl ReplTuiState {
                         &mask_char_ranges,
                     );
                     if !selected.is_empty() {
-                        spans.push(Span::styled(selected, sel_style));
+                        let sel_mask_style =
+                            sel_style.add_modifier(Modifier::DIM | Modifier::ITALIC);
+                        Self::push_input_text_spans(
+                            &mut spans,
+                            &selected,
+                            line_start + row_sel_start,
+                            sel_style,
+                            sel_mask_style,
+                            &mask_char_ranges,
+                        );
                     }
                     Self::push_input_text_spans(
                         &mut spans,
@@ -3310,6 +3418,16 @@ fn run_loop(
                     continue;
                 }
 
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('w')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.word_backspace();
+                    state.wake_input_caret();
+                    state.refresh_slash_overlay();
+                    continue;
+                }
+
                 // Copy input selection (Ctrl+C / Ctrl+Insert).
                 if state.active_modal.is_none()
                     && state.input_selection.is_some()
@@ -3731,9 +3849,7 @@ fn run_loop(
                             }
                             state.exit = true;
                             state.persist_on_exit = true;
-                            state.input.text.clear();
-                            state.input.cursor = 0;
-                            state.input.byte_cursor = 0;
+                            state.reset_input();
                             continue;
                         }
                         if state.busy {
@@ -3762,12 +3878,8 @@ fn run_loop(
 
                         let raw_line = std::mem::take(&mut state.input.text);
                         let line = expand_masks(&raw_line, &state.input.pastes);
-                        state.input.cursor = 0;
-                        state.input.byte_cursor = 0;
-                        state.input.preferred_col = None;
+                        state.reset_input();
                         state.input_scroll_offset = 0;
-                        state.input.pastes.clear();
-                        state.input.next_paste_id = 1;
                         state.clear_input_history();
                         let trimmed = line.trim().to_string();
                         state.refresh_slash_overlay();
@@ -4840,8 +4952,8 @@ mod tests {
         assert!(!s.input.text.contains("[#1 Pasted"));
         assert!(s.input.text.len() < before_len);
         assert!(s.input.pastes.is_empty());
-        // "hi " + trailing space that originally followed the (now-deleted) mask.
-        assert_eq!(s.input.text, "hi  ");
+        // Trailing separator space is deleted atomically with the mask.
+        assert_eq!(s.input.text, "hi ");
     }
 
     #[test]
