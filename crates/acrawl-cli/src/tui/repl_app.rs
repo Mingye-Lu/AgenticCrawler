@@ -946,6 +946,88 @@ impl ReplTuiState {
         lines
     }
 
+    /// Counts total visual lines and locates the caret's visual line index in a
+    /// single O(n) pass with **no heap allocation**.  Used by
+    /// `calculate_input_dimensions` so the render path never triggers the
+    /// allocating `visual_line_info` scan.
+    fn count_visual_lines_with_caret(
+        &self,
+        safe_width: usize,
+        caret_char_idx: usize,
+    ) -> (usize, usize) {
+        let mut total = 0usize;
+        let mut caret_line = 0usize;
+        let mut char_cursor = 0usize;
+        let mut caret_found = false;
+        let mut parts = self.input.text.split('\n').peekable();
+        let mut logical_idx = 0usize;
+
+        while let Some(part) = parts.next() {
+            let has_more = parts.peek().is_some();
+            let first_cap = safe_width.saturating_sub(if logical_idx == 0 { 2 } else { 0 });
+
+            if part.is_empty() {
+                if !caret_found && char_cursor == caret_char_idx {
+                    caret_line = total;
+                    caret_found = true;
+                }
+                total += 1;
+            } else {
+                let mut col = 0usize;
+                let mut is_first_chunk = true;
+                let mut has_chars = false;
+
+                for c in part.chars() {
+                    if !caret_found && char_cursor == caret_char_idx {
+                        caret_line = total;
+                        caret_found = true;
+                    }
+
+                    let target = if is_first_chunk { first_cap } else { safe_width };
+                    let cw = char_display_width(c);
+
+                    if has_chars && col + cw > target {
+                        total += 1;
+                        col = 0;
+                        is_first_chunk = false;
+                    }
+
+                    col += cw;
+                    char_cursor += 1;
+                    has_chars = true;
+
+                    if col >= target {
+                        total += 1;
+                        col = 0;
+                        is_first_chunk = false;
+                        has_chars = false;
+                    }
+                }
+
+                if !caret_found && char_cursor == caret_char_idx {
+                    caret_line = total;
+                    caret_found = true;
+                }
+
+                if has_chars || char_cursor == caret_char_idx {
+                    total += 1;
+                }
+            }
+
+            if has_more {
+                char_cursor += 1;
+            }
+
+            logical_idx += 1;
+        }
+
+        if !caret_found {
+            caret_line = total.saturating_sub(1);
+        }
+
+        (total.max(1), caret_line)
+    }
+
     fn move_input_cursor_up(&mut self) {
         self.move_input_cursor_up_inner();
     }
@@ -1248,19 +1330,10 @@ impl ReplTuiState {
         let safe_width = width.saturating_sub(5).max(5) as usize;
         let max_text_lines = MAX_INPUT_LINES;
 
-        let vis_for_count = if is_placeholder {
-            Vec::new()
+        let (total_visual, caret_visual_line) = if is_placeholder {
+            (1usize, 0usize)
         } else {
-            self.visual_line_info(safe_width)
-        };
-        let total_visual = vis_for_count.len().max(1);
-        let caret_cursor = self.input.cursor;
-        let caret_visual_line = if is_placeholder || vis_for_count.is_empty() {
-            0
-        } else {
-            vis_for_count
-                .partition_point(|(s, _, _)| *s <= caret_cursor)
-                .saturating_sub(1)
+            self.count_visual_lines_with_caret(safe_width, self.input.cursor)
         };
 
         let max_scroll = total_visual.saturating_sub(max_text_lines);
@@ -1508,7 +1581,19 @@ impl ReplTuiState {
         let visual_ranges: Vec<(usize, usize)> = if is_placeholder {
             vec![(0, 0); visual_lines.len()]
         } else {
-            let vis = self.visual_line_info_capped(safe_width, skip + max_text_lines + 1);
+            // Fast path: if vis_cache is warm (populated by a navigation event),
+            // slice the needed entries directly — O(1).
+            // Cold path (e.g. right after paste, before any navigation): fall back
+            // to the early-exit capped scan — O(chars up to skip+max_text_lines).
+            let vis = if self.vis_cache_width == safe_width {
+                if let Some(ref cached) = self.vis_cache {
+                    cached.clone()
+                } else {
+                    self.visual_line_info_capped(safe_width, skip + max_text_lines + 1)
+                }
+            } else {
+                self.visual_line_info_capped(safe_width, skip + max_text_lines + 1)
+            };
             vis.iter()
                 .enumerate()
                 .map(|(idx, &(start, _, _))| {
