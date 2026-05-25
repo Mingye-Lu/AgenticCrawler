@@ -290,6 +290,11 @@ pub(super) struct ReplTuiState {
     /// Timestamp of the most-recent `KeyCode::Char` or `KeyCode::Enter` event.
     /// Used to decide whether the next keystroke is part of the same burst.
     last_key_time: Option<Instant>,
+    /// Windows Ctrl+V can be delivered as a consumed modified key followed by a
+    /// delayed stream of plain `Char`/`Enter` events. Timing alone is not
+    /// reliable for the first streamed key, so this flag forces that first key
+    /// into the burst accumulator.
+    force_next_paste_burst_key: bool,
     input_undo_stack: Vec<InputUndoSnapshot>,
     input_redo_stack: Vec<InputUndoSnapshot>,
     paste_entries: Vec<PasteEntry>,
@@ -355,6 +360,7 @@ impl ReplTuiState {
             },
             paste_burst_chars: Vec::new(),
             last_key_time: None,
+            force_next_paste_burst_key: false,
             selection: SelectionState::default(),
             input_undo_stack: Vec::new(),
             input_redo_stack: Vec::new(),
@@ -814,6 +820,17 @@ impl ReplTuiState {
         self.last_key_time.is_some_and(|t| {
             now.duration_since(t) <= Duration::from_millis(Self::PASTE_BURST_THRESHOLD_MS)
         })
+    }
+
+    fn arm_streamed_paste_burst(&mut self, now: Instant) {
+        self.last_key_time = Some(now);
+        self.force_next_paste_burst_key = true;
+    }
+
+    fn should_capture_streamed_paste_key(&self, now: Instant) -> bool {
+        self.force_next_paste_burst_key
+            || self.in_paste_burst(now)
+            || !self.paste_burst_chars.is_empty()
     }
 
     /// If the burst accumulator has any chars, drain it into the input via
@@ -3568,6 +3585,7 @@ fn run_loop(
                 // Bracketed paste supersedes any in-flight burst accumulation.
                 state.flush_paste_burst();
                 state.last_key_time = None;
+                state.force_next_paste_burst_key = false;
                 state.handle_paste_event(&text);
                 if text.contains('\n') {
                     state.arm_paste_enter_suppression();
@@ -3589,6 +3607,7 @@ fn run_loop(
                     || !key.modifiers.is_empty()
                 {
                     state.flush_paste_burst();
+                    state.force_next_paste_burst_key = false;
                 }
                 if state
                     .selection
@@ -3610,6 +3629,7 @@ fn run_loop(
                     // Manual paste supersedes any in-flight burst accumulation.
                     state.flush_paste_burst();
                     state.last_key_time = None;
+                    state.force_next_paste_burst_key = false;
                     if let Some(text) = read_clipboard_text() {
                         state.handle_paste_event(&text);
                         if text.contains('\n') {
@@ -3630,7 +3650,7 @@ fn run_loop(
                     && key.code == KeyCode::Char('v')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
-                    state.last_key_time = Some(Instant::now());
+                    state.arm_streamed_paste_burst(Instant::now());
                     continue;
                 }
 
@@ -4077,12 +4097,14 @@ fn run_loop(
                         // terminals that deliver pastes as raw keystrokes
                         // instead of `Event::Paste`.
                         let now = Instant::now();
-                        if state.in_paste_burst(now) {
+                        if state.should_capture_streamed_paste_key(now) {
                             state.paste_burst_chars.push('\n');
+                            state.force_next_paste_burst_key = false;
                             state.last_key_time = Some(now);
                             state.wake_input_caret();
                             continue;
                         }
+                        state.force_next_paste_burst_key = false;
                         state.flush_paste_burst();
                         state.last_key_time = Some(now);
                         // Child tab resume (check before parent pause)
@@ -4167,8 +4189,9 @@ fn run_loop(
                     }
                     KeyCode::Char(c) => {
                         let now = Instant::now();
-                        if state.in_paste_burst(now) || !state.paste_burst_chars.is_empty() {
+                        if state.should_capture_streamed_paste_key(now) {
                             state.paste_burst_chars.push(c);
+                            state.force_next_paste_burst_key = false;
                         } else {
                             state.insert_input_char(c);
                         }
@@ -4290,6 +4313,8 @@ fn run_loop(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use std::sync::mpsc;
 
     use crate::app::Provider;
@@ -4309,6 +4334,30 @@ mod tests {
 
     fn test_state() -> ReplTuiState {
         ReplTuiState::new()
+    }
+
+    fn simulate_windows_ctrl_v(state: &mut ReplTuiState, at: Instant) {
+        state.arm_streamed_paste_burst(at);
+    }
+
+    fn simulate_streamed_char(state: &mut ReplTuiState, c: char, at: Instant) {
+        if state.should_capture_streamed_paste_key(at) {
+            state.paste_burst_chars.push(c);
+            state.force_next_paste_burst_key = false;
+        } else {
+            state.insert_input_char(c);
+        }
+        state.last_key_time = Some(at);
+    }
+
+    fn simulate_idle_burst_flush(state: &mut ReplTuiState, now: Instant) {
+        let should_flush = !state.paste_burst_chars.is_empty()
+            && state.last_key_time.is_some_and(|t| {
+                now.duration_since(t) > Duration::from_millis(ReplTuiState::PASTE_BURST_THRESHOLD_MS)
+            });
+        if should_flush {
+            state.flush_paste_burst();
+        }
     }
 
     #[test]
@@ -4867,6 +4916,40 @@ mod tests {
                     )
             });
         assert!(should_flush_idle, "must flush once the burst has gone idle");
+    }
+
+    #[test]
+    fn paste_burst_e2e_windows_ctrl_v_streamed_chars_mask_large_paste() {
+        let mut s = test_state();
+        let now = Instant::now();
+        let pasted = "x".repeat(2048);
+
+        simulate_windows_ctrl_v(&mut s, now);
+
+        let first_char_at = now + Duration::from_millis(100);
+        simulate_streamed_char(&mut s, 'x', first_char_at);
+        assert!(
+            s.input.text.is_empty(),
+            "the first streamed char after Ctrl+V must be captured into the burst, not inserted raw"
+        );
+
+        let mut at = first_char_at;
+        for ch in pasted.chars().skip(1) {
+            at += Duration::from_millis(2);
+            simulate_streamed_char(&mut s, ch, at);
+        }
+
+        simulate_idle_burst_flush(&mut s, at + Duration::from_millis(100));
+
+        assert!(s.paste_burst_chars.is_empty(), "idle flush should drain the burst");
+        assert_eq!(s.paste_entries.len(), 1, "large streamed paste should be masked");
+        assert_eq!(s.input.text.chars().count(), 1, "masked paste should insert one sentinel");
+        assert!(s.input.text.chars().all(is_paste_sentinel));
+        assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+        assert!(
+            !s.force_next_paste_burst_key,
+            "forced-capture flag should clear after the first streamed key"
+        );
     }
 
     #[test]
