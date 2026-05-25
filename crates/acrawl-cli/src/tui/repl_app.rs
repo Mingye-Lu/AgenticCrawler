@@ -83,6 +83,11 @@ fn should_mask_paste(text: &str) -> bool {
         || text.bytes().filter(|&b| b == b'\n').count() >= PASTE_MASK_THRESHOLD_LINES
 }
 
+fn format_paste_pill(id: u32, content: &str) -> String {
+    let line_count = content.bytes().filter(|&b| b == b'\n').count() + 1;
+    format!("[📋 #{id} ~{line_count} lines]")
+}
+
 fn read_clipboard_text() -> Option<String> {
     let mut clipboard = arboard::Clipboard::new().ok()?;
     let text = clipboard.get_text().ok()?;
@@ -666,6 +671,46 @@ impl ReplTuiState {
             }
         }
         result
+    }
+
+    /// Split `text` into styled spans, replacing paste sentinel chars with
+    /// dim+italic pill spans showing the entry line count.
+    fn spans_from_text_with_pills(&self, text: &str, base_style: Style) -> Vec<Span<'static>> {
+        if !text.chars().any(is_paste_sentinel) {
+            if text.is_empty() {
+                return Vec::new();
+            }
+            return vec![Span::styled(text.to_string(), base_style)];
+        }
+
+        let pill_style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM | Modifier::ITALIC);
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut current = String::new();
+
+        for ch in text.chars() {
+            if is_paste_sentinel(ch) {
+                if !current.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut current), base_style));
+                }
+
+                let id = sentinel_to_id(ch);
+                let pill_text = self.paste_entries.iter().find(|e| e.id == id).map_or_else(
+                    || format!("[📋 #{id}]"),
+                    |e| format_paste_pill(id, &e.content),
+                );
+                spans.push(Span::styled(pill_text, pill_style));
+            } else {
+                current.push(ch);
+            }
+        }
+
+        if !current.is_empty() {
+            spans.push(Span::styled(current, base_style));
+        }
+
+        spans
     }
 
     fn selected_input_text_string(&self) -> Option<String> {
@@ -1585,7 +1630,7 @@ impl ReplTuiState {
         let mut visual_lines = Vec::with_capacity(max_text_lines);
 
         let input_char_width = |ch: char| {
-            if ch == INPUT_CARET_MARKER {
+            if ch == INPUT_CARET_MARKER || is_paste_sentinel(ch) {
                 0
             } else {
                 char_display_width(ch)
@@ -1923,22 +1968,12 @@ impl ReplTuiState {
                             .take(row_sel_end.saturating_sub(row_sel_start))
                             .collect();
                         let after_s: String = full.chars().skip(row_sel_end).collect();
-                        if !before_s.is_empty() {
-                            spans.push(Span::styled(before_s, text_style));
-                        }
-                        if !selected_s.is_empty() {
-                            spans.push(Span::styled(selected_s, sel_style));
-                        }
-                        if !after_s.is_empty() {
-                            spans.push(Span::styled(after_s, text_style));
-                        }
+                        spans.extend(self.spans_from_text_with_pills(&before_s, text_style));
+                        spans.extend(self.spans_from_text_with_pills(&selected_s, sel_style));
+                        spans.extend(self.spans_from_text_with_pills(&after_s, text_style));
                     } else {
-                        if !left.is_empty() {
-                            spans.push(Span::styled(left.clone(), text_style));
-                        }
-                        if !right.is_empty() {
-                            spans.push(Span::styled(right.clone(), text_style));
-                        }
+                        spans.extend(self.spans_from_text_with_pills(&left, text_style));
+                        spans.extend(self.spans_from_text_with_pills(&right, text_style));
                     }
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
@@ -1958,17 +1993,11 @@ impl ReplTuiState {
                         .take(row_sel_end - row_sel_start)
                         .collect();
                     let after: String = row.chars().skip(row_sel_end).collect();
-                    if !before.is_empty() {
-                        spans.push(Span::styled(before, text_style));
-                    }
-                    if !selected.is_empty() {
-                        spans.push(Span::styled(selected, sel_style));
-                    }
-                    if !after.is_empty() {
-                        spans.push(Span::styled(after, text_style));
-                    }
+                    spans.extend(self.spans_from_text_with_pills(&before, text_style));
+                    spans.extend(self.spans_from_text_with_pills(&selected, sel_style));
+                    spans.extend(self.spans_from_text_with_pills(&after, text_style));
                 } else if !row.is_empty() {
-                    spans.push(Span::styled(row, text_style));
+                    spans.extend(self.spans_from_text_with_pills(&row, text_style));
                 }
             } else {
                 // No active selection — plain rendering (existing logic).
@@ -1991,16 +2020,16 @@ impl ReplTuiState {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
                     } else {
                         let left_width = text_display_width(&left);
-                        spans.push(Span::styled(left, text_style));
+                        spans.extend(self.spans_from_text_with_pills(&left, text_style));
                         let cursor_col =
                             prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
                     }
                     if !right.is_empty() {
-                        spans.push(Span::styled(right, text_style));
+                        spans.extend(self.spans_from_text_with_pills(&right, text_style));
                     }
                 } else if !row.is_empty() {
-                    spans.push(Span::styled(row, text_style));
+                    spans.extend(self.spans_from_text_with_pills(&row, text_style));
                 }
             }
             render_lines.push(Line::from(spans));
@@ -4253,7 +4282,7 @@ mod tests {
     use std::sync::mpsc;
 
     use crate::app::Provider;
-    use crate::display_width::text_display_width;
+    use crate::display_width::{char_display_width, text_display_width};
     use crate::tool_format::tool_input_summary;
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::repl_render::{line_to_plain_text, render_tool_call_lines, wrap_ansi_line};
@@ -4263,8 +4292,8 @@ mod tests {
     use ratatui::text::Line;
 
     use super::{
-        is_paste_sentinel, normalize_pasted_text, should_mask_paste, ReplTuiState, ToolCallStatus,
-        TranscriptEntry,
+        format_paste_pill, id_to_sentinel, is_paste_sentinel, normalize_pasted_text,
+        should_mask_paste, ReplTuiState, ToolCallStatus, TranscriptEntry,
     };
 
     fn test_state() -> ReplTuiState {
@@ -4301,6 +4330,20 @@ mod tests {
         assert!(should_mask_paste(&thirty_newlines));
         let twenty_nine = "\n".repeat(29);
         assert!(!should_mask_paste(&twenty_nine));
+    }
+
+    #[test]
+    fn format_paste_pill_formats_correctly() {
+        let content = "a\nb\nc\nd\ne\nf";
+        let pill = format_paste_pill(1, content);
+        assert!(pill.contains("~6 lines"));
+        assert!(pill.contains("#1"));
+    }
+
+    #[test]
+    fn char_display_width_for_sentinel_requires_local_zero_width_guard() {
+        let sentinel = id_to_sentinel(1);
+        assert_eq!(char_display_width(sentinel), 1);
     }
 
     #[test]
@@ -5141,6 +5184,21 @@ mod tests {
         assert!(render_lines.len() <= super::MAX_INPUT_LINES + 3);
         assert!(max_scroll > 0);
         assert!(cursor_pos.is_some());
+    }
+
+    #[test]
+    fn calculate_input_dimensions_renders_pill_for_masked_paste() {
+        let mut state = test_state();
+        state.input_area_width = 80;
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+
+        let (_, render_lines, _, _) = state.calculate_input_dimensions(80, "Model");
+
+        let has_pill = render_lines
+            .iter()
+            .any(|line| line.spans.iter().any(|span| span.content.contains('📋')));
+        assert!(has_pill, "Expected pill emoji in rendered output");
     }
 
     #[test]
