@@ -647,8 +647,30 @@ impl ReplTuiState {
         self.input.text.get(sel_start..sel_end)
     }
 
+    /// Expand all paste sentinel chars in `text` by replacing each with its
+    /// stored content from `paste_entries`. Called on the submit path and
+    /// clipboard copy/cut paths.
+    fn expand_paste_sentinels(&self, text: &str) -> String {
+        if self.paste_entries.is_empty() {
+            return text.to_string();
+        }
+        let mut result = String::with_capacity(text.len());
+        for ch in text.chars() {
+            if is_paste_sentinel(ch) {
+                let id = sentinel_to_id(ch);
+                if let Some(entry) = self.paste_entries.iter().find(|e| e.id == id) {
+                    result.push_str(&entry.content);
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        result
+    }
+
     fn selected_input_text_string(&self) -> Option<String> {
-        Some(self.selected_input_text()?.to_string())
+        let raw = self.selected_input_text()?;
+        Some(self.expand_paste_sentinels(raw))
     }
 
     fn cut_input_selection_text(&mut self) -> Option<String> {
@@ -4078,7 +4100,7 @@ fn run_loop(
                         }
 
                         let raw_line = std::mem::take(&mut state.input.text);
-                        let line = raw_line;
+                        let line = state.expand_paste_sentinels(&raw_line);
                         state.reset_input();
                         state.input_scroll_offset = 0;
                         state.clear_input_history();
@@ -4305,6 +4327,28 @@ mod tests {
     }
 
     #[test]
+    fn expand_paste_sentinels_noop_when_no_entries() {
+        let state = test_state();
+        let text = "hello world";
+        let expanded = state.expand_paste_sentinels(text);
+        assert_eq!(expanded, text);
+    }
+
+    #[test]
+    fn expand_paste_sentinels_replaces_sentinel_with_content() {
+        let mut state = test_state();
+        state.insert_input_str("before ");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.insert_input_str(" after");
+        let expanded = state.expand_paste_sentinels(&state.input.text.clone());
+        assert!(expanded.contains("before "));
+        assert!(expanded.contains(&big));
+        assert!(expanded.contains(" after"));
+        assert!(!expanded.chars().any(is_paste_sentinel));
+    }
+
+    #[test]
     fn undo_after_mask_insert_restores_pre_paste_state() {
         let mut state = test_state();
         let big = "x".repeat(2048);
@@ -4364,6 +4408,29 @@ mod tests {
         state.delete_selection_range();
 
         assert!(state.input.text.is_empty());
+        assert!(state.paste_entries.is_empty());
+    }
+
+    #[test]
+    fn selected_input_text_string_expands_sentinel() {
+        let mut state = test_state();
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.select_all_input();
+        let selected = state.selected_input_text_string().unwrap();
+        assert_eq!(selected, big);
+        assert!(!selected.chars().any(is_paste_sentinel));
+    }
+
+    #[test]
+    fn submit_path_expand_paste_sentinels() {
+        let mut state = test_state();
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        let raw = state.input.text.clone();
+        let expanded = state.expand_paste_sentinels(&raw);
+        state.reset_input();
+        assert_eq!(expanded, big);
         assert!(state.paste_entries.is_empty());
     }
 
