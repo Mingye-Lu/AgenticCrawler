@@ -295,6 +295,12 @@ pub(super) struct ReplTuiState {
     /// reliable for the first streamed key, so this flag forces that first key
     /// into the burst accumulator.
     force_next_paste_burst_key: bool,
+    /// When Ctrl+V clipboard reads succeed, some Windows terminals still echo
+    /// the pasted text back as a delayed stream of bare `Char`/`Enter` events.
+    /// Track how many echoed keys still need to be swallowed so the clipboard
+    /// paste is applied exactly once.
+    ctrl_v_echo_remaining: usize,
+    ctrl_v_echo_deadline: Option<Instant>,
     input_undo_stack: Vec<InputUndoSnapshot>,
     input_redo_stack: Vec<InputUndoSnapshot>,
     paste_entries: Vec<PasteEntry>,
@@ -361,6 +367,8 @@ impl ReplTuiState {
             paste_burst_chars: Vec::new(),
             last_key_time: None,
             force_next_paste_burst_key: false,
+            ctrl_v_echo_remaining: 0,
+            ctrl_v_echo_deadline: None,
             selection: SelectionState::default(),
             input_undo_stack: Vec::new(),
             input_redo_stack: Vec::new(),
@@ -825,6 +833,42 @@ impl ReplTuiState {
     fn arm_streamed_paste_burst(&mut self, now: Instant) {
         self.last_key_time = Some(now);
         self.force_next_paste_burst_key = true;
+    }
+
+    fn clear_ctrl_v_echo_swallow(&mut self) {
+        self.ctrl_v_echo_remaining = 0;
+        self.ctrl_v_echo_deadline = None;
+    }
+
+    fn arm_ctrl_v_echo_swallow(&mut self, text: &str, now: Instant) {
+        self.ctrl_v_echo_remaining = text.chars().count();
+        self.ctrl_v_echo_deadline = Some(now + Duration::from_millis(500));
+    }
+
+    fn should_swallow_ctrl_v_echo_key(&mut self, key: KeyCode, now: Instant) -> bool {
+        if self
+            .ctrl_v_echo_deadline
+            .is_some_and(|deadline| now > deadline)
+        {
+            self.clear_ctrl_v_echo_swallow();
+            return false;
+        }
+
+        if self.ctrl_v_echo_remaining == 0 {
+            self.ctrl_v_echo_deadline = None;
+            return false;
+        }
+
+        if !matches!(key, KeyCode::Char(_) | KeyCode::Enter) {
+            return false;
+        }
+
+        self.ctrl_v_echo_remaining = self.ctrl_v_echo_remaining.saturating_sub(1);
+        self.ctrl_v_echo_deadline = Some(now + Duration::from_millis(500));
+        if self.ctrl_v_echo_remaining == 0 {
+            self.clear_ctrl_v_echo_swallow();
+        }
+        true
     }
 
     fn should_capture_streamed_paste_key(&self, now: Instant) -> bool {
@@ -3577,6 +3621,7 @@ fn run_loop(
                     .suppress_paste_until
                     .is_some_and(|deadline| Instant::now() <= deadline);
                 state.selection.suppress_paste_until = None;
+                state.clear_ctrl_v_echo_swallow();
 
                 if suppress || state.active_modal.is_some() {
                     continue;
@@ -3594,6 +3639,14 @@ fn run_loop(
                 state.refresh_slash_overlay();
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                let now = Instant::now();
+                if state.active_modal.is_none()
+                    && key.modifiers.is_empty()
+                    && state.should_swallow_ctrl_v_echo_key(key.code, now)
+                {
+                    continue;
+                }
+
                 let suppress_paste_key = state.paste_enter_is_suppressed(key.code);
                 if suppress_paste_key {
                     state.selection.suppress_paste_until =
@@ -3630,6 +3683,7 @@ fn run_loop(
                     state.flush_paste_burst();
                     state.last_key_time = None;
                     state.force_next_paste_burst_key = false;
+                    state.clear_ctrl_v_echo_swallow();
                     if let Some(text) = read_clipboard_text() {
                         state.handle_paste_event(&text);
                         if text.contains('\n') {
@@ -3650,7 +3704,19 @@ fn run_loop(
                     && key.code == KeyCode::Char('v')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
-                    state.arm_streamed_paste_burst(Instant::now());
+                    let now = Instant::now();
+                    state.flush_paste_burst();
+                    state.force_next_paste_burst_key = false;
+                    state.clear_ctrl_v_echo_swallow();
+                    if let Some(text) = read_clipboard_text() {
+                        state.last_key_time = None;
+                        state.handle_paste_event(&text);
+                        state.arm_ctrl_v_echo_swallow(&text, now);
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                    } else {
+                        state.arm_streamed_paste_burst(now);
+                    }
                     continue;
                 }
 
@@ -4340,6 +4406,14 @@ mod tests {
         state.arm_streamed_paste_burst(at);
     }
 
+    fn simulate_swallowed_ctrl_v_echo_key(
+        state: &mut ReplTuiState,
+        key: KeyCode,
+        at: Instant,
+    ) -> bool {
+        state.should_swallow_ctrl_v_echo_key(key, at)
+    }
+
     fn simulate_streamed_char(state: &mut ReplTuiState, c: char, at: Instant) {
         if state.should_capture_streamed_paste_key(at) {
             state.paste_burst_chars.push(c);
@@ -4950,6 +5024,77 @@ mod tests {
             !s.force_next_paste_burst_key,
             "forced-capture flag should clear after the first streamed key"
         );
+    }
+
+    #[test]
+    fn ctrl_v_clipboard_path_masks_immediately_and_swallows_echo_stream() {
+        let mut s = test_state();
+        let now = Instant::now();
+        let pasted = "x".repeat(2048);
+
+        s.handle_paste_event(&pasted);
+        s.arm_ctrl_v_echo_swallow(&pasted, now);
+
+        assert_eq!(s.paste_entries.len(), 1, "large clipboard paste should mask immediately");
+        assert_eq!(s.input.text.chars().count(), 1, "masked paste should insert one sentinel");
+        assert!(s.input.text.chars().all(is_paste_sentinel));
+
+        let mut at = now;
+        for ch in pasted.chars() {
+            assert!(
+                simulate_swallowed_ctrl_v_echo_key(&mut s, KeyCode::Char(ch), at),
+                "echoed char should be swallowed while Ctrl+V echo suppression is armed"
+            );
+            assert_eq!(
+                s.expand_paste_sentinels(&s.input.text),
+                pasted,
+                "echo swallowing must not mutate the already-masked input"
+            );
+            at += Duration::from_millis(200);
+        }
+
+        assert_eq!(s.ctrl_v_echo_remaining, 0);
+        assert!(s.ctrl_v_echo_deadline.is_none());
+        assert!(
+            !simulate_swallowed_ctrl_v_echo_key(&mut s, KeyCode::Char('z'), at),
+            "swallow state must clear after the echoed stream is fully consumed"
+        );
+        assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+    }
+
+    #[test]
+    fn ctrl_v_echo_swallow_handles_enter_events_and_expires() {
+        let mut s = test_state();
+        let now = Instant::now();
+        let pasted = "a\nb";
+
+        s.arm_ctrl_v_echo_swallow(pasted, now);
+        assert!(simulate_swallowed_ctrl_v_echo_key(
+            &mut s,
+            KeyCode::Char('a'),
+            now + Duration::from_millis(10),
+        ));
+        assert!(simulate_swallowed_ctrl_v_echo_key(
+            &mut s,
+            KeyCode::Enter,
+            now + Duration::from_millis(20),
+        ));
+        assert!(simulate_swallowed_ctrl_v_echo_key(
+            &mut s,
+            KeyCode::Char('b'),
+            now + Duration::from_millis(30),
+        ));
+        assert_eq!(s.ctrl_v_echo_remaining, 0);
+        assert!(s.ctrl_v_echo_deadline.is_none());
+
+        s.arm_ctrl_v_echo_swallow("ab", now);
+        assert!(!simulate_swallowed_ctrl_v_echo_key(
+            &mut s,
+            KeyCode::Char('a'),
+            now + Duration::from_millis(600),
+        ));
+        assert_eq!(s.ctrl_v_echo_remaining, 0);
+        assert!(s.ctrl_v_echo_deadline.is_none());
     }
 
     #[test]
