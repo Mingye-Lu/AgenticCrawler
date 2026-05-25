@@ -522,9 +522,12 @@ impl ReplTuiState {
         }
         while i > 0 {
             let (_, ch) = chars_before[i - 1];
-            if ch.is_whitespace() {
+            if ch.is_whitespace() || is_paste_sentinel(ch) {
                 break;
             }
+            i -= 1;
+        }
+        if i > 0 && is_paste_sentinel(chars_before[i - 1].1) {
             i -= 1;
         }
         let del_start = if i < chars_before.len() {
@@ -534,6 +537,12 @@ impl ReplTuiState {
         };
         if del_start == bc {
             return;
+        }
+        for &(_, ch) in &chars_before[i..] {
+            if is_paste_sentinel(ch) {
+                let id = sentinel_to_id(ch);
+                self.paste_entries.retain(|e| e.id != id);
+            }
         }
         self.input.text.replace_range(del_start..bc, "");
         self.vis_cache = None;
@@ -607,6 +616,7 @@ impl ReplTuiState {
             self.input
                 .text
                 .replace_range(self.input.byte_cursor..end_byte, "");
+            self.cleanup_orphaned_paste_entries();
             self.vis_cache = None;
             self.input.preferred_col = None;
             self.input_scroll_offset = usize::MAX;
@@ -614,6 +624,20 @@ impl ReplTuiState {
         } else {
             false
         }
+    }
+
+    /// Remove any `PasteEntries` whose sentinel char is no longer present in
+    /// `input.text`. Called after any bulk text mutation (selection delete,
+    /// Ctrl-A + delete, etc.) to keep `paste_entries` in sync.
+    fn cleanup_orphaned_paste_entries(&mut self) {
+        let live_ids: std::collections::HashSet<u32> = self
+            .input
+            .text
+            .chars()
+            .filter(|&c| is_paste_sentinel(c))
+            .map(sentinel_to_id)
+            .collect();
+        self.paste_entries.retain(|e| live_ids.contains(&e.id));
     }
 
     fn selected_input_text(&self) -> Option<&str> {
@@ -776,6 +800,12 @@ impl ReplTuiState {
         };
         let start = prev_byte;
         let end = self.input.byte_cursor;
+        if let Some(prev_ch) = self.input.text[start..].chars().next() {
+            if is_paste_sentinel(prev_ch) {
+                let id = sentinel_to_id(prev_ch);
+                self.paste_entries.retain(|e| e.id != id);
+            }
+        }
         self.input.text.replace_range(start..end, "");
         self.vis_cache = None;
         self.input.cursor -= 1;
@@ -799,6 +829,12 @@ impl ReplTuiState {
         let mut end = self.input.byte_cursor + 1;
         while end < bytes.len() && (bytes[end] & 0xC0) == 0x80 {
             end += 1;
+        }
+        if let Some(ch) = self.input.text[self.input.byte_cursor..].chars().next() {
+            if is_paste_sentinel(ch) {
+                let id = sentinel_to_id(ch);
+                self.paste_entries.retain(|e| e.id != id);
+            }
         }
         self.input
             .text
@@ -4275,6 +4311,72 @@ mod tests {
         state.handle_paste_event(&big);
         assert_eq!(state.paste_entries.len(), 1);
         state.undo_input_edit();
+        assert!(state.input.text.is_empty());
+        assert!(state.paste_entries.is_empty());
+    }
+
+    #[test]
+    fn backspace_after_sentinel_removes_entry() {
+        let mut state = test_state();
+        state.insert_input_str("ab");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+
+        assert_eq!(state.paste_entries.len(), 1);
+
+        state.backspace_input_char();
+
+        assert!(state.input.text.chars().all(|c| !is_paste_sentinel(c)));
+        assert!(state.paste_entries.is_empty());
+        assert_eq!(state.input.text, "ab");
+    }
+
+    #[test]
+    fn delete_at_sentinel_removes_entry() {
+        let mut state = test_state();
+        state.insert_input_str("ab");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+
+        state.input.cursor = 2;
+        state.resync_byte_cursor();
+        assert_eq!(state.paste_entries.len(), 1);
+
+        state.delete_input_char();
+
+        assert!(state.input.text.chars().all(|c| !is_paste_sentinel(c)));
+        assert!(state.paste_entries.is_empty());
+        assert_eq!(state.input.text, "ab");
+    }
+
+    #[test]
+    fn select_all_delete_clears_paste_entries() {
+        let mut state = test_state();
+        state.insert_input_str("hello ");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.insert_input_str(" world");
+
+        assert_eq!(state.paste_entries.len(), 1);
+
+        state.select_all_input();
+        state.record_input_undo_snapshot();
+        state.delete_selection_range();
+
+        assert!(state.input.text.is_empty());
+        assert!(state.paste_entries.is_empty());
+    }
+
+    #[test]
+    fn ctrl_w_on_sentinel_deletes_it_and_entry() {
+        let mut state = test_state();
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+
+        assert_eq!(state.paste_entries.len(), 1);
+
+        state.word_backspace();
+
         assert!(state.input.text.is_empty());
         assert!(state.paste_entries.is_empty());
     }
