@@ -4293,7 +4293,7 @@ mod tests {
 
     use super::{
         format_paste_pill, id_to_sentinel, is_paste_sentinel, normalize_pasted_text,
-        should_mask_paste, ReplTuiState, ToolCallStatus, TranscriptEntry,
+        sentinel_to_id, should_mask_paste, ReplTuiState, ToolCallStatus, TranscriptEntry,
     };
 
     fn test_state() -> ReplTuiState {
@@ -5484,5 +5484,117 @@ mod tests {
             .join("\n");
 
         assert!(!content.contains("Update available"));
+    }
+
+    // ── paste masking v2: edge-case integration tests ─────────────────────────
+
+    #[test]
+    fn paste_only_newlines_exceeding_30_is_masked() {
+        let mut state = test_state();
+        // 31 newlines = 31 bytes but ≥30 lines → should be masked
+        let thirty_one_newlines = "\n".repeat(31);
+        state.handle_paste_event(&thirty_one_newlines);
+        assert_eq!(state.paste_entries.len(), 1);
+        assert_eq!(state.input.text.chars().count(), 1);
+        let c = state.input.text.chars().next().unwrap();
+        assert!(is_paste_sentinel(c));
+    }
+
+    #[test]
+    fn adjacent_masks_create_two_entries_and_two_sentinels() {
+        let mut state = test_state();
+        let big1 = "a".repeat(2048);
+        let big2 = "b".repeat(2048);
+        state.handle_paste_event(&big1);
+        state.handle_paste_event(&big2);
+        assert_eq!(state.paste_entries.len(), 2);
+        assert_eq!(state.input.text.chars().count(), 2);
+        // Both chars in input.text should be sentinels
+        let chars: Vec<char> = state.input.text.chars().collect();
+        assert!(is_paste_sentinel(chars[0]));
+        assert!(is_paste_sentinel(chars[1]));
+        // They should have distinct ids
+        assert_ne!(sentinel_to_id(chars[0]), sentinel_to_id(chars[1]));
+        // Content preserved
+        assert_eq!(state.paste_entries[0].content, big1);
+        assert_eq!(state.paste_entries[1].content, big2);
+    }
+
+    #[test]
+    fn ctrl_a_then_type_clears_all_entries() {
+        let mut state = test_state();
+        state.insert_input_str("prefix ");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.insert_input_str(" suffix");
+        assert_eq!(state.paste_entries.len(), 1);
+        // Ctrl-A (select all) then backspace replaces all, then type a char
+        state.select_all_input();
+        state.backspace_input_char();
+        state.insert_input_char('z');
+        assert!(
+            state.paste_entries.is_empty(),
+            "entries should be cleared after select-all+delete"
+        );
+        assert_eq!(state.input.text, "z");
+    }
+
+    #[test]
+    fn burst_flush_above_threshold_creates_mask() {
+        let mut state = test_state();
+        // Simulate a paste burst: push 2048 'x' chars then flush
+        let chars: Vec<char> = "x".repeat(2048).chars().collect();
+        state.paste_burst_chars.extend(chars);
+        state.flush_paste_burst();
+        assert_eq!(
+            state.paste_entries.len(),
+            1,
+            "burst flush above threshold should create mask"
+        );
+        assert_eq!(state.input.text.chars().count(), 1);
+        assert!(is_paste_sentinel(state.input.text.chars().next().unwrap()));
+    }
+
+    #[test]
+    fn mixed_content_cursor_navigates_around_sentinel() {
+        let mut state = test_state();
+        state.insert_input_str("hello ");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.insert_input_str(" world");
+        // text: "hello " + sentinel + " world" = 6 + 1 + 6 = 13 chars
+        // cursor is at position 13 (after 'd')
+        // Move left 6 times to get to position 7 (space before 'world')
+        for _ in 0..6 {
+            state.move_input_cursor_left();
+        }
+        assert_eq!(state.input.cursor, 7);
+        // Move left one more: should skip the sentinel at position 6, land at 5
+        state.move_input_cursor_left();
+        assert_eq!(
+            state.input.cursor, 5,
+            "cursor should have jumped over sentinel from position 7 to 5"
+        );
+    }
+
+    #[test]
+    fn input_text_never_contains_pill_text() {
+        let mut state = test_state();
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        // input.text should only contain the sentinel char, not any human-readable text
+        let text = &state.input.text;
+        assert!(
+            !text.contains('\u{1F4CB}'),
+            "input.text should not contain pill emoji"
+        );
+        assert!(
+            !text.contains("lines"),
+            "input.text should not contain 'lines'"
+        );
+        assert!(!text.contains('['), "input.text should not contain '['");
+        // Should only have the single sentinel char
+        assert_eq!(text.chars().count(), 1);
+        assert!(text.chars().all(is_paste_sentinel));
     }
 }
