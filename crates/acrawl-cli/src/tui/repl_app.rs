@@ -861,6 +861,20 @@ impl ReplTuiState {
         self.input.cursor -= 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
+        // Atomic skip: if we landed on a paste sentinel, move one more step left.
+        if self.input.cursor > 0 {
+            if let Some(ch) = self.input.text[self.input.byte_cursor..].chars().next() {
+                if is_paste_sentinel(ch) {
+                    let bytes = self.input.text.as_bytes();
+                    let mut pos = self.input.byte_cursor.saturating_sub(1);
+                    while pos > 0 && (bytes[pos] & 0xC0) == 0x80 {
+                        pos -= 1;
+                    }
+                    self.input.byte_cursor = pos;
+                    self.input.cursor -= 1;
+                }
+            }
+        }
     }
 
     fn move_input_cursor_right(&mut self) {
@@ -880,6 +894,16 @@ impl ReplTuiState {
         self.input.cursor += 1;
         self.input.preferred_col = None;
         self.input_scroll_offset = usize::MAX;
+        // Atomic skip: if we landed on a paste sentinel, move one more step right.
+        if self.input.cursor < self.input_char_len() {
+            if let Some(ch) = self.input.text[self.input.byte_cursor..].chars().next() {
+                if is_paste_sentinel(ch) {
+                    let skip = ch.len_utf8();
+                    self.input.byte_cursor += skip;
+                    self.input.cursor += 1;
+                }
+            }
+        }
     }
 
     fn move_input_cursor_home(&mut self) {
@@ -1283,6 +1307,19 @@ impl ReplTuiState {
         self.input.preferred_col = Some(preferred_col);
     }
 
+    /// If the cursor is positioned before (on) a paste sentinel char, advance it
+    /// forward past the sentinel. Called at the end of any cursor-setting
+    /// operation that does not have an explicit direction preference.
+    fn snap_cursor_off_sentinel(&mut self) {
+        if let Some(ch) = self.input.text[self.input.byte_cursor..].chars().next() {
+            if is_paste_sentinel(ch) {
+                let skip = ch.len_utf8();
+                self.input.byte_cursor += skip;
+                self.input.cursor += 1;
+            }
+        }
+    }
+
     /// Set cursor directly by character index (used by visual-line nav).
     fn set_input_cursor_line_col_by_char(&mut self, char_idx: usize) {
         self.input_scroll_manual = false;
@@ -1290,6 +1327,7 @@ impl ReplTuiState {
         self.input_click_anchor = None;
         self.input.cursor = char_idx.min(self.input_char_len());
         self.resync_byte_cursor();
+        self.snap_cursor_off_sentinel();
         self.input_scroll_offset = usize::MAX;
     }
 
@@ -1340,6 +1378,16 @@ impl ReplTuiState {
             }
             col += cw;
             char_idx += 1;
+        }
+        // Snap: if the resolved position is a paste sentinel, move past it.
+        if self
+            .input
+            .text
+            .chars()
+            .nth(char_idx)
+            .is_some_and(is_paste_sentinel)
+        {
+            return Some(char_idx + 1);
         }
         Some(char_idx)
     }
@@ -4229,6 +4277,51 @@ mod tests {
         state.undo_input_edit();
         assert!(state.input.text.is_empty());
         assert!(state.paste_entries.is_empty());
+    }
+
+    #[test]
+    fn move_right_skips_over_paste_sentinel() {
+        let mut state = test_state();
+        state.insert_input_str("ab");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.insert_input_str("cd");
+
+        state.input.cursor = 1;
+        state.resync_byte_cursor();
+
+        state.move_input_cursor_right();
+
+        assert_eq!(state.input.cursor, 3);
+    }
+
+    #[test]
+    fn move_left_skips_over_paste_sentinel() {
+        let mut state = test_state();
+        state.insert_input_str("ab");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.insert_input_str("cd");
+
+        state.input.cursor = 3;
+        state.resync_byte_cursor();
+
+        state.move_input_cursor_left();
+
+        assert_eq!(state.input.cursor, 1);
+    }
+
+    #[test]
+    fn set_input_cursor_line_col_by_char_snaps_past_sentinel() {
+        let mut state = test_state();
+        state.insert_input_str("ab");
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        state.insert_input_str("cd");
+
+        state.set_input_cursor_line_col_by_char(2);
+
+        assert_eq!(state.input.cursor, 3);
     }
 
     fn count_visual_lines_with_caret_baseline(
