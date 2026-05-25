@@ -3604,10 +3604,8 @@ fn run_loop(
                 }
 
                 if state.active_modal.is_none()
-                    && ((key.code == KeyCode::Char('v')
-                        && key.modifiers.contains(KeyModifiers::CONTROL))
-                        || (key.code == KeyCode::Insert
-                            && key.modifiers.contains(KeyModifiers::SHIFT)))
+                    && key.code == KeyCode::Insert
+                    && key.modifiers.contains(KeyModifiers::SHIFT)
                 {
                     // Manual paste supersedes any in-flight burst accumulation.
                     state.flush_paste_burst();
@@ -3620,6 +3618,19 @@ fn run_loop(
                         state.wake_input_caret();
                         state.refresh_slash_overlay();
                     }
+                    continue;
+                }
+
+                // Ctrl+V: on Windows terminals the clipboard content is streamed as
+                // individual keystrokes rather than delivered as a single Event::Paste.
+                // Consume this key event and prime last_key_time so the streamed chars
+                // land in the burst accumulator; flush_paste_burst then applies masking
+                // atomically when the next non-burst event fires (e.g. Enter).
+                if state.active_modal.is_none()
+                    && key.code == KeyCode::Char('v')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    state.last_key_time = Some(Instant::now());
                     continue;
                 }
 
