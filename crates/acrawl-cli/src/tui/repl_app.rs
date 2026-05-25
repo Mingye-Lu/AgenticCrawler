@@ -50,6 +50,9 @@ pub(super) const WELCOME_BOX_SIDE_GUTTER: u16 = 16;
 pub(super) const WELCOME_BOX_MAX_WIDTH: u16 = 82;
 pub(super) const WELCOME_BOX_MIN_WIDTH: u16 = 30;
 const INPUT_CARET_MARKER: char = '\u{E000}';
+const PASTE_MASK_THRESHOLD_BYTES: usize = 2048;
+const PASTE_MASK_THRESHOLD_LINES: usize = 30;
+const PASTE_SENTINEL_BASE: u32 = 0xF0001;
 pub(super) const SLASH_OVERLAY_VISIBLE_ITEMS: usize = 7;
 pub(super) const SLASH_OVERLAY_HINT_TEXT: &str =
     "Up/Down move  Enter accept  Tab complete  Esc close";
@@ -60,6 +63,24 @@ fn normalize_pasted_text(text: &str) -> std::borrow::Cow<'_, str> {
     } else {
         std::borrow::Cow::Borrowed(text)
     }
+}
+
+fn is_paste_sentinel(c: char) -> bool {
+    let cp = c as u32;
+    (PASTE_SENTINEL_BASE..PASTE_SENTINEL_BASE + 65534).contains(&cp)
+}
+
+fn sentinel_to_id(c: char) -> u32 {
+    (c as u32) - PASTE_SENTINEL_BASE + 1
+}
+
+fn id_to_sentinel(id: u32) -> char {
+    char::from_u32(PASTE_SENTINEL_BASE + id - 1).unwrap()
+}
+
+fn should_mask_paste(text: &str) -> bool {
+    text.len() >= PASTE_MASK_THRESHOLD_BYTES
+        || text.bytes().filter(|&b| b == b'\n').count() >= PASTE_MASK_THRESHOLD_LINES
 }
 
 fn read_clipboard_text() -> Option<String> {
@@ -177,6 +198,14 @@ struct InputUndoSnapshot {
     cursor: usize,
     preferred_col: Option<usize>,
     selection: Option<(usize, usize)>,
+    paste_entries: Vec<PasteEntry>,
+    next_paste_id: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PasteEntry {
+    id: u32,
+    content: String,
 }
 
 #[derive(Default)]
@@ -258,6 +287,8 @@ pub(super) struct ReplTuiState {
     last_key_time: Option<Instant>,
     input_undo_stack: Vec<InputUndoSnapshot>,
     input_redo_stack: Vec<InputUndoSnapshot>,
+    paste_entries: Vec<PasteEntry>,
+    next_paste_id: u32,
     last_esc_at: Option<Instant>,
     pub(super) debug_mode: bool,
     pub(super) update_info: Option<runtime::update_check::UpdateInfo>,
@@ -322,6 +353,8 @@ impl ReplTuiState {
             selection: SelectionState::default(),
             input_undo_stack: Vec::new(),
             input_redo_stack: Vec::new(),
+            paste_entries: Vec::new(),
+            next_paste_id: 1,
             last_esc_at: None,
             debug_mode: false,
             update_info: None,
@@ -423,6 +456,8 @@ impl ReplTuiState {
             cursor: self.input.cursor,
             preferred_col: self.input.preferred_col,
             selection: self.input_selection,
+            paste_entries: self.paste_entries.clone(),
+            next_paste_id: self.next_paste_id,
         }
     }
 
@@ -434,6 +469,8 @@ impl ReplTuiState {
         self.input.preferred_col = snapshot.preferred_col;
         self.input_selection = snapshot.selection;
         self.input_click_anchor = None;
+        self.paste_entries = snapshot.paste_entries;
+        self.next_paste_id = snapshot.next_paste_id;
         self.resync_byte_cursor();
         self.input_scroll_offset = usize::MAX;
     }
@@ -462,6 +499,8 @@ impl ReplTuiState {
         self.input.cursor = 0;
         self.input.byte_cursor = 0;
         self.input.preferred_col = None;
+        self.paste_entries.clear();
+        self.next_paste_id = 1;
     }
 
     /// Ctrl-W: delete backward to the previous word boundary.
@@ -625,6 +664,28 @@ impl ReplTuiState {
         self.input_scroll_offset = usize::MAX;
     }
 
+    fn insert_paste_mask(&mut self, content: &str) {
+        self.input_scroll_manual = false;
+        self.record_input_undo_snapshot();
+        self.delete_selection_range();
+        self.clamp_input_cursor();
+        let id = self.next_paste_id;
+        self.next_paste_id += 1;
+        let sentinel = id_to_sentinel(id);
+        debug_assert!(is_paste_sentinel(sentinel));
+        debug_assert_eq!(sentinel_to_id(sentinel), id);
+        self.input.text.insert(self.input.byte_cursor, sentinel);
+        self.vis_cache = None;
+        self.input.cursor = self.input.cursor.saturating_add(1);
+        self.input.byte_cursor = self.input.byte_cursor.saturating_add(sentinel.len_utf8());
+        self.input.preferred_col = None;
+        self.input_scroll_offset = usize::MAX;
+        self.paste_entries.push(PasteEntry {
+            id,
+            content: content.to_string(),
+        });
+    }
+
     /// Single entry point for any pasted text, regardless of source (bracketed
     /// paste, Ctrl+V, Shift+Insert, burst flush).  Normalises newlines and
     /// inserts the result directly into the input.
@@ -637,7 +698,11 @@ impl ReplTuiState {
     /// Callers that need post-paste suppression set it themselves.
     fn handle_paste_event(&mut self, raw: &str) {
         let normalised = normalize_pasted_text(raw);
-        self.insert_input_str(&normalised);
+        if should_mask_paste(&normalised) {
+            self.insert_paste_mask(&normalised);
+        } else {
+            self.insert_input_str(&normalised);
+        }
     }
 
     /// Arm the post-paste suppression window used by the bracketed-paste and
@@ -1027,7 +1092,11 @@ impl ReplTuiState {
                         caret_found = true;
                     }
 
-                    let target = if is_first_chunk { first_cap } else { safe_width };
+                    let target = if is_first_chunk {
+                        first_cap
+                    } else {
+                        safe_width
+                    };
                     let cw = char_display_width(c);
 
                     if has_chars && col + cw > target {
@@ -1653,8 +1722,7 @@ impl ReplTuiState {
 
         // Only needed when a selection is active; line_start/line_end are
         // consumed exclusively in the input_selection branch below.
-        let visual_ranges: Vec<(usize, usize)> = if is_placeholder
-            || self.input_selection.is_none()
+        let visual_ranges: Vec<(usize, usize)> = if is_placeholder || self.input_selection.is_none()
         {
             Vec::new()
         } else {
@@ -4088,7 +4156,10 @@ mod tests {
     use ratatui::style::Color;
     use ratatui::text::Line;
 
-    use super::{normalize_pasted_text, ReplTuiState, ToolCallStatus, TranscriptEntry};
+    use super::{
+        is_paste_sentinel, normalize_pasted_text, should_mask_paste, ReplTuiState, ToolCallStatus,
+        TranscriptEntry,
+    };
 
     fn test_state() -> ReplTuiState {
         ReplTuiState::new()
@@ -4108,6 +4179,56 @@ mod tests {
             normalize_pasted_text("plain"),
             std::borrow::Cow::Borrowed("plain")
         ));
+    }
+
+    #[test]
+    fn should_mask_paste_threshold_bytes() {
+        let big = "x".repeat(2048);
+        assert!(should_mask_paste(&big));
+        let small = "x".repeat(2047);
+        assert!(!should_mask_paste(&small));
+    }
+
+    #[test]
+    fn should_mask_paste_threshold_lines() {
+        let thirty_newlines = "\n".repeat(30);
+        assert!(should_mask_paste(&thirty_newlines));
+        let twenty_nine = "\n".repeat(29);
+        assert!(!should_mask_paste(&twenty_nine));
+    }
+
+    #[test]
+    fn insert_paste_mask_stores_sentinel_and_entry() {
+        let mut state = test_state();
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        assert_eq!(state.input.text.chars().count(), 1);
+        let c = state.input.text.chars().next().unwrap();
+        assert!(is_paste_sentinel(c));
+        assert_eq!(state.paste_entries.len(), 1);
+        assert_eq!(state.paste_entries[0].content, big);
+    }
+
+    #[test]
+    fn reset_input_clears_paste_entries() {
+        let mut state = test_state();
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        assert_eq!(state.paste_entries.len(), 1);
+        state.reset_input();
+        assert!(state.paste_entries.is_empty());
+        assert_eq!(state.next_paste_id, 1);
+    }
+
+    #[test]
+    fn undo_after_mask_insert_restores_pre_paste_state() {
+        let mut state = test_state();
+        let big = "x".repeat(2048);
+        state.handle_paste_event(&big);
+        assert_eq!(state.paste_entries.len(), 1);
+        state.undo_input_edit();
+        assert!(state.input.text.is_empty());
+        assert!(state.paste_entries.is_empty());
     }
 
     fn count_visual_lines_with_caret_baseline(
@@ -4143,7 +4264,11 @@ mod tests {
                         caret_found = true;
                     }
 
-                    let target = if is_first_chunk { first_cap } else { safe_width };
+                    let target = if is_first_chunk {
+                        first_cap
+                    } else {
+                        safe_width
+                    };
                     let cw = super::char_display_width(c);
 
                     if has_chars && col + cw > target {
