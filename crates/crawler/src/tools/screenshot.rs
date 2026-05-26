@@ -38,10 +38,7 @@ fn default_filename() -> String {
 }
 
 pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
-    let save = input
-        .get("save")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let save = input.get("save").and_then(Value::as_bool).unwrap_or(false);
 
     let (screenshot_base64, size_bytes) = browser
         .acquire_bridge()
@@ -119,6 +116,8 @@ mod tests {
     fn default_filename_has_png_extension() {
         let name = default_filename();
         assert!(name.starts_with("screenshot_"));
-        assert!(name.ends_with(".png"));
+        assert!(Path::new(&name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png")));
     }
 }
