@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 acrawl-core = { path = "../core" }
+agent = { path = "../agent" }
 api = { path = "../api" }
 commands = { path = "../commands" }
 crawler = { path = "../crawler" }

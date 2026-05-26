@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 
 use regex::Regex;
 
-use crate::tool_effect::CrawlScope;
+use crate::CrawlScope;
 
 /// Reason a claim was rejected. Surfaced to the LLM so it can adjust scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,7 +161,6 @@ impl UrlClaimRegistry {
         }
     }
 
-    /// Snapshot of currently claimed entries; intended for tests/debug.
     #[must_use]
     pub fn len(&self) -> usize {
         self.inner
@@ -366,7 +365,6 @@ mod tests {
             )
             .expect_err("UrlList overlap should fail");
         assert!(matches!(err, ClaimConflict::ExactUrl { .. }));
-        // Verify no partial insertion: y is still claimable.
         registry
             .try_claim(
                 &CrawlScope::SinglePage {
@@ -466,18 +464,15 @@ mod tests {
                     urls: vec![
                         "https://example.com/a".to_string(),
                         "https://example.com/b".to_string(),
-                        "https://example.com/a".to_string(), // duplicate
+                        "https://example.com/a".to_string(),
                     ],
                 },
                 "child-1",
             )
             .expect("claim with intra-list duplicate should succeed (deduped)");
 
-        // Only 2 entries registered, not 3.
         assert_eq!(registry.len(), 2);
 
-        // The deduplicated URL is still claimable by another child after the
-        // guard drops (this verifies len() tracked correctly).
         drop(guard);
         assert_eq!(registry.len(), 0);
     }
@@ -501,10 +496,6 @@ mod tests {
                 .ok()
             }));
         }
-        // Collect ALL results first so the winning thread's ClaimGuard stays
-        // alive while the late-joining threads finish their own try_claim
-        // calls. Counting + dropping inside a single iterator chain would
-        // free the entry between iterations and let late losers re-claim.
         let results: Vec<Option<ClaimGuard>> =
             handles.into_iter().map(|h| h.join().unwrap()).collect();
         let successes = results.iter().filter(|c| c.is_some()).count();

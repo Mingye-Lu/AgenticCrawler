@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use acrawl_core::ToolOutcome;
-use crawler::{CrawlerAgent, SharedApiClient, ToolRegistry};
+use agent::CrawlerAgent;
+use agent::ToolRegistry;
+use crawler::SharedApiClient;
 use runtime::{ControlState, ToolError, ToolExecutor};
 
 use super::AllowedToolSet;

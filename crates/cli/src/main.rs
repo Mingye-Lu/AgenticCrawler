@@ -22,7 +22,7 @@ use std::sync::OnceLock;
 pub(crate) static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
-use crawler::mvp_tool_specs;
+use agent::mvp_tool_specs;
 use runtime::Session;
 
 use app::{

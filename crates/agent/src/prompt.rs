@@ -1,4 +1,4 @@
-use crate::ToolSpec;
+use acrawl_core::ToolSpec;
 
 fn format_tool(spec: &ToolSpec) -> String {
     let required: Vec<&str> = spec

@@ -3,15 +3,16 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::str::FromStr;
 use std::sync::Mutex;
 
+use agent::{CrawlResult, CrawlerAgent};
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
 use api::{
     ContentBlockDelta, ContentBlockDeltaEvent, InputContentBlock, InputMessage, MessageRequest,
     StreamEvent,
 };
 use api::{ImageSource, OutputContentBlock, ToolChoice, ToolDefinition};
+use agent::{mvp_tool_specs, ToolRegistry};
 use crawler::{
-    mvp_tool_specs, BrowserBackend, BrowserContext, CrawlerAgent, PlaywrightBridge, ToolEffect,
-    ToolRegistry,
+    BrowserBackend, BrowserContext, PlaywrightBridge, ToolEffect,
 };
 use runtime::{encode_mcp_frame, read_mcp_frame};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage};
@@ -270,7 +271,7 @@ trait GoalExecutor {
     fn execute(
         &self,
         request: &RunGoalRequest,
-    ) -> Result<crawler::CrawlResult, RunGoalExecutionError>;
+    ) -> Result<CrawlResult, RunGoalExecutionError>;
 }
 
 struct RealGoalExecutor;
@@ -404,10 +405,7 @@ fn render_text_with_json(summary: &str, payload: &Value) -> String {
     format!("{summary}\n\nStructured result:\n```json\n{pretty}\n```")
 }
 
-fn build_run_goal_success_response(
-    request: &RunGoalRequest,
-    result: &crawler::CrawlResult,
-) -> Value {
+fn build_run_goal_success_response(request: &RunGoalRequest, result: &CrawlResult) -> Value {
     let structured = json!({
         "summary": result.summary,
         "extracted_data": result.extracted_data,
@@ -748,7 +746,7 @@ impl GoalExecutor for RealGoalExecutor {
     fn execute(
         &self,
         request: &RunGoalRequest,
-    ) -> Result<crawler::CrawlResult, RunGoalExecutionError> {
+    ) -> Result<CrawlResult, RunGoalExecutionError> {
         let provider = build_provider(&request.model).map_err(RunGoalExecutionError::Internal)?;
         let api_client =
             CrawlApiClient::new(provider, &request.model, request.allowed_tools.clone());
@@ -1054,14 +1052,14 @@ mod tests {
 
     #[derive(Debug, Clone)]
     struct FakeGoalExecutor {
-        result: Result<crawler::CrawlResult, RunGoalExecutionError>,
+        result: Result<CrawlResult, RunGoalExecutionError>,
     }
 
     impl GoalExecutor for FakeGoalExecutor {
         fn execute(
             &self,
             _request: &RunGoalRequest,
-        ) -> Result<crawler::CrawlResult, RunGoalExecutionError> {
+        ) -> Result<CrawlResult, RunGoalExecutionError> {
             self.result.clone()
         }
     }
@@ -1069,7 +1067,7 @@ mod tests {
     #[test]
     fn execute_run_goal_success_returns_structured_content() {
         let executor = FakeGoalExecutor {
-            result: Ok(crawler::CrawlResult {
+            result: Ok(CrawlResult {
                 summary: "Finished crawl".to_string(),
                 extracted_data: vec![json!({"title": "Example"})],
                 steps_executed: 3,

@@ -7,6 +7,7 @@ name = "acrawl-cli"
 version = "0.6.4"
 dependencies = [
  "acrawl-core",
+ "agent",
  "api",
  "arboard",
  "commands",
@@ -40,6 +41,21 @@ name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
+name = "agent"
+version = "0.6.4"
+dependencies = [
+ "acrawl-core",
+ "async-trait",
+ "base64",
+ "browser",
+ "csv",
+ "regex",
+ "runtime",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "aho-corasick"
@@ -611,17 +627,11 @@ name = "crawler"
 version = "0.6.4"
 dependencies = [
  "acrawl-core",
- "async-trait",
- "base64",
+ "agent",
  "browser",
- "csv",
  "futures-util",
- "rand 0.8.5",
- "regex",
  "runtime",
- "serde",
  "serde_json",
- "socket2 0.5.10",
  "tokio",
  "tokio-tungstenite",
 ]

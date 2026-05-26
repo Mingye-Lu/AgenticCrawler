@@ -212,7 +212,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use crate::tool_registry::ToolRegistry;
+    use crate::registry::ToolRegistry;
 
     fn env_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -374,7 +374,7 @@ mod tests {
             Box::new(bridge) as Box<dyn BrowserBackend + Send>
         ));
 
-        let registry = crate::tool_registry::ToolRegistry::new_with_core_tools();
+        let registry = crate::registry::ToolRegistry::new_with_core_tools();
         let mut agent =
             CrawlerAgent::new_for_testing(registry).with_agent_id("ext-tool-test".to_string());
         agent.set_shared_bridge(shared);

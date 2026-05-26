@@ -261,7 +261,6 @@ impl ChildControlRegistry {
 // ── ChildEventSender ─────────────────────────────────────────────────────────
 
 /// Implements `RuntimeObserver` and forwards events through an mpsc channel.
-/// Lives in the crawler crate (same as `ChildEvent`) to avoid cyclic dependencies.
 ///
 /// Also mirrors every observer callback into an optional
 /// [`ChildSnapshotRegistry`] so the parent can poll a child's state without

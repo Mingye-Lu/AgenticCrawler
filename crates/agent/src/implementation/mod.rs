@@ -15,7 +15,7 @@ use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
 use crate::state::CrawlState;
 use crate::tool_effect::ToolEffect;
-use crate::tool_registry::ToolRegistry;
+use crate::registry::ToolRegistry;
 use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
 
 mod fork;
@@ -69,6 +69,12 @@ impl Display for CrawlError {
 }
 
 impl std::error::Error for CrawlError {}
+
+impl From<CrawlError> for acrawl_core::error::ToolExecutionError {
+    fn from(value: CrawlError) -> Self {
+        Self::new(value.to_string())
+    }
+}
 
 #[allow(async_fn_in_trait)]
 pub trait CrawlAgent {
@@ -589,7 +595,7 @@ mod tests {
     use tokio::sync::Mutex as AsyncMutex;
 
     use super::*;
-    use crate::tool_registry::ToolRegistry;
+use crate::registry::ToolRegistry;
 
     struct MockApiClient {
         call_count: usize,

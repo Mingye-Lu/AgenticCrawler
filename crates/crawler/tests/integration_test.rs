@@ -1,4 +1,5 @@
-use crawler::{CrawlerAgent, FetchedPage, ToolEffect, ToolRegistry};
+use agent::{CrawlerAgent, ToolRegistry};
+use crawler::{FetchedPage, ToolEffect};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolExecutor};
 use serde_json::{json, Value};
 

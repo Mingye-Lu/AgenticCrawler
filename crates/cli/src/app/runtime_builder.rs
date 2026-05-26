@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use super::{AllowedToolSet, CliError, CliToolExecutor, LlmRuntimeClient};
-use crawler::{mvp_tool_specs, SharedApiClient};
+use agent::mvp_tool_specs;
+use crawler::SharedApiClient;
 use runtime::{
     load_settings, settings_get_max_steps, ConfigLoader, ControlState, ConversationRuntime,
     RuntimeObserver, Session,

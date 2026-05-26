@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/agent",
     "crates/cli",
     "crates/runtime",
     "crates/api",
@@ -9,6 +10,9 @@ members = [
     "crates/browser",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+agent = { path = "crates/agent" }
 
 [workspace.package]
 version = "0.6.4"
