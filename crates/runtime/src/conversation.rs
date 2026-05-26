@@ -13,6 +13,7 @@ use tokio::time::{sleep, Duration};
 
 pub use acrawl_core::event::AssistantEvent;
 pub use acrawl_core::error::{RuntimeError, ToolError};
+pub use acrawl_core::traits::ToolExecutor;
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
 
@@ -24,11 +25,6 @@ pub struct ApiRequest {
 
 pub trait ApiClient {
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
-}
-
-#[allow(async_fn_in_trait)]
-pub trait ToolExecutor {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
