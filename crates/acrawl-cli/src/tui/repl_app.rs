@@ -845,6 +845,7 @@ impl ReplTuiState {
     const BRACKETED_PASTE_MATCH_WAIT_MS: u64 = 5;
     const BRACKETED_PASTE_CONTENT_WAIT_MS: u64 = 50;
     const BRACKETED_PASTE_MAX_EVENTS: usize = 262_144;
+    const IGNORED_KEY_DRAIN_MAX_EVENTS: usize = 8192;
 
     /// True if the previous key event arrived within the paste-burst threshold.
     fn in_paste_burst(&self, now: Instant) -> bool {
@@ -867,6 +868,10 @@ impl ReplTuiState {
         } else {
             None
         }
+    }
+
+    fn is_ignored_key_event(ev: &Event) -> bool {
+        matches!(ev, Event::Key(key) if key.kind != KeyEventKind::Press)
     }
 
     fn is_plain_text_modifier(modifiers: KeyModifiers) -> bool {
@@ -905,15 +910,48 @@ impl ReplTuiState {
         }
     }
 
+    fn drain_ignored_key_events(&mut self) -> io::Result<usize> {
+        let mut drained = 0usize;
+        while drained < Self::IGNORED_KEY_DRAIN_MAX_EVENTS {
+            match self.pending_events.pop_front() {
+                Some(ev) if Self::is_ignored_key_event(&ev) => {
+                    drained += 1;
+                    continue;
+                }
+                Some(ev) => {
+                    self.pending_events.push_front(ev);
+                    return Ok(drained);
+                }
+                None => {}
+            }
+
+            let Some(ev) = Self::read_event_if_ready(Duration::from_millis(0))? else {
+                return Ok(drained);
+            };
+            if Self::is_ignored_key_event(&ev) {
+                drained += 1;
+                continue;
+            }
+            self.pending_events.push_front(ev);
+            return Ok(drained);
+        }
+        Ok(drained)
+    }
+
     fn try_consume_bracketed_paste_after_esc(&mut self) -> io::Result<Option<String>> {
         let mut consumed = Vec::new();
         for &expected in Self::BRACKETED_PASTE_OPEN_TAIL {
-            let Some(ev) = Self::read_event_if_ready(Duration::from_millis(
-                Self::BRACKETED_PASTE_MATCH_WAIT_MS,
-            ))?
-            else {
-                self.push_pending_events_front(consumed);
-                return Ok(None);
+            let ev = loop {
+                let Some(ev) = Self::read_event_if_ready(Duration::from_millis(
+                    Self::BRACKETED_PASTE_MATCH_WAIT_MS,
+                ))?
+                else {
+                    self.push_pending_events_front(consumed);
+                    return Ok(None);
+                };
+                if !Self::is_ignored_key_event(&ev) {
+                    break ev;
+                }
             };
             let matched = Self::bare_press_key_code(&ev).and_then(Self::bracketed_paste_key_byte)
                 == Some(expected);
@@ -936,7 +974,9 @@ impl ReplTuiState {
             };
 
             let Some(key_code) = Self::bare_press_key_code(&ev) else {
-                self.pending_events.push_back(ev);
+                if !Self::is_ignored_key_event(&ev) {
+                    self.pending_events.push_back(ev);
+                }
                 continue;
             };
 
@@ -1033,6 +1073,7 @@ impl ReplTuiState {
     ) {
         self.clear_stream_paste_probe();
         self.paste_burst_chars.clear();
+        self.force_next_paste_burst_key = false;
         self.handle_paste_event(clipboard_text);
         self.arm_ctrl_v_echo_swallow_count(
             clipboard_text.chars().count().saturating_sub(matched_chars),
@@ -1107,22 +1148,31 @@ impl ReplTuiState {
         self.ctrl_v_echo_deadline = None;
     }
 
-    fn drain_plain_streamed_paste_queue(&mut self) -> io::Result<()> {
+    fn drain_plain_streamed_paste_queue(&mut self) -> io::Result<usize> {
         let mut drained = 0usize;
         while drained < Self::STREAM_PASTE_DRAIN_MAX_EVENTS
             && (self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0)
         {
-            let wait = if self.stream_paste_deadline.is_some() {
-                Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
+            let ev = if let Some(ev) = self.pending_events.pop_front() {
+                ev
             } else {
-                Duration::from_millis(0)
+                let wait = if self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0
+                {
+                    Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
+                } else {
+                    Duration::from_millis(0)
+                };
+                if !event::poll(wait)? {
+                    break;
+                }
+                event::read()?
             };
-            if !event::poll(wait)? {
-                break;
-            }
 
-            let ev = event::read()?;
             let now = Instant::now();
+            if Self::is_ignored_key_event(&ev) {
+                drained += 1;
+                continue;
+            }
             if let Some(key_code) = Self::bare_press_key_code(&ev) {
                 if self.ctrl_v_echo_remaining > 0
                     && self.should_swallow_ctrl_v_echo_key(key_code, now)
@@ -1142,7 +1192,52 @@ impl ReplTuiState {
             self.pending_events.push_front(ev);
             break;
         }
-        Ok(())
+        Ok(drained)
+    }
+
+    fn drain_available_plain_streamed_paste_queue(&mut self) -> io::Result<usize> {
+        let mut drained = 0usize;
+        while drained < Self::STREAM_PASTE_DRAIN_MAX_EVENTS
+            && (self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0)
+        {
+            let ev = if let Some(ev) = self.pending_events.pop_front() {
+                ev
+            } else {
+                let wait = if self.stream_paste_deadline.is_some() {
+                    Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
+                } else {
+                    Duration::from_millis(0)
+                };
+                if !event::poll(wait)? {
+                    break;
+                }
+                event::read()?
+            };
+            let now = Instant::now();
+            if Self::is_ignored_key_event(&ev) {
+                drained += 1;
+                continue;
+            }
+            if let Some(key_code) = Self::bare_press_key_code(&ev) {
+                if self.ctrl_v_echo_remaining > 0
+                    && self.should_swallow_ctrl_v_echo_key(key_code, now)
+                {
+                    drained += 1;
+                    continue;
+                }
+                if self.stream_paste_deadline.is_some()
+                    && self
+                        .maybe_capture_plain_streamed_paste_key_with_clipboard(key_code, now, None)
+                {
+                    drained += 1;
+                    continue;
+                }
+            }
+
+            self.pending_events.push_front(ev);
+            break;
+        }
+        Ok(drained)
     }
 
     fn arm_ctrl_v_echo_swallow(&mut self, text: &str, now: Instant) {
@@ -3604,6 +3699,8 @@ fn run_loop(
 
         state.drain_events(ui_rx);
         state.reconcile_child_view_mode();
+        state.drain_available_plain_streamed_paste_queue()?;
+        state.drain_ignored_key_events()?;
 
         if let Some(rx) = state.update_rx.as_mut() {
             if let Ok(info) = rx.try_recv() {
@@ -4496,24 +4593,26 @@ fn run_loop(
                         state.refresh_slash_overlay();
                     }
                     KeyCode::Enter => {
+                        let now = Instant::now();
+                        let had_stream_paste_probe = state.stream_paste_deadline.is_some();
+                        if state.active_modal.is_none()
+                            && ReplTuiState::is_plain_text_modifier(key.modifiers)
+                            && state.maybe_capture_plain_streamed_paste_key(KeyCode::Enter, now)
+                        {
+                            state.force_next_paste_burst_key = false;
+                            state.drain_plain_streamed_paste_queue()?;
+                            state.last_key_time = Some(now);
+                            state.wake_input_caret();
+                            continue;
+                        }
                         // Paste-burst Enter: if the previous keystroke arrived
                         // within the burst threshold, treat this Enter as a
                         // pasted `\n` (accumulate, don't submit).  Handles
                         // terminals that deliver pastes as raw keystrokes
                         // instead of `Event::Paste`.
-                        let now = Instant::now();
-                        if state.should_capture_streamed_paste_key(now) {
+                        if !had_stream_paste_probe && state.should_capture_streamed_paste_key(now) {
                             state.paste_burst_chars.push('\n');
                             state.force_next_paste_burst_key = false;
-                            state.last_key_time = Some(now);
-                            state.wake_input_caret();
-                            continue;
-                        }
-                        if state.active_modal.is_none()
-                            && ReplTuiState::is_plain_text_modifier(key.modifiers)
-                            && state.maybe_capture_plain_streamed_paste_key(KeyCode::Enter, now)
-                        {
-                            state.drain_plain_streamed_paste_queue()?;
                             state.last_key_time = Some(now);
                             state.wake_input_caret();
                             continue;
@@ -4604,14 +4703,18 @@ fn run_loop(
                     }
                     KeyCode::Char(c) => {
                         let now = Instant::now();
-                        if state.should_capture_streamed_paste_key(now) {
-                            state.paste_burst_chars.push(c);
-                            state.force_next_paste_burst_key = false;
-                        } else if state.active_modal.is_none()
+                        let had_stream_paste_probe = state.stream_paste_deadline.is_some();
+                        if state.active_modal.is_none()
                             && ReplTuiState::is_plain_text_modifier(key.modifiers)
                             && state.maybe_capture_plain_streamed_paste_key(KeyCode::Char(c), now)
                         {
+                            state.force_next_paste_burst_key = false;
                             state.drain_plain_streamed_paste_queue()?;
+                        } else if had_stream_paste_probe {
+                            state.insert_input_char(c);
+                        } else if state.should_capture_streamed_paste_key(now) {
+                            state.paste_burst_chars.push(c);
+                            state.force_next_paste_burst_key = false;
                         } else {
                             state.insert_input_char(c);
                         }
@@ -4743,7 +4846,7 @@ mod tests {
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::repl_render::{line_to_plain_text, render_tool_call_lines, wrap_ansi_line};
     use crate::tui::ReplTuiEvent;
-    use crossterm::event::KeyCode;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
     use ratatui::style::Color;
     use ratatui::text::Line;
 
@@ -4801,28 +4904,33 @@ mod tests {
 
         match key {
             KeyCode::Char(c) => {
-                if state.should_capture_streamed_paste_key(at) {
-                    state.paste_burst_chars.push(c);
-                    state.force_next_paste_burst_key = false;
-                } else if state.maybe_capture_plain_streamed_paste_key_with_clipboard(
+                let had_stream_paste_probe = state.stream_paste_deadline.is_some();
+                if state.maybe_capture_plain_streamed_paste_key_with_clipboard(
                     key,
                     at,
                     Some(clipboard),
                 ) {
+                    state.force_next_paste_burst_key = false;
+                } else if had_stream_paste_probe {
+                    state.insert_input_char(c);
+                } else if state.should_capture_streamed_paste_key(at) {
+                    state.paste_burst_chars.push(c);
+                    state.force_next_paste_burst_key = false;
                 } else {
                     state.insert_input_char(c);
                 }
             }
             KeyCode::Enter => {
-                if state.should_capture_streamed_paste_key(at) {
+                let had_stream_paste_probe = state.stream_paste_deadline.is_some();
+                if state.maybe_capture_plain_streamed_paste_key_with_clipboard(
+                    key,
+                    at,
+                    Some(clipboard),
+                ) {
+                    state.force_next_paste_burst_key = false;
+                } else if !had_stream_paste_probe && state.should_capture_streamed_paste_key(at) {
                     state.paste_burst_chars.push('\n');
                     state.force_next_paste_burst_key = false;
-                } else {
-                    let _ = state.maybe_capture_plain_streamed_paste_key_with_clipboard(
-                        key,
-                        at,
-                        Some(clipboard),
-                    );
                 }
             }
             _ => unreachable!("test helper only supports bare Char/Enter"),
@@ -4843,6 +4951,89 @@ mod tests {
         assert!(matches!(
             normalize_pasted_text("plain"),
             std::borrow::Cow::Borrowed("plain")
+        ));
+    }
+
+    #[test]
+    fn key_release_events_are_ignored_during_paste_drain() {
+        let release = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        let press = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        ));
+
+        assert!(ReplTuiState::is_ignored_key_event(&release));
+        assert!(!ReplTuiState::is_ignored_key_event(&press));
+    }
+
+    #[test]
+    fn ignored_key_drain_discards_pending_releases_before_next_press() {
+        let mut s = test_state();
+        for _ in 0..10 {
+            s.pending_events
+                .push_back(Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char('x'),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release,
+                )));
+        }
+        s.pending_events
+            .push_back(Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Down,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )));
+
+        s.drain_ignored_key_events().unwrap();
+
+        assert_eq!(s.pending_events.len(), 1);
+        assert!(matches!(
+            s.pending_events.front(),
+            Some(Event::Key(key)) if key.code == KeyCode::Down && key.kind == KeyEventKind::Press
+        ));
+    }
+
+    #[test]
+    fn paste_echo_drain_discards_pending_echo_without_mutating_input() {
+        let mut s = test_state();
+        let pasted = "abcdef";
+        s.handle_paste_event(pasted);
+        s.arm_ctrl_v_echo_swallow(pasted, Instant::now());
+        for ch in pasted.chars() {
+            s.pending_events
+                .push_back(Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char(ch),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Press,
+                )));
+            s.pending_events
+                .push_back(Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char(ch),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release,
+                )));
+        }
+        s.pending_events
+            .push_back(Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Down,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )));
+
+        let paste_drained = s.drain_available_plain_streamed_paste_queue().unwrap();
+        let ignored_drained = s.drain_ignored_key_events().unwrap();
+
+        assert_eq!(paste_drained + ignored_drained, pasted.chars().count() * 2);
+        assert_eq!(s.input.text, pasted);
+        assert_eq!(s.ctrl_v_echo_remaining, 0);
+        assert!(matches!(
+            s.pending_events.front(),
+            Some(Event::Key(key)) if key.code == KeyCode::Down && key.kind == KeyEventKind::Press
         ));
     }
 
@@ -5510,6 +5701,36 @@ mod tests {
             s.input.text.chars().count(),
             1,
             "recognized plain stream should mask instead of leaving raw text"
+        );
+        assert!(s.input.text.chars().all(is_paste_sentinel));
+        assert_eq!(s.paste_entries.len(), 1);
+        assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+    }
+
+    #[test]
+    fn plain_streamed_clipboard_prefix_wins_over_fast_burst_detection() {
+        let mut s = test_state();
+        let pasted = "x".repeat(2048);
+        let start = Instant::now();
+        s.last_key_time = Some(start);
+        let mut at = start + Duration::from_millis(2);
+
+        for ch in pasted
+            .chars()
+            .take(ReplTuiState::STREAM_PASTE_CONFIDENCE_CHARS)
+        {
+            simulate_plain_streamed_key_with_clipboard(&mut s, KeyCode::Char(ch), &pasted, at);
+            at += Duration::from_millis(2);
+        }
+
+        assert!(
+            s.paste_burst_chars.is_empty(),
+            "clipboard-matched streams should not be diverted into the burst accumulator"
+        );
+        assert_eq!(
+            s.input.text.chars().count(),
+            1,
+            "recognized fast stream should mask immediately after confidence is reached"
         );
         assert!(s.input.text.chars().all(is_paste_sentinel));
         assert_eq!(s.paste_entries.len(), 1);
