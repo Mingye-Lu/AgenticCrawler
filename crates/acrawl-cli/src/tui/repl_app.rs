@@ -1243,7 +1243,12 @@ impl ReplTuiState {
 
     fn drain_plain_streamed_paste_queue(&mut self) -> io::Result<usize> {
         let mut drained = 0usize;
-        while drained < Self::STREAM_PASTE_DRAIN_MAX_EVENTS
+        let max_events = Self::STREAM_PASTE_DRAIN_MAX_EVENTS.max(
+            self.ctrl_v_echo_remaining
+                .saturating_mul(2)
+                .saturating_add(1024),
+        );
+        while drained < max_events
             && (self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0)
         {
             let ev = if let Some(ev) = self.pending_events.pop_front() {
@@ -1290,13 +1295,19 @@ impl ReplTuiState {
 
     fn drain_available_plain_streamed_paste_queue(&mut self) -> io::Result<usize> {
         let mut drained = 0usize;
-        while drained < Self::STREAM_PASTE_DRAIN_MAX_EVENTS
+        let max_events = Self::STREAM_PASTE_DRAIN_MAX_EVENTS.max(
+            self.ctrl_v_echo_remaining
+                .saturating_mul(2)
+                .saturating_add(1024),
+        );
+        while drained < max_events
             && (self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0)
         {
             let ev = if let Some(ev) = self.pending_events.pop_front() {
                 ev
             } else {
-                let wait = if self.stream_paste_deadline.is_some() {
+                let wait = if self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0
+                {
                     Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
                 } else {
                     Duration::from_millis(0)
@@ -5200,6 +5211,44 @@ mod tests {
 
         assert_eq!(paste_drained + ignored_drained, pasted.chars().count() * 2);
         assert_eq!(s.input.text, pasted);
+        assert_eq!(s.ctrl_v_echo_remaining, 0);
+        assert!(matches!(
+            s.pending_events.front(),
+            Some(Event::Key(key)) if key.code == KeyCode::Down && key.kind == KeyEventKind::Press
+        ));
+    }
+
+    #[test]
+    fn paste_echo_drain_consumes_large_echo_batch_before_redraw() {
+        let mut s = test_state();
+        let pasted = "x".repeat(12_000);
+        s.handle_paste_event(&pasted);
+        s.arm_ctrl_v_echo_swallow(&pasted, Instant::now());
+        for ch in pasted.chars() {
+            s.pending_events
+                .push_back(Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char(ch),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Press,
+                )));
+            s.pending_events
+                .push_back(Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char(ch),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release,
+                )));
+        }
+        s.pending_events
+            .push_back(Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Down,
+                KeyModifiers::NONE,
+                KeyEventKind::Press,
+            )));
+
+        let paste_drained = s.drain_available_plain_streamed_paste_queue().unwrap();
+        let ignored_drained = s.drain_ignored_key_events().unwrap();
+
+        assert_eq!(paste_drained + ignored_drained, pasted.chars().count() * 2);
         assert_eq!(s.ctrl_v_echo_remaining, 0);
         assert!(matches!(
             s.pending_events.front(),
