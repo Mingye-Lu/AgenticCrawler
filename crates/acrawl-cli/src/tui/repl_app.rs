@@ -78,6 +78,7 @@ fn sentinel_to_id(c: char) -> u32 {
     (c as u32) - PASTE_SENTINEL_BASE + 1
 }
 
+#[cfg(test)]
 fn id_to_sentinel(id: u32) -> char {
     char::from_u32(PASTE_SENTINEL_BASE + id - 1).unwrap()
 }
@@ -733,9 +734,9 @@ impl ReplTuiState {
         }
     }
 
-    /// Remove any `PasteEntries` whose sentinel char is no longer present in
-    /// `input.text`. Called after any bulk text mutation (selection delete,
-    /// Ctrl-A + delete, etc.) to keep `paste_entries` in sync.
+    /// Remove legacy sentinel-backed paste entries whose sentinel char is no
+    /// longer present in `input.text`. New masked pastes are attachment-style
+    /// entries and deliberately do not live in the editable input buffer.
     fn cleanup_orphaned_paste_entries(&mut self) {
         let live_ids: std::collections::HashSet<u32> = self
             .input
@@ -744,34 +745,22 @@ impl ReplTuiState {
             .filter(|&c| is_paste_sentinel(c))
             .map(sentinel_to_id)
             .collect();
+        if live_ids.is_empty() {
+            return;
+        }
         self.paste_entries.retain(|e| live_ids.contains(&e.id));
     }
 
     fn delete_paste_entry_by_id(&mut self, id: u32) -> bool {
-        let Some(char_idx) = self
-            .input
-            .text
-            .chars()
-            .position(|ch| is_paste_sentinel(ch) && sentinel_to_id(ch) == id)
-        else {
+        if !self.paste_entries.iter().any(|entry| entry.id == id) {
             return false;
-        };
+        }
 
         self.record_input_undo_snapshot();
-        let start = self.input_char_to_byte(char_idx);
-        let end = self.input_char_to_byte(char_idx + 1);
-        self.input.text.replace_range(start..end, "");
         self.paste_entries.retain(|entry| entry.id != id);
-        self.input.cursor = self
-            .input
-            .cursor
-            .saturating_sub(usize::from(self.input.cursor > char_idx));
-        self.resync_byte_cursor();
         self.input_selection = None;
         self.input_click_anchor = None;
-        self.input.preferred_col = None;
-        self.vis_cache = None;
-        self.input_scroll_offset = usize::MAX;
+        self.paste_preview_delete_targets.clear();
         true
     }
 
@@ -806,6 +795,17 @@ impl ReplTuiState {
             } else {
                 result.push(ch);
             }
+        }
+        result
+    }
+
+    fn compose_input_text(&self, raw: &str) -> String {
+        let mut result = self.expand_paste_sentinels(raw);
+        for entry in &self.paste_entries {
+            if !result.trim().is_empty() {
+                result.push_str("\n\n");
+            }
+            result.push_str(&entry.content);
         }
         result
     }
@@ -889,15 +889,6 @@ impl ReplTuiState {
         self.clamp_input_cursor();
         let id = self.next_paste_id;
         self.next_paste_id += 1;
-        let sentinel = id_to_sentinel(id);
-        debug_assert!(is_paste_sentinel(sentinel));
-        debug_assert_eq!(sentinel_to_id(sentinel), id);
-        self.input.text.insert(self.input.byte_cursor, sentinel);
-        self.vis_cache = None;
-        self.input.cursor = self.input.cursor.saturating_add(1);
-        self.input.byte_cursor = self.input.byte_cursor.saturating_add(sentinel.len_utf8());
-        self.input.preferred_col = None;
-        self.input_scroll_offset = usize::MAX;
         self.paste_entries.push(PasteEntry {
             id,
             content: content.to_string(),
@@ -2166,25 +2157,14 @@ impl ReplTuiState {
     }
 
     fn paste_preview_entries(&self) -> Vec<(u32, String, String)> {
-        self.input
-            .text
-            .chars()
-            .filter_map(|ch| {
-                if is_paste_sentinel(ch) {
-                    let id = sentinel_to_id(ch);
-                    self.paste_entries
-                        .iter()
-                        .find(|entry| entry.id == id)
-                        .map(|entry| {
-                            (
-                                entry.id,
-                                entry.preview_snippet.clone(),
-                                entry.token_label.clone(),
-                            )
-                        })
-                } else {
-                    None
-                }
+        self.paste_entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.id,
+                    entry.preview_snippet.clone(),
+                    entry.token_label.clone(),
+                )
             })
             .collect()
     }
@@ -2208,7 +2188,9 @@ impl ReplTuiState {
             .bg(Color::Rgb(52, 56, 64));
         let delete_style = Style::default()
             .fg(Color::Rgb(220, 110, 110))
+            .bg(Color::Rgb(52, 56, 64))
             .add_modifier(Modifier::BOLD);
+        let delete_pad_style = Style::default().bg(Color::Rgb(52, 56, 64));
 
         let mut snippet_spans = Vec::new();
         let mut token_spans = Vec::new();
@@ -2228,7 +2210,7 @@ impl ReplTuiState {
             snippet_spans.push(Span::styled(format!(" {snippet} "), snippet_style));
             snippet_spans.push(Span::styled("x", delete_style));
             token_spans.push(Span::styled(format!(" {token_label} "), token_style));
-            token_spans.push(Span::raw(" "));
+            token_spans.push(Span::styled(" ", delete_pad_style));
         }
 
         vec![Line::from(snippet_spans), Line::from(token_spans)]
@@ -4726,7 +4708,7 @@ fn run_loop(
                     if state.busy {
                         continue;
                     }
-                    if state.input.text.is_empty() {
+                    if state.input.text.is_empty() && state.paste_entries.is_empty() {
                         state.exit = true;
                         state.persist_on_exit = true;
                     }
@@ -4863,7 +4845,7 @@ fn run_loop(
                         }
 
                         let raw_line = std::mem::take(&mut state.input.text);
-                        let line = state.expand_paste_sentinels(&raw_line);
+                        let line = state.compose_input_text(&raw_line);
                         state.reset_input();
                         state.input_scroll_offset = 0;
                         state.clear_input_history();
@@ -5039,9 +5021,8 @@ mod tests {
 
     use super::{
         estimate_paste_tokens, format_paste_preview_snippet, format_paste_token_label,
-        id_to_sentinel, is_paste_sentinel, normalize_pasted_text, sentinel_to_id,
-        should_mask_paste, ReplTuiState, ToolCallStatus, TranscriptEntry,
-        PASTE_PREVIEW_BLOCK_WIDTH,
+        id_to_sentinel, is_paste_sentinel, normalize_pasted_text, should_mask_paste, ReplTuiState,
+        ToolCallStatus, TranscriptEntry, PASTE_PREVIEW_BLOCK_WIDTH,
     };
 
     fn test_state() -> ReplTuiState {
@@ -5263,13 +5244,11 @@ mod tests {
     }
 
     #[test]
-    fn insert_paste_mask_stores_sentinel_and_entry() {
+    fn insert_paste_mask_stores_attachment_entry() {
         let mut state = test_state();
         let big = "x".repeat(2048);
         state.handle_paste_event(&big);
-        assert_eq!(state.input.text.chars().count(), 1);
-        let c = state.input.text.chars().next().unwrap();
-        assert!(is_paste_sentinel(c));
+        assert!(state.input.text.is_empty());
         assert_eq!(state.paste_entries.len(), 1);
         assert_eq!(state.paste_entries[0].content, big);
     }
@@ -5294,13 +5273,13 @@ mod tests {
     }
 
     #[test]
-    fn expand_paste_sentinels_replaces_sentinel_with_content() {
+    fn compose_input_text_appends_paste_entries() {
         let mut state = test_state();
         state.insert_input_str("before ");
         let big = "x".repeat(2048);
         state.handle_paste_event(&big);
         state.insert_input_str(" after");
-        let expanded = state.expand_paste_sentinels(&state.input.text.clone());
+        let expanded = state.compose_input_text(&state.input.text.clone());
         assert!(expanded.contains("before "));
         assert!(expanded.contains(&big));
         assert!(expanded.contains(" after"));
@@ -5319,7 +5298,7 @@ mod tests {
     }
 
     #[test]
-    fn backspace_after_sentinel_removes_entry() {
+    fn backspace_after_attachment_does_not_remove_entry() {
         let mut state = test_state();
         state.insert_input_str("ab");
         let big = "x".repeat(2048);
@@ -5330,12 +5309,12 @@ mod tests {
         state.backspace_input_char();
 
         assert!(state.input.text.chars().all(|c| !is_paste_sentinel(c)));
-        assert!(state.paste_entries.is_empty());
-        assert_eq!(state.input.text, "ab");
+        assert_eq!(state.paste_entries.len(), 1);
+        assert_eq!(state.input.text, "a");
     }
 
     #[test]
-    fn delete_at_sentinel_removes_entry() {
+    fn delete_in_input_does_not_remove_attachment_entry() {
         let mut state = test_state();
         state.insert_input_str("ab");
         let big = "x".repeat(2048);
@@ -5348,12 +5327,12 @@ mod tests {
         state.delete_input_char();
 
         assert!(state.input.text.chars().all(|c| !is_paste_sentinel(c)));
-        assert!(state.paste_entries.is_empty());
+        assert_eq!(state.paste_entries.len(), 1);
         assert_eq!(state.input.text, "ab");
     }
 
     #[test]
-    fn select_all_delete_clears_paste_entries() {
+    fn select_all_delete_preserves_paste_entries() {
         let mut state = test_state();
         state.insert_input_str("hello ");
         let big = "x".repeat(2048);
@@ -5367,35 +5346,33 @@ mod tests {
         state.delete_selection_range();
 
         assert!(state.input.text.is_empty());
-        assert!(state.paste_entries.is_empty());
+        assert_eq!(state.paste_entries.len(), 1);
     }
 
     #[test]
-    fn selected_input_text_string_expands_sentinel() {
+    fn compose_input_text_includes_attachment_when_input_empty() {
         let mut state = test_state();
         let big = "x".repeat(2048);
         state.handle_paste_event(&big);
-        state.select_all_input();
-        let selected = state.selected_input_text_string().unwrap();
-        assert_eq!(selected, big);
-        assert!(!selected.chars().any(is_paste_sentinel));
+        assert_eq!(state.compose_input_text(""), big);
     }
 
     #[test]
-    fn submit_path_expand_paste_sentinels() {
+    fn submit_path_composes_paste_entries() {
         let mut state = test_state();
         let big = "x".repeat(2048);
         state.handle_paste_event(&big);
         let raw = state.input.text.clone();
-        let expanded = state.expand_paste_sentinels(&raw);
+        let expanded = state.compose_input_text(&raw);
         state.reset_input();
         assert_eq!(expanded, big);
         assert!(state.paste_entries.is_empty());
     }
 
     #[test]
-    fn ctrl_w_on_sentinel_deletes_it_and_entry() {
+    fn ctrl_w_preserves_attachment_entry() {
         let mut state = test_state();
+        state.insert_input_str("word");
         let big = "x".repeat(2048);
         state.handle_paste_event(&big);
 
@@ -5404,11 +5381,11 @@ mod tests {
         state.word_backspace();
 
         assert!(state.input.text.is_empty());
-        assert!(state.paste_entries.is_empty());
+        assert_eq!(state.paste_entries.len(), 1);
     }
 
     #[test]
-    fn move_right_skips_over_paste_sentinel() {
+    fn move_right_ignores_attachment_entries() {
         let mut state = test_state();
         state.insert_input_str("ab");
         let big = "x".repeat(2048);
@@ -5420,11 +5397,11 @@ mod tests {
 
         state.move_input_cursor_right();
 
-        assert_eq!(state.input.cursor, 3);
+        assert_eq!(state.input.cursor, 2);
     }
 
     #[test]
-    fn move_left_skips_over_paste_sentinel() {
+    fn move_left_ignores_attachment_entries() {
         let mut state = test_state();
         state.insert_input_str("ab");
         let big = "x".repeat(2048);
@@ -5436,11 +5413,11 @@ mod tests {
 
         state.move_input_cursor_left();
 
-        assert_eq!(state.input.cursor, 1);
+        assert_eq!(state.input.cursor, 2);
     }
 
     #[test]
-    fn set_input_cursor_line_col_by_char_snaps_past_sentinel() {
+    fn set_input_cursor_line_col_by_char_ignores_attachment_entries() {
         let mut state = test_state();
         state.insert_input_str("ab");
         let big = "x".repeat(2048);
@@ -5449,7 +5426,7 @@ mod tests {
 
         state.set_input_cursor_line_col_by_char(2);
 
-        assert_eq!(state.input.cursor, 3);
+        assert_eq!(state.input.cursor, 2);
     }
 
     fn count_visual_lines_with_caret_baseline(
@@ -5808,11 +5785,10 @@ mod tests {
         );
         assert_eq!(
             s.input.text.chars().count(),
-            1,
-            "masked paste should insert one sentinel"
+            0,
+            "masked paste should not mutate input text"
         );
-        assert!(s.input.text.chars().all(is_paste_sentinel));
-        assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+        assert_eq!(s.compose_input_text(&s.input.text), pasted);
         assert!(
             !s.force_next_paste_burst_key,
             "forced-capture flag should clear after the first streamed key"
@@ -5835,10 +5811,10 @@ mod tests {
         );
         assert_eq!(
             s.input.text.chars().count(),
-            1,
-            "masked paste should insert one sentinel"
+            0,
+            "masked paste should not mutate input text"
         );
-        assert!(s.input.text.chars().all(is_paste_sentinel));
+        assert_eq!(s.compose_input_text(&s.input.text), pasted);
 
         let mut at = now;
         for ch in pasted.chars() {
@@ -5847,7 +5823,7 @@ mod tests {
                 "echoed char should be swallowed while Ctrl+V echo suppression is armed"
             );
             assert_eq!(
-                s.expand_paste_sentinels(&s.input.text),
+                s.compose_input_text(&s.input.text),
                 pasted,
                 "echo swallowing must not mutate the already-masked input"
             );
@@ -5860,7 +5836,7 @@ mod tests {
             !simulate_swallowed_ctrl_v_echo_key(&mut s, KeyCode::Char('z'), at),
             "swallow state must clear after the echoed stream is fully consumed"
         );
-        assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+        assert_eq!(s.compose_input_text(&s.input.text), pasted);
     }
 
     #[test]
@@ -5875,12 +5851,11 @@ mod tests {
             if idx + 1 == ReplTuiState::STREAM_PASTE_CONFIDENCE_CHARS {
                 assert_eq!(
                     s.input.text.chars().count(),
-                    1,
+                    0,
                     "recognized plain stream should mask immediately after confidence is reached"
                 );
-                assert!(s.input.text.chars().all(is_paste_sentinel));
                 assert_eq!(s.paste_entries.len(), 1);
-                assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+                assert_eq!(s.compose_input_text(&s.input.text), pasted);
                 assert_eq!(
                     s.ctrl_v_echo_remaining,
                     pasted.chars().count() - ReplTuiState::STREAM_PASTE_CONFIDENCE_CHARS,
@@ -5894,12 +5869,11 @@ mod tests {
 
         assert_eq!(
             s.input.text.chars().count(),
-            1,
+            0,
             "recognized plain stream should mask instead of leaving raw text"
         );
-        assert!(s.input.text.chars().all(is_paste_sentinel));
         assert_eq!(s.paste_entries.len(), 1);
-        assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+        assert_eq!(s.compose_input_text(&s.input.text), pasted);
     }
 
     #[test]
@@ -5924,12 +5898,11 @@ mod tests {
         );
         assert_eq!(
             s.input.text.chars().count(),
-            1,
+            0,
             "recognized fast stream should mask immediately after confidence is reached"
         );
-        assert!(s.input.text.chars().all(is_paste_sentinel));
         assert_eq!(s.paste_entries.len(), 1);
-        assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+        assert_eq!(s.compose_input_text(&s.input.text), pasted);
     }
 
     #[test]
@@ -6701,33 +6674,27 @@ mod tests {
         let thirty_one_newlines = "\n".repeat(31);
         state.handle_paste_event(&thirty_one_newlines);
         assert_eq!(state.paste_entries.len(), 1);
-        assert_eq!(state.input.text.chars().count(), 1);
-        let c = state.input.text.chars().next().unwrap();
-        assert!(is_paste_sentinel(c));
+        assert!(state.input.text.is_empty());
+        assert_eq!(state.compose_input_text(""), thirty_one_newlines);
     }
 
     #[test]
-    fn adjacent_masks_create_two_entries_and_two_sentinels() {
+    fn adjacent_masks_create_two_attachment_entries() {
         let mut state = test_state();
         let big1 = "a".repeat(2048);
         let big2 = "b".repeat(2048);
         state.handle_paste_event(&big1);
         state.handle_paste_event(&big2);
         assert_eq!(state.paste_entries.len(), 2);
-        assert_eq!(state.input.text.chars().count(), 2);
-        // Both chars in input.text should be sentinels
-        let chars: Vec<char> = state.input.text.chars().collect();
-        assert!(is_paste_sentinel(chars[0]));
-        assert!(is_paste_sentinel(chars[1]));
-        // They should have distinct ids
-        assert_ne!(sentinel_to_id(chars[0]), sentinel_to_id(chars[1]));
+        assert!(state.input.text.is_empty());
+        assert_ne!(state.paste_entries[0].id, state.paste_entries[1].id);
         // Content preserved
         assert_eq!(state.paste_entries[0].content, big1);
         assert_eq!(state.paste_entries[1].content, big2);
     }
 
     #[test]
-    fn ctrl_a_then_type_clears_all_entries() {
+    fn ctrl_a_then_type_preserves_attachment_entries() {
         let mut state = test_state();
         state.insert_input_str("prefix ");
         let big = "x".repeat(2048);
@@ -6738,10 +6705,7 @@ mod tests {
         state.select_all_input();
         state.backspace_input_char();
         state.insert_input_char('z');
-        assert!(
-            state.paste_entries.is_empty(),
-            "entries should be cleared after select-all+delete"
-        );
+        assert_eq!(state.paste_entries.len(), 1);
         assert_eq!(state.input.text, "z");
     }
 
@@ -6757,30 +6721,25 @@ mod tests {
             1,
             "burst flush above threshold should create mask"
         );
-        assert_eq!(state.input.text.chars().count(), 1);
-        assert!(is_paste_sentinel(state.input.text.chars().next().unwrap()));
+        assert!(state.input.text.is_empty());
     }
 
     #[test]
-    fn mixed_content_cursor_navigates_around_sentinel() {
+    fn mixed_content_cursor_ignores_attachment_entries() {
         let mut state = test_state();
         state.insert_input_str("hello ");
         let big = "x".repeat(2048);
         state.handle_paste_event(&big);
         state.insert_input_str(" world");
-        // text: "hello " + sentinel + " world" = 6 + 1 + 6 = 13 chars
-        // cursor is at position 13 (after 'd')
-        // Move left 6 times to get to position 7 (space before 'world')
+        // text: "hello " + " world" = 12 chars; attachment is outside input.text.
+        // cursor is at position 12 (after 'd')
+        // Move left 6 times to get to position 6 (space before 'world')
         for _ in 0..6 {
             state.move_input_cursor_left();
         }
-        assert_eq!(state.input.cursor, 7);
-        // Move left one more: should skip the sentinel at position 6, land at 5
+        assert_eq!(state.input.cursor, 6);
         state.move_input_cursor_left();
-        assert_eq!(
-            state.input.cursor, 5,
-            "cursor should have jumped over sentinel from position 7 to 5"
-        );
+        assert_eq!(state.input.cursor, 5);
     }
 
     #[test]
@@ -6788,7 +6747,7 @@ mod tests {
         let mut state = test_state();
         let big = "x".repeat(2048);
         state.handle_paste_event(&big);
-        // input.text should only contain the sentinel char, not any human-readable text
+        // input.text should not contain any human-readable preview or hidden sentinel.
         let text = &state.input.text;
         assert!(
             !text.contains('\u{1F4CB}'),
@@ -6799,8 +6758,6 @@ mod tests {
             "input.text should not contain 'lines'"
         );
         assert!(!text.contains('['), "input.text should not contain '['");
-        // Should only have the single sentinel char
-        assert_eq!(text.chars().count(), 1);
-        assert!(text.chars().all(is_paste_sentinel));
+        assert!(text.is_empty());
     }
 }
