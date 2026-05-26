@@ -307,6 +307,7 @@ pub(super) struct ReplTuiState {
     stream_paste_probe: String,
     stream_paste_deadline: Option<Instant>,
     stream_paste_clipboard: Option<String>,
+    pending_events: VecDeque<Event>,
     input_undo_stack: Vec<InputUndoSnapshot>,
     input_redo_stack: Vec<InputUndoSnapshot>,
     paste_entries: Vec<PasteEntry>,
@@ -378,6 +379,7 @@ impl ReplTuiState {
             stream_paste_probe: String::new(),
             stream_paste_deadline: None,
             stream_paste_clipboard: None,
+            pending_events: VecDeque::new(),
             selection: SelectionState::default(),
             input_undo_stack: Vec::new(),
             input_redo_stack: Vec::new(),
@@ -836,6 +838,13 @@ impl ReplTuiState {
     const STREAM_PASTE_PROBE_WINDOW_MS: u64 = 500;
     const STREAM_PASTE_CONFIDENCE_CHARS: usize = 8;
     const STREAM_PASTE_NEWLINE_CONFIDENCE_CHARS: usize = 2;
+    const STREAM_PASTE_DRAIN_MAX_EVENTS: usize = 8192;
+    const STREAM_PASTE_DRAIN_WAIT_MS: u64 = 8;
+    const BRACKETED_PASTE_OPEN_TAIL: &'static [u8] = b"[200~";
+    const BRACKETED_PASTE_CLOSE: &'static [u8] = b"\x1b[201~";
+    const BRACKETED_PASTE_MATCH_WAIT_MS: u64 = 5;
+    const BRACKETED_PASTE_CONTENT_WAIT_MS: u64 = 50;
+    const BRACKETED_PASTE_MAX_EVENTS: usize = 262_144;
 
     /// True if the previous key event arrived within the paste-burst threshold.
     fn in_paste_burst(&self, now: Instant) -> bool {
@@ -847,6 +856,118 @@ impl ReplTuiState {
     fn arm_streamed_paste_burst(&mut self, now: Instant) {
         self.last_key_time = Some(now);
         self.force_next_paste_burst_key = true;
+    }
+
+    fn bare_press_key_code(ev: &Event) -> Option<KeyCode> {
+        let Event::Key(key) = ev else {
+            return None;
+        };
+        if key.kind == KeyEventKind::Press && Self::is_plain_text_modifier(key.modifiers) {
+            Some(key.code)
+        } else {
+            None
+        }
+    }
+
+    fn is_plain_text_modifier(modifiers: KeyModifiers) -> bool {
+        !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    }
+
+    fn bracketed_paste_key_byte(key_code: KeyCode) -> Option<u8> {
+        match key_code {
+            KeyCode::Esc => Some(0x1b),
+            KeyCode::Char(c) if c.is_ascii() => Some(c as u8),
+            _ => None,
+        }
+    }
+
+    fn bracketed_paste_content_char(key_code: KeyCode) -> Option<char> {
+        match key_code {
+            KeyCode::Char(c) => Some(c),
+            KeyCode::Enter => Some('\n'),
+            KeyCode::Tab => Some('\t'),
+            KeyCode::Esc => Some('\x1b'),
+            _ => None,
+        }
+    }
+
+    fn push_pending_events_front(&mut self, mut events: Vec<Event>) {
+        while let Some(ev) = events.pop() {
+            self.pending_events.push_front(ev);
+        }
+    }
+
+    fn read_event_if_ready(timeout: Duration) -> io::Result<Option<Event>> {
+        if event::poll(timeout)? {
+            Ok(Some(event::read()?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn try_consume_bracketed_paste_after_esc(&mut self) -> io::Result<Option<String>> {
+        let mut consumed = Vec::new();
+        for &expected in Self::BRACKETED_PASTE_OPEN_TAIL {
+            let Some(ev) = Self::read_event_if_ready(Duration::from_millis(
+                Self::BRACKETED_PASTE_MATCH_WAIT_MS,
+            ))?
+            else {
+                self.push_pending_events_front(consumed);
+                return Ok(None);
+            };
+            let matched = Self::bare_press_key_code(&ev).and_then(Self::bracketed_paste_key_byte)
+                == Some(expected);
+            if !matched {
+                consumed.push(ev);
+                self.push_pending_events_front(consumed);
+                return Ok(None);
+            }
+            consumed.push(ev);
+        }
+
+        let mut paste = String::new();
+        let mut close_idx = 0usize;
+        for _ in 0..Self::BRACKETED_PASTE_MAX_EVENTS {
+            let Some(ev) = Self::read_event_if_ready(Duration::from_millis(
+                Self::BRACKETED_PASTE_CONTENT_WAIT_MS,
+            ))?
+            else {
+                return Ok(Some(paste));
+            };
+
+            let Some(key_code) = Self::bare_press_key_code(&ev) else {
+                self.pending_events.push_back(ev);
+                continue;
+            };
+
+            if let Some(byte) = Self::bracketed_paste_key_byte(key_code) {
+                if byte == Self::BRACKETED_PASTE_CLOSE[close_idx] {
+                    close_idx += 1;
+                    if close_idx == Self::BRACKETED_PASTE_CLOSE.len() {
+                        return Ok(Some(paste));
+                    }
+                    continue;
+                }
+            }
+
+            if close_idx > 0 {
+                for &b in &Self::BRACKETED_PASTE_CLOSE[..close_idx] {
+                    paste.push(char::from(b));
+                }
+                close_idx = 0;
+                if Self::bracketed_paste_key_byte(key_code) == Some(Self::BRACKETED_PASTE_CLOSE[0])
+                {
+                    close_idx = 1;
+                    continue;
+                }
+            }
+
+            if let Some(ch) = Self::bracketed_paste_content_char(key_code) {
+                paste.push(ch);
+            }
+        }
+
+        Ok(Some(paste))
     }
 
     fn clear_stream_paste_probe(&mut self) {
@@ -888,6 +1009,13 @@ impl ReplTuiState {
                 && matched_chars >= Self::STREAM_PASTE_NEWLINE_CONFIDENCE_CHARS)
     }
 
+    fn should_probe_plain_streamed_paste(clipboard_text: &str) -> bool {
+        let char_count = clipboard_text.chars().count();
+        char_count >= Self::STREAM_PASTE_CONFIDENCE_CHARS
+            || (clipboard_text.contains('\n')
+                && char_count >= Self::STREAM_PASTE_NEWLINE_CONFIDENCE_CHARS)
+    }
+
     fn maybe_capture_plain_streamed_paste_key(&mut self, key: KeyCode, now: Instant) -> bool {
         let clipboard = if self.stream_paste_deadline.is_some() {
             None
@@ -895,6 +1023,21 @@ impl ReplTuiState {
             read_clipboard_text()
         };
         self.maybe_capture_plain_streamed_paste_key_with_clipboard(key, now, clipboard.as_deref())
+    }
+
+    fn confirm_plain_streamed_paste(
+        &mut self,
+        clipboard_text: &str,
+        matched_chars: usize,
+        now: Instant,
+    ) {
+        self.clear_stream_paste_probe();
+        self.paste_burst_chars.clear();
+        self.handle_paste_event(clipboard_text);
+        self.arm_ctrl_v_echo_swallow_count(
+            clipboard_text.chars().count().saturating_sub(matched_chars),
+            now,
+        );
     }
 
     fn maybe_capture_plain_streamed_paste_key_with_clipboard(
@@ -917,9 +1060,13 @@ impl ReplTuiState {
                 self.stream_paste_probe = candidate;
                 self.stream_paste_deadline =
                     Some(now + Duration::from_millis(Self::STREAM_PASTE_PROBE_WINDOW_MS));
-                if Self::plain_stream_paste_confidence_reached(&clipboard, &self.stream_paste_probe) {
-                    self.paste_burst_chars.extend(self.stream_paste_probe.chars());
-                    self.clear_stream_paste_probe();
+                if Self::plain_stream_paste_confidence_reached(&clipboard, &self.stream_paste_probe)
+                {
+                    self.confirm_plain_streamed_paste(
+                        &clipboard,
+                        self.stream_paste_probe.chars().count(),
+                        now,
+                    );
                 }
                 return true;
             }
@@ -931,7 +1078,7 @@ impl ReplTuiState {
         let Some(clipboard_text) = clipboard_text else {
             return false;
         };
-        if !should_mask_paste(clipboard_text) {
+        if !Self::should_probe_plain_streamed_paste(clipboard_text) {
             return false;
         }
 
@@ -946,8 +1093,11 @@ impl ReplTuiState {
             Some(now + Duration::from_millis(Self::STREAM_PASTE_PROBE_WINDOW_MS));
         self.stream_paste_clipboard = Some(clipboard_text.to_string());
         if Self::plain_stream_paste_confidence_reached(clipboard_text, &self.stream_paste_probe) {
-            self.paste_burst_chars.extend(self.stream_paste_probe.chars());
-            self.clear_stream_paste_probe();
+            self.confirm_plain_streamed_paste(
+                clipboard_text,
+                self.stream_paste_probe.chars().count(),
+                now,
+            );
         }
         true
     }
@@ -957,8 +1107,54 @@ impl ReplTuiState {
         self.ctrl_v_echo_deadline = None;
     }
 
+    fn drain_plain_streamed_paste_queue(&mut self) -> io::Result<()> {
+        let mut drained = 0usize;
+        while drained < Self::STREAM_PASTE_DRAIN_MAX_EVENTS
+            && (self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0)
+        {
+            let wait = if self.stream_paste_deadline.is_some() {
+                Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
+            } else {
+                Duration::from_millis(0)
+            };
+            if !event::poll(wait)? {
+                break;
+            }
+
+            let ev = event::read()?;
+            let now = Instant::now();
+            if let Some(key_code) = Self::bare_press_key_code(&ev) {
+                if self.ctrl_v_echo_remaining > 0
+                    && self.should_swallow_ctrl_v_echo_key(key_code, now)
+                {
+                    drained += 1;
+                    continue;
+                }
+                if self.stream_paste_deadline.is_some()
+                    && self
+                        .maybe_capture_plain_streamed_paste_key_with_clipboard(key_code, now, None)
+                {
+                    drained += 1;
+                    continue;
+                }
+            }
+
+            self.pending_events.push_front(ev);
+            break;
+        }
+        Ok(())
+    }
+
     fn arm_ctrl_v_echo_swallow(&mut self, text: &str, now: Instant) {
-        self.ctrl_v_echo_remaining = text.chars().count();
+        self.arm_ctrl_v_echo_swallow_count(text.chars().count(), now);
+    }
+
+    fn arm_ctrl_v_echo_swallow_count(&mut self, remaining: usize, now: Instant) {
+        if remaining == 0 {
+            self.clear_ctrl_v_echo_swallow();
+            return;
+        }
+        self.ctrl_v_echo_remaining = remaining;
         self.ctrl_v_echo_deadline = Some(now + Duration::from_millis(500));
     }
 
@@ -989,9 +1185,10 @@ impl ReplTuiState {
     }
 
     fn should_capture_streamed_paste_key(&self, now: Instant) -> bool {
-        self.force_next_paste_burst_key
-            || self.in_paste_burst(now)
-            || !self.paste_burst_chars.is_empty()
+        self.stream_paste_deadline.is_none()
+            && (self.force_next_paste_burst_key
+                || self.in_paste_burst(now)
+                || !self.paste_burst_chars.is_empty())
     }
 
     /// If the burst accumulator has any chars, drain it into the input via
@@ -3486,11 +3683,15 @@ fn run_loop(
         } else {
             16
         };
-        if !event::poll(Duration::from_millis(poll_ms))? {
+        if state.pending_events.is_empty() && !event::poll(Duration::from_millis(poll_ms))? {
             continue;
         }
 
-        let ev = event::read()?;
+        let ev = if let Some(ev) = state.pending_events.pop_front() {
+            ev
+        } else {
+            event::read()?
+        };
         match ev {
             Event::Mouse(me) => {
                 if matches!(
@@ -3760,7 +3961,23 @@ fn run_loop(
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 let now = Instant::now();
                 if state.active_modal.is_none()
-                    && key.modifiers.is_empty()
+                    && key.code == KeyCode::Esc
+                    && ReplTuiState::is_plain_text_modifier(key.modifiers)
+                {
+                    if let Some(text) = state.try_consume_bracketed_paste_after_esc()? {
+                        state.flush_stream_paste_probe_to_input();
+                        state.flush_paste_burst();
+                        state.clear_ctrl_v_echo_swallow();
+                        state.last_key_time = None;
+                        state.force_next_paste_burst_key = false;
+                        state.handle_paste_event(&text);
+                        state.wake_input_caret();
+                        state.refresh_slash_overlay();
+                        continue;
+                    }
+                }
+                if state.active_modal.is_none()
+                    && ReplTuiState::is_plain_text_modifier(key.modifiers)
                     && state.should_swallow_ctrl_v_echo_key(key.code, now)
                 {
                     continue;
@@ -3776,7 +3993,7 @@ fn run_loop(
                 // the buffer here so command handlers (Ctrl-A/Z/Y/W/C/X, etc.)
                 // see a consistent input state.
                 if !matches!(key.code, KeyCode::Char(_) | KeyCode::Enter)
-                    || !key.modifiers.is_empty()
+                    || !ReplTuiState::is_plain_text_modifier(key.modifiers)
                 {
                     state.flush_paste_burst();
                     state.flush_stream_paste_probe_to_input();
@@ -4293,9 +4510,10 @@ fn run_loop(
                             continue;
                         }
                         if state.active_modal.is_none()
-                            && key.modifiers.is_empty()
+                            && ReplTuiState::is_plain_text_modifier(key.modifiers)
                             && state.maybe_capture_plain_streamed_paste_key(KeyCode::Enter, now)
                         {
+                            state.drain_plain_streamed_paste_queue()?;
                             state.last_key_time = Some(now);
                             state.wake_input_caret();
                             continue;
@@ -4390,9 +4608,10 @@ fn run_loop(
                             state.paste_burst_chars.push(c);
                             state.force_next_paste_burst_key = false;
                         } else if state.active_modal.is_none()
-                            && key.modifiers.is_empty()
+                            && ReplTuiState::is_plain_text_modifier(key.modifiers)
                             && state.maybe_capture_plain_streamed_paste_key(KeyCode::Char(c), now)
                         {
+                            state.drain_plain_streamed_paste_queue()?;
                         } else {
                             state.insert_input_char(c);
                         }
@@ -4562,7 +4781,8 @@ mod tests {
     fn simulate_idle_burst_flush(state: &mut ReplTuiState, now: Instant) {
         let should_flush = !state.paste_burst_chars.is_empty()
             && state.last_key_time.is_some_and(|t| {
-                now.duration_since(t) > Duration::from_millis(ReplTuiState::PASTE_BURST_THRESHOLD_MS)
+                now.duration_since(t)
+                    > Duration::from_millis(ReplTuiState::PASTE_BURST_THRESHOLD_MS)
             });
         if should_flush {
             state.flush_paste_burst();
@@ -4575,18 +4795,36 @@ mod tests {
         clipboard: &str,
         at: Instant,
     ) {
-        if state.maybe_capture_plain_streamed_paste_key_with_clipboard(
-            key,
-            at,
-            Some(clipboard),
-        ) {
-            state.last_key_time = Some(at);
+        if state.should_swallow_ctrl_v_echo_key(key, at) {
             return;
         }
 
         match key {
-            KeyCode::Char(c) => state.insert_input_char(c),
-            KeyCode::Enter => {}
+            KeyCode::Char(c) => {
+                if state.should_capture_streamed_paste_key(at) {
+                    state.paste_burst_chars.push(c);
+                    state.force_next_paste_burst_key = false;
+                } else if state.maybe_capture_plain_streamed_paste_key_with_clipboard(
+                    key,
+                    at,
+                    Some(clipboard),
+                ) {
+                } else {
+                    state.insert_input_char(c);
+                }
+            }
+            KeyCode::Enter => {
+                if state.should_capture_streamed_paste_key(at) {
+                    state.paste_burst_chars.push('\n');
+                    state.force_next_paste_burst_key = false;
+                } else {
+                    let _ = state.maybe_capture_plain_streamed_paste_key_with_clipboard(
+                        key,
+                        at,
+                        Some(clipboard),
+                    );
+                }
+            }
             _ => unreachable!("test helper only supports bare Char/Enter"),
         }
         state.last_key_time = Some(at);
@@ -5173,9 +5411,20 @@ mod tests {
 
         simulate_idle_burst_flush(&mut s, at + Duration::from_millis(100));
 
-        assert!(s.paste_burst_chars.is_empty(), "idle flush should drain the burst");
-        assert_eq!(s.paste_entries.len(), 1, "large streamed paste should be masked");
-        assert_eq!(s.input.text.chars().count(), 1, "masked paste should insert one sentinel");
+        assert!(
+            s.paste_burst_chars.is_empty(),
+            "idle flush should drain the burst"
+        );
+        assert_eq!(
+            s.paste_entries.len(),
+            1,
+            "large streamed paste should be masked"
+        );
+        assert_eq!(
+            s.input.text.chars().count(),
+            1,
+            "masked paste should insert one sentinel"
+        );
         assert!(s.input.text.chars().all(is_paste_sentinel));
         assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
         assert!(
@@ -5193,8 +5442,16 @@ mod tests {
         s.handle_paste_event(&pasted);
         s.arm_ctrl_v_echo_swallow(&pasted, now);
 
-        assert_eq!(s.paste_entries.len(), 1, "large clipboard paste should mask immediately");
-        assert_eq!(s.input.text.chars().count(), 1, "masked paste should insert one sentinel");
+        assert_eq!(
+            s.paste_entries.len(),
+            1,
+            "large clipboard paste should mask immediately"
+        );
+        assert_eq!(
+            s.input.text.chars().count(),
+            1,
+            "masked paste should insert one sentinel"
+        );
         assert!(s.input.text.chars().all(is_paste_sentinel));
 
         let mut at = now;
@@ -5227,17 +5484,71 @@ mod tests {
         let start = Instant::now();
         let mut at = start;
 
-        for ch in pasted.chars() {
+        for (idx, ch) in pasted.chars().enumerate() {
             simulate_plain_streamed_key_with_clipboard(&mut s, KeyCode::Char(ch), &pasted, at);
+            if idx + 1 == ReplTuiState::STREAM_PASTE_CONFIDENCE_CHARS {
+                assert_eq!(
+                    s.input.text.chars().count(),
+                    1,
+                    "recognized plain stream should mask immediately after confidence is reached"
+                );
+                assert!(s.input.text.chars().all(is_paste_sentinel));
+                assert_eq!(s.paste_entries.len(), 1);
+                assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+                assert_eq!(
+                    s.ctrl_v_echo_remaining,
+                    pasted.chars().count() - ReplTuiState::STREAM_PASTE_CONFIDENCE_CHARS,
+                    "remaining terminal echo keys should be swallowed after immediate mask"
+                );
+            }
             at += Duration::from_millis(2);
         }
 
         simulate_idle_burst_flush(&mut s, at + Duration::from_millis(100));
 
-        assert_eq!(s.input.text.chars().count(), 1, "recognized plain stream should mask instead of leaving raw text");
+        assert_eq!(
+            s.input.text.chars().count(),
+            1,
+            "recognized plain stream should mask instead of leaving raw text"
+        );
         assert!(s.input.text.chars().all(is_paste_sentinel));
         assert_eq!(s.paste_entries.len(), 1);
         assert_eq!(s.expand_paste_sentinels(&s.input.text), pasted);
+    }
+
+    #[test]
+    fn plain_streamed_clipboard_prefix_inserts_small_multiline_paste_immediately() {
+        let mut s = test_state();
+        let pasted = "first line\nsecond line\nthird line";
+        assert!(!should_mask_paste(pasted));
+        let start = Instant::now();
+
+        simulate_plain_streamed_key_with_clipboard(&mut s, KeyCode::Char('f'), pasted, start);
+        assert!(
+            s.input.text.is_empty(),
+            "first char should be held as probe"
+        );
+
+        simulate_plain_streamed_key_with_clipboard(
+            &mut s,
+            KeyCode::Char('i'),
+            pasted,
+            start + Duration::from_millis(2),
+        );
+
+        assert_eq!(
+            s.input.text, pasted,
+            "small multiline paste should be inserted in one bulk operation once confidence is reached"
+        );
+        assert!(
+            s.paste_entries.is_empty(),
+            "small paste should not be masked"
+        );
+        assert_eq!(
+            s.ctrl_v_echo_remaining,
+            pasted.chars().count() - ReplTuiState::STREAM_PASTE_NEWLINE_CONFIDENCE_CHARS,
+            "remaining raw key events should be swallowed after bulk insert"
+        );
     }
 
     #[test]
