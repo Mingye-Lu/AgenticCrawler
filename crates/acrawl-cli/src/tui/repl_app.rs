@@ -53,6 +53,8 @@ const INPUT_CARET_MARKER: char = '\u{E000}';
 const PASTE_MASK_THRESHOLD_BYTES: usize = 2048;
 const PASTE_MASK_THRESHOLD_LINES: usize = 30;
 const PASTE_SENTINEL_BASE: u32 = 0xF0001;
+const PASTE_PREVIEW_BLOCK_WIDTH: usize = 12;
+const PASTE_PREVIEW_INNER_WIDTH: usize = PASTE_PREVIEW_BLOCK_WIDTH - 2;
 pub(super) const SLASH_OVERLAY_VISIBLE_ITEMS: usize = 7;
 pub(super) const SLASH_OVERLAY_HINT_TEXT: &str =
     "Up/Down move  Enter accept  Tab complete  Esc close";
@@ -83,9 +85,69 @@ fn should_mask_paste(text: &str) -> bool {
         || text.bytes().filter(|&b| b == b'\n').count() >= PASTE_MASK_THRESHOLD_LINES
 }
 
-fn format_paste_pill(id: u32, content: &str) -> String {
-    let line_count = content.bytes().filter(|&b| b == b'\n').count() + 1;
-    format!("[📋 #{id} ~{line_count} lines]")
+fn format_paste_marker(_id: u32) -> &'static str {
+    "▣"
+}
+
+fn estimate_paste_tokens(content: &str) -> usize {
+    content.len() / 4 + 1
+}
+
+fn format_paste_token_label(tokens: usize) -> String {
+    let number = if tokens < 100_000 {
+        tokens.to_string()
+    } else if tokens < 1_000_000 {
+        format!("{}k", tokens / 1_000)
+    } else {
+        format!("{}m", tokens / 1_000_000)
+    };
+    fit_display_width(&format!("{number}token"), PASTE_PREVIEW_INNER_WIDTH)
+}
+
+fn normalized_preview_text(content: &str) -> String {
+    let mut out = String::new();
+    let mut previous_space = false;
+    for ch in content.chars() {
+        let ch = if ch.is_whitespace() { ' ' } else { ch };
+        if ch == ' ' {
+            if previous_space {
+                continue;
+            }
+            previous_space = true;
+        } else {
+            previous_space = false;
+        }
+        out.push(ch);
+    }
+    out.trim().to_string()
+}
+
+fn fit_display_width(text: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let char_width = char_display_width(ch);
+        if used + char_width > width {
+            break;
+        }
+        out.push(ch);
+        used += char_width;
+    }
+    out.push_str(&" ".repeat(width.saturating_sub(used)));
+    out
+}
+
+fn format_paste_preview_snippet(content: &str) -> String {
+    let normalized = normalized_preview_text(content);
+    let has_more = text_display_width(&normalized) > 9;
+    let mut snippet = fit_display_width(&normalized, 9);
+    while snippet.ends_with(' ') {
+        snippet.pop();
+    }
+    if has_more {
+        snippet.push('…');
+    }
+    fit_display_width(&snippet, PASTE_PREVIEW_INNER_WIDTH)
 }
 
 fn read_clipboard_text() -> Option<String> {
@@ -700,8 +762,9 @@ impl ReplTuiState {
         result
     }
 
-    /// Split `text` into styled spans, replacing paste sentinel chars with
-    /// dim+italic pill spans showing the entry line count.
+    /// Split `text` into styled spans, replacing paste sentinel chars with a
+    /// compact fixed-width marker. The full paste details render in the fixed
+    /// preview strip below the editable input.
     fn spans_from_text_with_pills(&self, text: &str, base_style: Style) -> Vec<Span<'static>> {
         if !text.chars().any(is_paste_sentinel) {
             if text.is_empty() {
@@ -710,9 +773,9 @@ impl ReplTuiState {
             return vec![Span::styled(text.to_string(), base_style)];
         }
 
-        let pill_style = Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM | Modifier::ITALIC);
+        let marker_style = Style::default()
+            .fg(Color::Rgb(150, 156, 166))
+            .add_modifier(Modifier::DIM | Modifier::BOLD);
         let mut spans: Vec<Span<'static>> = Vec::new();
         let mut current = String::new();
 
@@ -723,11 +786,7 @@ impl ReplTuiState {
                 }
 
                 let id = sentinel_to_id(ch);
-                let pill_text = self.paste_entries.iter().find(|e| e.id == id).map_or_else(
-                    || format!("[📋 #{id}]"),
-                    |e| format_paste_pill(id, &e.content),
-                );
-                spans.push(Span::styled(pill_text, pill_style));
+                spans.push(Span::styled(format_paste_marker(id), marker_style));
             } else {
                 current.push(ch);
             }
@@ -2051,6 +2110,56 @@ impl ReplTuiState {
         }
     }
 
+    fn paste_preview_entries(&self) -> Vec<&PasteEntry> {
+        self.input
+            .text
+            .chars()
+            .filter_map(|ch| {
+                if is_paste_sentinel(ch) {
+                    let id = sentinel_to_id(ch);
+                    self.paste_entries.iter().find(|entry| entry.id == id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn paste_preview_lines(&self, max_width: usize) -> Vec<Line<'static>> {
+        let entries = self.paste_preview_entries();
+        if entries.is_empty() || max_width < PASTE_PREVIEW_BLOCK_WIDTH {
+            return Vec::new();
+        }
+
+        let max_blocks = ((max_width + 1) / (PASTE_PREVIEW_BLOCK_WIDTH + 1)).max(1);
+        let visible_entries = entries.into_iter().take(max_blocks).collect::<Vec<_>>();
+        let snippet_style = Style::default()
+            .fg(Color::Rgb(220, 224, 230))
+            .bg(Color::Rgb(52, 56, 64));
+        let token_style = Style::default()
+            .fg(Color::Rgb(150, 156, 166))
+            .bg(Color::Rgb(52, 56, 64))
+            .add_modifier(Modifier::DIM);
+
+        let mut snippet_spans = Vec::new();
+        let mut token_spans = Vec::new();
+        for (idx, entry) in visible_entries.iter().enumerate() {
+            if idx > 0 {
+                snippet_spans.push(Span::raw(" "));
+                token_spans.push(Span::raw(" "));
+            }
+            let snippet = format!(" {} ", format_paste_preview_snippet(&entry.content));
+            let tokens = format!(
+                " {} ",
+                format_paste_token_label(estimate_paste_tokens(&entry.content))
+            );
+            snippet_spans.push(Span::styled(snippet, snippet_style));
+            token_spans.push(Span::styled(tokens, token_style));
+        }
+
+        vec![Line::from(snippet_spans), Line::from(token_spans)]
+    }
+
     #[allow(clippy::too_many_lines)]
     pub(super) fn calculate_input_dimensions(
         &mut self,
@@ -2100,7 +2209,7 @@ impl ReplTuiState {
         let mut visual_lines = Vec::with_capacity(max_text_lines);
 
         let input_char_width = |ch: char| {
-            if ch == INPUT_CARET_MARKER || is_paste_sentinel(ch) {
+            if ch == INPUT_CARET_MARKER {
                 0
             } else {
                 char_display_width(ch)
@@ -2505,6 +2614,9 @@ impl ReplTuiState {
             render_lines.push(Line::from(spans));
         }
 
+        let preview_lines = self.paste_preview_lines(safe_width);
+        let preview_line_count = preview_lines.len();
+        render_lines.extend(preview_lines);
         render_lines.push(Line::from(""));
         render_lines.push(Line::from(Span::styled(
             format!("Model: {model_label}"),
@@ -2514,7 +2626,7 @@ impl ReplTuiState {
         )));
 
         #[allow(clippy::cast_possible_truncation)]
-        let box_height = (total_sliced as u16) + 5;
+        let box_height = (total_sliced as u16) + 5 + u16::try_from(preview_line_count).unwrap_or(0);
         (box_height, render_lines, max_scroll, cursor_pos)
     }
 
@@ -4851,8 +4963,10 @@ mod tests {
     use ratatui::text::Line;
 
     use super::{
-        format_paste_pill, id_to_sentinel, is_paste_sentinel, normalize_pasted_text,
+        estimate_paste_tokens, format_paste_marker, format_paste_preview_snippet,
+        format_paste_token_label, id_to_sentinel, is_paste_sentinel, normalize_pasted_text,
         sentinel_to_id, should_mask_paste, ReplTuiState, ToolCallStatus, TranscriptEntry,
+        PASTE_PREVIEW_BLOCK_WIDTH,
     };
 
     fn test_state() -> ReplTuiState {
@@ -5054,11 +5168,23 @@ mod tests {
     }
 
     #[test]
-    fn format_paste_pill_formats_correctly() {
-        let content = "a\nb\nc\nd\ne\nf";
-        let pill = format_paste_pill(1, content);
-        assert!(pill.contains("~6 lines"));
-        assert!(pill.contains("#1"));
+    fn format_paste_marker_is_fixed_width() {
+        let marker = format_paste_marker(12);
+        assert_eq!(text_display_width(marker), 1);
+    }
+
+    #[test]
+    fn paste_preview_snippet_and_token_label_fit_blocks() {
+        let snippet = format_paste_preview_snippet("abcdefghiXYZ");
+        let token_label = format_paste_token_label(estimate_paste_tokens(&"x".repeat(2048)));
+
+        assert_eq!(text_display_width(&snippet), PASTE_PREVIEW_BLOCK_WIDTH - 2);
+        assert_eq!(
+            text_display_width(&token_label),
+            PASTE_PREVIEW_BLOCK_WIDTH - 2
+        );
+        assert!(snippet.starts_with("abcdefghi…"));
+        assert!(token_label.trim_end().ends_with("token"));
     }
 
     #[test]
@@ -6163,18 +6289,33 @@ mod tests {
     }
 
     #[test]
-    fn calculate_input_dimensions_renders_pill_for_masked_paste() {
+    fn calculate_input_dimensions_renders_marker_and_preview_for_masked_paste() {
         let mut state = test_state();
         state.input_area_width = 80;
-        let big = "x".repeat(2048);
+        let big = "abcdefghiXYZ".repeat(180);
         state.handle_paste_event(&big);
 
-        let (_, render_lines, _, _) = state.calculate_input_dimensions(80, "Model");
+        let (height, render_lines, _, cursor_pos) = state.calculate_input_dimensions(80, "Model");
 
-        let has_pill = render_lines
+        let has_marker = render_lines
             .iter()
-            .any(|line| line.spans.iter().any(|span| span.content.contains('📋')));
-        assert!(has_pill, "Expected pill emoji in rendered output");
+            .any(|line| line.spans.iter().any(|span| span.content == "▣"));
+        let has_snippet = render_lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.contains("abcdefghi…"))
+        });
+        let has_token_label = render_lines.iter().any(|line| {
+            line.spans
+                .iter()
+                .any(|span| span.content.as_ref().contains("token"))
+        });
+
+        assert!(has_marker, "Expected compact paste marker in input line");
+        assert!(has_snippet, "Expected paste preview snippet line");
+        assert!(has_token_label, "Expected paste preview token line");
+        assert_eq!(height, u16::try_from(render_lines.len() + 2).unwrap());
+        assert_eq!(cursor_pos, Some((1, text_display_width("❯ ▣") as u16)));
     }
 
     #[test]
