@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use acrawl_core::ToolOutcome;
 use runtime::{
     ApiClient, ContentBlock, ControlState, ConversationRuntime, Session, ToolError, ToolExecutor,
     TurnSummary,
@@ -354,7 +355,7 @@ impl Drop for CrawlerAgent {
 }
 
 impl ToolExecutor for CrawlerAgent {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<ToolOutcome, ToolError> {
         if self
             .allowed_tools
             .as_ref()
@@ -408,7 +409,18 @@ impl ToolExecutor for CrawlerAgent {
             return Err(ToolError::new(format!("unknown tool: `{tool_name}`")));
         };
 
-        self.dispatch_tool_effect(tool_effect).await
+        let observed_effect = match &tool_effect {
+            ToolEffect::Reply(_) => None,
+            effect => Some(effect.clone()),
+        };
+
+        self.dispatch_tool_effect(tool_effect).await.map(|text| {
+            if let Some(effect) = observed_effect {
+                ToolOutcome::with_effect(text, effect)
+            } else {
+                ToolOutcome::reply(text)
+            }
+        })
     }
 }
 
@@ -820,7 +832,8 @@ mod tests {
             .execute("navigate", r#"{"url":"https://example.com"}"#)
             .await
             .expect("navigate should succeed");
-        assert!(result.contains("Navigated to https://example.com"));
+        assert!(result.text.contains("Navigated to https://example.com"));
+        assert!(result.effect.is_none());
     }
 
     #[tokio::test]
@@ -883,7 +896,8 @@ mod tests {
             .execute("navigate", "")
             .await
             .expect("empty input should map to empty object");
-        assert!(output.contains("unknown"));
+        assert!(output.text.contains("unknown"));
+        assert!(output.effect.is_none());
     }
 
     #[tokio::test]
@@ -966,7 +980,10 @@ mod tests {
             .await
             .expect("fork should succeed");
 
-        assert!(observation.contains("Forked subagent root-child-1 for: check result"));
+        assert!(observation
+            .text
+            .contains("Forked subagent root-child-1 for: check result"));
+        assert!(matches!(observation.effect, Some(ToolEffect::Spawn(_))));
         assert_eq!(manager.lock().await.get_children("root").len(), 1);
         assert_eq!(agent.child_tasks.len(), 1);
         for (_, (_, handle, _)) in agent.child_tasks.drain() {
@@ -1008,10 +1025,8 @@ mod tests {
             .await
             .expect("fork should succeed");
 
-        assert_eq!(
-            observation,
-            "Forked subagent root-child-1 for: collect details"
-        );
+        assert_eq!(observation.text, "Forked subagent root-child-1 for: collect details");
+        assert!(matches!(observation.effect, Some(ToolEffect::Spawn(_))));
 
         for (_, (_, handle, _)) in agent.child_tasks.drain() {
             handle.abort();
@@ -1090,11 +1105,12 @@ mod tests {
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
 
-        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result.text).unwrap();
         assert_eq!(parsed["waited"], 1);
         assert_eq!(parsed["finished"].as_array().unwrap().len(), 1);
         assert_eq!(agent.crawl_state.action_history.len(), 1);
         assert!(agent.crawl_state.action_history[0].contains("Waited on 1 subagent(s)"));
+        assert!(matches!(result.effect, Some(ToolEffect::Wait(_))));
     }
 
     #[tokio::test]
@@ -1116,12 +1132,13 @@ mod tests {
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
 
-        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result.text).unwrap();
         assert_eq!(parsed["finished"][0]["items_extracted"], 1);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
         assert_eq!(agent.crawl_state.child_blocks[0].child_id, "child-1");
         assert_eq!(agent.crawl_state.child_blocks[0].sub_goal, "search");
         assert_eq!(agent.crawl_state.child_blocks[0].items.len(), 1);
+        assert!(matches!(result.effect, Some(ToolEffect::Wait(_))));
     }
 
     #[tokio::test]
@@ -1175,8 +1192,9 @@ mod tests {
         );
 
         let wait_result = parent.execute("wait_for_subagents", "{}").await.unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&wait_result).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&wait_result.text).unwrap();
         assert_eq!(parsed["finished"][0]["items_extracted"], 2);
+        assert!(matches!(wait_result.effect, Some(ToolEffect::Wait(_))));
 
         let all = parent.crawl_state.all_data();
         assert_eq!(all.len(), 3);
@@ -1330,9 +1348,10 @@ mod tests {
             .expect("wait_for_human should succeed in interactive mode");
 
         assert!(
-            result.contains("resumed"),
-            "result should contain resumed status: {result}"
+            result.text.contains("resumed"),
+            "result should contain resumed status: {result:?}"
         );
+        assert!(matches!(result.effect, Some(ToolEffect::Pause { .. })));
         std::env::set_var("HEADLESS", "true");
     }
 

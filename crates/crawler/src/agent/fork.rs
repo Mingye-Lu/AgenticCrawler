@@ -621,10 +621,8 @@ mod tests {
             .await
             .expect("fork should succeed");
 
-        assert_eq!(
-            observation,
-            "Forked subagent root-child-1 for: collect details"
-        );
+        assert_eq!(observation.text, "Forked subagent root-child-1 for: collect details");
+        assert!(matches!(observation.effect, Some(crate::ToolEffect::Spawn(_))));
         assert_eq!(
             agent.child_tasks.get("root-child-1").unwrap().0,
             "collect details"
@@ -657,7 +655,10 @@ mod tests {
             .await
             .expect("fork should succeed");
 
-        assert!(observation.contains("Forked subagent root-child-1 for: check result"));
+        assert!(observation
+            .text
+            .contains("Forked subagent root-child-1 for: check result"));
+        assert!(matches!(observation.effect, Some(crate::ToolEffect::Spawn(_))));
         assert_eq!(manager.lock().await.get_children("root").len(), 1);
         assert_eq!(agent.child_tasks.len(), 1);
         for (_, (_, handle, _)) in agent.child_tasks.drain() {
@@ -721,7 +722,8 @@ mod tests {
             )
             .await
             .expect("first fork should succeed");
-        assert!(first.contains("Forked subagent root-child-1"));
+        assert!(first.text.contains("Forked subagent root-child-1"));
+        assert!(matches!(first.effect, Some(crate::ToolEffect::Spawn(_))));
 
         let err = agent
             .execute(
@@ -770,13 +772,14 @@ mod tests {
             .insert("child-1".to_string(), ("search".to_string(), handle, None));
 
         let result = agent.execute("wait_for_subagents", "{}").await.unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&result.text).unwrap();
         assert_eq!(parsed["waited"], 1);
         // child returned None → counted as finished/failed, not still_running
         assert_eq!(parsed["finished"].as_array().unwrap().len(), 1);
         assert!(parsed["still_running"].as_array().unwrap().is_empty());
         assert_eq!(agent.crawl_state.action_history.len(), 1);
         assert!(agent.crawl_state.action_history[0].contains("Waited on 1 subagent(s)"));
+        assert!(matches!(result.effect, Some(crate::ToolEffect::Wait(_))));
     }
 
     #[tokio::test]

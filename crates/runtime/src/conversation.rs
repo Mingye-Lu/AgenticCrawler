@@ -13,6 +13,7 @@ use tokio::time::{sleep, Duration};
 
 pub use acrawl_core::event::AssistantEvent;
 pub use acrawl_core::error::{RuntimeError, ToolError};
+pub use acrawl_core::outcome::ToolOutcome;
 pub use acrawl_core::traits::ToolExecutor;
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
@@ -267,7 +268,14 @@ where
                         }
                         result = execute_fut => {
                             let (output, is_error) = match result {
-                                Ok(output) => (output, false),
+                                Ok(outcome) => {
+                                    if let Some(ref mut observer) = self.observer {
+                                        if let Some(effect) = outcome.effect.as_ref() {
+                                            observer.on_tool_effect(effect);
+                                        }
+                                    }
+                                    (outcome.text, false)
+                                }
                                 Err(error) => (error.to_string(), true),
                             };
                             ConversationMessage::tool_result(
@@ -647,7 +655,7 @@ fn flush_text_block(text: &mut String, blocks: &mut Vec<ContentBlock>) {
     }
 }
 
-type ToolHandler = Box<dyn FnMut(&str) -> Result<String, ToolError>>;
+type ToolHandler = Box<dyn FnMut(&str) -> Result<ToolOutcome, ToolError>>;
 
 #[derive(Default)]
 pub struct StaticToolExecutor {
@@ -664,7 +672,7 @@ impl StaticToolExecutor {
     pub fn register(
         mut self,
         tool_name: impl Into<String>,
-        handler: impl FnMut(&str) -> Result<String, ToolError> + 'static,
+        handler: impl FnMut(&str) -> Result<ToolOutcome, ToolError> + 'static,
     ) -> Self {
         self.handlers.insert(tool_name.into(), Box::new(handler));
         self
@@ -672,7 +680,7 @@ impl StaticToolExecutor {
 }
 
 impl ToolExecutor for StaticToolExecutor {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<ToolOutcome, ToolError> {
         self.handlers
             .get_mut(tool_name)
             .ok_or_else(|| ToolError::new(format!("unknown tool: {tool_name}")))?(input)
@@ -684,6 +692,7 @@ mod tests {
     use super::{
         parse_auto_compaction_threshold, ApiClient, ApiRequest, AssistantEvent,
         AutoCompactionEvent, ConversationRuntime, RuntimeError, StaticToolExecutor,
+        ToolOutcome,
         DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
     };
     use crate::compact::CompactionConfig;
@@ -773,7 +782,7 @@ mod tests {
                 .split(',')
                 .map(|part| part.parse::<i32>().expect("input must be valid integer"))
                 .sum::<i32>();
-            Ok(total.to_string())
+            Ok(ToolOutcome::reply(total.to_string()))
         });
         let system_prompt = SystemPromptBuilder::new().append_section("# Tools").build();
         let mut runtime =
@@ -1324,7 +1333,9 @@ mod tests {
             let control = Arc::clone(&control_for_executor);
             StaticToolExecutor::new().register("wait_for_human", move |_input| {
                 control.request_pause();
-                Ok("Human intervention requested: captcha".to_string())
+                Ok(ToolOutcome::reply(
+                    "Human intervention requested: captcha".to_string(),
+                ))
             })
         };
 
@@ -1391,7 +1402,7 @@ mod tests {
         let control_for_pause = Arc::clone(&shared_control);
         let tool_executor = StaticToolExecutor::new().register("noop", move |_| {
             control_for_pause.request_pause();
-            Ok("ok".to_string())
+            Ok(ToolOutcome::reply("ok".to_string()))
         });
 
         let mut runtime = ConversationRuntime::new(
@@ -1470,7 +1481,7 @@ mod tests {
         let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
             cycle_count_clone.fetch_add(1, Ordering::SeqCst);
             control_for_tool.request_pause();
-            Ok("paused".to_string())
+            Ok(ToolOutcome::reply("paused".to_string()))
         });
 
         let mut runtime = ConversationRuntime::new(
@@ -1540,7 +1551,7 @@ mod tests {
         let control_for_tool = Arc::clone(&shared_control);
         let tool_executor = StaticToolExecutor::new().register("wait_for_human", move |_| {
             control_for_tool.request_pause();
-            Ok("paused".to_string())
+            Ok(ToolOutcome::reply("paused".to_string()))
         });
 
         let mut runtime = ConversationRuntime::new(
@@ -1612,7 +1623,7 @@ mod tests {
         let tool_executor = StaticToolExecutor::new().register("pause_tool", move |_| {
             control_for_tool.request_pause();
             control_for_tool.resume();
-            Ok("instant-resumed".to_string())
+            Ok(ToolOutcome::reply("instant-resumed".to_string()))
         });
 
         let mut runtime = ConversationRuntime::new(

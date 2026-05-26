@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use acrawl_core::ToolOutcome;
 use crawler::{CrawlerAgent, SharedApiClient, ToolRegistry};
 use runtime::{ControlState, ToolError, ToolExecutor};
 
@@ -58,7 +59,7 @@ impl CliToolExecutor {
 }
 
 impl ToolExecutor for CliToolExecutor {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError> {
+    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<ToolOutcome, ToolError> {
         if self
             .allowed_tools
             .as_ref()

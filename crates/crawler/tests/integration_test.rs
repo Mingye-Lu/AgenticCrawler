@@ -148,7 +148,8 @@ async fn crawler_agent_execute_dispatches_registered_tool() {
         .await
         .expect("page_map should execute successfully");
 
-    let parsed: Value = serde_json::from_str(&output).expect("tool output should be valid JSON");
+    let parsed: Value =
+        serde_json::from_str(&output.text).expect("tool output should be valid JSON");
     assert!(
         parsed["headings"].is_array(),
         "page_map should return headings array"
@@ -179,7 +180,8 @@ async fn navigate_markdown_end_to_end() {
         .await
         .expect("navigate should execute successfully");
 
-    let parsed: Value = serde_json::from_str(&output).expect("tool output should be valid JSON");
+    let parsed: Value =
+        serde_json::from_str(&output.text).expect("tool output should be valid JSON");
     assert!(
         parsed["content"]
             .as_str()
@@ -207,7 +209,8 @@ async fn interaction_tool_returns_page_state() {
         .await
         .expect("click should execute successfully");
 
-    let parsed: Value = serde_json::from_str(&output).expect("tool output should be valid JSON");
+    let parsed: Value =
+        serde_json::from_str(&output.text).expect("tool output should be valid JSON");
     assert!(parsed.get("page_state").is_some());
     assert!(parsed["page_state"]["url"].is_string());
     assert!(parsed["page_state"]["title"].is_string());
@@ -222,7 +225,8 @@ async fn page_map_expanded_structure() {
         .await
         .expect("page_map should execute successfully");
 
-    let parsed: Value = serde_json::from_str(&output).expect("tool output should be valid JSON");
+    let parsed: Value =
+        serde_json::from_str(&output.text).expect("tool output should be valid JSON");
     for key in [
         "headings",
         "landmarks",

@@ -4,6 +4,7 @@ pub use acrawl_core::observer::RuntimeObserver;
 #[cfg(test)]
 mod tests {
     use acrawl_core::observer::RuntimeObserver;
+    use acrawl_core::{ToolEffect, ToolOutcome};
     use crate::conversation::{
         ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
         StaticToolExecutor,
@@ -16,6 +17,7 @@ mod tests {
     struct ObserverState {
         text_deltas: Vec<String>,
         tool_calls: Vec<(String, String, String)>,
+        tool_effects: Vec<String>,
         tool_results: Vec<(String, String, bool)>,
         turn_finished: Vec<Result<(), String>>,
         usages: Vec<TokenUsage>,
@@ -56,6 +58,14 @@ mod tests {
                 .push((name.to_string(), output.to_string(), is_error));
         }
 
+        fn on_tool_effect(&self, effect: &ToolEffect) {
+            self.state
+                .lock()
+                .expect("observer state lock")
+                .tool_effects
+                .push(format!("{effect:?}"));
+        }
+
         fn on_turn_finished(&mut self, result: &Result<(), String>) {
             self.state
                 .lock()
@@ -93,6 +103,9 @@ mod tests {
         observer.on_pause_ended();
         observer.on_tool_call_start("tool-1", "add", "2,2");
         observer.on_tool_result("add", "4", false);
+        observer.on_tool_effect(&ToolEffect::Pause {
+            reason: "user input required".to_string(),
+        });
         observer.on_system_message("system");
         observer.on_turn_finished(&Ok(()));
         observer.on_usage(&TokenUsage::default());
@@ -165,7 +178,8 @@ mod tests {
         let mut runtime = ConversationRuntime::new(
             Session::new(),
             ToolCallApiClient { calls: 0 },
-            StaticToolExecutor::new().register("echo", |input| Ok(format!("echo:{input}"))),
+            StaticToolExecutor::new()
+                .register("echo", |input| Ok(ToolOutcome::reply(format!("echo:{input}")))),
             vec!["system".to_string()],
         )
         .with_observer(Box::new(observer));
@@ -184,6 +198,67 @@ mod tests {
         assert_eq!(
             state.tool_results,
             vec![("echo".to_string(), "echo:payload".to_string(), false)]
+        );
+    }
+
+    struct ToolEffectApiClient {
+        calls: usize,
+    }
+
+    impl ApiClient for ToolEffectApiClient {
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.calls += 1;
+            match self.calls {
+                1 => Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "wait_for_human".to_string(),
+                        input: "payload".to_string(),
+                    },
+                    AssistantEvent::MessageStop,
+                ]),
+                2 => Ok(vec![
+                    AssistantEvent::TextDelta("done".to_string()),
+                    AssistantEvent::MessageStop,
+                ]),
+                _ => Err(RuntimeError::new("unexpected extra API call")),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_observer_receives_tool_effect() {
+        let state = Arc::new(Mutex::new(ObserverState::default()));
+        let observer = RecordingObserver::new(Arc::clone(&state));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            ToolEffectApiClient { calls: 0 },
+            StaticToolExecutor::new().register("wait_for_human", |_input| {
+                Ok(ToolOutcome::with_effect(
+                    "Human intervention requested: captcha".to_string(),
+                    ToolEffect::Pause {
+                        reason: "captcha".to_string(),
+                    },
+                ))
+            }),
+            vec!["system".to_string()],
+        )
+        .with_observer(Box::new(observer));
+
+        runtime.run_turn("use tool").await.expect("turn succeeds");
+
+        let state = state.lock().expect("observer state lock");
+        assert_eq!(
+            state.tool_effects,
+            vec!["Pause { reason: \"captcha\" }".to_string()]
+        );
+        assert_eq!(
+            state.tool_results,
+            vec![(
+                "wait_for_human".to_string(),
+                "Human intervention requested: captcha".to_string(),
+                false,
+            )]
         );
     }
 
@@ -229,6 +304,131 @@ mod tests {
                 cache_read_input_tokens: 0,
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn test_reply_outcome_does_not_trigger_on_tool_effect() {
+        let state = Arc::new(Mutex::new(ObserverState::default()));
+        let observer = RecordingObserver::new(Arc::clone(&state));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            ToolCallApiClient { calls: 0 },
+            StaticToolExecutor::new()
+                .register("echo", |input| Ok(ToolOutcome::reply(format!("echo:{input}")))),
+            vec!["system".to_string()],
+        )
+        .with_observer(Box::new(observer));
+
+        runtime.run_turn("use tool").await.expect("turn succeeds");
+
+        let state = state.lock().expect("observer state lock");
+        assert!(
+            state.tool_effects.is_empty(),
+            "ToolOutcome::reply should NOT trigger on_tool_effect"
+        );
+        assert_eq!(
+            state.tool_results,
+            vec![("echo".to_string(), "echo:payload".to_string(), false)]
+        );
+    }
+
+    struct MixedEffectApiClient {
+        calls: usize,
+    }
+
+    impl ApiClient for MixedEffectApiClient {
+        fn stream(&mut self, _request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.calls += 1;
+            match self.calls {
+                1 => Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: "tool-1".to_string(),
+                        name: "echo".to_string(),
+                        input: "hello".to_string(),
+                    },
+                    AssistantEvent::ToolUse {
+                        id: "tool-2".to_string(),
+                        name: "pause_tool".to_string(),
+                        input: "reason".to_string(),
+                    },
+                    AssistantEvent::MessageStop,
+                ]),
+                2 => Ok(vec![
+                    AssistantEvent::TextDelta("done".to_string()),
+                    AssistantEvent::MessageStop,
+                ]),
+                _ => Err(RuntimeError::new("unexpected extra API call")),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mixed_outcomes_only_effect_bearing_triggers_observer() {
+        let state = Arc::new(Mutex::new(ObserverState::default()));
+        let observer = RecordingObserver::new(Arc::clone(&state));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            MixedEffectApiClient { calls: 0 },
+            StaticToolExecutor::new()
+                .register("echo", |input| Ok(ToolOutcome::reply(format!("echo:{input}"))))
+                .register("pause_tool", |_input| {
+                    Ok(ToolOutcome::with_effect(
+                        "paused".to_string(),
+                        ToolEffect::Pause {
+                            reason: "needs input".to_string(),
+                        },
+                    ))
+                }),
+            vec!["system".to_string()],
+        )
+        .with_observer(Box::new(observer));
+
+        runtime.run_turn("use both").await.expect("turn succeeds");
+
+        let state = state.lock().expect("observer state lock");
+        assert_eq!(state.tool_effects.len(), 1);
+        assert_eq!(
+            state.tool_effects[0],
+            "Pause { reason: \"needs input\" }".to_string()
+        );
+        assert_eq!(state.tool_results.len(), 2);
+        assert_eq!(state.tool_results[0].0, "echo");
+        assert_eq!(state.tool_results[0].1, "echo:hello");
+        assert_eq!(state.tool_results[1].0, "pause_tool");
+        assert_eq!(state.tool_results[1].1, "paused");
+    }
+
+    #[tokio::test]
+    async fn test_tool_outcome_text_stored_in_session() {
+        let state = Arc::new(Mutex::new(ObserverState::default()));
+        let observer = RecordingObserver::new(Arc::clone(&state));
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            ToolEffectApiClient { calls: 0 },
+            StaticToolExecutor::new().register("wait_for_human", |_input| {
+                Ok(ToolOutcome::with_effect(
+                    "Human intervention requested: captcha".to_string(),
+                    ToolEffect::Pause {
+                        reason: "captcha".to_string(),
+                    },
+                ))
+            }),
+            vec!["system".to_string()],
+        )
+        .with_observer(Box::new(observer));
+
+        runtime.run_turn("use tool").await.expect("turn succeeds");
+
+        let state = state.lock().expect("observer state lock");
+        assert_eq!(
+            state.tool_results,
+            vec![(
+                "wait_for_human".to_string(),
+                "Human intervention requested: captcha".to_string(),
+                false,
+            )]
+        );
+        assert_eq!(state.tool_effects.len(), 1);
     }
 
     struct ErrorApiClient;

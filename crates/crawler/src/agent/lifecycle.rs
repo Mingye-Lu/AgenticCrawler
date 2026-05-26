@@ -454,8 +454,8 @@ mod tests {
         let result = handle.await.expect("task should complete");
         let output = result.expect("click should succeed through extension bridge");
         assert!(
-            output.contains("Clicked element: #submit"),
-            "unexpected output: {output}"
+            output.text.contains("Clicked element: #submit"),
+            "unexpected output: {output:?}"
         );
     }
 

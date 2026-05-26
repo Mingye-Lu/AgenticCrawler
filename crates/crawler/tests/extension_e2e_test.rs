@@ -103,8 +103,8 @@ async fn extension_bridge_e2e_tool_routes_through_websocket() {
     let result = handle.await.expect("task completes");
     let output = result.expect("click succeeds through extension bridge");
     assert!(
-        output.contains("Clicked element: #btn"),
-        "unexpected: {output}"
+        output.text.contains("Clicked element: #btn"),
+        "unexpected: {output:?}"
     );
 }
 
