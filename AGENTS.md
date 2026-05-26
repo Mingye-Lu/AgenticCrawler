@@ -26,7 +26,7 @@ The CLI reads LLM credentials from `~/.acrawl/credentials.json` (managed by `acr
 
 Five crates under `crates/`, compiled with `resolver = "2"`:
 
-- **acrawl-cli** — binary entry (`src/main.rs`), arg parsing, REPL (`src/tui/`), session management, provider selection. `src/app/` directory owns `LiveCli` and the provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`). `output_sink.rs` bridges runtime events to the UI. `markdown.rs` handles markdown/spinner rendering. `tool_format.rs` formats tool call output. `mcp_server.rs` is the built-in MCP server (JSON-RPC over stdio, 16 direct browser tools + `run_goal`). `mcp_install.rs` is the interactive IDE installer (`acrawl mcp install`).
+- **cli** — binary entry (`src/main.rs`), arg parsing, REPL (`src/tui/`), session management, provider selection. `src/app/` directory owns `LiveCli` and the provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`). `output_sink.rs` bridges runtime events to the UI. `markdown.rs` handles markdown/spinner rendering. `tool_format.rs` formats tool call output. `mcp_server.rs` is the built-in MCP server (JSON-RPC over stdio, 16 direct browser tools + `run_goal`). `mcp_install.rs` is the interactive IDE installer (`acrawl mcp install`).
 - **api** — HTTP + SSE clients for Anthropic (`client.rs`), OpenAI-compatible (`openai.rs`), and Codex OAuth (`codex.rs`). `sse.rs` is the shared streaming frame parser; `types.rs` holds the Anthropic message schema. `provider/registry.rs` and `provider/factory.rs` handle provider discovery and client construction.
 - **runtime** — `ConversationRuntime` (the core turn loop), `RuntimeObserver` trait for event callbacks, `Session` persistence, system-prompt builder, compaction, usage/pricing, OAuth PKCE, `observer.rs` for the observer trait, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/auth`, `/headed`, `/headless`, `/extension`, `/cloakbrowser`, `/debug`, `/version`, `/exit`). Knows which commands are safe to replay in `--resume`.
@@ -34,7 +34,7 @@ Five crates under `crates/`, compiled with `resolver = "2"`:
 
 ## Architecture: how a turn actually flows
 
-1. `acrawl-cli::app::LiveCli` builds a `ProviderClient` via `ProviderRegistry` from the persisted `CredentialStore` (`credentials.json`), plus a `ToolExecutor` backed by `crawler::ToolRegistry`.
+1. `cli::app::LiveCli` builds a `ProviderClient` via `ProviderRegistry` from the persisted `CredentialStore` (`credentials.json`), plus a `ToolExecutor` backed by `crawler::ToolRegistry`.
 2. `runtime::ConversationRuntime::run_turn` drives the loop: call `ApiClient::stream` → feed `AssistantEvent`s (text deltas, tool_use, usage, stop) → execute tools through `ToolExecutor` → append results → repeat until the model emits `MessageStop` with no tool calls or `MAX_STEPS` is hit. The runtime notifies a `RuntimeObserver` at each event (text deltas, tool calls, turn end); `OutputSink` (`StdoutSink` for non-interactive `prompt`/`--resume`, `ChannelSink` for TUI) implements this trait to bridge events to the UI.
 3. The crawler tool handlers (`crates/crawler/src/tools/*.rs`) take JSON input, consult `CrawlState`, and act through a `BrowserContext` that wraps either the `FetchRouter` (reqwest HTTP path) or the `PlaywrightBridge` (headless Chromium). The router auto-escalates from HTTP to the browser when JS is needed.
 4. The optional `--allowedTools` CLI flag restricts which tools are available; `CliToolExecutor` enforces this before execution. `ToolSpec` has no permission tier — all 21 tools are unrestricted by default.
@@ -78,7 +78,7 @@ Default model comes from the `default_model` field in the active provider's `Sto
 - **Always run `cargo fmt` before committing.** CI checks formatting with `cargo fmt --check` — commits that fail this check will be rejected.
 - `unsafe_code = "forbid"` at the workspace level — do not introduce `unsafe`.
 - Clippy `pedantic` is on as a warning; `module_name_repetitions`, `missing_panics_doc`, `missing_errors_doc` are explicitly allowed. New lint warnings should be fixed rather than suppressed locally unless there's a reason.
-- Tests that mutate process env (provider, model, workspace dir) must serialize with a `OnceLock<Mutex<()>>` guard, following the pattern in `acrawl-cli/src/main.rs` and `crates/runtime/src/lib.rs::test_env_lock`.
+- Tests that mutate process env (provider, model, workspace dir) must serialize with a `OnceLock<Mutex<()>>` guard, following the pattern in `cli/src/main.rs` and `crates/runtime/src/lib.rs::test_env_lock`.
 - Slash-command behavior is shared between the live REPL and `--resume`. When editing a slash command, check `resume_supported_slash_commands()` — the test `resume_supported_command_list_matches_expected_surface` pins the exact resume-safe set.
 - TUI popup/list UX baseline (applies to slash overlay + auth modal lists + similar list selectors):
   - Keep one blank line at the top of popup content.
