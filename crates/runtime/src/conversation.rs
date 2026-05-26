@@ -12,27 +12,14 @@ use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
 use tokio::time::{sleep, Duration};
 
+pub use acrawl_core::event::AssistantEvent;
+
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiRequest {
     pub system_prompt: Vec<String>,
     pub messages: Vec<ConversationMessage>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AssistantEvent {
-    TextDelta(String),
-    ToolUse {
-        id: String,
-        name: String,
-        input: String,
-    },
-    Reasoning {
-        data: String,
-    },
-    Usage(TokenUsage),
-    MessageStop,
 }
 
 pub trait ApiClient {

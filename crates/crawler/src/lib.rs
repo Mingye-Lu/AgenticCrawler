@@ -19,6 +19,7 @@ mod tools;
 mod url_claim;
 pub mod ws_server;
 
+pub use acrawl_core::ToolSpec;
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
 pub use browser::BrowserContext;
 pub use browser_backend::BrowserBackend;
@@ -42,15 +43,6 @@ pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};
 pub use ws_server::{
     generate_bridge_token, BridgeCommand, BridgeResponse, WsBridgeError, WsBridgeServer,
 };
-
-/// Specification for a single tool that the agent can invoke.
-pub struct ToolSpec {
-    pub name: &'static str,
-    pub description: &'static str,
-    pub input_schema: serde_json::Value,
-    /// Extended usage guidance rendered into the system prompt.
-    pub instructions: Option<&'static str>,
-}
 
 /// Returns the built-in tool specifications.
 #[must_use]

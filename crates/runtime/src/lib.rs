@@ -74,7 +74,8 @@ pub use settings::{
 };
 pub use update_check::{check_for_update, check_for_update_force, UpdateInfo};
 pub use usage::{
-    format_usd, pricing_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
+    estimate_cost_usd, estimate_cost_usd_with_pricing, format_usd, pricing_for_model, summary_lines,
+    summary_lines_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
 };
 
 #[cfg(test)]

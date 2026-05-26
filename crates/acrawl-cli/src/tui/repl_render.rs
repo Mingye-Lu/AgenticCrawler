@@ -38,8 +38,8 @@ pub(super) fn build_header_snapshot(cli: &LiveCli) -> HeaderSnapshot {
     let usage = cli.cumulative_usage();
     let pricing = pricing_for_model(cli.model_name());
     let estimate = pricing.map_or_else(
-        || usage.estimate_cost_usd(),
-        |model_pricing| usage.estimate_cost_usd_with_pricing(model_pricing),
+        || runtime::estimate_cost_usd(usage),
+        |model_pricing| runtime::estimate_cost_usd_with_pricing(usage, model_pricing),
     );
     HeaderSnapshot {
         model: cli.model_name().to_string(),

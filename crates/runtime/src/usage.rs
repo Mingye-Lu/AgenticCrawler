@@ -1,3 +1,4 @@
+pub use acrawl_core::message::TokenUsage;
 use crate::session::Session;
 
 const DEFAULT_INPUT_COST_PER_MILLION: f64 = 15.0;
@@ -23,14 +24,6 @@ impl ModelPricing {
             cache_read_cost_per_million: DEFAULT_CACHE_READ_COST_PER_MILLION,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct TokenUsage {
-    pub input_tokens: u32,
-    pub output_tokens: u32,
-    pub cache_creation_input_tokens: u32,
-    pub cache_read_input_tokens: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -76,78 +69,68 @@ pub fn pricing_for_model(model: &str) -> Option<ModelPricing> {
     None
 }
 
-impl TokenUsage {
-    #[must_use]
-    pub fn total_tokens(self) -> u32 {
-        self.input_tokens
-            + self.output_tokens
-            + self.cache_creation_input_tokens
-            + self.cache_read_input_tokens
-    }
+#[must_use]
+pub fn estimate_cost_usd(usage: TokenUsage) -> UsageCostEstimate {
+    estimate_cost_usd_with_pricing(usage, ModelPricing::default_sonnet_tier())
+}
 
-    #[must_use]
-    pub fn estimate_cost_usd(self) -> UsageCostEstimate {
-        self.estimate_cost_usd_with_pricing(ModelPricing::default_sonnet_tier())
+#[must_use]
+pub fn estimate_cost_usd_with_pricing(usage: TokenUsage, pricing: ModelPricing) -> UsageCostEstimate {
+    UsageCostEstimate {
+        input_cost_usd: cost_for_tokens(usage.input_tokens, pricing.input_cost_per_million),
+        output_cost_usd: cost_for_tokens(usage.output_tokens, pricing.output_cost_per_million),
+        cache_creation_cost_usd: cost_for_tokens(
+            usage.cache_creation_input_tokens,
+            pricing.cache_creation_cost_per_million,
+        ),
+        cache_read_cost_usd: cost_for_tokens(
+            usage.cache_read_input_tokens,
+            pricing.cache_read_cost_per_million,
+        ),
     }
+}
 
-    #[must_use]
-    pub fn estimate_cost_usd_with_pricing(self, pricing: ModelPricing) -> UsageCostEstimate {
-        UsageCostEstimate {
-            input_cost_usd: cost_for_tokens(self.input_tokens, pricing.input_cost_per_million),
-            output_cost_usd: cost_for_tokens(self.output_tokens, pricing.output_cost_per_million),
-            cache_creation_cost_usd: cost_for_tokens(
-                self.cache_creation_input_tokens,
-                pricing.cache_creation_cost_per_million,
-            ),
-            cache_read_cost_usd: cost_for_tokens(
-                self.cache_read_input_tokens,
-                pricing.cache_read_cost_per_million,
-            ),
-        }
-    }
+#[must_use]
+pub fn summary_lines(usage: TokenUsage, label: &str) -> Vec<String> {
+    summary_lines_for_model(usage, label, None)
+}
 
-    #[must_use]
-    pub fn summary_lines(self, label: &str) -> Vec<String> {
-        self.summary_lines_for_model(label, None)
-    }
-
-    #[must_use]
-    pub fn summary_lines_for_model(self, label: &str, model: Option<&str>) -> Vec<String> {
-        let pricing = model.and_then(pricing_for_model);
-        let cost = pricing.map_or_else(
-            || self.estimate_cost_usd(),
-            |pricing| self.estimate_cost_usd_with_pricing(pricing),
-        );
-        let model_suffix =
-            model.map_or_else(String::new, |model_name| format!(" model={model_name}"));
-        let pricing_suffix = if pricing.is_some() {
-            ""
-        } else if model.is_some() {
-            " pricing=estimated-default"
-        } else {
-            ""
-        };
-        vec![
-            format!(
-                "{label}: total_tokens={} input={} output={} cache_write={} cache_read={} estimated_cost={}{}{}",
-                self.total_tokens(),
-                self.input_tokens,
-                self.output_tokens,
-                self.cache_creation_input_tokens,
-                self.cache_read_input_tokens,
-                format_usd(cost.total_cost_usd()),
-                model_suffix,
-                pricing_suffix,
-            ),
-            format!(
-                "  cost breakdown: input={} output={} cache_write={} cache_read={}",
-                format_usd(cost.input_cost_usd),
-                format_usd(cost.output_cost_usd),
-                format_usd(cost.cache_creation_cost_usd),
-                format_usd(cost.cache_read_cost_usd),
-            ),
-        ]
-    }
+#[must_use]
+pub fn summary_lines_for_model(usage: TokenUsage, label: &str, model: Option<&str>) -> Vec<String> {
+    let pricing = model.and_then(pricing_for_model);
+    let cost = pricing.map_or_else(
+        || estimate_cost_usd(usage),
+        |pricing| estimate_cost_usd_with_pricing(usage, pricing),
+    );
+    let model_suffix =
+        model.map_or_else(String::new, |model_name| format!(" model={model_name}"));
+    let pricing_suffix = if pricing.is_some() {
+        ""
+    } else if model.is_some() {
+        " pricing=estimated-default"
+    } else {
+        ""
+    };
+    vec![
+        format!(
+            "{label}: total_tokens={} input={} output={} cache_write={} cache_read={} estimated_cost={}{}{}",
+            usage.total_tokens(),
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_creation_input_tokens,
+            usage.cache_read_input_tokens,
+            format_usd(cost.total_cost_usd()),
+            model_suffix,
+            pricing_suffix,
+        ),
+        format!(
+            "  cost breakdown: input={} output={} cache_write={} cache_read={}",
+            format_usd(cost.input_cost_usd),
+            format_usd(cost.output_cost_usd),
+            format_usd(cost.cache_creation_cost_usd),
+            format_usd(cost.cache_read_cost_usd),
+        ),
+    ]
 }
 
 fn cost_for_tokens(tokens: u32, usd_per_million_tokens: f64) -> f64 {
@@ -210,7 +193,10 @@ impl UsageTracker {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_usd, pricing_for_model, TokenUsage, UsageTracker};
+    use super::{
+        estimate_cost_usd, estimate_cost_usd_with_pricing, format_usd, pricing_for_model,
+        summary_lines_for_model, TokenUsage, UsageTracker,
+    };
     use crate::session::{ContentBlock, ConversationMessage, MessageRole, Session};
 
     #[test]
@@ -246,10 +232,10 @@ mod tests {
             cache_read_input_tokens: 200_000,
         };
 
-        let cost = usage.estimate_cost_usd();
+        let cost = estimate_cost_usd(usage);
         assert_eq!(format_usd(cost.input_cost_usd), "$15.0000");
         assert_eq!(format_usd(cost.output_cost_usd), "$37.5000");
-        let lines = usage.summary_lines_for_model("usage", Some("claude-sonnet-4-20250514"));
+        let lines = summary_lines_for_model(usage, "usage", Some("claude-sonnet-4-20250514"));
         assert!(lines[0].contains("estimated_cost=$54.6750"));
         assert!(lines[0].contains("model=claude-sonnet-4-20250514"));
         assert!(lines[1].contains("cache_read=$0.3000"));
@@ -266,8 +252,8 @@ mod tests {
 
         let haiku = pricing_for_model("claude-haiku-4-5-20251001").expect("haiku pricing");
         let opus = pricing_for_model("claude-opus-4-6").expect("opus pricing");
-        let haiku_cost = usage.estimate_cost_usd_with_pricing(haiku);
-        let opus_cost = usage.estimate_cost_usd_with_pricing(opus);
+        let haiku_cost = estimate_cost_usd_with_pricing(usage, haiku);
+        let opus_cost = estimate_cost_usd_with_pricing(usage, opus);
         assert_eq!(format_usd(haiku_cost.total_cost_usd()), "$3.5000");
         assert_eq!(format_usd(opus_cost.total_cost_usd()), "$52.5000");
     }
@@ -280,7 +266,7 @@ mod tests {
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
         };
-        let lines = usage.summary_lines_for_model("usage", Some("custom-model"));
+        let lines = summary_lines_for_model(usage, "usage", Some("custom-model"));
         assert!(lines[0].contains("pricing=estimated-default"));
     }
 

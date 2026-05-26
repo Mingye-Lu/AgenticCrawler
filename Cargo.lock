@@ -6,6 +6,7 @@ version = 4
 name = "acrawl-cli"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "api",
  "arboard",
  "commands",
@@ -24,6 +25,14 @@ dependencies = [
  "tokio",
  "unicode-width",
  "zeroize",
+]
+
+[[package]]
+name = "acrawl-core"
+version = "0.6.4"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -66,6 +75,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "api"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "aws-credential-types",
  "aws-sigv4",
  "azure_identity",
@@ -466,6 +476,7 @@ dependencies = [
 name = "commands"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "runtime",
 ]
 
@@ -581,6 +592,7 @@ dependencies = [
 name = "crawler"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "async-trait",
  "base64",
  "csv",
@@ -2799,6 +2811,7 @@ dependencies = [
 name = "runtime"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "getrandom 0.2.17",
  "reqwest 0.12.28",
  "serde",
