@@ -1100,4 +1100,321 @@ mod tests {
         let output = String::from_utf8_lossy(&out);
         assert!(output.contains("Working"));
     }
+
+    fn md_to_ansi(md: &str) -> String {
+        let renderer = TerminalRenderer::new();
+        renderer.markdown_to_ansi(md)
+    }
+
+    #[test]
+    fn golden_h1_bold_underlined() {
+        let ansi = md_to_ansi("# Hello\n");
+        // H1 style: BOLD + UNDERLINED
+        assert!(
+            ansi.contains("\x1b[1m"),
+            "H1 must contain BOLD escape, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("\x1b[4m"),
+            "H1 must contain UNDERLINED escape, got: {ansi:?}"
+        );
+        // Heading prefix preserved in output
+        assert!(
+            ansi.contains("# Hello"),
+            "H1 must contain '# Hello', got: {ansi:?}"
+        );
+        // Exact golden output: styled prefix + text, single reset
+        assert_eq!(ansi, "\x1b[1m\x1b[4m# Hello\x1b[0m");
+    }
+
+    #[test]
+    fn golden_h2_bold_only() {
+        let ansi = md_to_ansi("## World\n");
+        // H2 style: BOLD only (no underline, no italic)
+        assert!(
+            ansi.contains("\x1b[1m"),
+            "H2 must contain BOLD, got: {ansi:?}"
+        );
+        assert!(
+            !ansi.contains("\x1b[4m"),
+            "H2 must NOT contain UNDERLINED, got: {ansi:?}"
+        );
+        assert!(
+            !ansi.contains("\x1b[3m"),
+            "H2 must NOT contain ITALIC, got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[1m## World\x1b[0m");
+    }
+
+    #[test]
+    fn golden_h3_bold_italic() {
+        let ansi = md_to_ansi("### Third\n");
+        // H3 style: BOLD + ITALIC
+        assert!(
+            ansi.contains("\x1b[1m"),
+            "H3 must contain BOLD, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("\x1b[3m"),
+            "H3 must contain ITALIC, got: {ansi:?}"
+        );
+        assert!(
+            !ansi.contains("\x1b[4m"),
+            "H3 must NOT contain UNDERLINED, got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[1m\x1b[3m### Third\x1b[0m");
+    }
+
+    #[test]
+    fn golden_bold_text() {
+        let ansi = md_to_ansi("**bold**\n");
+        // Bold text uses BOLD modifier
+        assert!(
+            ansi.contains("\x1b[1m"),
+            "bold must contain BOLD escape, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("bold"),
+            "must contain text 'bold', got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[1mbold\x1b[0m");
+    }
+
+    #[test]
+    fn golden_italic_text() {
+        let ansi = md_to_ansi("*italic*\n");
+        // Italic text uses ITALIC modifier
+        assert!(
+            ansi.contains("\x1b[3m"),
+            "italic must contain ITALIC escape, got: {ansi:?}"
+        );
+        assert!(
+            !ansi.contains("\x1b[1m"),
+            "italic must NOT contain BOLD, got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[3mitalic\x1b[0m");
+    }
+
+    #[test]
+    fn golden_inline_code_cyan() {
+        let ansi = md_to_ansi("`code`\n");
+        // Inline code renders with Cyan foreground (color code 36)
+        assert!(
+            ansi.contains("\x1b[36m"),
+            "inline code must contain Cyan fg \\x1b[36m, got: {ansi:?}"
+        );
+        assert!(ansi.contains("code"), "must contain text, got: {ansi:?}");
+        assert_eq!(ansi, "\x1b[36mcode\x1b[0m");
+    }
+
+    #[test]
+    fn golden_fenced_code_block_cyan() {
+        let ansi = md_to_ansi("```\nhello world\n```\n");
+        // Fenced code blocks render with Cyan foreground
+        assert!(
+            ansi.contains("\x1b[36m"),
+            "fenced code must contain Cyan fg, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("hello world"),
+            "must contain code text, got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[36mhello world\x1b[0m");
+    }
+
+    #[test]
+    fn golden_fenced_code_block_with_language() {
+        let ansi = md_to_ansi("```rust\nfn main() {}\n```\n");
+        // Language-tagged fenced blocks also render Cyan
+        assert!(
+            ansi.contains("\x1b[36m"),
+            "tagged code must contain Cyan, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("fn main() {}"),
+            "must preserve code content, got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[36mfn main() {}\x1b[0m");
+    }
+
+    #[test]
+    fn golden_link_cyan_underlined() {
+        let ansi = md_to_ansi("[click here](https://example.com)\n");
+        // Links render with Cyan fg + UNDERLINED
+        assert!(
+            ansi.contains("\x1b[36m"),
+            "link must contain Cyan fg, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("\x1b[4m"),
+            "link must contain UNDERLINED, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("click here"),
+            "link text must be present, got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[36m\x1b[4mclick here\x1b[0m");
+    }
+
+    #[test]
+    fn golden_unordered_list() {
+        let ansi = md_to_ansi("- one\n- two\n");
+        let plain = strip_ansi(&ansi);
+        // Unordered list uses "- " prefix with default style
+        assert!(
+            plain.contains("- one"),
+            "must contain '- one', got: {plain:?}"
+        );
+        assert!(
+            plain.contains("- two"),
+            "must contain '- two', got: {plain:?}"
+        );
+        // Markers have no color styling (default style emits trailing reset only)
+        assert!(
+            !ansi.contains("\x1b[94m"),
+            "unordered list must NOT have LightBlue markers, got: {ansi:?}"
+        );
+    }
+
+    #[test]
+    fn golden_ordered_list_lightblue_markers() {
+        let ansi = md_to_ansi("1. first\n2. second\n");
+        // Ordered list markers are colored LightBlue (ANSI code 94)
+        assert!(
+            ansi.contains("\x1b[94m"),
+            "ordered list must use LightBlue (94) for markers, got: {ansi:?}"
+        );
+        // Verify marker text
+        assert!(
+            ansi.contains("1. "),
+            "must contain '1. ' marker, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("2. "),
+            "must contain '2. ' marker, got: {ansi:?}"
+        );
+        // Content text follows after reset
+        let plain = strip_ansi(&ansi);
+        assert!(plain.contains("first"), "got: {plain:?}");
+        assert!(plain.contains("second"), "got: {plain:?}");
+    }
+
+    #[test]
+    fn golden_table_dim_borders() {
+        let ansi = md_to_ansi("text\n\n| A | B |\n|---|---|\n| 1 | 2 |\n");
+        // Table borders use DIM modifier (ANSI code 2)
+        assert!(
+            ansi.contains("\x1b[2m"),
+            "table must use DIM for borders, got: {ansi:?}"
+        );
+        // Box-drawing characters present
+        assert!(
+            ansi.contains('┌'),
+            "table must have top-left corner, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains('┘'),
+            "table must have bottom-right corner, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains('│'),
+            "table must have vertical borders, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains('─'),
+            "table must have horizontal borders, got: {ansi:?}"
+        );
+        // Cell content preserved
+        let plain = strip_ansi(&ansi);
+        assert!(plain.contains('1'), "cell 1 missing, got: {plain:?}");
+        assert!(plain.contains('2'), "cell 2 missing, got: {plain:?}");
+    }
+
+    #[test]
+    fn golden_nested_bold_in_italic() {
+        let ansi = md_to_ansi("*italic **and bold***\n");
+        // Contains ITALIC for outer
+        assert!(
+            ansi.contains("\x1b[3m"),
+            "must contain ITALIC, got: {ansi:?}"
+        );
+        // Contains BOLD for nested
+        assert!(
+            ansi.contains("\x1b[1m"),
+            "must contain BOLD for nested, got: {ansi:?}"
+        );
+        // All text present
+        let plain = strip_ansi(&ansi);
+        assert!(plain.contains("italic"), "got: {plain:?}");
+        assert!(plain.contains("and bold"), "got: {plain:?}");
+    }
+
+    #[test]
+    fn golden_blockquote_green_prefix() {
+        let ansi = md_to_ansi("> quoted text\n");
+        // Block quotes use Green foreground (ANSI 32) for the "> " prefix
+        assert!(
+            ansi.contains("\x1b[32m"),
+            "blockquote prefix must be Green (32), got: {ansi:?}"
+        );
+        let plain = strip_ansi(&ansi);
+        assert!(
+            plain.contains("> "),
+            "must show '> ' prefix, got: {plain:?}"
+        );
+        assert!(
+            plain.contains("quoted text"),
+            "must contain text, got: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn golden_horizontal_rule_dim() {
+        let ansi = md_to_ansi("---\n");
+        // Horizontal rules render as repeated "─" with DIM
+        assert!(
+            ansi.contains("\x1b[2m"),
+            "rule must use DIM, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("─"),
+            "rule must use box-drawing dash, got: {ansi:?}"
+        );
+        // Rule is 40 chars wide
+        let plain = strip_ansi(&ansi);
+        let dashes = plain.chars().filter(|&c| c == '─').count();
+        assert_eq!(dashes, 40, "rule must be 40 dashes, got {dashes}");
+    }
+
+    #[test]
+    fn golden_strikethrough() {
+        let ansi = md_to_ansi("~~struck~~\n");
+        // Strikethrough uses CROSSED_OUT (ANSI 9)
+        assert!(
+            ansi.contains("\x1b[9m"),
+            "strikethrough must use CROSSED_OUT (9), got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("struck"),
+            "text must be present, got: {ansi:?}"
+        );
+        assert_eq!(ansi, "\x1b[9mstruck\x1b[0m");
+    }
+
+    #[test]
+    fn golden_mixed_paragraph_resets_between_styles() {
+        let ansi = md_to_ansi("normal **bold** normal\n");
+        // After bold text, reset is emitted before returning to normal
+        assert!(
+            ansi.contains("\x1b[0m"),
+            "must contain resets, got: {ansi:?}"
+        );
+        assert!(
+            ansi.contains("\x1b[1m"),
+            "bold section present, got: {ansi:?}"
+        );
+        // Structure: unstyled "normal " → BOLD "bold" → reset → unstyled " normal" → reset
+        let plain = strip_ansi(&ansi);
+        assert_eq!(plain, "normal bold normal");
+    }
 }
