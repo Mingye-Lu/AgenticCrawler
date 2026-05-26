@@ -376,6 +376,9 @@ pub(super) struct ReplTuiState {
     /// paste is applied exactly once.
     ctrl_v_echo_remaining: usize,
     ctrl_v_echo_deadline: Option<Instant>,
+    /// After an immediate clipboard paste, render the preview once before
+    /// coalescing the terminal's echoed key stream.
+    defer_ctrl_v_echo_drain_until_redraw: bool,
     /// Buffer for a possible plain streamed paste on terminals that never emit
     /// a distinct Ctrl+V key event and instead deliver clipboard text as a raw
     /// `Char`/`Enter` stream.
@@ -452,6 +455,7 @@ impl ReplTuiState {
             force_next_paste_burst_key: false,
             ctrl_v_echo_remaining: 0,
             ctrl_v_echo_deadline: None,
+            defer_ctrl_v_echo_drain_until_redraw: false,
             stream_paste_probe: String::new(),
             stream_paste_deadline: None,
             stream_paste_clipboard: None,
@@ -1239,6 +1243,11 @@ impl ReplTuiState {
     fn clear_ctrl_v_echo_swallow(&mut self) {
         self.ctrl_v_echo_remaining = 0;
         self.ctrl_v_echo_deadline = None;
+        self.defer_ctrl_v_echo_drain_until_redraw = false;
+    }
+
+    fn should_defer_ctrl_v_echo_drain_until_redraw(&self) -> bool {
+        self.defer_ctrl_v_echo_drain_until_redraw && self.ctrl_v_echo_remaining > 0
     }
 
     fn drain_plain_streamed_paste_queue(&mut self) -> io::Result<usize> {
@@ -1355,6 +1364,7 @@ impl ReplTuiState {
         }
         self.ctrl_v_echo_remaining = remaining;
         self.ctrl_v_echo_deadline = Some(now + Duration::from_millis(500));
+        self.defer_ctrl_v_echo_drain_until_redraw = true;
     }
 
     fn should_swallow_ctrl_v_echo_key(&mut self, key: KeyCode, now: Instant) -> bool {
@@ -3873,7 +3883,9 @@ fn run_loop(
 
         state.drain_events(ui_rx);
         state.reconcile_child_view_mode();
-        state.drain_available_plain_streamed_paste_queue()?;
+        if !state.should_defer_ctrl_v_echo_drain_until_redraw() {
+            state.drain_available_plain_streamed_paste_queue()?;
+        }
         state.drain_ignored_key_events()?;
 
         if let Some(rx) = state.update_rx.as_mut() {
@@ -3931,6 +3943,7 @@ fn run_loop(
                 modal.draw(frame, frame.area());
             }
         })?;
+        state.defer_ctrl_v_echo_drain_until_redraw = false;
 
         if let Some(ref mut modal) = state.active_modal {
             modal.process_loading();
@@ -5216,6 +5229,20 @@ mod tests {
             s.pending_events.front(),
             Some(Event::Key(key)) if key.code == KeyCode::Down && key.kind == KeyEventKind::Press
         ));
+    }
+
+    #[test]
+    fn ctrl_v_echo_drain_defers_until_first_redraw() {
+        let mut s = test_state();
+        s.arm_ctrl_v_echo_swallow("abcdef", Instant::now());
+
+        assert!(s.should_defer_ctrl_v_echo_drain_until_redraw());
+
+        s.defer_ctrl_v_echo_drain_until_redraw = false;
+        assert!(!s.should_defer_ctrl_v_echo_drain_until_redraw());
+
+        s.clear_ctrl_v_echo_swallow();
+        assert!(!s.defer_ctrl_v_echo_drain_until_redraw);
     }
 
     #[test]
