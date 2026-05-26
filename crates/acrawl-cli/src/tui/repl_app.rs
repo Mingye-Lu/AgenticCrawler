@@ -537,13 +537,12 @@ impl ReplTuiState {
             .find(|(_, r)| r.end == self.input.byte_cursor)
             .map(|(i, r)| (*i, r.clone()))
         {
-            let del_end = if self.input.text.len() > r.end
-                && self.input.text.as_bytes()[r.end] == b' '
-            {
-                r.end + 1
-            } else {
-                r.end
-            };
+            let del_end =
+                if self.input.text.len() > r.end && self.input.text.as_bytes()[r.end] == b' ' {
+                    r.end + 1
+                } else {
+                    r.end
+                };
             self.input.text.replace_range(r.start..del_end, "");
             self.input.pastes.remove(idx);
             self.input.byte_cursor = r.start;
@@ -570,7 +569,11 @@ impl ReplTuiState {
             }
             i -= 1;
         }
-        let del_start = if i < chars_before.len() { chars_before[i].0 } else { bc };
+        let del_start = if i < chars_before.len() {
+            chars_before[i].0
+        } else {
+            bc
+        };
         if del_start == bc {
             return;
         }
@@ -740,7 +743,9 @@ impl ReplTuiState {
         let placeholder = format_paste_placeholder(id, count_lines(raw));
         let to_insert = format!("{placeholder} ");
 
-        self.input.text.insert_str(self.input.byte_cursor, &to_insert);
+        self.input
+            .text
+            .insert_str(self.input.byte_cursor, &to_insert);
         let char_count = to_insert.chars().count();
         self.input.cursor = self.input.cursor.saturating_add(char_count);
         self.input.byte_cursor = self.input.byte_cursor.saturating_add(to_insert.len());
@@ -778,8 +783,7 @@ impl ReplTuiState {
     /// for each `\n` in a paste are discarded for the next 100 ms so they
     /// don't trigger an accidental send.
     fn arm_paste_enter_suppression(&mut self) {
-        self.selection.suppress_paste_until =
-            Some(Instant::now() + Duration::from_millis(100));
+        self.selection.suppress_paste_until = Some(Instant::now() + Duration::from_millis(100));
     }
 
     /// Maximum gap (ms) between consecutive keystrokes considered a paste burst.
@@ -854,8 +858,11 @@ impl ReplTuiState {
         // Build a sorted (byte_offset, char_index) table in one pass; then use
         // binary search per range — O(n) build, O(log n) per lookup.
         let text = &self.input.text;
-        let mut byte_to_char: Vec<(usize, usize)> =
-            text.char_indices().enumerate().map(|(ci, (bi, _))| (bi, ci)).collect();
+        let mut byte_to_char: Vec<(usize, usize)> = text
+            .char_indices()
+            .enumerate()
+            .map(|(ci, (bi, _))| (bi, ci))
+            .collect();
         let total_chars = byte_to_char.len();
         byte_to_char.push((text.len(), total_chars));
 
@@ -904,13 +911,12 @@ impl ReplTuiState {
                 .find(|(_, r)| r.end == self.input.byte_cursor)
                 .map(|(i, r)| (*i, r.clone()))
             {
-                let del_end = if self.input.text.len() > r.end
-                    && self.input.text.as_bytes()[r.end] == b' '
-                {
-                    r.end + 1
-                } else {
-                    r.end
-                };
+                let del_end =
+                    if self.input.text.len() > r.end && self.input.text.as_bytes()[r.end] == b' ' {
+                        r.end + 1
+                    } else {
+                        r.end
+                    };
                 self.input.text.replace_range(r.start..del_end, "");
                 self.input.pastes.remove(idx);
                 self.input.byte_cursor = r.start;
@@ -961,13 +967,12 @@ impl ReplTuiState {
                 .find(|(_, r)| r.start == self.input.byte_cursor)
                 .map(|(i, r)| (*i, r.clone()))
             {
-                let del_end = if self.input.text.len() > r.end
-                    && self.input.text.as_bytes()[r.end] == b' '
-                {
-                    r.end + 1
-                } else {
-                    r.end
-                };
+                let del_end =
+                    if self.input.text.len() > r.end && self.input.text.as_bytes()[r.end] == b' ' {
+                        r.end + 1
+                    } else {
+                        r.end
+                    };
                 self.input.text.replace_range(r.start..del_end, "");
                 self.input.pastes.remove(idx);
                 // byte_cursor stays at r.start; char cursor stays the same.
@@ -4319,15 +4324,21 @@ mod tests {
         s.flush_paste_burst();
 
         // Full multi-line text now in input.text; no auto-send happened.
-        assert_eq!(s.input.text, "ab\ncd",
-            "all pasted content should land in input.text, with the newline preserved");
-        assert!(s.paste_burst_chars.is_empty(),
-            "burst buffer drained after flush");
+        assert_eq!(
+            s.input.text, "ab\ncd",
+            "all pasted content should land in input.text, with the newline preserved"
+        );
+        assert!(
+            s.paste_burst_chars.is_empty(),
+            "burst buffer drained after flush"
+        );
         // CRITICAL: post-paste suppression must NOT be armed by the burst flush.
         // If it were, the 100 ms window would eat subsequent paste characters,
         // truncating long multi-line pastes (the bug this regression covers).
-        assert!(s.selection.suppress_paste_until.is_none(),
-            "burst flush must not arm Enter suppression");
+        assert!(
+            s.selection.suppress_paste_until.is_none(),
+            "burst flush must not arm Enter suppression"
+        );
     }
 
     /// E2E: long keystroke-paste hits the mask threshold via the burst flush.
@@ -4351,8 +4362,10 @@ mod tests {
         s.flush_paste_burst();
 
         // The 199-char burst above the 150-byte threshold → masked.
-        assert!(s.input.text.contains("[#1 Pasted"),
-            "burst above threshold should flush through the mask path");
+        assert!(
+            s.input.text.contains("[#1 Pasted"),
+            "burst above threshold should flush through the mask path"
+        );
         // Single PasteEntry recorded with the full 199-char content.
         assert_eq!(s.input.pastes.len(), 1);
         assert_eq!(s.input.pastes[0].content.len(), 199);
@@ -4415,19 +4428,24 @@ mod tests {
         s.last_key_time = Some(now - std::time::Duration::from_millis(5));
         let should_flush_recent = !s.paste_burst_chars.is_empty()
             && s.last_key_time.is_some_and(|t| {
-                t.elapsed() > std::time::Duration::from_millis(
-                    super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
-                )
+                t.elapsed()
+                    > std::time::Duration::from_millis(
+                        super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
+                    )
             });
-        assert!(!should_flush_recent, "must not flush while burst is still active");
+        assert!(
+            !should_flush_recent,
+            "must not flush while burst is still active"
+        );
 
         // Idle past threshold → flush.
         s.last_key_time = Some(now - std::time::Duration::from_millis(100));
         let should_flush_idle = !s.paste_burst_chars.is_empty()
             && s.last_key_time.is_some_and(|t| {
-                t.elapsed() > std::time::Duration::from_millis(
-                    super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
-                )
+                t.elapsed()
+                    > std::time::Duration::from_millis(
+                        super::ReplTuiState::PASTE_BURST_THRESHOLD_MS,
+                    )
             });
         assert!(should_flush_idle, "must flush once the burst has gone idle");
     }
@@ -4457,7 +4475,10 @@ mod tests {
         s.input.cursor = 5;
         s.input.byte_cursor = 5;
         s.flush_paste_burst();
-        assert_eq!(s.input.text, "hello", "empty buffer flush must not modify text");
+        assert_eq!(
+            s.input.text, "hello",
+            "empty buffer flush must not modify text"
+        );
     }
 
     #[test]
