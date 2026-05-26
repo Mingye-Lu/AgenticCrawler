@@ -1,18 +1,18 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::{ToolEffect, ToolError};
+use crate::{ToolEffect, ToolExecutionError};
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
 
     let url = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?
         .go_back()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let page_state = super::feedback::post_action_page_state(browser).await;
 
@@ -39,3 +39,4 @@ mod tests {
         assert!(input.is_null());
     }
 }
+

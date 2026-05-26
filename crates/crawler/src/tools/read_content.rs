@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::{CrawlError, ToolEffect, ToolError};
+use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const DEFAULT_MAX_CHARS: usize = 10_000;
 const MAX_CHARS_CEILING: usize = 100_000;
@@ -33,16 +33,16 @@ fn parse_input(
     Ok((heading, selector, offset, max_chars))
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let (heading, selector, offset, max_chars) = parse_input(input)?;
     let mut bridge = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
     let result = bridge
         .read_content(heading.as_deref(), selector.as_deref(), offset, max_chars)
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
     Ok(ToolEffect::reply_json(&result))
 }
 
@@ -101,3 +101,4 @@ mod tests {
         assert_eq!(max_chars, MAX_CHARS_CEILING);
     }
 }
+

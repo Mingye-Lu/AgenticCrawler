@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::{ToolEffect, ToolError};
+use crate::{ToolEffect, ToolExecutionError};
 
-pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolError> + Send + Sync>;
+pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
 const ASYNC_TOOLS: &[&str] = &[
     "navigate",
@@ -51,7 +51,7 @@ impl ToolRegistry {
             let tool_name = name.to_string();
             registry.register(
                 name,
-                Box::new(move |_| Err(ToolError::requires_async(tool_name.clone()))),
+                Box::new(move |_| Err(ToolExecutionError::requires_async(tool_name.clone()))),
             );
         }
         registry.register("fork", Box::new(crate::tools::fork::execute));
@@ -108,7 +108,7 @@ impl ToolRegistry {
         name: &str,
         input: &Value,
         browser: &mut BrowserContext,
-    ) -> Result<ToolEffect, ToolError> {
+    ) -> Result<ToolEffect, ToolExecutionError> {
         match name {
             "navigate" => crate::tools::navigate::execute(input, browser).await,
             "click" => crate::tools::click::execute(input, browser).await,
@@ -130,7 +130,7 @@ impl ToolRegistry {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
                 } else {
-                    Err(ToolError::new(format!("unknown tool: `{name}`")))
+                    Err(ToolExecutionError::new(format!("unknown tool: `{name}`")))
                 }
             }
         }

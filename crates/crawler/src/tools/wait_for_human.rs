@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::{ToolEffect, ToolError};
+use crate::{ToolEffect, ToolExecutionError};
 
 #[derive(Debug)]
 struct WaitForHumanInput {
@@ -23,9 +23,9 @@ fn parse_input(input: &Value) -> Result<WaitForHumanInput, crate::CrawlError> {
     })
 }
 
-pub fn execute(input: &Value, is_interactive: bool) -> Result<ToolEffect, ToolError> {
+pub fn execute(input: &Value, is_interactive: bool) -> Result<ToolEffect, ToolExecutionError> {
     if !is_interactive {
-        return Err(ToolError::new(
+        return Err(ToolExecutionError::new(
             "wait_for_human is only available in an interactive TUI session \
              (not in `prompt` or `--resume`)."
                 .to_string(),
@@ -91,3 +91,4 @@ mod tests {
         assert!(err.to_string().contains("empty"));
     }
 }
+

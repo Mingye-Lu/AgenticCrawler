@@ -1,22 +1,22 @@
 use serde_json::Value;
 
-use crate::{ToolEffect, ToolError, WaitSpec};
+use crate::{ToolEffect, ToolExecutionError, WaitSpec};
 
-pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
+pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let child_ids = input
         .get("child_ids")
         .map(|value| {
             value
                 .as_array()
                 .ok_or_else(|| {
-                    ToolError::new("wait_for_subagents child_ids must be an array".to_string())
+                    ToolExecutionError::new("wait_for_subagents child_ids must be an array".to_string())
                 })
                 .and_then(|values| {
                     values
                         .iter()
                         .map(|value| {
                             value.as_str().map(str::to_owned).ok_or_else(|| {
-                                ToolError::new(
+                                ToolExecutionError::new(
                                     "wait_for_subagents child_ids entries must be strings"
                                         .to_string(),
                                 )
@@ -60,3 +60,4 @@ mod tests {
         }
     }
 }
+

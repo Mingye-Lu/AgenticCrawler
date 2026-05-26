@@ -36,7 +36,7 @@ pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
 pub use tool_effect::{
-    CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, ToolError, WaitSpec,
+    CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, ToolExecutionError, WaitSpec,
 };
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};

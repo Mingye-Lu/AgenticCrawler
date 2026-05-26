@@ -1,19 +1,19 @@
 use serde_json::Value;
 
-use crate::{tool_effect::StatusSpec, ToolEffect, ToolError};
+use crate::{tool_effect::StatusSpec, ToolEffect, ToolExecutionError};
 
-pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
+pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let child_ids = match input.get("child_ids") {
         None | Some(Value::Null) => None,
         Some(value) => {
             let array = value.as_array().ok_or_else(|| {
-                ToolError::new("subagent_status child_ids must be an array".to_string())
+                ToolExecutionError::new("subagent_status child_ids must be an array".to_string())
             })?;
             let ids = array
                 .iter()
                 .map(|entry| {
                     entry.as_str().map(str::to_owned).ok_or_else(|| {
-                        ToolError::new(
+                        ToolExecutionError::new(
                             "subagent_status child_ids entries must be strings".to_string(),
                         )
                     })
@@ -68,3 +68,4 @@ mod tests {
         assert!(err.to_string().contains("must be an array"));
     }
 }
+

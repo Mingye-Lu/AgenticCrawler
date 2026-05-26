@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::{CrawlError, ToolEffect, ToolError};
+use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 pub struct SaveFileInput {
     pub url: String,
@@ -83,7 +83,7 @@ fn validate_relative_path(field: &str, value: &str) -> Result<(), CrawlError> {
     Ok(())
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
     let settings = runtime::load_settings();
@@ -99,10 +99,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
     let saved_path = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?
         .save_file(&parsed.url, &path_str)
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     Ok(ToolEffect::reply_json(&json!({
         "success": true,
@@ -161,3 +161,4 @@ mod tests {
         assert!(parse_input(&input).is_err());
     }
 }
+

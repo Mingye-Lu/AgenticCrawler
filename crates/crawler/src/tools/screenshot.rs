@@ -4,15 +4,15 @@ use base64::Engine as _;
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::{ToolEffect, ToolError};
+use crate::{ToolEffect, ToolExecutionError};
 
-fn validate_filename(filename: &str) -> Result<(), ToolError> {
+fn validate_filename(filename: &str) -> Result<(), ToolExecutionError> {
     if filename.trim().is_empty() {
-        return Err(ToolError::new("screenshot filename must not be empty"));
+        return Err(ToolExecutionError::new("screenshot filename must not be empty"));
     }
     let path = Path::new(filename);
     if path.components().count() != 1 {
-        return Err(ToolError::new(
+        return Err(ToolExecutionError::new(
             "screenshot filename must not contain path separators",
         ));
     }
@@ -20,7 +20,7 @@ fn validate_filename(filename: &str) -> Result<(), ToolError> {
         match component {
             Component::Normal(_) => {}
             _ => {
-                return Err(ToolError::new(
+                return Err(ToolExecutionError::new(
                     "screenshot filename must be a plain name without '.' or '..' components",
                 ));
             }
@@ -36,16 +36,16 @@ fn default_filename() -> String {
     format!("screenshot_{ms}.png")
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let save = input.get("save").and_then(Value::as_bool).unwrap_or(false);
 
     let (screenshot_base64, size_bytes) = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?
         .screenshot()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     if !save {
         return Ok(ToolEffect::reply_json(&serde_json::json!({
@@ -68,15 +68,15 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
 
     tokio::fs::create_dir_all(&output_dir)
         .await
-        .map_err(|e| ToolError::new(format!("failed to create output directory: {e}")))?;
+        .map_err(|e| ToolExecutionError::new(format!("failed to create output directory: {e}")))?;
 
     let png_bytes = base64::engine::general_purpose::STANDARD
         .decode(&screenshot_base64)
-        .map_err(|e| ToolError::new(format!("failed to decode screenshot: {e}")))?;
+        .map_err(|e| ToolExecutionError::new(format!("failed to decode screenshot: {e}")))?;
 
     tokio::fs::write(&target, &png_bytes)
         .await
-        .map_err(|e| ToolError::new(format!("failed to write screenshot: {e}")))?;
+        .map_err(|e| ToolExecutionError::new(format!("failed to write screenshot: {e}")))?;
 
     let saved_path = target.to_string_lossy().to_string();
     Ok(ToolEffect::reply_json(&serde_json::json!({
@@ -444,3 +444,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
+

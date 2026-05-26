@@ -1,18 +1,18 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::{ToolEffect, ToolError};
+use crate::{ToolEffect, ToolExecutionError};
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
 
     let result = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?
         .list_resources()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let links = result.get("links").cloned().unwrap_or_else(|| json!([]));
     let images = result.get("images").cloned().unwrap_or_else(|| json!([]));
@@ -42,3 +42,4 @@ mod tests {
         );
     }
 }
+

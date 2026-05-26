@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::{CrawlError, ToolEffect, ToolError};
+use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 pub struct SelectOptionInput {
     pub selector: String,
@@ -25,16 +25,16 @@ pub fn parse_input(input: &Value) -> Result<SelectOptionInput, CrawlError> {
     Ok(SelectOptionInput { selector, value })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
     browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?
         .select_option(&parsed.selector, &parsed.value)
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let page_state = super::feedback::post_action_page_state(browser).await;
 
@@ -95,3 +95,4 @@ mod tests {
         assert!(!response["page_state"]["page_map"].is_null());
     }
 }
+

@@ -4,7 +4,7 @@ use crate::browser::BrowserContext;
 use crate::fetcher::FetchRouter;
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
 use crate::tools::page_map::apply_page_map_caps;
-use crate::{CrawlError, ToolEffect, ToolError};
+use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const SLIM_MAX_CHARS: usize = 2000;
 
@@ -214,14 +214,14 @@ fn resolve_content(
     }
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 
-    let router = FetchRouter::new().map_err(|e| ToolError::new(e.to_string()))?;
+    let router = FetchRouter::new().map_err(|e| ToolExecutionError::new(e.to_string()))?;
     let page = router
         .fetch(&params.url, Some(browser))
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let title = page.title.clone().unwrap_or_default();
 
@@ -513,3 +513,4 @@ mod tests {
         assert!(!result.strip_images);
     }
 }
+

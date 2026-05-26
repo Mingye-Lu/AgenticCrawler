@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
 use crate::compact::{
@@ -13,6 +12,7 @@ use crate::usage::{TokenUsage, UsageTracker};
 use tokio::time::{sleep, Duration};
 
 pub use acrawl_core::event::AssistantEvent;
+pub use acrawl_core::error::{RuntimeError, ToolError};
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
 
@@ -30,50 +30,6 @@ pub trait ApiClient {
 pub trait ToolExecutor {
     async fn execute(&mut self, tool_name: &str, input: &str) -> Result<String, ToolError>;
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolError {
-    message: String,
-}
-
-impl ToolError {
-    #[must_use]
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl Display for ToolError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for ToolError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeError {
-    message: String,
-}
-
-impl RuntimeError {
-    #[must_use]
-    pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl Display for RuntimeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
-
-impl std::error::Error for RuntimeError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnSummary {

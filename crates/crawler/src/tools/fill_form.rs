@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::{CrawlError, ToolEffect, ToolError};
+use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 #[derive(Debug)]
 struct FillFormInput {
@@ -51,17 +51,17 @@ fn parse_input(input: &Value) -> Result<FillFormInput, CrawlError> {
     })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 
     for (selector, value) in &params.fields {
         browser
             .acquire_bridge()
             .await
-            .map_err(|e| ToolError::new(e.to_string()))?
+            .map_err(|e| ToolExecutionError::new(e.to_string()))?
             .fill(selector, value)
             .await
-            .map_err(|e| ToolError::new(format!("failed to fill '{selector}': {e}")))?;
+            .map_err(|e| ToolExecutionError::new(format!("failed to fill '{selector}': {e}")))?;
     }
 
     if params.submit {
@@ -72,10 +72,10 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         browser
             .acquire_bridge()
             .await
-            .map_err(|e| ToolError::new(e.to_string()))?
+            .map_err(|e| ToolExecutionError::new(e.to_string()))?
             .evaluate(&js)
             .await
-            .map_err(|e| ToolError::new(format!("failed to submit form: {e}")))?;
+            .map_err(|e| ToolExecutionError::new(format!("failed to submit form: {e}")))?;
     }
 
     let page_state = super::feedback::post_action_page_state(browser).await;
@@ -175,3 +175,4 @@ mod tests {
         assert!(!response["page_state"]["page_map"].is_null());
     }
 }
+

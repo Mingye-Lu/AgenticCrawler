@@ -1,16 +1,16 @@
 use serde_json::Value;
 
-use crate::{tool_effect::CancelSpec, ToolEffect, ToolError};
+use crate::{tool_effect::CancelSpec, ToolEffect, ToolExecutionError};
 
-pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
+pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let raw_ids = input
         .get("child_ids")
-        .ok_or_else(|| ToolError::new("cancel_subagent requires child_ids".to_string()))?
+        .ok_or_else(|| ToolExecutionError::new("cancel_subagent requires child_ids".to_string()))?
         .as_array()
-        .ok_or_else(|| ToolError::new("cancel_subagent child_ids must be an array".to_string()))?;
+        .ok_or_else(|| ToolExecutionError::new("cancel_subagent child_ids must be an array".to_string()))?;
 
     if raw_ids.is_empty() {
-        return Err(ToolError::new(
+        return Err(ToolExecutionError::new(
             "cancel_subagent child_ids must not be empty".to_string(),
         ));
     }
@@ -19,7 +19,7 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
         .iter()
         .map(|value| {
             value.as_str().map(str::to_owned).ok_or_else(|| {
-                ToolError::new("cancel_subagent child_ids entries must be strings".to_string())
+                ToolExecutionError::new("cancel_subagent child_ids entries must be strings".to_string())
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -69,3 +69,4 @@ mod tests {
         assert!(err.to_string().contains("must be strings"));
     }
 }
+

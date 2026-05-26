@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::browser::BrowserContext;
-use crate::{ToolEffect, ToolError};
+use crate::{ToolEffect, ToolExecutionError};
 
 pub fn parse_input(input: &Value) -> i64 {
     input
@@ -11,7 +11,7 @@ pub fn parse_input(input: &Value) -> i64 {
         .unwrap_or(-1)
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let index = parse_input(input);
 
     let result = browser
@@ -20,7 +20,7 @@ pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<Tool
         .await
         .switch_tab(index)
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     if let Some(page_index) = result
         .get("pageIndex")
@@ -71,3 +71,4 @@ mod tests {
         assert_eq!(idx, -1);
     }
 }
+

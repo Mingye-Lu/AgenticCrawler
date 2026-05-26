@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::{
     tool_effect::{CrawlScope, CrawlTask},
-    ToolEffect, ToolError,
+    ToolEffect, ToolExecutionError,
 };
 
 /// Parse the LLM's fork tool input into a typed [`CrawlTask`]. The shape is:
@@ -18,22 +18,22 @@ use crate::{
 ///
 /// `scope.type` is one of `single_page`, `url_list`, `url_pattern`. The
 /// parser validates the regex compiles when `scope.type == url_pattern`.
-pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
+pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let objective = input
         .get("objective")
         .and_then(Value::as_str)
         .map(str::trim)
-        .ok_or_else(|| ToolError::new("fork requires objective".to_string()))?
+        .ok_or_else(|| ToolExecutionError::new("fork requires objective".to_string()))?
         .to_string();
     if objective.is_empty() {
-        return Err(ToolError::new(
+        return Err(ToolExecutionError::new(
             "fork requires non-empty objective".to_string(),
         ));
     }
 
     let scope_value = input
         .get("scope")
-        .ok_or_else(|| ToolError::new("fork requires scope".to_string()))?;
+        .ok_or_else(|| ToolExecutionError::new("fork requires scope".to_string()))?;
     let scope = parse_scope(scope_value)?;
 
     let max_steps = input
@@ -49,14 +49,14 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolError> {
     }))
 }
 
-fn parse_scope(value: &Value) -> Result<CrawlScope, ToolError> {
+fn parse_scope(value: &Value) -> Result<CrawlScope, ToolExecutionError> {
     let obj = value
         .as_object()
-        .ok_or_else(|| ToolError::new("fork scope must be an object".to_string()))?;
+        .ok_or_else(|| ToolExecutionError::new("fork scope must be an object".to_string()))?;
     let kind = obj
         .get("type")
         .and_then(Value::as_str)
-        .ok_or_else(|| ToolError::new("fork scope.type must be a string".to_string()))?;
+        .ok_or_else(|| ToolExecutionError::new("fork scope.type must be a string".to_string()))?;
     match kind {
         "single_page" => {
             let url = obj
@@ -64,10 +64,10 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolError> {
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .ok_or_else(|| {
-                    ToolError::new("fork scope.url is required for single_page".to_string())
+                    ToolExecutionError::new("fork scope.url is required for single_page".to_string())
                 })?;
             if url.is_empty() {
-                return Err(ToolError::new(
+                return Err(ToolExecutionError::new(
                     "fork scope.url must not be empty".to_string(),
                 ));
             }
@@ -77,10 +77,10 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolError> {
         }
         "url_list" => {
             let urls = obj.get("urls").and_then(Value::as_array).ok_or_else(|| {
-                ToolError::new("fork scope.urls is required for url_list".to_string())
+                ToolExecutionError::new("fork scope.urls is required for url_list".to_string())
             })?;
             if urls.is_empty() {
-                return Err(ToolError::new(
+                return Err(ToolExecutionError::new(
                     "fork scope.urls must contain at least one URL".to_string(),
                 ));
             }
@@ -93,7 +93,7 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolError> {
                         .filter(|s| !s.is_empty())
                         .map(str::to_owned)
                         .ok_or_else(|| {
-                            ToolError::new(
+                            ToolExecutionError::new(
                                 "fork scope.urls entries must be non-empty strings".to_string(),
                             )
                         })
@@ -107,10 +107,10 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolError> {
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .ok_or_else(|| {
-                    ToolError::new("fork scope.regex is required for url_pattern".to_string())
+                    ToolExecutionError::new("fork scope.regex is required for url_pattern".to_string())
                 })?;
             if regex.is_empty() {
-                return Err(ToolError::new(
+                return Err(ToolExecutionError::new(
                     "fork scope.regex must not be empty".to_string(),
                 ));
             }
@@ -118,12 +118,12 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolError> {
             // re-compile, but the parser surfaces the error before the
             // claim attempt.
             Regex::new(regex)
-                .map_err(|error| ToolError::new(format!("fork scope.regex is invalid: {error}")))?;
+                .map_err(|error| ToolExecutionError::new(format!("fork scope.regex is invalid: {error}")))?;
             Ok(CrawlScope::UrlPattern {
                 regex: regex.to_string(),
             })
         }
-        other => Err(ToolError::new(format!(
+        other => Err(ToolExecutionError::new(format!(
             "fork scope.type must be `single_page`, `url_list`, or `url_pattern`; got `{other}`"
         ))),
     }

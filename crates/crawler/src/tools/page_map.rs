@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::browser::BrowserContext;
-use crate::{ToolEffect, ToolError};
+use crate::{ToolEffect, ToolExecutionError};
 
 const MAX_PAGE_MAP_LINKS: usize = 50;
 const MAX_PAGE_MAP_FORMS: usize = 10;
@@ -35,16 +35,16 @@ fn truncate_array_field(value: &mut Value, key: &str, max_len: usize) -> bool {
         })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolError> {
+pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
 
     let mut result = browser
         .acquire_bridge()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?
         .page_map()
         .await
-        .map_err(|e| ToolError::new(e.to_string()))?;
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     apply_page_map_caps(&mut result);
 
@@ -262,3 +262,4 @@ mod tests {
         assert_eq!(value["truncated_links"], json!(false));
     }
 }
+
