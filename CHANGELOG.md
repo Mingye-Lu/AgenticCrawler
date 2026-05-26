@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-05-26
+
+### Added
+
+- **Paste masking** — large pastes (>150 bytes or >30 lines, whichever triggers first) are stored behind a dim italic placeholder pill instead of flooding the input area. Bracketed paste sequences and `Ctrl+V` both route through this path. Atomic cursor navigation skips over masks as a single unit; `Backspace`, `Delete`, and `Ctrl+W` delete the entire mask in one keystroke; clipboard cut expands the mask before yanking; and pressing Enter expands all masks before submitting the message.
+- **`acrawl mcp uninstall`** — removes the MCP server configuration from any previously configured IDE (Claude Code, Cursor, Windsurf, VS Code/Copilot, OpenCode). Presents a styled confirmation prompt and degrades gracefully when stdin is not a TTY.
+
+### Fixed
+
+- **Install override behavior** — `acrawl mcp install` now correctly removes and re-adds an existing MCP entry when reinstalling, instead of silently appending a duplicate.
+- **Stray Enter events from pasted newlines** — terminals that bypass bracketed paste and deliver content character-by-character no longer cause a premature submission when a pasted newline arrives; the paste-burst accumulator suppresses the Enter until the burst is flushed.
+- **Paste-burst must not arm Enter suppression mid-paste** — flushing a burst while another burst is in progress no longer incorrectly activates the Enter-suppression gate, preventing legitimate Enter keystrokes from being swallowed after a paste.
+
+### Performance
+
+- **Slash overlay skipped when input has no leading `/`** — `refresh_slash_overlay` is a no-op on every keystroke that does not start with `/`, eliminating the scan on the hot path for normal typing.
+
 ## [0.6.2] - 2026-05-23
 
 ### Added
@@ -410,6 +427,8 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.6.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.3
+[0.6.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.0
 [0.5.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.1
