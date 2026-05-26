@@ -937,6 +937,7 @@ impl ReplTuiState {
     const STREAM_PASTE_NEWLINE_CONFIDENCE_CHARS: usize = 2;
     const STREAM_PASTE_DRAIN_MAX_EVENTS: usize = 8192;
     const STREAM_PASTE_DRAIN_WAIT_MS: u64 = 8;
+    const CTRL_V_ECHO_DRAIN_WAIT_MS: u64 = 1;
     const BRACKETED_PASTE_OPEN_TAIL: &'static [u8] = b"[200~";
     const BRACKETED_PASTE_CLOSE: &'static [u8] = b"\x1b[201~";
     const BRACKETED_PASTE_MATCH_WAIT_MS: u64 = 5;
@@ -1250,6 +1251,16 @@ impl ReplTuiState {
         self.defer_ctrl_v_echo_drain_until_redraw && self.ctrl_v_echo_remaining > 0
     }
 
+    fn paste_drain_poll_wait(&self) -> Duration {
+        if self.stream_paste_deadline.is_some() {
+            Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
+        } else if self.ctrl_v_echo_remaining > 0 {
+            Duration::from_millis(Self::CTRL_V_ECHO_DRAIN_WAIT_MS)
+        } else {
+            Duration::from_millis(0)
+        }
+    }
+
     fn drain_plain_streamed_paste_queue(&mut self) -> io::Result<usize> {
         let mut drained = 0usize;
         let max_events = Self::STREAM_PASTE_DRAIN_MAX_EVENTS.max(
@@ -1263,12 +1274,7 @@ impl ReplTuiState {
             let ev = if let Some(ev) = self.pending_events.pop_front() {
                 ev
             } else {
-                let wait = if self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0
-                {
-                    Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
-                } else {
-                    Duration::from_millis(0)
-                };
+                let wait = self.paste_drain_poll_wait();
                 if !event::poll(wait)? {
                     break;
                 }
@@ -1315,12 +1321,7 @@ impl ReplTuiState {
             let ev = if let Some(ev) = self.pending_events.pop_front() {
                 ev
             } else {
-                let wait = if self.stream_paste_deadline.is_some() || self.ctrl_v_echo_remaining > 0
-                {
-                    Duration::from_millis(Self::STREAM_PASTE_DRAIN_WAIT_MS)
-                } else {
-                    Duration::from_millis(0)
-                };
+                let wait = self.paste_drain_poll_wait();
                 if !event::poll(wait)? {
                     break;
                 }
@@ -3883,10 +3884,11 @@ fn run_loop(
 
         state.drain_events(ui_rx);
         state.reconcile_child_view_mode();
-        if !state.should_defer_ctrl_v_echo_drain_until_redraw() {
+        let defer_echo_drain = state.should_defer_ctrl_v_echo_drain_until_redraw();
+        if !defer_echo_drain {
             state.drain_available_plain_streamed_paste_queue()?;
+            state.drain_ignored_key_events()?;
         }
-        state.drain_ignored_key_events()?;
 
         if let Some(rx) = state.update_rx.as_mut() {
             if let Ok(info) = rx.try_recv() {
@@ -5243,6 +5245,22 @@ mod tests {
 
         s.clear_ctrl_v_echo_swallow();
         assert!(!s.defer_ctrl_v_echo_drain_until_redraw);
+    }
+
+    #[test]
+    fn pure_ctrl_v_echo_uses_shorter_drain_wait_than_stream_probe() {
+        let mut s = test_state();
+        s.arm_ctrl_v_echo_swallow("abcdef", Instant::now());
+        assert_eq!(
+            s.paste_drain_poll_wait(),
+            Duration::from_millis(ReplTuiState::CTRL_V_ECHO_DRAIN_WAIT_MS)
+        );
+
+        s.stream_paste_deadline = Some(Instant::now() + Duration::from_millis(500));
+        assert_eq!(
+            s.paste_drain_poll_wait(),
+            Duration::from_millis(ReplTuiState::STREAM_PASTE_DRAIN_WAIT_MS)
+        );
     }
 
     #[test]
