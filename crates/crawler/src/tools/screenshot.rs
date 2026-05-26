@@ -32,8 +32,7 @@ fn validate_filename(filename: &str) -> Result<(), ToolError> {
 fn default_filename() -> String {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis());
     format!("screenshot_{ms}.png")
 }
 

@@ -4214,7 +4214,7 @@ mod tests {
         let mut s = test_state();
         // Open a suppression window that expired 1 ms ago.
         s.selection.suppress_paste_until =
-            Some(std::time::Instant::now() - std::time::Duration::from_millis(1));
+            std::time::Instant::now().checked_sub(std::time::Duration::from_millis(1));
         assert!(
             !s.paste_enter_is_suppressed(KeyCode::Enter),
             "Enter must not be suppressed once the window has expired"
@@ -4283,7 +4283,7 @@ mod tests {
 
     /// End-to-end simulation of the event loop's paste-burst handling for the
     /// concrete regression we're fixing: a multi-line paste arriving as raw
-    /// keystrokes (Windows Terminal + ConPTY bypassing `Event::Paste`).
+    /// keystrokes (Windows Terminal + `ConPTY` bypassing `Event::Paste`).
     ///
     /// This walks through the exact sequence of state mutations the event-loop
     /// handlers (`KeyCode::Char(c)`, `KeyCode::Enter`) would perform on each
@@ -4425,7 +4425,10 @@ mod tests {
         s.paste_burst_chars.push('x');
 
         // Recent key → don't flush yet (burst may continue).
-        s.last_key_time = Some(now - std::time::Duration::from_millis(5));
+        s.last_key_time = Some(
+            now.checked_sub(std::time::Duration::from_millis(5))
+                .unwrap(),
+        );
         let should_flush_recent = !s.paste_burst_chars.is_empty()
             && s.last_key_time.is_some_and(|t| {
                 t.elapsed()
@@ -4439,7 +4442,10 @@ mod tests {
         );
 
         // Idle past threshold → flush.
-        s.last_key_time = Some(now - std::time::Duration::from_millis(100));
+        s.last_key_time = Some(
+            now.checked_sub(std::time::Duration::from_millis(100))
+                .unwrap(),
+        );
         let should_flush_idle = !s.paste_burst_chars.is_empty()
             && s.last_key_time.is_some_and(|t| {
                 t.elapsed()
@@ -4488,10 +4494,16 @@ mod tests {
         // No previous key recorded → not in burst.
         assert!(!s.in_paste_burst(now));
         // Previous key within threshold → in burst.
-        s.last_key_time = Some(now - std::time::Duration::from_millis(10));
+        s.last_key_time = Some(
+            now.checked_sub(std::time::Duration::from_millis(10))
+                .unwrap(),
+        );
         assert!(s.in_paste_burst(now));
         // Previous key beyond threshold → not in burst.
-        s.last_key_time = Some(now - std::time::Duration::from_millis(100));
+        s.last_key_time = Some(
+            now.checked_sub(std::time::Duration::from_millis(100))
+                .unwrap(),
+        );
         assert!(!s.in_paste_burst(now));
     }
 
