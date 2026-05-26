@@ -111,7 +111,16 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             description: "Capture a screenshot of the current page",
             input_schema: json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "save": {
+                        "type": "boolean",
+                        "description": "If true, save the screenshot as a PNG in the workspace output directory and return the saved path instead of base64."
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename for the saved PNG (e.g. \"shot.png\"). Only used when save is true. Defaults to a timestamped name if omitted."
+                    }
+                },
                 "additionalProperties": false
             }),
 
