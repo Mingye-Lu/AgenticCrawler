@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-05-26
+
+### Added
+
+- **`screenshot` save to disk** — the `screenshot` tool accepts two new optional parameters: `save` (boolean, default `false`) and `filename` (string). When `save` is `true`, the captured PNG is decoded from base64 and written to the configured `output_dir`. If `filename` is omitted a timestamped default (`screenshot_<unix_ms>.png`) is used. Existing callers that pass no parameters continue to receive `screenshot_base64` in the response unchanged.
+
+### Fixed
+
+- **`acrawl update` fails on large binary downloads** — GitHub's Azure Blob CDN closes connections without sending the TLS `close_notify` alert after transmitting all data. `rustls` treated this as a fatal error, causing `error decoding response body` during self-update. The downloader now uses chunked streaming that accepts the connection-close when `Content-Length` bytes have already been received; SHA256 checksum verification still catches actual corruption.
+
 ## [0.6.3] - 2026-05-26
 
 ### Added
@@ -427,6 +437,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.6.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.4
 [0.6.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.3
 [0.6.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.1
