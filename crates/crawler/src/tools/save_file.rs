@@ -2,7 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 pub struct SaveFileInput {

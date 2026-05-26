@@ -1,15 +1,9 @@
 use serde_json::json;
 
 mod agent;
-mod browser;
-mod browser_backend;
 pub mod child_events;
-mod extension;
-mod fetcher;
 mod manager;
-pub mod markdown;
 mod output;
-mod playwright;
 mod prompt;
 mod shared_client;
 mod state;
@@ -17,21 +11,20 @@ pub mod tool_effect;
 mod tool_registry;
 mod tools;
 mod url_claim;
-pub mod ws_server;
 
 pub use acrawl_core::ToolSpec;
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
-pub use browser::BrowserContext;
-pub use browser_backend::BrowserBackend;
+pub use ::browser::{BridgeError, BrowserBackend, BrowserContext, BrowserState, PageInfo, PlaywrightBridge, SharedBridge};
+pub use ::browser::{ExtensionBridge, generate_bridge_token, BridgeCommand, BridgeResponse, WsBridgeError, WsBridgeServer};
+pub use ::browser::ws_server;
+pub use ::browser::markdown;
+pub use ::browser::{FetchError, FetchRouter, FetchedPage};
 pub use child_events::{
     ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender, ChildLifecycle,
     ChildSnapshot, ChildSnapshotRegistry,
 };
-pub use extension::ExtensionBridge;
-pub use fetcher::{FetchError, FetchRouter, FetchedPage};
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
-pub use playwright::{BridgeError, BrowserState, PageInfo, PlaywrightBridge, SharedBridge};
 pub use prompt::build_system_prompt;
 pub use shared_client::SharedApiClient;
 pub use state::CrawlState;
@@ -40,9 +33,6 @@ pub use tool_effect::{
 };
 pub use tool_registry::{ToolHandler, ToolRegistry};
 pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};
-pub use ws_server::{
-    generate_bridge_token, BridgeCommand, BridgeResponse, WsBridgeError, WsBridgeServer,
-};
 
 /// Returns the built-in tool specifications.
 #[must_use]

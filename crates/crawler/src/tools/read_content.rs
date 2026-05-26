@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const DEFAULT_MAX_CHARS: usize = 10_000;

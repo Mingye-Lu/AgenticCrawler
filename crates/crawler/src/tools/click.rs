@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 #[derive(Debug)]

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
-use crate::browser::BrowserContext;
-use crate::fetcher::FetchRouter;
+use crate::BrowserContext;
+use crate::FetchRouter;
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
 use crate::tools::page_map::apply_page_map_caps;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};

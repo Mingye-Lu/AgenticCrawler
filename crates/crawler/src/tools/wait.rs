@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;

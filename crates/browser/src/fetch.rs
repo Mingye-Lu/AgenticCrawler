@@ -4,8 +4,8 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use reqwest::{Client, StatusCode};
 
-use crate::browser::BrowserContext;
-use crate::playwright::PageInfo;
+use crate::BrowserContext;
+use crate::PageInfo;
 
 #[derive(Debug, Clone)]
 pub struct FetchedPage {

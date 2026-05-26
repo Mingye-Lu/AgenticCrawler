@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
 
 const MAX_PAGE_MAP_LINKS: usize = 50;

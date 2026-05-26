@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;

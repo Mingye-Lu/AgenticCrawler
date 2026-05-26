@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use base64::Engine as _;
 use serde_json::Value;
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
 
 fn validate_filename(filename: &str) -> Result<(), ToolExecutionError> {

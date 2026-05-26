@@ -11,7 +11,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::BrowserBackend;
+use crate::browser_backend::BrowserBackend;
 
 const DEFAULT_LAUNCH_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);

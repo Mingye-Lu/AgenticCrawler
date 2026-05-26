@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
 
 pub fn parse_input(input: &Value) -> i64 {

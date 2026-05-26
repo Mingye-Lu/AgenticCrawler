@@ -374,6 +374,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "browser"
+version = "0.6.4"
+dependencies = [
+ "async-trait",
+ "base64",
+ "futures-util",
+ "htmd",
+ "rand 0.8.5",
+ "reqwest 0.12.28",
+ "runtime",
+ "serde",
+ "serde_json",
+ "socket2 0.5.10",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -595,12 +613,11 @@ dependencies = [
  "acrawl-core",
  "async-trait",
  "base64",
+ "browser",
  "csv",
  "futures-util",
- "htmd",
  "rand 0.8.5",
  "regex",
- "reqwest 0.12.28",
  "runtime",
  "serde",
  "serde_json",

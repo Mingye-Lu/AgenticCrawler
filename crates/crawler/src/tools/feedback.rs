@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::time::timeout;
 
-use crate::browser::BrowserContext;
+use crate::BrowserContext;
 
 use super::page_map::apply_page_map_caps;
 
