@@ -55,6 +55,8 @@ const PASTE_MASK_THRESHOLD_LINES: usize = 30;
 const PASTE_SENTINEL_BASE: u32 = 0xF0001;
 const PASTE_PREVIEW_BLOCK_WIDTH: usize = 12;
 const PASTE_PREVIEW_INNER_WIDTH: usize = PASTE_PREVIEW_BLOCK_WIDTH - 2;
+const PASTE_PREVIEW_DELETE_WIDTH: usize = 1;
+const PASTE_PREVIEW_GAP: usize = 2;
 pub(super) const SLASH_OVERLAY_VISIBLE_ITEMS: usize = 7;
 pub(super) const SLASH_OVERLAY_HINT_TEXT: &str =
     "Up/Down move  Enter accept  Tab complete  Esc close";
@@ -85,10 +87,6 @@ fn should_mask_paste(text: &str) -> bool {
         || text.bytes().filter(|&b| b == b'\n').count() >= PASTE_MASK_THRESHOLD_LINES
 }
 
-fn format_paste_marker(_id: u32) -> &'static str {
-    "▣"
-}
-
 fn estimate_paste_tokens(content: &str) -> usize {
     content.len() / 4 + 1
 }
@@ -102,24 +100,6 @@ fn format_paste_token_label(tokens: usize) -> String {
         format!("{}m", tokens / 1_000_000)
     };
     fit_display_width(&format!("{number}token"), PASTE_PREVIEW_INNER_WIDTH)
-}
-
-fn normalized_preview_text(content: &str) -> String {
-    let mut out = String::new();
-    let mut previous_space = false;
-    for ch in content.chars() {
-        let ch = if ch.is_whitespace() { ' ' } else { ch };
-        if ch == ' ' {
-            if previous_space {
-                continue;
-            }
-            previous_space = true;
-        } else {
-            previous_space = false;
-        }
-        out.push(ch);
-    }
-    out.trim().to_string()
 }
 
 fn fit_display_width(text: &str, width: usize) -> String {
@@ -138,9 +118,31 @@ fn fit_display_width(text: &str, width: usize) -> String {
 }
 
 fn format_paste_preview_snippet(content: &str) -> String {
-    let normalized = normalized_preview_text(content);
-    let has_more = text_display_width(&normalized) > 9;
-    let mut snippet = fit_display_width(&normalized, 9);
+    let mut snippet = String::new();
+    let mut used = 0usize;
+    let mut previous_space = false;
+    let mut has_more = false;
+
+    for ch in content.chars() {
+        let ch = if ch.is_whitespace() { ' ' } else { ch };
+        if ch == ' ' {
+            if previous_space {
+                has_more = true;
+                continue;
+            }
+            previous_space = true;
+        } else {
+            previous_space = false;
+        }
+        let char_width = char_display_width(ch);
+        if used + char_width > 9 {
+            has_more = true;
+            break;
+        }
+        snippet.push(ch);
+        used += char_width;
+    }
+
     while snippet.ends_with(' ') {
         snippet.pop();
     }
@@ -273,6 +275,15 @@ struct InputUndoSnapshot {
 struct PasteEntry {
     id: u32,
     content: String,
+    preview_snippet: String,
+    token_label: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PastePreviewDeleteTarget {
+    id: u32,
+    row: usize,
+    col: usize,
 }
 
 #[derive(Default)]
@@ -299,6 +310,7 @@ pub(super) struct ReplTuiState {
     pub(super) last_wrapped_len: usize,
     pub(super) last_view_height: usize,
     pub(super) last_input_rect: Rect,
+    paste_preview_delete_targets: Vec<PastePreviewDeleteTarget>,
     pub(super) input_scroll_offset: usize,
     /// Set to `true` when the user manually scrolls the input field with the
     /// mouse wheel; suppresses the caret-visibility snap in
@@ -396,6 +408,7 @@ impl ReplTuiState {
             last_wrapped_len: 0,
             last_view_height: 0,
             last_input_rect: Rect::default(),
+            paste_preview_delete_targets: Vec::new(),
             input_scroll_offset: 0,
             input_scroll_manual: false,
             input_selection: None,
@@ -734,6 +747,41 @@ impl ReplTuiState {
         self.paste_entries.retain(|e| live_ids.contains(&e.id));
     }
 
+    fn delete_paste_entry_by_id(&mut self, id: u32) -> bool {
+        let Some(char_idx) = self
+            .input
+            .text
+            .chars()
+            .position(|ch| is_paste_sentinel(ch) && sentinel_to_id(ch) == id)
+        else {
+            return false;
+        };
+
+        self.record_input_undo_snapshot();
+        let start = self.input_char_to_byte(char_idx);
+        let end = self.input_char_to_byte(char_idx + 1);
+        self.input.text.replace_range(start..end, "");
+        self.paste_entries.retain(|entry| entry.id != id);
+        self.input.cursor = self
+            .input
+            .cursor
+            .saturating_sub(usize::from(self.input.cursor > char_idx));
+        self.resync_byte_cursor();
+        self.input_selection = None;
+        self.input_click_anchor = None;
+        self.input.preferred_col = None;
+        self.vis_cache = None;
+        self.input_scroll_offset = usize::MAX;
+        true
+    }
+
+    fn paste_preview_delete_id_at(&self, row: usize, col: usize) -> Option<u32> {
+        self.paste_preview_delete_targets
+            .iter()
+            .find(|target| target.row == row && target.col == col)
+            .map(|target| target.id)
+    }
+
     fn selected_input_text(&self) -> Option<&str> {
         let (a, b) = self.input_selection?;
         let sel_start = self.input_char_to_byte(a);
@@ -762,9 +810,8 @@ impl ReplTuiState {
         result
     }
 
-    /// Split `text` into styled spans, replacing paste sentinel chars with a
-    /// compact fixed-width marker. The full paste details render in the fixed
-    /// preview strip below the editable input.
+    /// Split `text` into styled spans, omitting paste sentinel chars. The full
+    /// paste details render in the fixed preview strip below the editable input.
     fn spans_from_text_with_pills(&self, text: &str, base_style: Style) -> Vec<Span<'static>> {
         if !text.chars().any(is_paste_sentinel) {
             if text.is_empty() {
@@ -773,9 +820,6 @@ impl ReplTuiState {
             return vec![Span::styled(text.to_string(), base_style)];
         }
 
-        let marker_style = Style::default()
-            .fg(Color::Rgb(150, 156, 166))
-            .add_modifier(Modifier::DIM | Modifier::BOLD);
         let mut spans: Vec<Span<'static>> = Vec::new();
         let mut current = String::new();
 
@@ -784,9 +828,6 @@ impl ReplTuiState {
                 if !current.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut current), base_style));
                 }
-
-                let id = sentinel_to_id(ch);
-                spans.push(Span::styled(format_paste_marker(id), marker_style));
             } else {
                 current.push(ch);
             }
@@ -860,6 +901,8 @@ impl ReplTuiState {
         self.paste_entries.push(PasteEntry {
             id,
             content: content.to_string(),
+            preview_snippet: format_paste_preview_snippet(content),
+            token_label: format_paste_token_label(estimate_paste_tokens(content)),
         });
     }
 
@@ -1451,7 +1494,7 @@ impl ReplTuiState {
                 line += 1;
                 col = 0;
             } else {
-                col += char_display_width(ch);
+                col += Self::input_char_display_width(ch);
             }
         }
         (line, col)
@@ -1459,6 +1502,18 @@ impl ReplTuiState {
 
     fn input_lines(&self) -> Vec<&str> {
         self.input.text.split('\n').collect()
+    }
+
+    fn input_char_display_width(ch: char) -> usize {
+        if ch == INPUT_CARET_MARKER || is_paste_sentinel(ch) {
+            0
+        } else {
+            char_display_width(ch)
+        }
+    }
+
+    fn input_text_display_width(text: &str) -> usize {
+        text.chars().map(Self::input_char_display_width).sum()
     }
 
     fn set_input_cursor_line_col(&mut self, target_line: usize, target_col: usize) {
@@ -1627,7 +1682,7 @@ impl ReplTuiState {
                     } else {
                         safe_width
                     };
-                    let cw = char_display_width(ch);
+                    let cw = Self::input_char_display_width(ch);
                     if has_chars && col + cw > target {
                         lines.push((line_start, col, is_first_chunk && logical_idx > 0));
                         if lines.len() >= max_lines {
@@ -1753,7 +1808,7 @@ impl ReplTuiState {
                     } else {
                         safe_width
                     };
-                    let cw = char_display_width(c);
+                    let cw = Self::input_char_display_width(c);
 
                     if has_chars && col + cw > target {
                         total += 1;
@@ -1835,7 +1890,7 @@ impl ReplTuiState {
             .chars()
             .skip(cur_start)
             .take(clamped_offset)
-            .map(char_display_width)
+            .map(Self::input_char_display_width)
             .sum::<usize>();
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
 
@@ -1905,7 +1960,7 @@ impl ReplTuiState {
             .chars()
             .skip(cur_start)
             .take(clamped_offset)
-            .map(char_display_width)
+            .map(Self::input_char_display_width)
             .sum::<usize>();
         // Resolve preferred column from current position (or previous nav).
         let preferred_col = self.input.preferred_col.unwrap_or(cur_display_col);
@@ -2001,7 +2056,7 @@ impl ReplTuiState {
             .skip(start)
             .take(line_end.saturating_sub(start))
         {
-            let cw = char_display_width(ch);
+            let cw = Self::input_char_display_width(ch);
             if cw == 0 {
                 continue;
             }
@@ -2110,14 +2165,23 @@ impl ReplTuiState {
         }
     }
 
-    fn paste_preview_entries(&self) -> Vec<&PasteEntry> {
+    fn paste_preview_entries(&self) -> Vec<(u32, String, String)> {
         self.input
             .text
             .chars()
             .filter_map(|ch| {
                 if is_paste_sentinel(ch) {
                     let id = sentinel_to_id(ch);
-                    self.paste_entries.iter().find(|entry| entry.id == id)
+                    self.paste_entries
+                        .iter()
+                        .find(|entry| entry.id == id)
+                        .map(|entry| {
+                            (
+                                entry.id,
+                                entry.preview_snippet.clone(),
+                                entry.token_label.clone(),
+                            )
+                        })
                 } else {
                     None
                 }
@@ -2125,36 +2189,46 @@ impl ReplTuiState {
             .collect()
     }
 
-    fn paste_preview_lines(&self, max_width: usize) -> Vec<Line<'static>> {
+    fn paste_preview_lines(&mut self, max_width: usize, start_row: usize) -> Vec<Line<'static>> {
+        self.paste_preview_delete_targets.clear();
         let entries = self.paste_preview_entries();
-        if entries.is_empty() || max_width < PASTE_PREVIEW_BLOCK_WIDTH {
+        let block_total_width = PASTE_PREVIEW_BLOCK_WIDTH + PASTE_PREVIEW_DELETE_WIDTH;
+        if entries.is_empty() || max_width < block_total_width {
             return Vec::new();
         }
 
-        let max_blocks = ((max_width + 1) / (PASTE_PREVIEW_BLOCK_WIDTH + 1)).max(1);
+        let max_blocks =
+            ((max_width + PASTE_PREVIEW_GAP) / (block_total_width + PASTE_PREVIEW_GAP)).max(1);
         let visible_entries = entries.into_iter().take(max_blocks).collect::<Vec<_>>();
         let snippet_style = Style::default()
             .fg(Color::Rgb(220, 224, 230))
             .bg(Color::Rgb(52, 56, 64));
         let token_style = Style::default()
-            .fg(Color::Rgb(150, 156, 166))
-            .bg(Color::Rgb(52, 56, 64))
-            .add_modifier(Modifier::DIM);
+            .fg(Color::Rgb(210, 216, 224))
+            .bg(Color::Rgb(52, 56, 64));
+        let delete_style = Style::default()
+            .fg(Color::Rgb(220, 110, 110))
+            .add_modifier(Modifier::BOLD);
 
         let mut snippet_spans = Vec::new();
         let mut token_spans = Vec::new();
-        for (idx, entry) in visible_entries.iter().enumerate() {
+        for (idx, (id, snippet, token_label)) in visible_entries.iter().enumerate() {
             if idx > 0 {
-                snippet_spans.push(Span::raw(" "));
-                token_spans.push(Span::raw(" "));
+                let gap = " ".repeat(PASTE_PREVIEW_GAP);
+                snippet_spans.push(Span::raw(gap.clone()));
+                token_spans.push(Span::raw(gap));
             }
-            let snippet = format!(" {} ", format_paste_preview_snippet(&entry.content));
-            let tokens = format!(
-                " {} ",
-                format_paste_token_label(estimate_paste_tokens(&entry.content))
-            );
-            snippet_spans.push(Span::styled(snippet, snippet_style));
-            token_spans.push(Span::styled(tokens, token_style));
+            let col = idx * (block_total_width + PASTE_PREVIEW_GAP);
+            self.paste_preview_delete_targets
+                .push(PastePreviewDeleteTarget {
+                    id: *id,
+                    row: start_row,
+                    col: col + PASTE_PREVIEW_BLOCK_WIDTH,
+                });
+            snippet_spans.push(Span::styled(format!(" {snippet} "), snippet_style));
+            snippet_spans.push(Span::styled("x", delete_style));
+            token_spans.push(Span::styled(format!(" {token_label} "), token_style));
+            token_spans.push(Span::raw(" "));
         }
 
         vec![Line::from(snippet_spans), Line::from(token_spans)]
@@ -2208,13 +2282,7 @@ impl ReplTuiState {
         let visible_end = skip + max_text_lines;
         let mut visual_lines = Vec::with_capacity(max_text_lines);
 
-        let input_char_width = |ch: char| {
-            if ch == INPUT_CARET_MARKER {
-                0
-            } else {
-                char_display_width(ch)
-            }
-        };
+        let input_char_width = Self::input_char_display_width;
 
         if is_placeholder {
             let mut lines_data = placeholder_text
@@ -2557,7 +2625,7 @@ impl ReplTuiState {
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
                     } else {
-                        let left_width = text_display_width(&left);
+                        let left_width = Self::input_text_display_width(&left);
                         let cursor_col =
                             prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), cursor_col));
@@ -2598,7 +2666,7 @@ impl ReplTuiState {
                     if left.is_empty() {
                         cursor_pos = Some((u16::try_from(i + 1).unwrap_or(1), prompt_width));
                     } else {
-                        let left_width = text_display_width(&left);
+                        let left_width = Self::input_text_display_width(&left);
                         spans.extend(self.spans_from_text_with_pills(&left, text_style));
                         let cursor_col =
                             prompt_width + u16::try_from(left_width).unwrap_or(u16::MAX);
@@ -2614,10 +2682,11 @@ impl ReplTuiState {
             render_lines.push(Line::from(spans));
         }
 
-        let preview_lines = self.paste_preview_lines(safe_width);
+        let preview_start_row = render_lines.len() + 1;
+        let preview_lines = self.paste_preview_lines(safe_width, preview_start_row);
         let preview_line_count = preview_lines.len();
-        render_lines.extend(preview_lines);
         render_lines.push(Line::from(""));
+        render_lines.extend(preview_lines);
         render_lines.push(Line::from(Span::styled(
             format!("Model: {model_label}"),
             Style::default()
@@ -4089,6 +4158,12 @@ fn run_loop(
                     let ir = state.last_input_rect;
                     let widget_row = usize::from(me.row.saturating_sub(ir.y));
                     let widget_col = usize::from(me.column.saturating_sub(ir.x));
+                    if matches!(me.kind, MouseEventKind::Down(MouseButton::Left)) {
+                        if let Some(id) = state.paste_preview_delete_id_at(widget_row, widget_col) {
+                            state.delete_paste_entry_by_id(id);
+                            continue;
+                        }
+                    }
                     let char_idx = state.char_index_at_mouse(widget_row, widget_col);
 
                     match me.kind {
@@ -4963,9 +5038,9 @@ mod tests {
     use ratatui::text::Line;
 
     use super::{
-        estimate_paste_tokens, format_paste_marker, format_paste_preview_snippet,
-        format_paste_token_label, id_to_sentinel, is_paste_sentinel, normalize_pasted_text,
-        sentinel_to_id, should_mask_paste, ReplTuiState, ToolCallStatus, TranscriptEntry,
+        estimate_paste_tokens, format_paste_preview_snippet, format_paste_token_label,
+        id_to_sentinel, is_paste_sentinel, normalize_pasted_text, sentinel_to_id,
+        should_mask_paste, ReplTuiState, ToolCallStatus, TranscriptEntry,
         PASTE_PREVIEW_BLOCK_WIDTH,
     };
 
@@ -5165,12 +5240,6 @@ mod tests {
         assert!(should_mask_paste(&thirty_newlines));
         let twenty_nine = "\n".repeat(29);
         assert!(!should_mask_paste(&twenty_nine));
-    }
-
-    #[test]
-    fn format_paste_marker_is_fixed_width() {
-        let marker = format_paste_marker(12);
-        assert_eq!(text_display_width(marker), 1);
     }
 
     #[test]
@@ -6289,7 +6358,7 @@ mod tests {
     }
 
     #[test]
-    fn calculate_input_dimensions_renders_marker_and_preview_for_masked_paste() {
+    fn calculate_input_dimensions_renders_preview_for_masked_paste() {
         let mut state = test_state();
         state.input_area_width = 80;
         let big = "abcdefghiXYZ".repeat(180);
@@ -6297,9 +6366,6 @@ mod tests {
 
         let (height, render_lines, _, cursor_pos) = state.calculate_input_dimensions(80, "Model");
 
-        let has_marker = render_lines
-            .iter()
-            .any(|line| line.spans.iter().any(|span| span.content == "▣"));
         let has_snippet = render_lines.iter().any(|line| {
             line.spans
                 .iter()
@@ -6311,11 +6377,34 @@ mod tests {
                 .any(|span| span.content.as_ref().contains("token"))
         });
 
-        assert!(has_marker, "Expected compact paste marker in input line");
         assert!(has_snippet, "Expected paste preview snippet line");
         assert!(has_token_label, "Expected paste preview token line");
+        assert_eq!(
+            render_lines[2].spans.len(),
+            0,
+            "input line should not render paste marker"
+        );
+        assert!(state
+            .paste_preview_delete_id_at(3, PASTE_PREVIEW_BLOCK_WIDTH)
+            .is_some());
         assert_eq!(height, u16::try_from(render_lines.len() + 2).unwrap());
-        assert_eq!(cursor_pos, Some((1, text_display_width("❯ ▣") as u16)));
+        assert_eq!(cursor_pos, Some((1, text_display_width("❯ ") as u16)));
+    }
+
+    #[test]
+    fn paste_preview_delete_target_removes_entry() {
+        let mut state = test_state();
+        let big = "abcdefghiXYZ".repeat(180);
+        state.handle_paste_event(&big);
+        state.calculate_input_dimensions(80, "Model");
+
+        let id = state
+            .paste_preview_delete_id_at(3, PASTE_PREVIEW_BLOCK_WIDTH)
+            .expect("delete target should be registered");
+        assert!(state.delete_paste_entry_by_id(id));
+
+        assert!(state.input.text.is_empty());
+        assert!(state.paste_entries.is_empty());
     }
 
     #[test]
