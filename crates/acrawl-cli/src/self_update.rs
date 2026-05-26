@@ -49,13 +49,7 @@ pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::builder().user_agent("acrawl").build()?;
 
     let pb = make_spinner(format!("Downloading {artifact_name}..."));
-    let binary_bytes = client
-        .get(&binary_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
+    let binary_bytes = download_tolerant(&client, &binary_url).await?;
     pb.finish_and_clear();
     println!(
         "Downloaded {artifact_name} ({} KB).",
@@ -160,6 +154,41 @@ fn replace_binary(
     }
 
     Ok(())
+}
+
+/// Downloads a URL using chunked streaming that tolerates servers closing
+/// the connection without a TLS `close_notify` alert (common with Azure CDN
+/// backing GitHub Releases). If all bytes indicated by `Content-Length` have
+/// been received, the missing alert is ignored; otherwise the error propagates.
+async fn download_tolerant(
+    client: &reqwest::Client,
+    url: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut response = client.get(url).send().await?.error_for_status()?;
+    let content_length = response.content_length();
+
+    let capacity = usize::try_from(content_length.unwrap_or(0)).unwrap_or(0);
+    let mut buffer = Vec::with_capacity(capacity);
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => buffer.extend_from_slice(&chunk),
+            Ok(None) => break,
+            Err(_) if content_length.is_some_and(|n| buffer.len() as u64 >= n) => break,
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    if let Some(expected) = content_length {
+        if (buffer.len() as u64) < expected {
+            return Err(format!(
+                "incomplete download: got {} of {expected} bytes",
+                buffer.len()
+            )
+            .into());
+        }
+    }
+
+    Ok(buffer)
 }
 
 async fn install_cloakbrowser_if_needed() {
