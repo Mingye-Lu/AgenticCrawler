@@ -15,8 +15,8 @@ dependencies = [
  "crossterm 0.28.1",
  "dialoguer",
  "indicatif",
- "pulldown-cmark",
  "ratatui",
+ "render",
  "reqwest 0.12.28",
  "runtime",
  "serde",
@@ -2745,6 +2745,19 @@ name = "regex-syntax"
 version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+
+[[package]]
+name = "render"
+version = "0.6.4"
+dependencies = [
+ "commands",
+ "crossterm 0.28.1",
+ "pulldown-cmark",
+ "ratatui",
+ "runtime",
+ "serde_json",
+ "unicode-width",
+]
 
 [[package]]
 name = "reqwest"
