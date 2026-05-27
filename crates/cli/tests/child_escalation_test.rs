@@ -64,7 +64,7 @@ mod repl_render {
 }
 
 #[allow(dead_code)]
-#[path = "../src/tui/child_tabs.rs"]
+#[path = "../../tui/src/child_tabs.rs"]
 mod child_tabs;
 
 use child_tabs::{ChildTabPanel, ChildTabStatus};
@@ -307,7 +307,7 @@ fn child_wait_for_human_pause_and_resume_via_registry() {
 
 #[test]
 fn repl_app_keeps_child_pause_auto_navigation_logic() {
-    let source = include_str!("../src/tui/repl_app.rs");
+    let source = include_str!("../../tui/src/repl_app.rs");
 
     assert!(source.contains("crawler::ChildEventKind::PauseRequested { .. }"));
     assert!(source.contains("matches!(self.view_mode, ViewMode::Parent)"));

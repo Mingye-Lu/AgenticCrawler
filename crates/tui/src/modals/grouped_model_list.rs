@@ -42,6 +42,7 @@ pub enum RowKind<'a> {
 }
 
 impl GroupedModelListState {
+    #[must_use]
     pub fn new(groups: Vec<ProviderGroup>, current_model_id: Option<String>) -> Self {
         Self {
             groups,
@@ -67,6 +68,7 @@ impl GroupedModelListState {
         self.filter_cursor = self.filter_cursor.min(self.filter_len());
     }
 
+    #[must_use]
     pub fn filtered_groups(&self) -> Vec<FilteredGroup<'_>> {
         if self.filter.is_empty() {
             return self
@@ -107,6 +109,7 @@ impl GroupedModelListState {
             .collect()
     }
 
+    #[must_use]
     pub fn total_selectable(&self) -> usize {
         let filtered = self.filtered_groups();
         filtered.iter().map(|g| g.models.len()).sum()
@@ -178,6 +181,7 @@ impl GroupedModelListState {
         self.filter_cursor = self.filter_len();
     }
 
+    #[must_use]
     pub fn selected_model(&self) -> Option<(&str, &str)> {
         let filtered = self.filtered_groups();
         let mut model_count = 0;
@@ -194,6 +198,7 @@ impl GroupedModelListState {
         None
     }
 
+    #[must_use]
     pub fn is_current_model(&self, model_id: &str) -> bool {
         self.current_model_id
             .as_ref()
@@ -201,6 +206,7 @@ impl GroupedModelListState {
     }
 
     #[cfg(test)]
+    #[must_use]
     pub fn row_at(&self, flat_row: usize) -> Option<RowKind<'_>> {
         let filtered = self.filtered_groups();
         let mut current_row = 0;

@@ -7,6 +7,7 @@ name = "acrawl-cli"
 version = "0.6.4"
 dependencies = [
  "acrawl-core",
+ "acrawl-tui",
  "agent",
  "api",
  "arboard",
@@ -35,6 +36,29 @@ version = "0.6.4"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "acrawl-tui"
+version = "0.6.4"
+dependencies = [
+ "acrawl-core",
+ "agent",
+ "api",
+ "arboard",
+ "commands",
+ "crawler",
+ "crossterm 0.28.1",
+ "dialoguer",
+ "ratatui",
+ "render",
+ "runtime",
+ "serde",
+ "serde_json",
+ "textwrap",
+ "tokio",
+ "unicode-width",
+ "zeroize",
 ]
 
 [[package]]
@@ -3530,6 +3554,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.6.3",

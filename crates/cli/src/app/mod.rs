@@ -21,7 +21,11 @@ use crate::format::{
 use crate::markdown::{Spinner, TerminalRenderer};
 use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
 use crate::session_mgr::{create_managed_session_handle, SessionHandle};
-use crate::tui::ReplTuiEvent;
+
+#[cfg(not(feature = "tui-crate-context"))]
+use acrawl_tui::events::ReplTuiEvent;
+#[cfg(feature = "tui-crate-context")]
+use crate::events::ReplTuiEvent;
 use commands::{slash_command_specs, SlashCommand};
 use agent::mvp_tool_specs;
 use runtime::{
@@ -98,7 +102,14 @@ pub(crate) fn run_repl(
              or `acrawl --resume <session.json> <slash-commands>` (session maintenance).",
         ));
     }
-    Ok(crate::tui::run_repl_ratatui(model, allowed_tools)?)
+    #[cfg(not(feature = "tui-crate-context"))]
+    {
+        Ok(acrawl_tui::run_tui(model, allowed_tools)?)
+    }
+    #[cfg(feature = "tui-crate-context")]
+    {
+        Ok(crate::run_tui(model, allowed_tools)?)
+    }
 }
 
 pub(crate) struct LiveCli {

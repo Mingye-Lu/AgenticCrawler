@@ -1,14 +1,19 @@
+#[allow(dead_code, unused_imports)]
 mod app;
+#[allow(dead_code, unused_imports)]
 mod auth;
+#[allow(dead_code)]
 mod display_width;
 mod error;
 mod format;
+#[allow(dead_code, unused_imports)]
 mod markdown;
 mod output_sink;
 mod self_update;
+#[allow(dead_code)]
 mod session_mgr;
+#[allow(dead_code, unused_imports)]
 mod tool_format;
-mod tui;
 mod uninstall;
 
 use std::collections::BTreeMap;

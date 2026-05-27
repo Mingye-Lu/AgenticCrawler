@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+﻿#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelInfo {
     pub id: String,
     pub display_name: Option<String>,

@@ -1,4 +1,4 @@
-//! Base modal trait and shared rendering helpers for the Ratatui TUI modal system.
+﻿//! Base modal trait and shared rendering helpers for the Ratatui TUI modal system.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;

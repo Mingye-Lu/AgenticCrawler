@@ -11,7 +11,7 @@ use api::provider::ModelInfo;
 use api::provider::ProviderRegistry;
 
 use crate::display_width::{prefix_display_width, text_display_width};
-use crate::tui::grouped_model_list::{GroupedModelListState, ModelEntry, ProviderGroup, RowKind};
+use super::grouped_model_list::{GroupedModelListState, ModelEntry, ProviderGroup, RowKind};
 use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,7 @@ pub struct ModelModal {
 }
 
 impl ModelModal {
+    #[must_use]
     pub fn new(
         registry: &ProviderRegistry,
         current_model_id: &str,

@@ -4138,6 +4138,7 @@ mod tests {
     use crate::tool_format::tool_input_summary;
     use crate::tui::auth_modal::{AuthModal, AuthModalStep, ProviderKind};
     use crate::tui::repl_render::{line_to_plain_text, render_tool_call_lines, wrap_ansi_line};
+    use crate::tui::session_modal::SessionModalEntry;
     use crate::tui::ReplTuiEvent;
     use crossterm::event::KeyCode;
     use ratatui::style::Color;
@@ -5455,5 +5456,178 @@ mod tests {
             .join("\n");
 
         assert!(!content.contains("Update available"));
+    }
+
+    // ── Integration tests: state construction ──────────────────────────────────
+
+    #[test]
+    fn repl_state_new_does_not_panic() {
+        let state = ReplTuiState::new();
+        assert!(!state.busy);
+        assert!(!state.exit);
+        assert!(state.entries.is_empty());
+        assert_eq!(state.input.text, "");
+        assert_eq!(state.input.cursor, 0);
+    }
+
+    #[test]
+    fn repl_state_new_starts_in_welcome_mode() {
+        let state = ReplTuiState::new();
+        assert_eq!(state.ui_state, super::AppUiState::WelcomeMode);
+        assert!(state.active_modal.is_none());
+        assert!(state.slash_overlay.is_none());
+        assert!(state.follow_bottom);
+    }
+
+    // ── Integration tests: event dispatch ──────────────────────────────────────
+
+    #[test]
+    fn drain_events_turn_starting_sets_busy() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+        assert!(!state.busy);
+
+        tx.send(ReplTuiEvent::TurnStarting).unwrap();
+        state.drain_events(&rx);
+
+        assert!(state.busy);
+        assert_eq!(state.status_line, "Thinking...");
+        assert!(!state.entries.is_empty());
+    }
+
+    #[test]
+    fn drain_events_turn_finished_clears_busy() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+
+        tx.send(ReplTuiEvent::TurnStarting).unwrap();
+        state.drain_events(&rx);
+        assert!(state.busy);
+
+        tx.send(ReplTuiEvent::TurnFinished(Ok(()))).unwrap();
+        state.drain_events(&rx);
+
+        assert!(!state.busy);
+        assert_eq!(state.status_line, "Ready");
+    }
+
+    #[test]
+    fn drain_events_system_message_adds_entry() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+
+        tx.send(ReplTuiEvent::SystemMessage("hello system".to_string()))
+            .unwrap();
+        state.drain_events(&rx);
+
+        assert_eq!(state.entries.len(), 1);
+        assert!(matches!(&state.entries[0], TranscriptEntry::System(s) if s == "hello system"));
+    }
+
+    #[test]
+    fn drain_events_stream_text_enqueues_typewriter_chars() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+
+        tx.send(ReplTuiEvent::StreamText("abc".to_string()))
+            .unwrap();
+        state.drain_events(&rx);
+
+        assert_eq!(state.typewriter.chars.len(), 3);
+        assert_eq!(state.typewriter.chars[0], 'a');
+        assert_eq!(state.typewriter.chars[1], 'b');
+        assert_eq!(state.typewriter.chars[2], 'c');
+    }
+
+    // ── Integration tests: modal state machine ─────────────────────────────────
+
+    #[test]
+    fn active_modal_auth_variant_accessors() {
+        use crate::tui::active_modal::ActiveModal;
+        use crate::tui::auth_modal::AuthModal;
+
+        let (tx, _rx) = mpsc::channel::<ReplTuiEvent>();
+        let auth = AuthModal::new(tx, None);
+        let mut modal = ActiveModal::Auth(auth);
+
+        assert!(modal.as_auth_mut().is_some());
+        assert!(modal.as_model_mut().is_none());
+        assert!(modal.as_session_mut().is_none());
+    }
+
+    #[test]
+    fn active_modal_session_variant_accessors() {
+        use crate::tui::active_modal::ActiveModal;
+        use crate::tui::session_modal::SessionModal;
+        use std::path::PathBuf;
+
+        let entries = vec![SessionModalEntry {
+            id: "s1".to_string(),
+            path: PathBuf::from("/tmp/s1.json"),
+            title: Some("Test Session".to_string()),
+            modified_epoch_secs: 1_700_000_000,
+            message_count: 5,
+            is_current: false,
+        }];
+        let session = SessionModal::new(entries);
+        let mut modal = ActiveModal::Session(session);
+
+        assert!(modal.as_session_mut().is_some());
+        assert!(modal.as_auth_mut().is_none());
+        assert!(modal.as_model_mut().is_none());
+    }
+
+    // ── Integration tests: calculate_input_dimensions ──────────────────────────
+
+    #[test]
+    fn calculate_input_dimensions_empty_input_various_widths() {
+        for width in [20u16, 40, 80, 120, 200] {
+            let mut state = ReplTuiState::new();
+            let (height, lines, _total_visual, cursor_pos) =
+                state.calculate_input_dimensions(width, "claude-sonnet-4-6");
+
+            assert!(height > 0, "height must be > 0 for width={width}");
+            assert!(!lines.is_empty(), "must produce at least 1 render line");
+            assert!(
+                cursor_pos.is_some(),
+                "cursor_pos should be Some for empty input at width={width}"
+            );
+        }
+    }
+
+    #[test]
+    fn calculate_input_dimensions_long_input_wraps() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "the quick brown fox jumps over the lazy dog".to_string();
+        state.input.cursor = state.input.text.chars().count();
+        state.resync_byte_cursor();
+
+        let (_height, lines, _total_visual, cursor_pos) =
+            state.calculate_input_dimensions(30, "model");
+
+        assert!(
+            lines.len() > 2,
+            "long text at narrow width should wrap into >2 lines, got {}",
+            lines.len()
+        );
+        assert!(cursor_pos.is_some());
+    }
+
+    #[test]
+    fn calculate_input_dimensions_multiline_input() {
+        let mut state = ReplTuiState::new();
+        state.input.text = "line1\nline2\nline3".to_string();
+        state.input.cursor = 5;
+        state.resync_byte_cursor();
+
+        let (_height, lines, _total_visual, cursor_pos) =
+            state.calculate_input_dimensions(80, "model");
+
+        assert!(
+            lines.len() >= 4,
+            "3 logical lines + padding should produce >=4 render lines, got {}",
+            lines.len()
+        );
+        assert!(cursor_pos.is_some());
     }
 }

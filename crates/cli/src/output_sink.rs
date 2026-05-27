@@ -4,7 +4,10 @@ use std::sync::mpsc;
 
 pub(crate) use render::sink::{OutputSink, StdoutSink};
 
-use crate::tui::events::ReplTuiEvent;
+#[cfg(not(feature = "tui-crate-context"))]
+use acrawl_tui::events::ReplTuiEvent;
+#[cfg(feature = "tui-crate-context")]
+use crate::events::ReplTuiEvent;
 
 #[derive(Debug)]
 pub(crate) struct ChannelSink {
@@ -58,7 +61,10 @@ impl OutputSink for ChannelSink {
 #[cfg(test)]
 mod tests {
     use super::{ChannelSink, OutputSink};
-    use crate::tui::events::ReplTuiEvent;
+    #[cfg(not(feature = "tui-crate-context"))]
+    use acrawl_tui::events::ReplTuiEvent;
+    #[cfg(feature = "tui-crate-context")]
+    use crate::events::ReplTuiEvent;
     use render::sink::StdoutSink;
     use runtime::RuntimeObserver;
     use std::sync::mpsc::channel;

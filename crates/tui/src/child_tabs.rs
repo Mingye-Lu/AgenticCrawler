@@ -1,4 +1,4 @@
-use ratatui::widgets::ListState;
+﻿use ratatui::widgets::ListState;
 
 use super::repl_app::{ToolCallStatus, TranscriptEntry};
 use crate::markdown::{drain_safe_boundary, render_lines};
@@ -215,9 +215,9 @@ impl ChildTabPanel {
                 }
 
                 let message = if *success {
-                    format!("✓ Done -- {items_extracted} items extracted")
+                    format!("鉁?Done -- {items_extracted} items extracted")
                 } else {
-                    format!("✗ Error: {}", error.as_deref().unwrap_or("unknown error"))
+                    format!("鉁?Error: {}", error.as_deref().unwrap_or("unknown error"))
                 };
                 tab.entries.push(TranscriptEntry::System(message));
             }
@@ -463,7 +463,7 @@ mod tests {
                 input_summary: "url".to_string(),
             },
         );
-        // Don't complete the tool — let Finished interrupt it
+        // Don't complete the tool 鈥?let Finished interrupt it
         panel.apply_event(
             "child-1",
             "goal",

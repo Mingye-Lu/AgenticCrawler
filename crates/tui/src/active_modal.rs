@@ -1,4 +1,4 @@
-use super::auth_modal::AuthModal;
+﻿use super::auth_modal::AuthModal;
 use super::modal::{Modal, ModalAction};
 use super::model_modal::ModelModal;
 use super::session_modal::SessionModal;

@@ -67,6 +67,7 @@ pub struct SessionModal {
 }
 
 impl SessionModal {
+    #[must_use]
     pub fn new(mut entries: Vec<SessionModalEntry>) -> Self {
         entries.sort_by_key(|e| std::cmp::Reverse(e.modified_epoch_secs));
         Self {
