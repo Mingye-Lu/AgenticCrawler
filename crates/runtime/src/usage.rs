@@ -1,5 +1,5 @@
-pub use acrawl_core::message::TokenUsage;
 use crate::session::Session;
+pub use acrawl_core::message::TokenUsage;
 
 const DEFAULT_INPUT_COST_PER_MILLION: f64 = 15.0;
 const DEFAULT_OUTPUT_COST_PER_MILLION: f64 = 75.0;
@@ -75,7 +75,10 @@ pub fn estimate_cost_usd(usage: TokenUsage) -> UsageCostEstimate {
 }
 
 #[must_use]
-pub fn estimate_cost_usd_with_pricing(usage: TokenUsage, pricing: ModelPricing) -> UsageCostEstimate {
+pub fn estimate_cost_usd_with_pricing(
+    usage: TokenUsage,
+    pricing: ModelPricing,
+) -> UsageCostEstimate {
     UsageCostEstimate {
         input_cost_usd: cost_for_tokens(usage.input_tokens, pricing.input_cost_per_million),
         output_cost_usd: cost_for_tokens(usage.output_tokens, pricing.output_cost_per_million),
@@ -102,8 +105,7 @@ pub fn summary_lines_for_model(usage: TokenUsage, label: &str, model: Option<&st
         || estimate_cost_usd(usage),
         |pricing| estimate_cost_usd_with_pricing(usage, pricing),
     );
-    let model_suffix =
-        model.map_or_else(String::new, |model_name| format!(" model={model_name}"));
+    let model_suffix = model.map_or_else(String::new, |model_name| format!(" model={model_name}"));
     let pricing_suffix = if pricing.is_some() {
         ""
     } else if model.is_some() {

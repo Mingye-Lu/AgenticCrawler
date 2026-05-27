@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
-use crate::BrowserContext;
-use crate::FetchRouter;
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
 use crate::tools::page_map::apply_page_map_caps;
+use crate::BrowserContext;
+use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const SLIM_MAX_CHARS: usize = 2000;
@@ -214,7 +214,10 @@ fn resolve_content(
     }
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 
     let router = FetchRouter::new().map_err(|e| ToolExecutionError::new(e.to_string()))?;
@@ -513,4 +516,3 @@ mod tests {
         assert!(!result.strip_images);
     }
 }
-

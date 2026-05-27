@@ -33,7 +33,10 @@ fn parse_input(
     Ok((heading, selector, offset, max_chars))
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let (heading, selector, offset, max_chars) = parse_input(input)?;
     let mut bridge = browser
         .acquire_bridge()
@@ -101,4 +104,3 @@ mod tests {
         assert_eq!(max_chars, MAX_CHARS_CEILING);
     }
 }
-

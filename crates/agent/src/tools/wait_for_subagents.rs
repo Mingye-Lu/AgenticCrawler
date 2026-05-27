@@ -9,7 +9,9 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
             value
                 .as_array()
                 .ok_or_else(|| {
-                    ToolExecutionError::new("wait_for_subagents child_ids must be an array".to_string())
+                    ToolExecutionError::new(
+                        "wait_for_subagents child_ids must be an array".to_string(),
+                    )
                 })
                 .and_then(|values| {
                     values
@@ -60,4 +62,3 @@ mod tests {
         }
     }
 }
-

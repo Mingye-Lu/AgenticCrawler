@@ -621,8 +621,14 @@ mod tests {
             .await
             .expect("fork should succeed");
 
-        assert_eq!(observation.text, "Forked subagent root-child-1 for: collect details");
-        assert!(matches!(observation.effect, Some(crate::ToolEffect::Spawn(_))));
+        assert_eq!(
+            observation.text,
+            "Forked subagent root-child-1 for: collect details"
+        );
+        assert!(matches!(
+            observation.effect,
+            Some(crate::ToolEffect::Spawn(_))
+        ));
         assert_eq!(
             agent.child_tasks.get("root-child-1").unwrap().0,
             "collect details"
@@ -658,7 +664,10 @@ mod tests {
         assert!(observation
             .text
             .contains("Forked subagent root-child-1 for: check result"));
-        assert!(matches!(observation.effect, Some(crate::ToolEffect::Spawn(_))));
+        assert!(matches!(
+            observation.effect,
+            Some(crate::ToolEffect::Spawn(_))
+        ));
         assert_eq!(manager.lock().await.get_children("root").len(), 1);
         assert_eq!(agent.child_tasks.len(), 1);
         for (_, (_, handle, _)) in agent.child_tasks.drain() {

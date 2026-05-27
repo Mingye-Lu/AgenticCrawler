@@ -31,11 +31,7 @@ pub fn format_model_report(model: &str, message_count: usize, turns: u32) -> Str
 }
 
 #[must_use]
-pub fn format_model_switch_report(
-    previous: &str,
-    next: &str,
-    message_count: usize,
-) -> String {
+pub fn format_model_switch_report(previous: &str, next: &str, message_count: usize) -> String {
     format!(
         "Model updated\n  Previous         {previous}\n  Current          {next}\n  Preserved msgs   {message_count}"
     )
@@ -54,11 +50,7 @@ pub fn format_cost_report(usage: TokenUsage) -> String {
 }
 
 #[must_use]
-pub fn format_compact_report(
-    removed: usize,
-    resulting_messages: usize,
-    skipped: bool,
-) -> String {
+pub fn format_compact_report(removed: usize, resulting_messages: usize, skipped: bool) -> String {
     if skipped {
         format!(
             "Compact\n  Result           skipped\n  Reason           session below compaction threshold\n  Messages kept    {resulting_messages}"
@@ -76,11 +68,7 @@ pub fn format_auto_compaction_notice(removed: usize) -> String {
 }
 
 #[must_use]
-pub fn format_status_report(
-    model: &str,
-    usage: StatusUsage,
-    context: &StatusContext,
-) -> String {
+pub fn format_status_report(model: &str, usage: StatusUsage, context: &StatusContext) -> String {
     [
         format!(
             "Status\n  Model            {model}\n  Messages         {}\n  Turns            {}\n  Estimated tokens {}\n  Session          {}",
@@ -120,9 +108,7 @@ pub fn render_repl_help() -> String {
     .join("\n")
 }
 
-pub fn render_config_report(
-    section: Option<&str>,
-) -> Result<String, Box<dyn std::error::Error>> {
+pub fn render_config_report(section: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
     let loader = ConfigLoader::default_for();
     let discovered = loader.discover();
     let runtime_config = loader.load()?;

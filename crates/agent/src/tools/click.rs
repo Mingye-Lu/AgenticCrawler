@@ -23,7 +23,10 @@ fn parse_input(input: &Value) -> Result<ClickInput, CrawlError> {
     })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
     browser
         .acquire_bridge()
@@ -98,4 +101,3 @@ mod tests {
         assert!(!response["page_state"]["page_map"].is_null());
     }
 }
-

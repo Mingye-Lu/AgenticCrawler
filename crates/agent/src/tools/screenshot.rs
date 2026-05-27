@@ -8,7 +8,9 @@ use crate::{ToolEffect, ToolExecutionError};
 
 fn validate_filename(filename: &str) -> Result<(), ToolExecutionError> {
     if filename.trim().is_empty() {
-        return Err(ToolExecutionError::new("screenshot filename must not be empty"));
+        return Err(ToolExecutionError::new(
+            "screenshot filename must not be empty",
+        ));
     }
     let path = Path::new(filename);
     if path.components().count() != 1 {
@@ -36,7 +38,10 @@ fn default_filename() -> String {
     format!("screenshot_{ms}.png")
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let save = input.get("save").and_then(Value::as_bool).unwrap_or(false);
 
     let (screenshot_base64, size_bytes) = browser
@@ -444,4 +449,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
-

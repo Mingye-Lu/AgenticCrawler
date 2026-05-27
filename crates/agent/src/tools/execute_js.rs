@@ -11,7 +11,10 @@ pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
         .ok_or_else(|| CrawlError::new("execute_js requires 'script' field"))
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let script = parse_input(input)?;
 
     let result = browser
@@ -55,4 +58,3 @@ mod tests {
         assert!(parse_input(&input).is_err());
     }
 }
-

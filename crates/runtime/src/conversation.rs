@@ -11,8 +11,8 @@ use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
 use tokio::time::{sleep, Duration};
 
-pub use acrawl_core::event::AssistantEvent;
 pub use acrawl_core::error::{RuntimeError, ToolError};
+pub use acrawl_core::event::AssistantEvent;
 pub use acrawl_core::outcome::ToolOutcome;
 pub use acrawl_core::traits::ToolExecutor;
 
@@ -691,8 +691,7 @@ impl ToolExecutor for StaticToolExecutor {
 mod tests {
     use super::{
         parse_auto_compaction_threshold, ApiClient, ApiRequest, AssistantEvent,
-        AutoCompactionEvent, ConversationRuntime, RuntimeError, StaticToolExecutor,
-        ToolOutcome,
+        AutoCompactionEvent, ConversationRuntime, RuntimeError, StaticToolExecutor, ToolOutcome,
         DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
     };
     use crate::compact::CompactionConfig;

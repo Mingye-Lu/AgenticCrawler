@@ -65,12 +65,14 @@ impl McpStdioProcess {
         self.stdin.flush().await
     }
 
+    #[allow(dead_code)]
     pub async fn write_line(&mut self, line: &str) -> io::Result<()> {
         self.write_all(line.as_bytes()).await?;
         self.write_all(b"\n").await?;
         self.flush().await
     }
 
+    #[allow(dead_code)]
     pub async fn read_line(&mut self) -> io::Result<String> {
         let mut line = String::new();
         let bytes_read = self.stdout.read_line(&mut line).await?;
@@ -83,6 +85,7 @@ impl McpStdioProcess {
         Ok(line)
     }
 
+    #[allow(dead_code)]
     pub async fn read_available(&mut self) -> io::Result<Vec<u8>> {
         let mut buffer = vec![0_u8; 4096];
         let read = self.stdout.read(&mut buffer).await?;
@@ -201,6 +204,7 @@ impl McpStdioProcess {
         self.request(id, "tools/call", Some(params)).await
     }
 
+    #[allow(dead_code)]
     pub async fn list_resources(
         &mut self,
         id: JsonRpcId,
@@ -209,6 +213,7 @@ impl McpStdioProcess {
         self.request(id, "resources/list", params).await
     }
 
+    #[allow(dead_code)]
     pub async fn read_resource(
         &mut self,
         id: JsonRpcId,
@@ -217,10 +222,12 @@ impl McpStdioProcess {
         self.request(id, "resources/read", Some(params)).await
     }
 
+    #[allow(dead_code)]
     pub async fn terminate(&mut self) -> io::Result<()> {
         self.child.kill().await
     }
 
+    #[allow(dead_code)]
     pub async fn wait(&mut self) -> io::Result<std::process::ExitStatus> {
         self.child.wait().await
     }
@@ -349,8 +356,8 @@ mod tests {
     use tokio::runtime::Builder;
 
     use crate::config::{McpSdkServerConfig, McpServerConfig, McpStdioServerConfig};
-    use crate::mcp::McpInitializeServerInfo;
 
+    use super::types::McpInitializeServerInfo;
     use super::{
         default_initialize_params, encode_frame, spawn_mcp_stdio_process, JsonRpcId,
         JsonRpcRequest, JsonRpcResponse, McpClientBootstrap, McpInitializeClientInfo,

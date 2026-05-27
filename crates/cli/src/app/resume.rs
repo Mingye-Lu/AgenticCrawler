@@ -2,12 +2,12 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::CliError;
-use crate::format::{
+use commands::SlashCommand;
+use render::format::{
     format_compact_report, format_cost_report, format_status_report, render_config_report,
     render_export_text, render_repl_help, render_version_report, resolve_export_path,
     status_context, StatusUsage,
 };
-use commands::SlashCommand;
 use runtime::{CompactionConfig, Session};
 
 #[derive(Debug, Clone)]

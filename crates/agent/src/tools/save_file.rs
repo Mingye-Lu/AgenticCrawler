@@ -83,7 +83,10 @@ fn validate_relative_path(field: &str, value: &str) -> Result<(), CrawlError> {
     Ok(())
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
     let settings = runtime::load_settings();
@@ -161,4 +164,3 @@ mod tests {
         assert!(parse_input(&input).is_err());
     }
 }
-

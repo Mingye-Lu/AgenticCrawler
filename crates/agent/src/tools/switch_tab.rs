@@ -11,7 +11,10 @@ pub fn parse_input(input: &Value) -> i64 {
         .unwrap_or(-1)
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let index = parse_input(input);
 
     let result = browser
@@ -71,4 +74,3 @@ mod tests {
         assert_eq!(idx, -1);
     }
 }
-

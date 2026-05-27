@@ -13,21 +13,22 @@ use std::str::FromStr;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::error::CliError;
-use crate::format::{
+use crate::output_sink::ChannelSink;
+use crate::session_mgr::{create_managed_session_handle, SessionHandle};
+use render::format::{
     format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
     format_model_switch_report, format_status_report, render_config_report, render_export_text,
     render_repl_help, render_version_report, resolve_export_path, status_context, StatusUsage,
 };
-use crate::markdown::{Spinner, TerminalRenderer};
-use crate::output_sink::{ChannelSink, OutputSink, StdoutSink};
-use crate::session_mgr::{create_managed_session_handle, SessionHandle};
+use render::markdown::{Spinner, TerminalRenderer};
+use render::sink::{OutputSink, StdoutSink};
 
-#[cfg(not(feature = "tui-crate-context"))]
-use acrawl_tui::events::ReplTuiEvent;
 #[cfg(feature = "tui-crate-context")]
 use crate::events::ReplTuiEvent;
-use commands::{slash_command_specs, SlashCommand};
+#[cfg(not(feature = "tui-crate-context"))]
+use acrawl_tui::events::ReplTuiEvent;
 use agent::mvp_tool_specs;
+use commands::{slash_command_specs, SlashCommand};
 use runtime::{
     CompactionConfig, ControlState, ConversationRuntime, RuntimeError, Session, TokenUsage,
 };
@@ -1385,11 +1386,11 @@ mod tests {
     }
 
     #[test]
-    fn model_supports_reasoning_for_unknown_reasoning_models() {
-        assert!(
-            model_supports_reasoning("gpt-5.3-codex"),
-            "gpt-5.3-codex should be detected as a reasoning model"
-        );
+    fn model_supports_reasoning_catalog_known_models_are_deterministic() {
+        assert!(model_supports_reasoning("o3"));
+        assert!(model_supports_reasoning("o4-mini"));
+        assert!(!model_supports_reasoning("gpt-4o"));
+        assert!(!model_supports_reasoning("claude-sonnet-4-6"));
     }
 
     #[test]

@@ -3,7 +3,10 @@ use serde_json::Value;
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
 
     let url = browser
@@ -39,4 +42,3 @@ mod tests {
         assert!(input.is_null());
     }
 }
-

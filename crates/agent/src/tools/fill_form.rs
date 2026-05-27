@@ -51,7 +51,10 @@ fn parse_input(input: &Value) -> Result<FillFormInput, CrawlError> {
     })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 
     for (selector, value) in &params.fields {
@@ -175,4 +178,3 @@ mod tests {
         assert!(!response["page_state"]["page_map"].is_null());
     }
 }
-

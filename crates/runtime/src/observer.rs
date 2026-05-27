@@ -3,14 +3,14 @@ pub use acrawl_core::observer::RuntimeObserver;
 
 #[cfg(test)]
 mod tests {
-    use acrawl_core::observer::RuntimeObserver;
-    use acrawl_core::{ToolEffect, ToolOutcome};
     use crate::conversation::{
         ApiClient, ApiRequest, AssistantEvent, ConversationRuntime, RuntimeError,
         StaticToolExecutor,
     };
     use crate::session::Session;
     use crate::usage::TokenUsage;
+    use acrawl_core::observer::RuntimeObserver;
+    use acrawl_core::{ToolEffect, ToolOutcome};
     use std::sync::{Arc, Mutex};
 
     #[derive(Debug, Default, PartialEq, Eq)]
@@ -178,8 +178,9 @@ mod tests {
         let mut runtime = ConversationRuntime::new(
             Session::new(),
             ToolCallApiClient { calls: 0 },
-            StaticToolExecutor::new()
-                .register("echo", |input| Ok(ToolOutcome::reply(format!("echo:{input}")))),
+            StaticToolExecutor::new().register("echo", |input| {
+                Ok(ToolOutcome::reply(format!("echo:{input}")))
+            }),
             vec!["system".to_string()],
         )
         .with_observer(Box::new(observer));
@@ -313,8 +314,9 @@ mod tests {
         let mut runtime = ConversationRuntime::new(
             Session::new(),
             ToolCallApiClient { calls: 0 },
-            StaticToolExecutor::new()
-                .register("echo", |input| Ok(ToolOutcome::reply(format!("echo:{input}")))),
+            StaticToolExecutor::new().register("echo", |input| {
+                Ok(ToolOutcome::reply(format!("echo:{input}")))
+            }),
             vec!["system".to_string()],
         )
         .with_observer(Box::new(observer));
@@ -370,7 +372,9 @@ mod tests {
             Session::new(),
             MixedEffectApiClient { calls: 0 },
             StaticToolExecutor::new()
-                .register("echo", |input| Ok(ToolOutcome::reply(format!("echo:{input}"))))
+                .register("echo", |input| {
+                    Ok(ToolOutcome::reply(format!("echo:{input}")))
+                })
                 .register("pause_tool", |_input| {
                     Ok(ToolOutcome::with_effect(
                         "paused".to_string(),

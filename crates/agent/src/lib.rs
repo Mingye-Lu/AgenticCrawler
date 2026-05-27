@@ -10,19 +10,22 @@ pub mod tools;
 mod url_claim;
 
 pub mod tool_effect {
-    pub use acrawl_core::effect::{CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, WaitSpec};
+    pub use acrawl_core::effect::{
+        CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, WaitSpec,
+    };
     pub use acrawl_core::error::ToolExecutionError;
 }
 
 // Re-exports that tools and registry use via `crate::` paths
-pub use acrawl_core::ToolSpec;
-pub use acrawl_core::effect::{CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, WaitSpec};
+pub use acrawl_core::effect::{
+    CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, WaitSpec,
+};
 pub use acrawl_core::error::ToolExecutionError;
+pub use acrawl_core::ToolSpec;
 pub use browser::{
-    markdown, ws_server, BridgeCommand, BridgeError, BridgeResponse, BrowserBackend,
-    BrowserContext, BrowserState, ExtensionBridge, FetchError, FetchRouter, FetchedPage,
-    PageInfo, PlaywrightBridge, SharedBridge, WsBridgeError, WsBridgeServer,
-    generate_bridge_token,
+    generate_bridge_token, markdown, ws_server, BridgeCommand, BridgeError, BridgeResponse,
+    BrowserBackend, BrowserContext, BrowserState, ExtensionBridge, FetchError, FetchRouter,
+    FetchedPage, PageInfo, PlaywrightBridge, SharedBridge, WsBridgeError, WsBridgeServer,
 };
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
@@ -31,7 +34,7 @@ pub use child_events::{
     ChildSnapshot, ChildSnapshotRegistry,
 };
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
-pub use output::{OutputError, OutputFormat, write_output};
+pub use output::{write_output, OutputError, OutputFormat};
 pub use prompt::build_system_prompt;
 pub use registry::{ToolHandler, ToolRegistry};
 pub use shared_client::SharedApiClient;
@@ -42,8 +45,8 @@ pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
-    use serde_json::json;
     use acrawl_core::ToolSpec;
+    use serde_json::json;
     vec![
         ToolSpec {
             name: "navigate",

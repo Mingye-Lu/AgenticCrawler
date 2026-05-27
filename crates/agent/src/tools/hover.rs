@@ -11,7 +11,10 @@ pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
         .ok_or_else(|| CrawlError::new("hover requires 'selector' field"))
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let selector = parse_input(input)?;
 
     browser
@@ -73,4 +76,3 @@ mod tests {
         assert!(!response["page_state"]["page_map"].is_null());
     }
 }
-

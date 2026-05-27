@@ -15,11 +15,11 @@ pub static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 #[allow(unused_imports, deprecated)]
 pub(crate) mod format {
     pub(crate) use render::format::{
-        format_auto_compaction_notice, format_compact_report, format_cost_report,
-        format_model_report, format_model_switch_report, format_status_report,
+        default_export_filename, format_auto_compaction_notice, format_compact_report,
+        format_cost_report, format_model_report, format_model_switch_report, format_status_report,
         render_config_report, render_export_text, render_repl_help, render_version_report,
-        resolve_export_path, status_context, default_export_filename, truncate_for_summary,
-        StatusContext, StatusUsage, DEFAULT_DATE, VERSION,
+        resolve_export_path, status_context, truncate_for_summary, StatusContext, StatusUsage,
+        DEFAULT_DATE, VERSION,
     };
 }
 
@@ -93,19 +93,19 @@ impl CliOutputFormat {
 
 // ── TUI utility modules (moved from CLI in T30) ──
 
-pub mod events;
-pub(crate) mod modal;
 pub(crate) mod active_modal;
 pub(crate) mod child_tabs;
+pub mod events;
+pub(crate) mod modal;
 pub(crate) mod model_list;
 
 pub mod modals;
 
 // Crate-root re-exports for backward compatibility paths
 pub(crate) use modals::auth as auth_modal;
-pub(crate) use modals::session as session_modal;
-pub(crate) use modals::model as model_modal;
 pub(crate) use modals::grouped_model_list;
+pub(crate) use modals::model as model_modal;
+pub(crate) use modals::session as session_modal;
 
 // ── The moved REPL files (source of truth now lives here) ──
 
@@ -126,9 +126,9 @@ pub(crate) mod tui {
     pub(crate) use crate::model_list;
     pub(crate) use crate::model_modal;
     pub(crate) use crate::repl_app;
+    pub(crate) use crate::repl_app::run_repl_ratatui;
     pub(crate) use crate::repl_render;
     pub(crate) use crate::session_modal;
-    pub(crate) use crate::repl_app::run_repl_ratatui;
 }
 
 // ── Public entry point ──

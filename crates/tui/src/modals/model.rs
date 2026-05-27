@@ -10,8 +10,8 @@ use ratatui::Frame;
 use api::provider::ModelInfo;
 use api::provider::ProviderRegistry;
 
-use crate::display_width::{prefix_display_width, text_display_width};
 use super::grouped_model_list::{GroupedModelListState, ModelEntry, ProviderGroup, RowKind};
+use crate::display_width::{prefix_display_width, text_display_width};
 use crate::tui::modal::{draw_modal_frame, should_passthrough_key, Modal, ModalAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

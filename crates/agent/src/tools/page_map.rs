@@ -35,7 +35,10 @@ fn truncate_array_field(value: &mut Value, key: &str, max_len: usize) -> bool {
         })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
 
     let mut result = browser
@@ -262,4 +265,3 @@ mod tests {
         assert_eq!(value["truncated_links"], json!(false));
     }
 }
-

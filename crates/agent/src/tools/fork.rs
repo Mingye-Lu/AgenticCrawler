@@ -64,7 +64,9 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolExecutionError> {
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .ok_or_else(|| {
-                    ToolExecutionError::new("fork scope.url is required for single_page".to_string())
+                    ToolExecutionError::new(
+                        "fork scope.url is required for single_page".to_string(),
+                    )
                 })?;
             if url.is_empty() {
                 return Err(ToolExecutionError::new(
@@ -107,7 +109,9 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolExecutionError> {
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .ok_or_else(|| {
-                    ToolExecutionError::new("fork scope.regex is required for url_pattern".to_string())
+                    ToolExecutionError::new(
+                        "fork scope.regex is required for url_pattern".to_string(),
+                    )
                 })?;
             if regex.is_empty() {
                 return Err(ToolExecutionError::new(
@@ -117,8 +121,9 @@ fn parse_scope(value: &Value) -> Result<CrawlScope, ToolExecutionError> {
             // Compile to surface invalid regex early — the registry will
             // re-compile, but the parser surfaces the error before the
             // claim attempt.
-            Regex::new(regex)
-                .map_err(|error| ToolExecutionError::new(format!("fork scope.regex is invalid: {error}")))?;
+            Regex::new(regex).map_err(|error| {
+                ToolExecutionError::new(format!("fork scope.regex is invalid: {error}"))
+            })?;
             Ok(CrawlScope::UrlPattern {
                 regex: regex.to_string(),
             })

@@ -10,7 +10,6 @@ dependencies = [
  "acrawl-tui",
  "agent",
  "api",
- "arboard",
  "commands",
  "crawler",
  "crossterm 0.28.1",
@@ -21,13 +20,10 @@ dependencies = [
  "render",
  "reqwest 0.12.28",
  "runtime",
- "serde",
  "serde_json",
  "sha2",
- "textwrap",
  "tokio",
  "unicode-width",
- "zeroize",
 ]
 
 [[package]]

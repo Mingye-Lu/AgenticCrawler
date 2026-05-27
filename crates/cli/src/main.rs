@@ -5,15 +5,10 @@ mod auth;
 #[allow(dead_code)]
 mod display_width;
 mod error;
-mod format;
-#[allow(dead_code, unused_imports)]
-mod markdown;
 mod output_sink;
 mod self_update;
 #[allow(dead_code)]
 mod session_mgr;
-#[allow(dead_code, unused_imports)]
-mod tool_format;
 mod uninstall;
 
 use std::collections::BTreeMap;
@@ -24,15 +19,15 @@ use std::sync::OnceLock;
 
 pub(crate) static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
-use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
 use agent::mvp_tool_specs;
+use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
 use runtime::Session;
 
 use app::{
     initial_model_from_credentials, run_auth_cli, run_repl, run_resume_command, AllowedToolSet,
     LiveCli,
 };
-use format::{render_version_report, VERSION};
+use render::format::{render_version_report, VERSION};
 
 pub(crate) use app::Provider;
 

@@ -1374,10 +1374,7 @@ mod tests {
     fn golden_horizontal_rule_dim() {
         let ansi = md_to_ansi("---\n");
         // Horizontal rules render as repeated "─" with DIM
-        assert!(
-            ansi.contains("\x1b[2m"),
-            "rule must use DIM, got: {ansi:?}"
-        );
+        assert!(ansi.contains("\x1b[2m"), "rule must use DIM, got: {ansi:?}");
         assert!(
             ansi.contains("─"),
             "rule must use box-drawing dash, got: {ansi:?}"

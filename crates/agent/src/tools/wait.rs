@@ -68,7 +68,10 @@ fn parse_timeout_ms(input: &Value) -> Result<u64, CrawlError> {
     Ok(millis as u64)
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
     if let Some(ref selector) = parsed.selector {
@@ -141,4 +144,3 @@ mod tests {
         assert!(parse_input(&input).is_err());
     }
 }
-

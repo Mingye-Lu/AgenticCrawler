@@ -7,7 +7,9 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
         .get("child_ids")
         .ok_or_else(|| ToolExecutionError::new("cancel_subagent requires child_ids".to_string()))?
         .as_array()
-        .ok_or_else(|| ToolExecutionError::new("cancel_subagent child_ids must be an array".to_string()))?;
+        .ok_or_else(|| {
+            ToolExecutionError::new("cancel_subagent child_ids must be an array".to_string())
+        })?;
 
     if raw_ids.is_empty() {
         return Err(ToolExecutionError::new(
@@ -19,7 +21,9 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
         .iter()
         .map(|value| {
             value.as_str().map(str::to_owned).ok_or_else(|| {
-                ToolExecutionError::new("cancel_subagent child_ids entries must be strings".to_string())
+                ToolExecutionError::new(
+                    "cancel_subagent child_ids entries must be strings".to_string(),
+                )
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -69,4 +73,3 @@ mod tests {
         assert!(err.to_string().contains("must be strings"));
     }
 }
-

@@ -3,6 +3,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::str::FromStr;
 use std::sync::Mutex;
 
+use agent::{mvp_tool_specs, ToolRegistry};
 use agent::{CrawlResult, CrawlerAgent};
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
 use api::{
@@ -10,10 +11,7 @@ use api::{
     StreamEvent,
 };
 use api::{ImageSource, OutputContentBlock, ToolChoice, ToolDefinition};
-use agent::{mvp_tool_specs, ToolRegistry};
-use crawler::{
-    BrowserBackend, BrowserContext, PlaywrightBridge, ToolEffect,
-};
+use crawler::{BrowserBackend, BrowserContext, PlaywrightBridge, ToolEffect};
 use runtime::{encode_mcp_frame, read_mcp_frame};
 use runtime::{ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage};
 use runtime::{MessageRole, RuntimeError, TokenUsage};
@@ -268,10 +266,7 @@ enum RunGoalOutcome {
 }
 
 pub trait GoalExecutor {
-    fn execute(
-        &self,
-        request: &RunGoalRequest,
-    ) -> Result<CrawlResult, RunGoalExecutionError>;
+    fn execute(&self, request: &RunGoalRequest) -> Result<CrawlResult, RunGoalExecutionError>;
 }
 
 pub struct RealGoalExecutor;
@@ -743,10 +738,7 @@ impl ApiClient for CrawlApiClient {
 }
 
 impl GoalExecutor for RealGoalExecutor {
-    fn execute(
-        &self,
-        request: &RunGoalRequest,
-    ) -> Result<CrawlResult, RunGoalExecutionError> {
+    fn execute(&self, request: &RunGoalRequest) -> Result<CrawlResult, RunGoalExecutionError> {
         let provider = build_provider(&request.model).map_err(RunGoalExecutionError::Internal)?;
         let api_client =
             CrawlApiClient::new(provider, &request.model, request.allowed_tools.clone());
@@ -1056,10 +1048,7 @@ mod tests {
     }
 
     impl GoalExecutor for FakeGoalExecutor {
-        fn execute(
-            &self,
-            _request: &RunGoalRequest,
-        ) -> Result<CrawlResult, RunGoalExecutionError> {
+        fn execute(&self, _request: &RunGoalRequest) -> Result<CrawlResult, RunGoalExecutionError> {
             self.result.clone()
         }
     }

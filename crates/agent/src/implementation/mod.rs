@@ -13,9 +13,9 @@ use tokio::sync::Mutex;
 
 use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
+use crate::registry::ToolRegistry;
 use crate::state::CrawlState;
 use crate::tool_effect::ToolEffect;
-use crate::registry::ToolRegistry;
 use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
 
 mod fork;
@@ -595,7 +595,7 @@ mod tests {
     use tokio::sync::Mutex as AsyncMutex;
 
     use super::*;
-use crate::registry::ToolRegistry;
+    use crate::registry::ToolRegistry;
 
     struct MockApiClient {
         call_count: usize,
@@ -1031,7 +1031,10 @@ use crate::registry::ToolRegistry;
             .await
             .expect("fork should succeed");
 
-        assert_eq!(observation.text, "Forked subagent root-child-1 for: collect details");
+        assert_eq!(
+            observation.text,
+            "Forked subagent root-child-1 for: collect details"
+        );
         assert!(matches!(observation.effect, Some(ToolEffect::Spawn(_))));
 
         for (_, (_, handle, _)) in agent.child_tasks.drain() {

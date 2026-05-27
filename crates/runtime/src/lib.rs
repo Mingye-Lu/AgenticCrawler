@@ -32,24 +32,11 @@ pub use summary_compression::{
     compress_summary, compress_summary_text, SummaryCompressionBudget, SummaryCompressionResult,
 };
 
+pub use mcp::{encode_mcp_frame, read_mcp_frame, McpServerManager, McpTool};
+pub use mcp::{mcp_tool_name, mcp_tool_prefix};
 pub use mcp::{
-    encode_mcp_frame, read_mcp_frame, spawn_mcp_stdio_process, McpServerManager, McpStdioProcess,
-};
-pub use mcp::{
-    mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
-    scoped_mcp_config_hash, unwrap_proxied_mcp_url,
-};
-pub use mcp::{
-    JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ManagedMcpTool,
-    McpInitializeClientInfo, McpInitializeParams, McpInitializeResult, McpInitializeServerInfo,
-    McpListResourcesParams, McpListResourcesResult, McpListToolsParams, McpListToolsResult,
-    McpReadResourceParams, McpReadResourceResult, McpResource, McpResourceContents,
-    McpServerManagerError, McpTool, McpToolCallContent, McpToolCallParams, McpToolCallResult,
-    UnsupportedMcpServer,
-};
-pub use mcp::{
-    McpClaudeAiProxyTransport, McpClientAuth, McpClientBootstrap, McpClientTransport,
-    McpRemoteTransport, McpSdkTransport, McpStdioTransport,
+    JsonRpcError, JsonRpcId, JsonRpcResponse, ManagedMcpTool, McpServerManagerError,
+    McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
 pub use oauth::{
     clear_oauth_credentials, code_challenge_s256, credentials_path, generate_pkce_pair,
@@ -74,8 +61,9 @@ pub use settings::{
 };
 pub use update_check::{check_for_update, check_for_update_force, UpdateInfo};
 pub use usage::{
-    estimate_cost_usd, estimate_cost_usd_with_pricing, format_usd, pricing_for_model, summary_lines,
-    summary_lines_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
+    estimate_cost_usd, estimate_cost_usd_with_pricing, format_usd, pricing_for_model,
+    summary_lines, summary_lines_for_model, ModelPricing, TokenUsage, UsageCostEstimate,
+    UsageTracker,
 };
 
 #[cfg(test)]

@@ -25,7 +25,10 @@ pub fn parse_input(input: &Value) -> Result<SelectOptionInput, CrawlError> {
     Ok(SelectOptionInput { selector, value })
 }
 
-pub async fn execute(input: &Value, browser: &mut BrowserContext) -> Result<ToolEffect, ToolExecutionError> {
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
     browser
@@ -95,4 +98,3 @@ mod tests {
         assert!(!response["page_state"]["page_map"].is_null());
     }
 }
-
