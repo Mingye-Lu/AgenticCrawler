@@ -15,6 +15,7 @@ dependencies = [
  "crossterm 0.28.1",
  "dialoguer",
  "indicatif",
+ "mcp-server",
  "ratatui",
  "render",
  "reqwest 0.12.28",
@@ -1856,6 +1857,21 @@ dependencies = [
  "markup5ever",
  "tendril",
  "xml5ever",
+]
+
+[[package]]
+name = "mcp-server"
+version = "0.6.4"
+dependencies = [
+ "acrawl-core",
+ "agent",
+ "api",
+ "crawler",
+ "dialoguer",
+ "runtime",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

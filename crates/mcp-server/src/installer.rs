@@ -516,7 +516,7 @@ pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
     let detected = detect_ides();
 
     if detected.is_empty() {

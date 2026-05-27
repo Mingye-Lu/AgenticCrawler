@@ -2,6 +2,7 @@
 members = [
     "crates/agent",
     "crates/cli",
+    "crates/mcp-server",
     "crates/render",
     "crates/runtime",
     "crates/api",
@@ -14,6 +15,7 @@ resolver = "2"
 
 [workspace.dependencies]
 agent = { path = "crates/agent" }
+mcp-server = { path = "crates/mcp-server" }
 render = { path = "crates/render" }
 
 [workspace.package]

@@ -116,30 +116,30 @@ fn write_frame_to_stdout(payload: &[u8]) {
 }
 
 #[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    jsonrpc: String,
+pub struct JsonRpcRequest {
+    pub jsonrpc: String,
     #[serde(default)]
-    id: Option<Value>,
-    method: String,
+    pub id: Option<Value>,
+    pub method: String,
     #[serde(default)]
-    params: Option<Value>,
+    pub params: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
-struct JsonRpcResponse {
-    jsonrpc: String,
+pub struct JsonRpcResponse {
+    pub jsonrpc: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<Value>,
+    pub id: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    result: Option<Value>,
+    pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<JsonRpcError>,
+    pub error: Option<JsonRpcError>,
 }
 
 #[derive(Debug, Serialize)]
-struct JsonRpcError {
-    code: i32,
-    message: String,
+pub struct JsonRpcError {
+    pub code: i32,
+    pub message: String,
 }
 
 fn send_response(response: &JsonRpcResponse) {
@@ -248,15 +248,15 @@ fn execute_browser_tool(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct RunGoalRequest {
-    goal: String,
-    model: String,
-    allowed_tools: Vec<String>,
-    max_steps: Option<usize>,
+pub struct RunGoalRequest {
+    pub goal: String,
+    pub model: String,
+    pub allowed_tools: Vec<String>,
+    pub max_steps: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum RunGoalExecutionError {
+pub enum RunGoalExecutionError {
     Internal(String),
     Crawl(String),
 }
@@ -267,14 +267,14 @@ enum RunGoalOutcome {
     JsonRpcError { code: i32, message: String },
 }
 
-trait GoalExecutor {
+pub trait GoalExecutor {
     fn execute(
         &self,
         request: &RunGoalRequest,
     ) -> Result<CrawlResult, RunGoalExecutionError>;
 }
 
-struct RealGoalExecutor;
+pub struct RealGoalExecutor;
 
 fn resolve_model(model: Option<&str>) -> Result<String, String> {
     if let Some(m) = model {
@@ -887,7 +887,7 @@ fn handle_tools_call(
     }
 }
 
-pub fn run() {
+pub fn run_mcp_server() {
     eprintln!("{SERVER_NAME} v{SERVER_VERSION} ready (stdio transport, waiting for JSON-RPC)");
 
     let rt = tokio::runtime::Builder::new_multi_thread()

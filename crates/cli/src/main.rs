@@ -4,8 +4,6 @@ mod display_width;
 mod error;
 mod format;
 mod markdown;
-mod mcp_install;
-mod mcp_server;
 mod output_sink;
 mod self_update;
 mod session_mgr;
@@ -101,9 +99,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
         CliAction::InstallBrowser => install_browser()?,
-        CliAction::Mcp => mcp_server::run(),
-        CliAction::McpInstall => mcp_install::run()?,
-        CliAction::McpUninstall => mcp_install::run_uninstall()?,
+        CliAction::Mcp => mcp_server::run_mcp_server(),
+        CliAction::McpInstall => mcp_server::run_install()?,
+        CliAction::McpUninstall => mcp_server::run_uninstall()?,
         CliAction::Repl {
             model,
             allowed_tools,
