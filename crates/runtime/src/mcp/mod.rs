@@ -2,7 +2,7 @@ mod client;
 mod naming;
 mod process;
 mod server_manager;
-mod types;
+pub(crate) mod types;
 
 // Re-export internally for crate tests that use `crate::mcp::X` paths
 #[cfg(test)]

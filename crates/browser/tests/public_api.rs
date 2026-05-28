@@ -232,7 +232,7 @@ fn fetched_page_struct_fields() {
 #[test]
 fn bridge_error_variants_display() {
     let timeout_err = BridgeError::CommandTimeout {
-        timeout: Duration::from_secs(60),
+        timeout: Duration::from_mins(1),
     };
     let display = format!("{timeout_err}");
     assert!(display.contains("60"));

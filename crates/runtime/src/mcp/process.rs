@@ -357,13 +357,13 @@ mod tests {
 
     use crate::config::{McpSdkServerConfig, McpServerConfig, McpStdioServerConfig};
 
-    use super::types::McpInitializeServerInfo;
     use super::{
         default_initialize_params, encode_frame, spawn_mcp_stdio_process, JsonRpcId,
         JsonRpcRequest, JsonRpcResponse, McpClientBootstrap, McpInitializeClientInfo,
         McpInitializeParams, McpInitializeResult, McpListToolsResult, McpReadResourceParams,
         McpReadResourceResult, McpStdioProcess, McpToolCallParams,
     };
+    use crate::mcp::types::McpInitializeServerInfo;
     use crate::mcp::McpTool;
 
     fn temp_dir() -> PathBuf {
@@ -848,7 +848,7 @@ while True:
             assert_eq!(
                 read.result,
                 Some(McpReadResourceResult {
-                    contents: vec![super::super::McpResourceContents {
+                    contents: vec![crate::mcp::types::McpResourceContents {
                         uri: "file://guide.txt".to_string(),
                         mime_type: Some("text/plain".to_string()),
                         text: Some("contents for file://guide.txt".to_string()),
