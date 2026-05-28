@@ -2191,7 +2191,9 @@ impl ReplTuiState {
                     self.pause_reason = String::new();
                     self.status_line = "Thinking...".to_string();
                 }
-                ReplTuiEvent::ChildEvent(_) => {}
+                ReplTuiEvent::ChildEvent(_)
+                | ReplTuiEvent::MessageCompleted(_)
+                | ReplTuiEvent::MessagesLoaded(_) => {}
                 ReplTuiEvent::ExtensionBridgeResult { success, message } => {
                     let title = if success {
                         "Extension"

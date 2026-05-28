@@ -98,6 +98,7 @@ pub(crate) mod child_tabs;
 pub mod events;
 pub(crate) mod modal;
 pub(crate) mod model_list;
+pub(crate) mod tool_pairing;
 
 pub mod modals;
 

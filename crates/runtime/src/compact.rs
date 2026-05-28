@@ -228,6 +228,7 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
             model: session.model.clone(),
             title: session.title.clone(),
             messages: compacted_messages,
+            child_sessions: session.child_sessions.clone(),
         },
         removed_message_count: removed.len(),
     }
@@ -667,10 +668,11 @@ mod tests {
     #[test]
     fn leaves_small_sessions_unchanged() {
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![ConversationMessage::user_text("hello")],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![ConversationMessage::user_text("hello")],
+          child_sessions: Vec::new(),
         };
 
         let result = compact_session(&session, CompactionConfig::default());
@@ -683,23 +685,24 @@ mod tests {
     #[test]
     fn compacts_older_messages_into_a_system_summary() {
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text("one ".repeat(200)),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "two ".repeat(200),
-                }]),
-                ConversationMessage::user_text("three ".repeat(200)),
-                ConversationMessage {
-                    role: MessageRole::Assistant,
-                    blocks: vec![ContentBlock::Text {
-                        text: "recent".to_string(),
-                    }],
-                    usage: None,
-                },
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text("one ".repeat(200)),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "two ".repeat(200),
+              }]),
+              ConversationMessage::user_text("three ".repeat(200)),
+              ConversationMessage {
+                  role: MessageRole::Assistant,
+                  blocks: vec![ContentBlock::Text {
+                      text: "recent".to_string(),
+                  }],
+                  usage: None,
+              },
+          ],
+          child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -778,27 +781,28 @@ mod tests {
     #[test]
     fn compaction_never_orphans_tool_result() {
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text("x ".repeat(200)),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "call_1".to_string(),
-                    name: "navigate".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("call_1", "navigate", "page content", false),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "call_2".to_string(),
-                    name: "click".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("call_2", "click", "ok", false),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "done".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text("x ".repeat(200)),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "call_1".to_string(),
+                  name: "navigate".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("call_1", "navigate", "page content", false),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "call_2".to_string(),
+                  name: "click".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("call_2", "click", "ok", false),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "done".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -836,21 +840,22 @@ mod tests {
     #[test]
     fn compaction_pulls_back_past_tool_boundary() {
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text("x ".repeat(200)),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "call_1".to_string(),
-                    name: "navigate".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("call_1", "navigate", "page", false),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "final".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text("x ".repeat(200)),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "call_1".to_string(),
+                  name: "navigate".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("call_1", "navigate", "page", false),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "final".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -911,10 +916,11 @@ mod tests {
     #[test]
     fn prefix_detection_returns_none_for_empty_session() {
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![],
+          child_sessions: Vec::new(),
         };
         assert_eq!(super::compacted_summary_prefix_len(&session), 0);
     }
@@ -1072,19 +1078,20 @@ mod tests {
     fn compact_session_second_compaction_merges_summary() {
         let large_text = "word ".repeat(400);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&large_text),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: large_text.clone(),
-                }]),
-                ConversationMessage::user_text(&large_text),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "done".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&large_text),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: large_text.clone(),
+              }]),
+              ConversationMessage::user_text(&large_text),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "done".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1124,19 +1131,20 @@ mod tests {
     fn compact_session_with_existing_prefix_does_not_summarize_it() {
         let large_text = "word ".repeat(400);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&large_text),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: large_text.clone(),
-                }]),
-                ConversationMessage::user_text(&large_text),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "done".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&large_text),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: large_text.clone(),
+              }]),
+              ConversationMessage::user_text(&large_text),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "done".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1170,20 +1178,21 @@ mod tests {
         let small = "a ".repeat(200);
         let large = "b ".repeat(1200);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&small),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: small.clone(),
-                }]),
-                ConversationMessage::user_text(&small),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: large.clone(),
-                }]),
-                ConversationMessage::user_text(&large),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&small),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: small.clone(),
+              }]),
+              ConversationMessage::user_text(&small),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: large.clone(),
+              }]),
+              ConversationMessage::user_text(&large),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1210,20 +1219,21 @@ mod tests {
     fn token_budget_floor_prevents_zero_preservation() {
         let large = "c ".repeat(60_000);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&large),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: large.clone(),
-                }]),
-                ConversationMessage::user_text(&large),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: large.clone(),
-                }]),
-                ConversationMessage::user_text(&large),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&large),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: large.clone(),
+              }]),
+              ConversationMessage::user_text(&large),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: large.clone(),
+              }]),
+              ConversationMessage::user_text(&large),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1246,15 +1256,16 @@ mod tests {
     fn token_budget_infinite_budget_preserves_all() {
         let text = "word ".repeat(50);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&text),
-                ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
-                ConversationMessage::user_text(&text),
-                ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&text),
+              ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
+              ConversationMessage::user_text(&text),
+              ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1277,21 +1288,22 @@ mod tests {
     fn tool_boundary_fix_still_works_with_budget_tail() {
         let text = "word ".repeat(200);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&text),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "call_1".to_string(),
-                    name: "navigate".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("call_1", "navigate", "page content", false),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "done".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&text),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "call_1".to_string(),
+                  name: "navigate".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("call_1", "navigate", "page content", false),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "done".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1326,17 +1338,18 @@ mod tests {
     fn backward_compat_preserve_recent_messages_still_works() {
         let text = "word ".repeat(200);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&text),
-                ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
-                ConversationMessage::user_text(&text),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "recent".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&text),
+              ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
+              ConversationMessage::user_text(&text),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "recent".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -1430,6 +1443,7 @@ mod tests {
             model: Some("claude-sonnet-4-6".to_string()),
             title: Some("QA Test 1".to_string()),
             messages,
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1504,23 +1518,24 @@ mod tests {
         };
 
         let session1 = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text(&text),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "c1".to_string(),
-                    name: "navigate".to_string(),
-                    input: r#"{"url":"https://example.com"}"#.to_string(),
-                }]),
-                ConversationMessage::tool_result("c1", "navigate", &text, false),
-                ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
-                ConversationMessage::user_text(&text),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "Here are the titles extracted.".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text(&text),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "c1".to_string(),
+                  name: "navigate".to_string(),
+                  input: r#"{"url":"https://example.com"}"#.to_string(),
+              }]),
+              ConversationMessage::tool_result("c1", "navigate", &text, false),
+              ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
+              ConversationMessage::user_text(&text),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "Here are the titles extracted.".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         let result1 = compact_session(&session1, config);
@@ -1633,6 +1648,7 @@ mod tests {
             model: None,
             title: None,
             messages,
+            child_sessions: Vec::new(),
         };
 
         // Budget of ~15K tokens (15000 * 4 chars ≈ 60K chars budget)
@@ -1723,50 +1739,51 @@ mod tests {
         // Build a session with multiple tool_use/tool_result pairs at various positions
         let text = "content ".repeat(200);
         let session = Session {
-            version: 1,
-            model: None,
-            title: None,
-            messages: vec![
-                ConversationMessage::user_text("Start crawling"),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "t1".to_string(),
-                    name: "navigate".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("t1", "navigate", &text, false),
-                ConversationMessage::assistant(vec![
-                    ContentBlock::Text {
-                        text: "Found page.".to_string(),
-                    },
-                    ContentBlock::ToolUse {
-                        id: "t2".to_string(),
-                        name: "click".to_string(),
-                        input: r#"{"selector":".next"}"#.to_string(),
-                    },
-                ]),
-                ConversationMessage::tool_result("t2", "click", "clicked next", false),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "t3".to_string(),
-                    name: "navigate".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("t3", "navigate", &text, false),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "t4".to_string(),
-                    name: "read_content".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("t4", "read_content", "extracted data", false),
-                ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                    id: "t5".to_string(),
-                    name: "navigate".to_string(),
-                    input: "{}".to_string(),
-                }]),
-                ConversationMessage::tool_result("t5", "navigate", &text, false),
-                ConversationMessage::assistant(vec![ContentBlock::Text {
-                    text: "All extracted.".to_string(),
-                }]),
-            ],
+          version: 1,
+          model: None,
+          title: None,
+          messages: vec![
+              ConversationMessage::user_text("Start crawling"),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "t1".to_string(),
+                  name: "navigate".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("t1", "navigate", &text, false),
+              ConversationMessage::assistant(vec![
+                  ContentBlock::Text {
+                      text: "Found page.".to_string(),
+                  },
+                  ContentBlock::ToolUse {
+                      id: "t2".to_string(),
+                      name: "click".to_string(),
+                      input: r#"{"selector":".next"}"#.to_string(),
+                  },
+              ]),
+              ConversationMessage::tool_result("t2", "click", "clicked next", false),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "t3".to_string(),
+                  name: "navigate".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("t3", "navigate", &text, false),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "t4".to_string(),
+                  name: "read_content".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("t4", "read_content", "extracted data", false),
+              ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                  id: "t5".to_string(),
+                  name: "navigate".to_string(),
+                  input: "{}".to_string(),
+              }]),
+              ConversationMessage::tool_result("t5", "navigate", &text, false),
+              ConversationMessage::assistant(vec![ContentBlock::Text {
+                  text: "All extracted.".to_string(),
+              }]),
+          ],
+          child_sessions: Vec::new(),
         };
 
         // Config 1: small preservation window
