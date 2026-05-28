@@ -5,43 +5,8 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::json::{JsonError, JsonValue};
-use crate::usage::TokenUsage;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MessageRole {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContentBlock {
-    Text {
-        text: String,
-    },
-    ToolUse {
-        id: String,
-        name: String,
-        input: String,
-    },
-    ToolResult {
-        tool_use_id: String,
-        tool_name: String,
-        output: String,
-        is_error: bool,
-    },
-    Reasoning {
-        data: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConversationMessage {
-    pub role: MessageRole,
-    pub blocks: Vec<ContentBlock>,
-    pub usage: Option<TokenUsage>,
-}
+pub use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole, TokenUsage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
@@ -133,7 +98,7 @@ impl Session {
             JsonValue::Array(
                 self.messages
                     .iter()
-                    .map(ConversationMessage::to_json)
+                    .map(conversation_message_to_json)
                     .collect(),
             ),
         );
@@ -168,7 +133,7 @@ impl Session {
             .and_then(JsonValue::as_array)
             .ok_or_else(|| SessionError::Format("missing messages".to_string()))?
             .iter()
-            .map(ConversationMessage::from_json)
+            .map(conversation_message_from_json)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             version,
@@ -185,196 +150,144 @@ impl Default for Session {
     }
 }
 
-impl ConversationMessage {
-    #[must_use]
-    pub fn user_text(text: impl Into<String>) -> Self {
-        Self {
-            role: MessageRole::User,
-            blocks: vec![ContentBlock::Text { text: text.into() }],
-            usage: None,
-        }
-    }
-
-    #[must_use]
-    pub fn assistant(blocks: Vec<ContentBlock>) -> Self {
-        Self {
-            role: MessageRole::Assistant,
-            blocks,
-            usage: None,
-        }
-    }
-
-    #[must_use]
-    pub fn assistant_with_usage(blocks: Vec<ContentBlock>, usage: Option<TokenUsage>) -> Self {
-        Self {
-            role: MessageRole::Assistant,
-            blocks,
-            usage,
-        }
-    }
-
-    #[must_use]
-    pub fn tool_result(
-        tool_use_id: impl Into<String>,
-        tool_name: impl Into<String>,
-        output: impl Into<String>,
-        is_error: bool,
-    ) -> Self {
-        Self {
-            role: MessageRole::Tool,
-            blocks: vec![ContentBlock::ToolResult {
-                tool_use_id: tool_use_id.into(),
-                tool_name: tool_name.into(),
-                output: output.into(),
-                is_error,
-            }],
-            usage: None,
-        }
-    }
-
-    #[must_use]
-    pub fn to_json(&self) -> JsonValue {
-        let mut object = BTreeMap::new();
-        object.insert(
-            "role".to_string(),
-            JsonValue::String(
-                match self.role {
-                    MessageRole::System => "system",
-                    MessageRole::User => "user",
-                    MessageRole::Assistant => "assistant",
-                    MessageRole::Tool => "tool",
-                }
-                .to_string(),
-            ),
-        );
-        object.insert(
-            "blocks".to_string(),
-            JsonValue::Array(self.blocks.iter().map(ContentBlock::to_json).collect()),
-        );
-        if let Some(usage) = self.usage {
-            object.insert("usage".to_string(), usage_to_json(usage));
-        }
-        JsonValue::Object(object)
-    }
-
-    fn from_json(value: &JsonValue) -> Result<Self, SessionError> {
-        let object = value
-            .as_object()
-            .ok_or_else(|| SessionError::Format("message must be an object".to_string()))?;
-        let role = match object
-            .get("role")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| SessionError::Format("missing role".to_string()))?
-        {
-            "system" => MessageRole::System,
-            "user" => MessageRole::User,
-            "assistant" => MessageRole::Assistant,
-            "tool" => MessageRole::Tool,
-            other => {
-                return Err(SessionError::Format(format!(
-                    "unsupported message role: {other}"
-                )))
+fn conversation_message_to_json(msg: &ConversationMessage) -> JsonValue {
+    let mut object = BTreeMap::new();
+    object.insert(
+        "role".to_string(),
+        JsonValue::String(
+            match msg.role {
+                MessageRole::System => "system",
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::Tool => "tool",
             }
-        };
-        let blocks = object
-            .get("blocks")
-            .and_then(JsonValue::as_array)
-            .ok_or_else(|| SessionError::Format("missing blocks".to_string()))?
-            .iter()
-            .map(ContentBlock::from_json)
-            .collect::<Result<Vec<_>, _>>()?;
-        let usage = object.get("usage").map(usage_from_json).transpose()?;
-        Ok(Self {
-            role,
-            blocks,
-            usage,
-        })
+            .to_string(),
+        ),
+    );
+    object.insert(
+        "blocks".to_string(),
+        JsonValue::Array(msg.blocks.iter().map(content_block_to_json).collect()),
+    );
+    if let Some(usage) = msg.usage {
+        object.insert("usage".to_string(), usage_to_json(usage));
     }
+    JsonValue::Object(object)
 }
 
-impl ContentBlock {
-    #[must_use]
-    pub fn to_json(&self) -> JsonValue {
-        let mut object = BTreeMap::new();
-        match self {
-            Self::Text { text } => {
-                object.insert("type".to_string(), JsonValue::String("text".to_string()));
-                object.insert("text".to_string(), JsonValue::String(text.clone()));
-            }
-            Self::ToolUse { id, name, input } => {
-                object.insert(
-                    "type".to_string(),
-                    JsonValue::String("tool_use".to_string()),
-                );
-                object.insert("id".to_string(), JsonValue::String(id.clone()));
-                object.insert("name".to_string(), JsonValue::String(name.clone()));
-                object.insert("input".to_string(), JsonValue::String(input.clone()));
-            }
-            Self::ToolResult {
-                tool_use_id,
-                tool_name,
-                output,
-                is_error,
-            } => {
-                object.insert(
-                    "type".to_string(),
-                    JsonValue::String("tool_result".to_string()),
-                );
-                object.insert(
-                    "tool_use_id".to_string(),
-                    JsonValue::String(tool_use_id.clone()),
-                );
-                object.insert(
-                    "tool_name".to_string(),
-                    JsonValue::String(tool_name.clone()),
-                );
-                object.insert("output".to_string(), JsonValue::String(output.clone()));
-                object.insert("is_error".to_string(), JsonValue::Bool(*is_error));
-            }
-            Self::Reasoning { data } => {
-                object.insert(
-                    "type".to_string(),
-                    JsonValue::String("reasoning".to_string()),
-                );
-                object.insert("data".to_string(), JsonValue::String(data.clone()));
-            }
+fn conversation_message_from_json(value: &JsonValue) -> Result<ConversationMessage, SessionError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| SessionError::Format("message must be an object".to_string()))?;
+    let role = match object
+        .get("role")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| SessionError::Format("missing role".to_string()))?
+    {
+        "system" => MessageRole::System,
+        "user" => MessageRole::User,
+        "assistant" => MessageRole::Assistant,
+        "tool" => MessageRole::Tool,
+        other => {
+            return Err(SessionError::Format(format!(
+                "unsupported message role: {other}"
+            )))
         }
-        JsonValue::Object(object)
-    }
+    };
+    let blocks = object
+        .get("blocks")
+        .and_then(JsonValue::as_array)
+        .ok_or_else(|| SessionError::Format("missing blocks".to_string()))?
+        .iter()
+        .map(content_block_from_json)
+        .collect::<Result<Vec<_>, _>>()?;
+    let usage = object.get("usage").map(usage_from_json).transpose()?;
+    Ok(ConversationMessage {
+        role,
+        blocks,
+        usage,
+    })
+}
 
-    fn from_json(value: &JsonValue) -> Result<Self, SessionError> {
-        let object = value
-            .as_object()
-            .ok_or_else(|| SessionError::Format("block must be an object".to_string()))?;
-        match object
-            .get("type")
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| SessionError::Format("missing block type".to_string()))?
-        {
-            "text" => Ok(Self::Text {
-                text: required_string(object, "text")?,
-            }),
-            "tool_use" => Ok(Self::ToolUse {
-                id: required_string(object, "id")?,
-                name: required_string(object, "name")?,
-                input: required_string(object, "input")?,
-            }),
-            "tool_result" => Ok(Self::ToolResult {
-                tool_use_id: required_string(object, "tool_use_id")?,
-                tool_name: required_string(object, "tool_name")?,
-                output: required_string(object, "output")?,
-                is_error: object
-                    .get("is_error")
-                    .and_then(JsonValue::as_bool)
-                    .ok_or_else(|| SessionError::Format("missing is_error".to_string()))?,
-            }),
-            "reasoning" => Ok(Self::Reasoning {
-                data: required_string(object, "data")?,
-            }),
-            other => Err(SessionError::Format(format!(
-                "unsupported block type: {other}"
-            ))),
+fn content_block_to_json(block: &ContentBlock) -> JsonValue {
+    let mut object = BTreeMap::new();
+    match block {
+        ContentBlock::Text { text } => {
+            object.insert("type".to_string(), JsonValue::String("text".to_string()));
+            object.insert("text".to_string(), JsonValue::String(text.clone()));
         }
+        ContentBlock::ToolUse { id, name, input } => {
+            object.insert(
+                "type".to_string(),
+                JsonValue::String("tool_use".to_string()),
+            );
+            object.insert("id".to_string(), JsonValue::String(id.clone()));
+            object.insert("name".to_string(), JsonValue::String(name.clone()));
+            object.insert("input".to_string(), JsonValue::String(input.clone()));
+        }
+        ContentBlock::ToolResult {
+            tool_use_id,
+            tool_name,
+            output,
+            is_error,
+        } => {
+            object.insert(
+                "type".to_string(),
+                JsonValue::String("tool_result".to_string()),
+            );
+            object.insert(
+                "tool_use_id".to_string(),
+                JsonValue::String(tool_use_id.clone()),
+            );
+            object.insert(
+                "tool_name".to_string(),
+                JsonValue::String(tool_name.clone()),
+            );
+            object.insert("output".to_string(), JsonValue::String(output.clone()));
+            object.insert("is_error".to_string(), JsonValue::Bool(*is_error));
+        }
+        ContentBlock::Reasoning { data } => {
+            object.insert(
+                "type".to_string(),
+                JsonValue::String("reasoning".to_string()),
+            );
+            object.insert("data".to_string(), JsonValue::String(data.clone()));
+        }
+    }
+    JsonValue::Object(object)
+}
+
+fn content_block_from_json(value: &JsonValue) -> Result<ContentBlock, SessionError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| SessionError::Format("block must be an object".to_string()))?;
+    match object
+        .get("type")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| SessionError::Format("missing block type".to_string()))?
+    {
+        "text" => Ok(ContentBlock::Text {
+            text: required_string(object, "text")?,
+        }),
+        "tool_use" => Ok(ContentBlock::ToolUse {
+            id: required_string(object, "id")?,
+            name: required_string(object, "name")?,
+            input: required_string(object, "input")?,
+        }),
+        "tool_result" => Ok(ContentBlock::ToolResult {
+            tool_use_id: required_string(object, "tool_use_id")?,
+            tool_name: required_string(object, "tool_name")?,
+            output: required_string(object, "output")?,
+            is_error: object
+                .get("is_error")
+                .and_then(JsonValue::as_bool)
+                .ok_or_else(|| SessionError::Format("missing is_error".to_string()))?,
+        }),
+        "reasoning" => Ok(ContentBlock::Reasoning {
+            data: required_string(object, "data")?,
+        }),
+        other => Err(SessionError::Format(format!(
+            "unsupported block type: {other}"
+        ))),
     }
 }
 

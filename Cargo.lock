@@ -6,20 +6,51 @@ version = 4
 name = "acrawl-cli"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
+ "acrawl-tui",
+ "agent",
  "api",
- "arboard",
+ "browser",
  "commands",
- "crawler",
  "crossterm 0.28.1",
  "dialoguer",
  "indicatif",
- "pulldown-cmark",
+ "mcp-server",
  "ratatui",
+ "render",
  "reqwest 0.12.28",
+ "runtime",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "unicode-width",
+]
+
+[[package]]
+name = "acrawl-core"
+version = "0.6.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "acrawl-tui"
+version = "0.6.4"
+dependencies = [
+ "acrawl-core",
+ "agent",
+ "api",
+ "arboard",
+ "browser",
+ "commands",
+ "crossterm 0.28.1",
+ "dialoguer",
+ "ratatui",
+ "render",
  "runtime",
  "serde",
  "serde_json",
- "sha2",
  "textwrap",
  "tokio",
  "unicode-width",
@@ -31,6 +62,21 @@ name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
+
+[[package]]
+name = "agent"
+version = "0.6.4"
+dependencies = [
+ "acrawl-core",
+ "async-trait",
+ "base64",
+ "browser",
+ "csv",
+ "regex",
+ "runtime",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "aho-corasick"
@@ -66,15 +112,17 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "api"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "aws-credential-types",
  "aws-sigv4",
  "azure_identity",
  "base64",
  "gcp_auth",
+ "getrandom 0.2.17",
  "reqwest 0.12.28",
- "runtime",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "zeroize",
 ]
@@ -364,6 +412,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "browser"
+version = "0.6.4"
+dependencies = [
+ "acrawl-core",
+ "async-trait",
+ "base64",
+ "futures-util",
+ "htmd",
+ "rand 0.8.5",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "socket2 0.5.10",
+ "tokio",
+ "tokio-tungstenite",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -466,6 +532,7 @@ dependencies = [
 name = "commands"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "runtime",
 ]
 
@@ -581,18 +648,12 @@ dependencies = [
 name = "crawler"
 version = "0.6.4"
 dependencies = [
- "async-trait",
- "base64",
- "csv",
+ "acrawl-core",
+ "agent",
+ "browser",
  "futures-util",
- "htmd",
- "rand 0.8.5",
- "regex",
- "reqwest 0.12.28",
  "runtime",
- "serde",
  "serde_json",
- "socket2 0.5.10",
  "tokio",
  "tokio-tungstenite",
 ]
@@ -1820,6 +1881,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-server"
+version = "0.6.4"
+dependencies = [
+ "acrawl-core",
+ "agent",
+ "api",
+ "browser",
+ "dialoguer",
+ "runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2708,6 +2784,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
+name = "render"
+version = "0.6.4"
+dependencies = [
+ "commands",
+ "crossterm 0.28.1",
+ "pulldown-cmark",
+ "ratatui",
+ "runtime",
+ "serde_json",
+ "unicode-width",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2799,6 +2888,7 @@ dependencies = [
 name = "runtime"
 version = "0.6.4"
 dependencies = [
+ "acrawl-core",
  "getrandom 0.2.17",
  "reqwest 0.12.28",
  "serde",
@@ -3461,6 +3551,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2 0.6.3",

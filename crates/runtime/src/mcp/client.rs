@@ -114,6 +114,7 @@ impl McpClientAuth {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub const fn requires_user_auth(&self) -> bool {
         matches!(self, Self::OAuth(_))
     }

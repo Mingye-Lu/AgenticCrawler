@@ -1,0 +1,38 @@
+[package]
+name = "acrawl-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "acrawl"
+path = "src/main.rs"
+
+[dependencies]
+acrawl-core = { path = "../core" }
+acrawl-tui = { path = "../tui" }
+agent = { path = "../agent" }
+api = { path = "../api" }
+browser = { path = "../browser" }
+commands = { path = "../commands" }
+crossterm = "0.28"
+dialoguer = { version = "0.12", features = ["fuzzy-select"] }
+indicatif = "0.17"
+mcp-server = { path = "../mcp-server" }
+render = { path = "../render" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+runtime = { path = "../runtime" }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "process"] }
+unicode-width = "0.2"
+
+[dev-dependencies]
+ratatui = "0.30.0"
+
+[lints]
+workspace = true
+
+[features]
+tui-crate-context = []

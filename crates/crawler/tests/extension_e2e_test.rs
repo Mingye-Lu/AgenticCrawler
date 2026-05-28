@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use crawler::{BrowserBackend, CrawlerAgent, ExtensionBridge, SharedBridge, WsBridgeServer};
+use agent::CrawlerAgent;
+use crawler::{BrowserBackend, ExtensionBridge, SharedBridge, WsBridgeServer};
 use futures_util::{SinkExt, StreamExt};
 use runtime::ToolExecutor;
 use serde_json::{json, Value};
@@ -73,7 +74,7 @@ async fn extension_bridge_e2e_tool_routes_through_websocket() {
     ));
 
     // Set up a CrawlerAgent with extension bridge
-    let registry = crawler::ToolRegistry::new_with_core_tools();
+    let registry = agent::ToolRegistry::new_with_core_tools();
     let mut agent = CrawlerAgent::new_lazy(registry);
     agent.set_shared_bridge(shared);
 
@@ -103,14 +104,14 @@ async fn extension_bridge_e2e_tool_routes_through_websocket() {
     let result = handle.await.expect("task completes");
     let output = result.expect("click succeeds through extension bridge");
     assert!(
-        output.contains("Clicked element: #btn"),
-        "unexpected: {output}"
+        output.text.contains("Clicked element: #btn"),
+        "unexpected: {output:?}"
     );
 }
 
 #[tokio::test]
 async fn extension_mode_flag_blocks_cloakbrowser_fallback() {
-    let mut agent = CrawlerAgent::new_lazy(crawler::ToolRegistry::new());
+    let mut agent = CrawlerAgent::new_lazy(agent::ToolRegistry::new());
     agent.set_extension_mode(true);
 
     let err = agent

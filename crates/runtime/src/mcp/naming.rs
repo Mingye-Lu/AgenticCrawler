@@ -82,6 +82,7 @@ pub fn mcp_server_signature(config: &McpServerConfig) -> Option<String> {
 }
 
 #[must_use]
+#[cfg(test)]
 pub fn scoped_mcp_config_hash(config: &McpServerConfig) -> String {
     let rendered = match config {
         McpServerConfig::Stdio(stdio) => format!(
@@ -126,6 +127,7 @@ fn render_command_signature(command: &[String]) -> String {
     format!("[{}]", escaped.join("|"))
 }
 
+#[cfg(test)]
 fn render_env_signature(map: &std::collections::BTreeMap<String, String>) -> String {
     map.iter()
         .map(|(key, value)| format!("{key}={value}"))
@@ -133,6 +135,7 @@ fn render_env_signature(map: &std::collections::BTreeMap<String, String>) -> Str
         .join(";")
 }
 
+#[cfg(test)]
 fn render_oauth_signature(oauth: Option<&crate::config::McpOAuthConfig>) -> String {
     oauth.map_or_else(String::new, |oauth| {
         format!(
@@ -147,6 +150,7 @@ fn render_oauth_signature(oauth: Option<&crate::config::McpOAuthConfig>) -> Stri
     })
 }
 
+#[cfg(test)]
 fn stable_hex_hash(value: &str) -> String {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in value.as_bytes() {

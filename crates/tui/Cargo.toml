@@ -1,0 +1,32 @@
+[package]
+name = "acrawl-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+acrawl-core = { path = "../core" }
+agent = { path = "../agent" }
+api = { path = "../api" }
+arboard = "3"
+browser = { path = "../browser" }
+commands = { path = "../commands" }
+crossterm = "0.28"
+dialoguer = { version = "0.12", features = ["fuzzy-select"] }
+ratatui = "0.30.0"
+render = { path = "../render" }
+runtime = { path = "../runtime" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+textwrap = "0.16"
+tokio = { version = "1", features = ["full"] }
+unicode-width = "0.2"
+zeroize = "1"
+
+[lints]
+workspace = true
+
+[features]
+default = ["tui-crate-context"]
+tui-crate-context = []
