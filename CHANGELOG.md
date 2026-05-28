@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-05-28
+
+### Fixed
+
+- **Output directory now globally stable** — `save_file` and `screenshot --save` previously resolved the default `output_dir` relative to the current working directory, producing unpredictable output locations (especially in MCP mode where CWD depends on the IDE). Relative paths in `settings.json` now resolve against `~/.acrawl/` (e.g. the default `"output"` becomes `~/.acrawl/output/`). Absolute paths are unaffected.
+- **Removed dead `ACRAWL_OUTPUT_DIR` env var** — was set in `main.rs` on startup but never read by any tool.
+
+### Added
+
+- **`output_dir` parameter on `save_file` and `screenshot`** — callers (especially MCP clients) can now pass an explicit output directory per tool call. Relative paths resolve against CWD; absolute paths are used as-is. When omitted, the global default applies.
+
 ## [0.7.0] - 2026-05-28
 
 ### Changed
@@ -445,6 +456,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.0
 [0.6.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.4
 [0.6.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.3
