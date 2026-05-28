@@ -1,3 +1,4 @@
+use runtime::ChildSession;
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -15,6 +16,7 @@ pub struct CrawlState {
     pub step_count: usize,
     pub child_blocks: Vec<ChildBlock>,
     pub max_steps: usize,
+    pub captured_child_sessions: Vec<ChildSession>,
 }
 
 impl CrawlState {
@@ -27,6 +29,7 @@ impl CrawlState {
             step_count: 0,
             child_blocks: Vec::new(),
             max_steps: child_max_steps,
+            captured_child_sessions: Vec::new(),
         }
     }
 
