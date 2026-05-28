@@ -5,11 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-05-28
 
 ### Changed
 
-- **Architecture: 11-crate workspace** — the monolithic `crawler` crate has been decomposed into focused, single-responsibility crates. New crates extracted: `acrawl-core` (shared types/traits/errors), `browser` (PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer), `agent` (agent loop, 21 tools, sub-agent fork/join, CrawlState), `render` (markdown rendering, tool output formatting, OutputSink), `mcp-server` (built-in MCP server + IDE installer), and `acrawl-tui` (Ratatui terminal UI). The original `crawler` crate remains as a thin re-export shim for backward compatibility and will be removed in a future release.
+- **Architecture: 10-crate workspace** — the monolithic `crawler` crate has been decomposed into focused, single-responsibility crates. New crates extracted: `acrawl-core` (shared types/traits/errors), `browser` (PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer), `agent` (agent loop, 21 tools, sub-agent fork/join, CrawlState), `render` (markdown rendering, tool output formatting, OutputSink), `mcp-server` (built-in MCP server + IDE installer), and `acrawl-tui` (Ratatui terminal UI). The transitional `crawler` shim has been removed entirely.
+
+- **Dependency graph corrected** — `api` and `browser` crates no longer depend on `runtime` (previously inverted). `ApiClient`/`ApiRequest` traits and `config_home_dir`/`OAuthConfig` moved to `acrawl-core`; OAuth module moved to `api`. All internal crates use direct imports instead of re-export shims.
 
 ## [0.6.4] - 2026-05-26
 
@@ -443,6 +445,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.0
 [0.6.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.4
 [0.6.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.3
 [0.6.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.2
