@@ -3020,11 +3020,13 @@ pub fn run_repl_ratatui(
 
     let cancel_flag = cli.lock().expect("cli lock").cancel_flag();
 
+    acrawl_core::set_tui_active(true);
     let mut terminal = ratatui::init();
     let work_shutdown = work_tx.clone();
     let result = run_loop(&mut terminal, &ui_rx, &ui_tx, &work_tx, &cli, &cancel_flag);
     let _ = work_shutdown.send(WorkerMsg::Shutdown);
     ratatui::restore();
+    acrawl_core::set_tui_active(false);
     result
 }
 

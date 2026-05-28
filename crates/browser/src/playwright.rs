@@ -4,7 +4,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use acrawl_core::config_home_dir;
+use acrawl_core::{child_stderr, config_home_dir};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -837,7 +837,7 @@ impl PlaywrightBridge {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(child_stderr())
             .kill_on_drop(true)
             .env("NODE_PATH", node_path);
         command
@@ -1435,6 +1435,27 @@ mod tests {
             paths.contains(&expected),
             "NODE_PATH should contain {expected:?}, got {paths:?}"
         );
+    }
+
+    #[test]
+    fn bridge_command_uses_child_stderr_from_core() {
+        acrawl_core::set_tui_active(false);
+        let args = vec!["-e".to_string(), "1".to_string()];
+        let cmd = PlaywrightBridge::bridge_command("node", &args);
+        let debug = format!("{:?}", cmd.as_std());
+        assert!(
+            !debug.contains("\"null\""),
+            "stderr should not be null when TUI inactive"
+        );
+
+        acrawl_core::set_tui_active(true);
+        let cmd = PlaywrightBridge::bridge_command("node", &args);
+        let debug = format!("{:?}", cmd.as_std());
+        assert!(
+            !debug.contains("\"inherit\""),
+            "stderr should not be inherit when TUI active"
+        );
+        acrawl_core::set_tui_active(false);
     }
 
     #[tokio::test]

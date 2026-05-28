@@ -10,7 +10,7 @@ pub mod tool_spec;
 pub mod traits;
 
 pub use api_types::{ApiClient, ApiRequest};
-pub use config::{config_home_dir, OAuthConfig};
+pub use config::{child_stderr, config_home_dir, is_tui_active, set_tui_active, OAuthConfig};
 pub use effect::{CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, WaitSpec};
 pub use error::{RuntimeError, ToolError, ToolExecutionError};
 pub use event::AssistantEvent;

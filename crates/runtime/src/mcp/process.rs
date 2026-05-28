@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::process::Stdio;
 
+use acrawl_core::child_stderr;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -37,7 +38,7 @@ impl McpStdioProcess {
             .args(&transport.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(child_stderr());
         apply_env(&mut command, &transport.env);
 
         let mut child = command.spawn()?;
