@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -26,19 +26,30 @@ pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
     let update_info = check_for_update_force().await;
     pb.finish_and_clear();
 
-    let update_info = match update_info {
-        Some(info) if info.is_outdated => info,
+    let binary_updated = match update_info {
+        Some(info) if info.is_outdated => {
+            update_binary(&info.latest_version).await?;
+            true
+        }
         Some(info) => {
             println!("Already up to date (v{}).", info.current_version);
-            return Ok(());
+            false
         }
         None => {
             println!("Already up to date (v{CURRENT_VERSION}).");
-            return Ok(());
+            false
         }
     };
 
-    let version = &update_info.latest_version;
+    install_cloakbrowser_if_needed().await;
+
+    if binary_updated {
+        println!("Update complete!");
+    }
+    Ok(())
+}
+
+async fn update_binary(version: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("Updating v{CURRENT_VERSION} -> v{version}...");
 
     let artifact_name = platform_artifact()?;
@@ -73,10 +84,6 @@ pub async fn run_self_update() -> Result<(), Box<dyn std::error::Error>> {
 
     let current_exe = env::current_exe()?;
     replace_binary(&current_exe, &binary_bytes)?;
-
-    install_cloakbrowser_if_needed().await;
-
-    println!("Updated to v{version} successfully!");
     Ok(())
 }
 
@@ -192,39 +199,188 @@ async fn download_tolerant(
 }
 
 async fn install_cloakbrowser_if_needed() {
-    let config_home = config_home_dir();
-
-    let pb = make_spinner("Updating CloakBrowser package...");
-    let npm_result = tokio::process::Command::new("npm")
-        .args(["install", "--prefix"])
-        .arg(&config_home)
-        .arg("cloakbrowser@latest")
-        .stdout(std::process::Stdio::null())
+    let node_check = tokio::process::Command::new("node")
+        .arg("--version")
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .status()
+        .output()
         .await;
+
+    let node_major = match node_check {
+        Ok(out) if out.status.success() => {
+            let version = String::from_utf8_lossy(&out.stdout);
+            let version = version.trim().trim_start_matches('v');
+            version
+                .split('.')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+        }
+        _ => None,
+    };
+
+    match node_major {
+        None => {
+            println!(
+                "Skipping CloakBrowser update: Node.js not found.\n  \
+                 Install Node.js 20+ from https://nodejs.org/ for browser automation."
+            );
+            return;
+        }
+        Some(major) if major < 20 => {
+            println!(
+                "Skipping CloakBrowser update: Node.js 20+ required (found v{major}.x).\n  \
+                 Upgrade from https://nodejs.org/"
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    let config_home = config_home_dir();
+    let _ = std::fs::create_dir_all(&config_home);
+
+    if update_cloakbrowser_package(&config_home).await {
+        download_browser_binary(&config_home).await;
+    }
+}
+
+fn npm_command() -> tokio::process::Command {
+    if cfg!(windows) {
+        let mut cmd = tokio::process::Command::new("cmd");
+        cmd.args(["/C", "npm"]);
+        cmd
+    } else {
+        tokio::process::Command::new("npm")
+    }
+}
+
+fn npx_command() -> tokio::process::Command {
+    if cfg!(windows) {
+        let mut cmd = tokio::process::Command::new("cmd");
+        cmd.args(["/C", "npx"]);
+        cmd
+    } else {
+        tokio::process::Command::new("npx")
+    }
+}
+
+async fn update_cloakbrowser_package(config_home: &Path) -> bool {
+    let pb = make_spinner("Updating CloakBrowser package...");
+    let npm_timeout = Duration::from_mins(2);
+    let npm_result = tokio::time::timeout(
+        npm_timeout,
+        npm_command()
+            .args(["install", "--prefix"])
+            .arg(config_home)
+            .arg("cloakbrowser@latest")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output(),
+    )
+    .await;
     pb.finish_and_clear();
 
-    if !npm_result.is_ok_and(|s| s.success()) {
-        println!("WARNING: CloakBrowser package update failed.");
-        return;
+    match npm_result {
+        Ok(Ok(output)) if output.status.success() => {
+            println!("CloakBrowser package updated.");
+            true
+        }
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!(
+                "WARNING: CloakBrowser package update failed (exit {}).",
+                output.status
+            );
+            print_stderr_tail(&stderr);
+            println!(
+                "  Run manually: npm install --prefix \"{}\" cloakbrowser@latest",
+                config_home.display()
+            );
+            false
+        }
+        Ok(Err(e)) => {
+            println!("WARNING: Could not run npm: {e}");
+            println!(
+                "  Run manually: npm install --prefix \"{}\" cloakbrowser@latest",
+                config_home.display()
+            );
+            false
+        }
+        Err(_) => {
+            println!(
+                "WARNING: CloakBrowser package update timed out after {}s.",
+                npm_timeout.as_secs()
+            );
+            println!(
+                "  Run manually: npm install --prefix \"{}\" cloakbrowser@latest",
+                config_home.display()
+            );
+            false
+        }
     }
-    println!("CloakBrowser package updated.");
+}
+
+async fn download_browser_binary(config_home: &Path) {
+    let cloakbrowser_bin = config_home
+        .join("node_modules")
+        .join(".bin")
+        .join(if cfg!(windows) {
+            "cloakbrowser.cmd"
+        } else {
+            "cloakbrowser"
+        });
 
     let pb = make_spinner("Downloading browser binary...");
-    let browser_dl = tokio::process::Command::new("npx")
-        .args(["--prefix"])
-        .arg(&config_home)
-        .args(["cloakbrowser", "install"])
+    let dl_timeout = Duration::from_mins(5);
+
+    let mut cmd = if cloakbrowser_bin.exists() {
+        let mut c = tokio::process::Command::new(&cloakbrowser_bin);
+        c.arg("install");
+        c
+    } else {
+        let mut c = npx_command();
+        c.args(["cloakbrowser", "install"]);
+        c
+    };
+    cmd.env("NODE_PATH", config_home.join("node_modules"))
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await;
+        .stderr(std::process::Stdio::piped());
+
+    let browser_dl = tokio::time::timeout(dl_timeout, cmd.output()).await;
     pb.finish_and_clear();
 
-    if browser_dl.is_ok_and(|s| s.success()) {
-        println!("Browser binary ready.");
-    } else {
-        println!("WARNING: Browser binary download failed. It will be downloaded on first use.");
+    match browser_dl {
+        Ok(Ok(output)) if output.status.success() => {
+            println!("Browser binary ready.");
+        }
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!(
+                "WARNING: Browser binary download failed (exit {}).",
+                output.status
+            );
+            print_stderr_tail(&stderr);
+            println!("  The browser will be downloaded automatically on first use.");
+        }
+        Ok(Err(e)) => {
+            println!("WARNING: Could not download browser binary: {e}");
+            println!("  The browser will be downloaded automatically on first use.");
+        }
+        Err(_) => {
+            println!(
+                "WARNING: Browser binary download timed out after {}s.",
+                dl_timeout.as_secs()
+            );
+            println!("  The browser will be downloaded automatically on first use.");
+        }
+    }
+}
+
+fn print_stderr_tail(stderr: &str) {
+    if !stderr.trim().is_empty() {
+        let tail: Vec<&str> = stderr.lines().rev().take(5).collect();
+        for line in tail.into_iter().rev() {
+            println!("  {line}");
+        }
     }
 }
