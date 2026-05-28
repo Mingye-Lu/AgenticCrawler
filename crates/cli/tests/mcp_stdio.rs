@@ -29,7 +29,6 @@ impl TestServer {
             .arg("mcp")
             .env("ACRAWL_CONFIG_HOME", &config_home)
             .env_remove("HEADLESS")
-            .env_remove("ACRAWL_OUTPUT_DIR")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

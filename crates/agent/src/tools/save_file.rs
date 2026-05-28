@@ -1,4 +1,4 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use serde_json::{json, Value};
 
@@ -90,8 +90,8 @@ pub async fn execute(
     let parsed = parse_input(input)?;
 
     let settings = runtime::load_settings();
-    let output_dir = runtime::settings_get_output_dir(&settings).to_string();
-    let mut target = PathBuf::from(&output_dir);
+    let override_dir = input.get("output_dir").and_then(|v| v.as_str());
+    let mut target = runtime::resolve_output_dir(&settings, override_dir);
     if let Some(ref sub) = parsed.subdir {
         target.push(sub);
     }

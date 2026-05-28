@@ -41,7 +41,7 @@ pub use observer::RuntimeObserver;
 pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use settings::{
-    config_home_dir, load_settings, save_settings, settings_file_path,
+    config_home_dir, load_settings, resolve_output_dir, save_settings, settings_file_path,
     settings_get_auto_compact_tokens, settings_get_compaction_llm_summarization,
     settings_get_compaction_max_summary_chars,
     settings_get_compaction_preserve_recent_messages_floor,

@@ -108,6 +108,10 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                     "filename": {
                         "type": "string",
                         "description": "Filename for the saved PNG (e.g. \"shot.png\"). Only used when save is true. Defaults to a timestamped name if omitted."
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Directory to save the screenshot in. Overrides the default output directory. Can be relative (resolved against CWD) or absolute."
                     }
                 },
                 "additionalProperties": false
@@ -236,12 +240,16 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "properties": {
                     "url": { "type": "string" },
                     "filename": { "type": "string" },
-                    "subdir": { "type": "string" }
+                    "subdir": { "type": "string" },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Directory to save the file in. Overrides the default output directory. Can be relative (resolved against CWD) or absolute."
+                    }
                 },
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename` and `subdir`."),
+            instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename`, `subdir`, and `output_dir`."),
         },
         ToolSpec {
             name: "page_map",
