@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-runtime = { path = "../runtime" }
+acrawl-core = { path = "../core" }
 async-trait = "0.1"
 base64 = "0.22"
 futures-util = "0.3"

@@ -15,6 +15,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use crate::error::CliError;
 use crate::output_sink::ChannelSink;
 use crate::session_mgr::{create_managed_session_handle, SessionHandle};
+use acrawl_core::ToolSpec;
+use agent::{ChildControlRegistry, ChildEvent, ExtensionBridge};
+use browser::{generate_bridge_token, BrowserBackend, BrowserState, SharedBridge, WsBridgeServer};
 use render::format::{
     format_auto_compaction_notice, format_compact_report, format_cost_report, format_model_report,
     format_model_switch_report, format_status_report, render_config_report, render_export_text,
@@ -78,7 +81,7 @@ pub(crate) fn initial_model_from_credentials() -> Option<String> {
     settings.model.filter(|m| !m.is_empty() && m.contains('/'))
 }
 
-pub(crate) fn filter_tool_specs(allowed_tools: Option<&AllowedToolSet>) -> Vec<crawler::ToolSpec> {
+pub(crate) fn filter_tool_specs(allowed_tools: Option<&AllowedToolSet>) -> Vec<ToolSpec> {
     mvp_tool_specs()
         .into_iter()
         .filter(|spec| allowed_tools.is_none_or(|allowed| allowed.contains(spec.name)))
@@ -122,12 +125,12 @@ pub(crate) struct LiveCli {
     output_mode: OutputMode,
     reasoning_effort: Option<api::ReasoningEffort>,
     debug_mode: bool,
-    child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
-    child_control_registry: Option<crawler::ChildControlRegistry>,
+    child_event_rx: Option<std::sync::mpsc::Receiver<ChildEvent>>,
+    child_control_registry: Option<ChildControlRegistry>,
     pending_title: Arc<Mutex<Option<String>>>,
     title_dispatched: bool,
-    ws_bridge_server: Option<crawler::WsBridgeServer>,
-    pending_extension_state: Option<crawler::BrowserState>,
+    ws_bridge_server: Option<WsBridgeServer>,
+    pending_extension_state: Option<BrowserState>,
     extension_bridge_initialized: bool,
 }
 
@@ -236,8 +239,8 @@ impl LiveCli {
         let system_prompt = build_system_prompt();
         let session = create_managed_session_handle();
         let output_mode = OutputMode::Channel(event_tx);
-        let (child_event_tx, child_event_rx) = std::sync::mpsc::channel::<crawler::ChildEvent>();
-        let registry = crawler::ChildControlRegistry::default();
+        let (child_event_tx, child_event_rx) = std::sync::mpsc::channel::<ChildEvent>();
+        let registry = ChildControlRegistry::default();
         let runtime = build_runtime_with_options(
             Session::new(),
             model.clone(),
@@ -289,13 +292,11 @@ impl LiveCli {
         self.session.id.as_str()
     }
 
-    pub(crate) fn take_child_event_rx(
-        &mut self,
-    ) -> Option<std::sync::mpsc::Receiver<crawler::ChildEvent>> {
+    pub(crate) fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<ChildEvent>> {
         self.child_event_rx.take()
     }
 
-    pub(crate) fn take_child_control_registry(&mut self) -> Option<crawler::ChildControlRegistry> {
+    pub(crate) fn take_child_control_registry(&mut self) -> Option<ChildControlRegistry> {
         self.child_control_registry.take()
     }
 
@@ -618,7 +619,7 @@ impl LiveCli {
 
     pub(crate) fn prepare_extension_bridge_activation(
         &mut self,
-    ) -> Result<(crawler::SharedBridge, Option<crawler::BrowserState>), String> {
+    ) -> Result<(SharedBridge, Option<BrowserState>), String> {
         if self.extension_bridge_initialized {
             return Err("extension bridge is already initialized".to_string());
         }
@@ -629,15 +630,15 @@ impl LiveCli {
 
         let sender = server.command_sender();
         let connected = server.connection_watcher();
-        let bridge = crawler::ExtensionBridge::new(sender, connected);
-        let shared: crawler::SharedBridge = Arc::new(tokio::sync::Mutex::new(
-            Box::new(bridge) as Box<dyn crawler::BrowserBackend + Send>
+        let bridge = ExtensionBridge::new(sender, connected);
+        let shared: SharedBridge = Arc::new(tokio::sync::Mutex::new(
+            Box::new(bridge) as Box<dyn BrowserBackend + Send>
         ));
 
         Ok((shared, self.pending_extension_state.take()))
     }
 
-    pub(crate) fn activate_extension_bridge(&mut self, shared: crawler::SharedBridge) {
+    pub(crate) fn activate_extension_bridge(&mut self, shared: SharedBridge) {
         self.runtime
             .tool_executor_mut()
             .set_extension_bridge(shared);
@@ -648,7 +649,7 @@ impl LiveCli {
         });
     }
 
-    pub(crate) fn restore_pending_extension_state(&mut self, state: Option<crawler::BrowserState>) {
+    pub(crate) fn restore_pending_extension_state(&mut self, state: Option<BrowserState>) {
         if self.pending_extension_state.is_none() {
             self.pending_extension_state = state;
         }
@@ -656,7 +657,7 @@ impl LiveCli {
 
     pub(crate) fn switch_to_cloakbrowser(&mut self) -> String {
         let saved_state = block_on_runtime_future(async {
-            Ok::<Option<crawler::BrowserState>, RuntimeError>(
+            Ok::<Option<BrowserState>, RuntimeError>(
                 self.runtime
                     .tool_executor_mut()
                     .export_current_state()
@@ -724,12 +725,10 @@ impl LiveCli {
     pub(crate) fn extension_connection_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
         self.ws_bridge_server
             .as_ref()
-            .map(crawler::WsBridgeServer::connection_watcher)
+            .map(WsBridgeServer::connection_watcher)
     }
 
     pub(crate) fn start_extension_server(&mut self) -> Result<(String, u16), String> {
-        use crawler::ws_server::generate_bridge_token;
-
         if self.ws_bridge_server.is_some() {
             self.ws_bridge_server = None;
             self.runtime.tool_executor_mut().clear_extension_bridge();
@@ -738,7 +737,7 @@ impl LiveCli {
         self.extension_bridge_initialized = false;
 
         let saved_state = block_on_runtime_future(async {
-            Ok::<Option<crawler::BrowserState>, RuntimeError>(
+            Ok::<Option<BrowserState>, RuntimeError>(
                 self.runtime
                     .tool_executor_mut()
                     .export_current_state()
@@ -759,7 +758,7 @@ impl LiveCli {
         let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
 
         let server = block_on_runtime_future(async {
-            crawler::WsBridgeServer::start(port, token.clone())
+            WsBridgeServer::start(port, token.clone())
                 .await
                 .map_err(|e| RuntimeError::new(e.to_string()))
         })

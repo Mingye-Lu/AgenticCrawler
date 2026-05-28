@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
 use super::{AllowedToolSet, CliError, CliToolExecutor, LlmRuntimeClient};
-use agent::mvp_tool_specs;
-use crawler::SharedApiClient;
+use agent::{
+    build_system_prompt as build_agent_system_prompt, mvp_tool_specs, ChildControlRegistry,
+    ChildEvent, SharedApiClient,
+};
 use runtime::{
     load_settings, settings_get_max_steps, ConfigLoader, ControlState, ConversationRuntime,
     RuntimeObserver, Session,
 };
 
 pub(super) fn build_system_prompt() -> Vec<String> {
-    crawler::build_system_prompt(&mvp_tool_specs())
+    build_agent_system_prompt(&mvp_tool_specs())
 }
 
 pub(super) fn build_runtime_feature_config() -> Result<runtime::RuntimeFeatureConfig, CliError> {
@@ -48,8 +50,8 @@ pub(super) fn build_runtime_with_options(
     observer: Box<dyn RuntimeObserver + Send>,
     is_interactive: bool,
     control_state: Option<Arc<ControlState>>,
-    child_event_tx: Option<std::sync::mpsc::Sender<crawler::ChildEvent>>,
-    child_control_registry: Option<crawler::ChildControlRegistry>,
+    child_event_tx: Option<std::sync::mpsc::Sender<ChildEvent>>,
+    child_control_registry: Option<ChildControlRegistry>,
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, CliError> {
     session.model = Some(model.clone());
     let max_steps = settings_get_max_steps(&load_settings()) as usize;

@@ -4,7 +4,6 @@ mod control;
 mod conversation;
 mod json;
 mod mcp;
-mod oauth;
 pub mod observer;
 mod prompt;
 mod session;
@@ -37,13 +36,6 @@ pub use mcp::{mcp_tool_name, mcp_tool_prefix};
 pub use mcp::{
     JsonRpcError, JsonRpcId, JsonRpcResponse, ManagedMcpTool, McpServerManagerError,
     McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
-};
-pub use oauth::{
-    clear_oauth_credentials, code_challenge_s256, credentials_path, generate_pkce_pair,
-    generate_state, load_oauth_credentials, loopback_redirect_uri, parse_oauth_callback_query,
-    parse_oauth_callback_request_target, save_oauth_credentials, OAuthAuthorizationRequest,
-    OAuthCallbackParams, OAuthRefreshRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
-    PkceChallengeMethod, PkceCodePair,
 };
 pub use observer::RuntimeObserver;
 pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};

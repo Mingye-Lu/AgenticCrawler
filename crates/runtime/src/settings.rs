@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use acrawl_core::config_home_dir as core_config_home_dir;
+
 /// Settings loaded from settings.json configuration file.
 /// All fields are optional with serde defaults to support partial JSON files.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -119,11 +121,7 @@ impl Default for Settings {
 /// Reads `ACRAWL_CONFIG_HOME` env var, falls back to ~/.acrawl/
 #[must_use]
 pub fn config_home_dir() -> PathBuf {
-    if let Ok(custom_home) = std::env::var("ACRAWL_CONFIG_HOME") {
-        PathBuf::from(custom_home)
-    } else {
-        home_dir().join(".acrawl")
-    }
+    core_config_home_dir()
 }
 
 /// Get the settings file path: `config_home_dir()/settings.json`
@@ -278,30 +276,6 @@ pub fn settings_get_compaction_llm_summarization(s: &Settings) -> bool {
     s.compaction_llm_summarization.unwrap_or(false)
 }
 
-/// Helper to get home directory.
-/// On Windows, tries USERPROFILE then HOMEPATH.
-/// On Unix, tries HOME.
-fn home_dir() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(home) = std::env::var("USERPROFILE") {
-            return PathBuf::from(home);
-        }
-        if let Ok(home) = std::env::var("HOMEPATH") {
-            return PathBuf::from(home);
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home);
-        }
-    }
-
-    PathBuf::from(".")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,7 +392,10 @@ mod tests {
         std::env::remove_var("ACRAWL_CONFIG_HOME");
 
         let home = config_home_dir();
-        let expected = home_dir().join(".acrawl");
+        let expected = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map_or_else(|| PathBuf::from("."), PathBuf::from)
+            .join(".acrawl");
 
         assert_eq!(home, expected);
     }

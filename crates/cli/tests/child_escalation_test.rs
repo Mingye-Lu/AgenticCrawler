@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crawler::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
+use agent::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
 use runtime::RuntimeObserver;
 
 #[allow(dead_code)]
@@ -309,7 +309,7 @@ fn child_wait_for_human_pause_and_resume_via_registry() {
 fn repl_app_keeps_child_pause_auto_navigation_logic() {
     let source = include_str!("../../tui/src/repl_app.rs");
 
-    assert!(source.contains("crawler::ChildEventKind::PauseRequested { .. }"));
+    assert!(source.contains("ChildEventKind::PauseRequested { .. }"));
     assert!(source.contains("matches!(self.view_mode, ViewMode::Parent)"));
     assert!(source.contains("self.view_mode = ViewMode::Child(child_ev.child_id.clone());"));
 }

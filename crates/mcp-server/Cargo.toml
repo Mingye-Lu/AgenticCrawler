@@ -9,7 +9,7 @@ publish.workspace = true
 acrawl-core = { path = "../core" }
 agent = { path = "../agent" }
 api = { path = "../api" }
-crawler = { path = "../crawler" }
+browser = { path = "../browser" }
 runtime = { path = "../runtime" }
 dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 serde = { version = "1", features = ["derive"] }

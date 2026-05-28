@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use runtime::{ApiClient, ApiRequest, AssistantEvent, RuntimeError};
+use acrawl_core::{ApiClient, ApiRequest, AssistantEvent, RuntimeError};
 
 /// Thread-safe wrapper that lets parent and child agents share a single
 /// `ApiClient` behind an `Arc<Mutex<…>>`.

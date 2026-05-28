@@ -14,8 +14,8 @@ acrawl-core = { path = "../core" }
 acrawl-tui = { path = "../tui" }
 agent = { path = "../agent" }
 api = { path = "../api" }
+browser = { path = "../browser" }
 commands = { path = "../commands" }
-crawler = { path = "../crawler" }
 crossterm = "0.28"
 dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 indicatif = "0.17"

@@ -1,6 +1,6 @@
 use tokio::time::{Duration, Instant};
 
-use runtime::ToolError;
+use acrawl_core::ToolError;
 
 use super::CrawlerAgent;
 use crate::state::ChildBlock;
@@ -538,7 +538,7 @@ impl CrawlerAgent {
 mod tests {
     use std::sync::Arc;
 
-    use runtime::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolExecutor};
+    use acrawl_core::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolExecutor};
     use serde_json::Value;
     use tokio::sync::Mutex;
 

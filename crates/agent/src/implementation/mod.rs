@@ -3,11 +3,8 @@ use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use acrawl_core::ToolOutcome;
-use runtime::{
-    ApiClient, ContentBlock, ControlState, ConversationRuntime, Session, ToolError, ToolExecutor,
-    TurnSummary,
-};
+use acrawl_core::{ApiClient, ContentBlock, ToolError, ToolExecutor, ToolOutcome};
+use runtime::{ControlState, ConversationRuntime, Session, TurnSummary};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
@@ -598,7 +595,7 @@ fn build_crawl_result(summary: &TurnSummary, crawl_state: &CrawlState) -> CrawlR
 mod tests {
     use std::sync::OnceLock;
 
-    use runtime::{ApiRequest, AssistantEvent, RuntimeError, TokenUsage};
+    use acrawl_core::{ApiRequest, AssistantEvent, RuntimeError, TokenUsage};
     use tokio::sync::Mutex as AsyncMutex;
 
     use super::*;

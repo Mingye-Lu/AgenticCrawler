@@ -1,10 +1,12 @@
 use std::io::{self, Write};
 
-use api::{AnthropicClient, AuthSource};
-use runtime::{
-    generate_pkce_pair, generate_state, load_oauth_credentials, save_oauth_credentials,
-    ConfigLoader, OAuthAuthorizationRequest, OAuthConfig, OAuthTokenExchangeRequest,
+use acrawl_core::OAuthConfig;
+use api::oauth::{
+    generate_pkce_pair, generate_state, load_oauth_credentials, loopback_redirect_uri,
+    save_oauth_credentials, OAuthAuthorizationRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
 };
+use api::{AnthropicClient, AuthSource};
+use runtime::ConfigLoader;
 
 use super::{
     bind_oauth_listener, open_browser, persist_provider_credentials, wait_for_oauth_callback,
@@ -69,7 +71,7 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     let oauth = config.oauth().unwrap_or(&default_oauth);
     let preferred_port = oauth.callback_port.unwrap_or(DEFAULT_OAUTH_CALLBACK_PORT);
     let (listener, actual_port) = bind_oauth_listener(preferred_port)?;
-    let redirect_uri = runtime::loopback_redirect_uri(actual_port);
+    let redirect_uri = loopback_redirect_uri(actual_port);
     let pkce = generate_pkce_pair()?;
     let state = generate_state()?;
     let authorize_url =
@@ -106,7 +108,7 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
         .get()
         .ok_or_else(|| io::Error::other("tokio runtime not initialised"))?;
     let token_set = runtime.block_on(client.exchange_oauth_code(oauth, &exchange_request))?;
-    save_oauth_credentials(&runtime::OAuthTokenSet {
+    save_oauth_credentials(&OAuthTokenSet {
         access_token: token_set.access_token,
         refresh_token: token_set.refresh_token,
         expires_at: token_set.expires_at,

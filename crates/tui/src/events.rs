@@ -1,6 +1,6 @@
 ﻿use crate::tui::model_list::ModelInfo as PickerModelInfo;
+use agent::ChildEvent;
 use api::provider::ModelInfo;
-use crawler::ChildEvent;
 
 /// UI updates from the LLM stream, tool executor, or worker thread.
 #[derive(Debug)]

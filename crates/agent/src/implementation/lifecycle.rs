@@ -1,4 +1,4 @@
-use runtime::ToolError;
+use acrawl_core::ToolError;
 use tokio::sync::Mutex;
 
 use super::CrawlerAgent;
@@ -363,7 +363,7 @@ mod tests {
     #[tokio::test]
     async fn tool_execution_routes_commands_through_extension_bridge() {
         use crate::ws_server::BridgeResponse;
-        use runtime::ToolExecutor;
+        use acrawl_core::ToolExecutor;
         use serde_json::json;
 
         // Create ExtensionBridge with a channel so we can observe commands.

@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::process::Command;
 use std::sync::mpsc;
 
-use runtime::parse_oauth_callback_request_target;
+use api::oauth::{parse_oauth_callback_request_target, OAuthCallbackParams};
 
 use super::Provider;
 
@@ -478,7 +478,7 @@ pub(crate) fn open_browser(url: &str) -> io::Result<()> {
 #[allow(clippy::needless_pass_by_value)]
 pub(super) fn wait_for_oauth_callback(
     listener: TcpListener,
-) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error>> {
+) -> Result<OAuthCallbackParams, Box<dyn std::error::Error>> {
     let (mut stream, _) = listener.accept()?;
     let mut buffer = [0_u8; 4096];
     let bytes_read = stream.read(&mut buffer)?;
@@ -512,7 +512,7 @@ pub(super) fn wait_for_oauth_callback(
 pub(crate) fn wait_for_oauth_callback_cancellable(
     listener: TcpListener,
     cancel_rx: mpsc::Receiver<()>,
-) -> Result<runtime::OAuthCallbackParams, Box<dyn std::error::Error + Send>> {
+) -> Result<OAuthCallbackParams, Box<dyn std::error::Error + Send>> {
     listener
         .set_nonblocking(true)
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;

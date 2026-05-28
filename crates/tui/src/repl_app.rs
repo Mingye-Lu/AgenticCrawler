@@ -24,6 +24,8 @@ use crate::tui::repl_render::{
 };
 use crate::tui::session_modal::SessionModalEntry;
 use crate::tui::ReplTuiEvent;
+use agent::{ChildControlRegistry, ChildEvent, ChildEventKind};
+use browser::{BrowserState, SharedBridge};
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
@@ -310,8 +312,8 @@ pub(super) struct ReplTuiState {
     pub(super) update_rx:
         Option<tokio::sync::oneshot::Receiver<Option<runtime::update_check::UpdateInfo>>>,
     pub(super) child_tab_panel: child_tabs::ChildTabPanel,
-    child_event_rx: Option<std::sync::mpsc::Receiver<crawler::ChildEvent>>,
-    pub(super) child_control_registry: Option<crawler::ChildControlRegistry>,
+    child_event_rx: Option<std::sync::mpsc::Receiver<ChildEvent>>,
+    pub(super) child_control_registry: Option<ChildControlRegistry>,
     pub(super) view_mode: ViewMode,
 }
 
@@ -2209,10 +2211,8 @@ impl ReplTuiState {
                     &child_ev.sub_goal,
                     &child_ev.event,
                 );
-                if matches!(
-                    child_ev.event,
-                    crawler::ChildEventKind::PauseRequested { .. }
-                ) && matches!(self.view_mode, ViewMode::Parent)
+                if matches!(child_ev.event, ChildEventKind::PauseRequested { .. })
+                    && matches!(self.view_mode, ViewMode::Parent)
                 {
                     self.view_mode = ViewMode::Child(child_ev.child_id.clone());
                 }
@@ -2690,8 +2690,8 @@ fn spawn_extension_connection_watch_from_receiver(
 }
 
 async fn prime_extension_bridge(
-    shared: &crawler::SharedBridge,
-    saved_state: Option<&crawler::BrowserState>,
+    shared: &SharedBridge,
+    saved_state: Option<&BrowserState>,
 ) -> Result<(), String> {
     let mut bridge = shared.lock().await;
     if let Some(state) = saved_state {
@@ -2792,11 +2792,11 @@ fn spawn_anthropic_oauth_thread(
                 bind_oauth_listener, default_oauth_config, open_browser,
                 wait_for_oauth_callback_cancellable,
             };
-            use api::{AnthropicClient, AuthSource};
-            use runtime::{
+            use api::oauth::{
                 generate_pkce_pair, generate_state, loopback_redirect_uri,
                 OAuthAuthorizationRequest, OAuthTokenExchangeRequest,
             };
+            use api::{AnthropicClient, AuthSource};
 
             let oauth = default_oauth_config();
             let preferred_port = oauth.callback_port.unwrap_or(4545);
@@ -2906,8 +2906,8 @@ fn spawn_openai_oauth_thread(ui_tx: Sender<ReplTuiEvent>, active_modal: &mut Opt
             use crate::app::{
                 bind_oauth_listener, open_browser, wait_for_oauth_callback_cancellable,
             };
+            use api::oauth::OAuthTokenExchangeRequest;
             use api::{AnthropicClient, AuthSource};
-            use runtime::OAuthTokenExchangeRequest;
 
             let (listener, actual_port) = bind_oauth_listener(api::CODEX_CALLBACK_PORT)
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;

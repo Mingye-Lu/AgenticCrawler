@@ -15,18 +15,9 @@ pub use acrawl_core::error::{RuntimeError, ToolError};
 pub use acrawl_core::event::AssistantEvent;
 pub use acrawl_core::outcome::ToolOutcome;
 pub use acrawl_core::traits::ToolExecutor;
+pub use acrawl_core::{ApiClient, ApiRequest};
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApiRequest {
-    pub system_prompt: Vec<String>,
-    pub messages: Vec<ConversationMessage>,
-}
-
-pub trait ApiClient {
-    fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError>;
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnSummary {

@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use acrawl_core::ToolOutcome;
-use agent::CrawlerAgent;
-use agent::ToolRegistry;
-use crawler::SharedApiClient;
+use agent::{ChildControlRegistry, ChildEvent, CrawlerAgent, SharedApiClient, ToolRegistry};
+use browser::{BrowserState, SharedBridge};
 use runtime::{ControlState, ToolError, ToolExecutor};
 
 use super::AllowedToolSet;
@@ -19,8 +18,8 @@ impl CliToolExecutor {
         fork_client: SharedApiClient,
         is_interactive: bool,
         control_state: Option<Arc<ControlState>>,
-        child_event_tx: Option<std::sync::mpsc::Sender<crawler::ChildEvent>>,
-        child_control_registry: Option<crawler::ChildControlRegistry>,
+        child_event_tx: Option<std::sync::mpsc::Sender<ChildEvent>>,
+        child_control_registry: Option<ChildControlRegistry>,
     ) -> Self {
         let registry = ToolRegistry::new_with_options(is_interactive);
         let mut agent = CrawlerAgent::new_lazy(registry).with_api_client(fork_client);
@@ -47,7 +46,7 @@ impl CliToolExecutor {
         self.agent.clear_shared_bridge();
     }
 
-    pub(crate) fn set_extension_bridge(&mut self, bridge: crawler::SharedBridge) {
+    pub(crate) fn set_extension_bridge(&mut self, bridge: SharedBridge) {
         self.agent.set_shared_bridge(bridge);
     }
 
@@ -55,7 +54,7 @@ impl CliToolExecutor {
         self.agent.set_extension_mode(active);
     }
 
-    pub(crate) async fn export_current_state(&mut self) -> Option<crawler::BrowserState> {
+    pub(crate) async fn export_current_state(&mut self) -> Option<BrowserState> {
         self.agent.export_browser_state().await
     }
 }

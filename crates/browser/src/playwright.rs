@@ -4,7 +4,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use runtime::config_home_dir;
+use acrawl_core::config_home_dir;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -1381,7 +1381,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-    use runtime::config_home_dir;
+    use acrawl_core::config_home_dir;
 
     use super::{BridgeError, PageInfo, PlaywrightBridge};
 

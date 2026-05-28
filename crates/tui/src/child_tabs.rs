@@ -1,4 +1,5 @@
-﻿use ratatui::widgets::ListState;
+use agent::ChildEventKind;
+use ratatui::widgets::ListState;
 
 use super::repl_app::{ToolCallStatus, TranscriptEntry};
 use crate::markdown::{drain_safe_boundary, render_lines};
@@ -111,16 +112,16 @@ impl ChildTabPanel {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub fn apply_event(&mut self, child_id: &str, sub_goal: &str, event: &crawler::ChildEventKind) {
+    pub fn apply_event(&mut self, child_id: &str, sub_goal: &str, event: &ChildEventKind) {
         let idx = self.get_or_create_tab(child_id, sub_goal);
 
         match event {
-            crawler::ChildEventKind::TextDelta(text) => {
+            ChildEventKind::TextDelta(text) => {
                 let tab = &mut self.tabs[idx];
                 tab.live.push_str(text);
                 tab.drain_completed_lines();
             }
-            crawler::ChildEventKind::ToolCallStart {
+            ChildEventKind::ToolCallStart {
                 name,
                 input_summary,
             } => {
@@ -132,7 +133,7 @@ impl ChildTabPanel {
                     status: ToolCallStatus::Running,
                 });
             }
-            crawler::ChildEventKind::ToolCallComplete {
+            ChildEventKind::ToolCallComplete {
                 name,
                 output_summary,
                 is_error,
@@ -166,12 +167,12 @@ impl ChildTabPanel {
                     });
                 }
             }
-            crawler::ChildEventKind::StepStarted { step, max_steps } => {
+            ChildEventKind::StepStarted { step, max_steps } => {
                 let tab = &mut self.tabs[idx];
                 tab.step = *step;
                 tab.max_steps = *max_steps;
             }
-            crawler::ChildEventKind::PauseRequested { reason } => {
+            ChildEventKind::PauseRequested { reason } => {
                 self.tabs[idx].status = ChildTabStatus::Paused {
                     reason: reason.clone(),
                 };
@@ -180,13 +181,13 @@ impl ChildTabPanel {
                     .push(TranscriptEntry::System(format!("PAUSED: {reason}")));
                 self.active_tab = idx;
             }
-            crawler::ChildEventKind::Resumed => {
+            ChildEventKind::Resumed => {
                 let tab = &mut self.tabs[idx];
                 tab.status = ChildTabStatus::Running;
                 tab.entries
                     .push(TranscriptEntry::System("Resumed".to_string()));
             }
-            crawler::ChildEventKind::Finished {
+            ChildEventKind::Finished {
                 success,
                 items_extracted,
                 error,
@@ -253,7 +254,7 @@ mod tests {
         panel.apply_event(
             "agent-a",
             "fetch data",
-            &crawler::ChildEventKind::StepStarted {
+            &ChildEventKind::StepStarted {
                 step: 1,
                 max_steps: 5,
             },
@@ -264,7 +265,7 @@ mod tests {
         panel.apply_event(
             "agent-a",
             "fetch data",
-            &crawler::ChildEventKind::PauseRequested {
+            &ChildEventKind::PauseRequested {
                 reason: "rate limit".into(),
             },
         );
@@ -275,7 +276,7 @@ mod tests {
         assert!(panel.active_tab_is_paused());
 
         // Resume it
-        panel.apply_event("agent-a", "fetch data", &crawler::ChildEventKind::Resumed);
+        panel.apply_event("agent-a", "fetch data", &ChildEventKind::Resumed);
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
         assert!(!panel.active_tab_is_paused());
 
@@ -283,7 +284,7 @@ mod tests {
         panel.apply_event(
             "agent-a",
             "fetch data",
-            &crawler::ChildEventKind::Finished {
+            &ChildEventKind::Finished {
                 success: true,
                 items_extracted: 10,
                 error: None,
@@ -314,7 +315,7 @@ mod tests {
         panel.apply_event(
             "c2",
             "g2",
-            &crawler::ChildEventKind::PauseRequested {
+            &ChildEventKind::PauseRequested {
                 reason: "captcha".into(),
             },
         );
@@ -330,18 +331,18 @@ mod tests {
         panel.apply_event(
             "c1",
             "g1",
-            &crawler::ChildEventKind::PauseRequested {
+            &ChildEventKind::PauseRequested {
                 reason: "r1".into(),
             },
         );
         panel.apply_event(
             "c2",
             "g2",
-            &crawler::ChildEventKind::PauseRequested {
+            &ChildEventKind::PauseRequested {
                 reason: "r2".into(),
             },
         );
-        panel.apply_event("c1", "g1", &crawler::ChildEventKind::Resumed);
+        panel.apply_event("c1", "g1", &ChildEventKind::Resumed);
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
         assert!(matches!(
             panel.tabs[1].status,
@@ -355,7 +356,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::ToolCallStart {
+            &ChildEventKind::ToolCallStart {
                 name: "navigate".to_string(),
                 input_summary: "https://example.com".to_string(),
             },
@@ -378,7 +379,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::ToolCallStart {
+            &ChildEventKind::ToolCallStart {
                 name: "navigate".to_string(),
                 input_summary: "url".to_string(),
             },
@@ -386,7 +387,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::ToolCallComplete {
+            &ChildEventKind::ToolCallComplete {
                 name: "navigate".to_string(),
                 output_summary: "loaded page".to_string(),
                 is_error: false,
@@ -408,7 +409,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::ToolCallStart {
+            &ChildEventKind::ToolCallStart {
                 name: "click".to_string(),
                 input_summary: "#btn".to_string(),
             },
@@ -416,7 +417,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::ToolCallComplete {
+            &ChildEventKind::ToolCallComplete {
                 name: "click".to_string(),
                 output_summary: "element not found".to_string(),
                 is_error: true,
@@ -438,7 +439,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::TextDelta("hello\nworld".to_string()),
+            &ChildEventKind::TextDelta("hello\nworld".to_string()),
         );
         let tab = &panel.tabs[0];
         let stream_count = tab
@@ -458,7 +459,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::ToolCallStart {
+            &ChildEventKind::ToolCallStart {
                 name: "navigate".to_string(),
                 input_summary: "url".to_string(),
             },
@@ -467,7 +468,7 @@ mod tests {
         panel.apply_event(
             "child-1",
             "goal",
-            &crawler::ChildEventKind::Finished {
+            &ChildEventKind::Finished {
                 success: false,
                 items_extracted: 0,
                 error: Some("interrupted".to_string()),
@@ -494,7 +495,7 @@ mod tests {
             panel.apply_event(
                 "child-1",
                 "goal",
-                &crawler::ChildEventKind::TextDelta(format!("line {i}\n")),
+                &ChildEventKind::TextDelta(format!("line {i}\n")),
             );
         }
         let tab = &panel.tabs[0];

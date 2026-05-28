@@ -1,5 +1,7 @@
 use crate::json::JsonValue;
 
+use acrawl_core::OAuthConfig;
+
 use super::{
     expect_object, expect_string, optional_string, optional_string_array, optional_u16,
     ConfigError, McpConfigCollection,
@@ -10,16 +12,6 @@ pub struct RuntimeFeatureConfig {
     pub(super) mcp: McpConfigCollection,
     pub(super) oauth: Option<OAuthConfig>,
     pub(super) model: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OAuthConfig {
-    pub client_id: String,
-    pub authorize_url: String,
-    pub token_url: String,
-    pub callback_port: Option<u16>,
-    pub manual_redirect_url: Option<String>,
-    pub scopes: Vec<String>,
 }
 
 impl RuntimeFeatureConfig {

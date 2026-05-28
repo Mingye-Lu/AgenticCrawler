@@ -1,8 +1,10 @@
 //! Codex OAuth PKCE helpers.
 
-use runtime::{
+use acrawl_core::OAuthConfig;
+
+use crate::oauth::{
     generate_pkce_pair, generate_state, save_oauth_credentials, OAuthAuthorizationRequest,
-    OAuthConfig, PkceCodePair,
+    OAuthTokenSet, PkceCodePair,
 };
 
 use crate::error::ApiError;
@@ -63,7 +65,7 @@ pub fn login(port: u16) -> Result<CodexLoginRequest, ApiError> {
     })
 }
 
-pub fn save_codex_credentials(token_set: &runtime::OAuthTokenSet) -> Result<(), ApiError> {
+pub fn save_codex_credentials(token_set: &OAuthTokenSet) -> Result<(), ApiError> {
     save_oauth_credentials(token_set).map_err(ApiError::from)
 }
 
@@ -71,7 +73,7 @@ pub fn save_codex_credentials(token_set: &runtime::OAuthTokenSet) -> Result<(), 
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use runtime::{clear_oauth_credentials, code_challenge_s256, load_oauth_credentials};
+    use crate::oauth::{clear_oauth_credentials, code_challenge_s256, load_oauth_credentials};
 
     use super::*;
 
@@ -175,7 +177,7 @@ mod tests {
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
 
-        let token_set = runtime::OAuthTokenSet {
+        let token_set = OAuthTokenSet {
             access_token: "new-codex-token".to_string(),
             refresh_token: Some("new-refresh".to_string()),
             expires_at: Some(now_secs() + 7200),

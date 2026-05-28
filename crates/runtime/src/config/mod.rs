@@ -9,7 +9,8 @@ mod features;
 mod loader;
 mod mcp_config;
 
-pub use features::{OAuthConfig, RuntimeFeatureConfig};
+pub use acrawl_core::OAuthConfig;
+pub use features::RuntimeFeatureConfig;
 pub use loader::{ConfigLoader, RuntimeConfig};
 pub use mcp_config::{
     McpClaudeAiProxyServerConfig, McpConfigCollection, McpOAuthConfig, McpRemoteServerConfig,

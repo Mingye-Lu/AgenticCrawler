@@ -3,11 +3,10 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+use acrawl_core::OAuthConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
-
-use crate::config::OAuthConfig;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OAuthTokenSet {
@@ -450,6 +449,9 @@ fn decode_hex(byte: u8) -> Result<u8, String> {
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[cfg(unix)]
+    use acrawl_core::OAuthConfig;
+
     use super::{
         clear_oauth_credentials, code_challenge_s256, credentials_path, load_oauth_credentials,
         parse_oauth_callback_query, parse_oauth_callback_request_target, save_oauth_credentials,
@@ -458,7 +460,7 @@ mod tests {
     #[cfg(unix)]
     use super::{
         generate_pkce_pair, generate_state, loopback_redirect_uri, OAuthAuthorizationRequest,
-        OAuthConfig, OAuthRefreshRequest, OAuthTokenExchangeRequest,
+        OAuthRefreshRequest, OAuthTokenExchangeRequest,
     };
 
     #[cfg(unix)]

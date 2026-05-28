@@ -6,6 +6,7 @@ pub mod credentials;
 mod error;
 mod gemini;
 pub mod models;
+pub mod oauth;
 mod openai;
 pub mod provider;
 mod responses;

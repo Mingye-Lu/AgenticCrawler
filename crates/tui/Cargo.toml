@@ -10,8 +10,8 @@ acrawl-core = { path = "../core" }
 agent = { path = "../agent" }
 api = { path = "../api" }
 arboard = "3"
+browser = { path = "../browser" }
 commands = { path = "../commands" }
-crawler = { path = "../crawler" }
 crossterm = "0.28"
 dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 ratatui = "0.30.0"

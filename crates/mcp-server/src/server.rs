@@ -3,6 +3,10 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::str::FromStr;
 use std::sync::Mutex;
 
+use acrawl_core::{
+    ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage, MessageRole,
+    RuntimeError, TokenUsage, ToolEffect, ToolSpec,
+};
 use agent::{mvp_tool_specs, ToolRegistry};
 use agent::{CrawlResult, CrawlerAgent};
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
@@ -11,10 +15,8 @@ use api::{
     StreamEvent,
 };
 use api::{ImageSource, OutputContentBlock, ToolChoice, ToolDefinition};
-use crawler::{BrowserBackend, BrowserContext, PlaywrightBridge, ToolEffect};
+use browser::{BrowserBackend, BrowserContext, PlaywrightBridge};
 use runtime::{encode_mcp_frame, read_mcp_frame};
-use runtime::{ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage};
-use runtime::{MessageRole, RuntimeError, TokenUsage};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -327,7 +329,7 @@ fn normalize_tool_names(names: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<crawler::ToolSpec> {
+fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<ToolSpec> {
     let allowed: BTreeSet<&str> = allowed_tools.iter().map(String::as_str).collect();
     mvp_tool_specs()
         .into_iter()
@@ -336,7 +338,7 @@ fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<crawler::ToolSpec> {
 }
 
 fn build_run_goal_system_prompt(allowed_tools: &[String]) -> Vec<String> {
-    crawler::build_system_prompt(&filtered_tool_specs(allowed_tools))
+    agent::build_system_prompt(&filtered_tool_specs(allowed_tools))
 }
 
 fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOutcome> {

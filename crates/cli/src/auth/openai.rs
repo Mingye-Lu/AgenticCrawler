@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
+use api::oauth::OAuthTokenExchangeRequest;
 use api::{AnthropicClient, AuthSource};
-use runtime::OAuthTokenExchangeRequest;
 
 use super::{
     bind_oauth_listener, open_browser, persist_provider_credentials, wait_for_oauth_callback,
