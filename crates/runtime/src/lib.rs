@@ -4,7 +4,6 @@ mod control;
 mod conversation;
 mod json;
 mod mcp;
-mod oauth;
 pub mod observer;
 mod prompt;
 mod session;
@@ -32,37 +31,17 @@ pub use summary_compression::{
     compress_summary, compress_summary_text, SummaryCompressionBudget, SummaryCompressionResult,
 };
 
+pub use mcp::{encode_mcp_frame, read_mcp_frame, McpServerManager, McpTool};
+pub use mcp::{mcp_tool_name, mcp_tool_prefix};
 pub use mcp::{
-    encode_mcp_frame, read_mcp_frame, spawn_mcp_stdio_process, McpServerManager, McpStdioProcess,
-};
-pub use mcp::{
-    mcp_server_signature, mcp_tool_name, mcp_tool_prefix, normalize_name_for_mcp,
-    scoped_mcp_config_hash, unwrap_proxied_mcp_url,
-};
-pub use mcp::{
-    JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, ManagedMcpTool,
-    McpInitializeClientInfo, McpInitializeParams, McpInitializeResult, McpInitializeServerInfo,
-    McpListResourcesParams, McpListResourcesResult, McpListToolsParams, McpListToolsResult,
-    McpReadResourceParams, McpReadResourceResult, McpResource, McpResourceContents,
-    McpServerManagerError, McpTool, McpToolCallContent, McpToolCallParams, McpToolCallResult,
-    UnsupportedMcpServer,
-};
-pub use mcp::{
-    McpClaudeAiProxyTransport, McpClientAuth, McpClientBootstrap, McpClientTransport,
-    McpRemoteTransport, McpSdkTransport, McpStdioTransport,
-};
-pub use oauth::{
-    clear_oauth_credentials, code_challenge_s256, credentials_path, generate_pkce_pair,
-    generate_state, load_oauth_credentials, loopback_redirect_uri, parse_oauth_callback_query,
-    parse_oauth_callback_request_target, save_oauth_credentials, OAuthAuthorizationRequest,
-    OAuthCallbackParams, OAuthRefreshRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
-    PkceChallengeMethod, PkceCodePair,
+    JsonRpcError, JsonRpcId, JsonRpcResponse, ManagedMcpTool, McpServerManagerError,
+    McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
 pub use observer::RuntimeObserver;
 pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};
 pub use session::{ContentBlock, ConversationMessage, MessageRole, Session, SessionError};
 pub use settings::{
-    config_home_dir, load_settings, save_settings, settings_file_path,
+    config_home_dir, load_settings, resolve_output_dir, save_settings, settings_file_path,
     settings_get_auto_compact_tokens, settings_get_compaction_llm_summarization,
     settings_get_compaction_max_summary_chars,
     settings_get_compaction_preserve_recent_messages_floor,
@@ -74,7 +53,9 @@ pub use settings::{
 };
 pub use update_check::{check_for_update, check_for_update_force, UpdateInfo};
 pub use usage::{
-    format_usd, pricing_for_model, ModelPricing, TokenUsage, UsageCostEstimate, UsageTracker,
+    estimate_cost_usd, estimate_cost_usd_with_pricing, format_usd, pricing_for_model,
+    summary_lines, summary_lines_for_model, ModelPricing, TokenUsage, UsageCostEstimate,
+    UsageTracker,
 };
 
 #[cfg(test)]

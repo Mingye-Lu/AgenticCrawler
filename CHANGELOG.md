@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-05-28
+
+### Fixed
+
+- **Output directory now globally stable** — `save_file` and `screenshot --save` previously resolved the default `output_dir` relative to the current working directory, producing unpredictable output locations (especially in MCP mode where CWD depends on the IDE). Relative paths in `settings.json` now resolve against `~/.acrawl/` (e.g. the default `"output"` becomes `~/.acrawl/output/`). Absolute paths are unaffected.
+- **Removed dead `ACRAWL_OUTPUT_DIR` env var** — was set in `main.rs` on startup but never read by any tool.
+
+### Added
+
+- **`output_dir` parameter on `save_file` and `screenshot`** — callers (especially MCP clients) can now pass an explicit output directory per tool call. Relative paths resolve against CWD; absolute paths are used as-is. When omitted, the global default applies.
+
+## [0.7.0] - 2026-05-28
+
+### Changed
+
+- **Architecture: 10-crate workspace** — the monolithic `crawler` crate has been decomposed into focused, single-responsibility crates. New crates extracted: `acrawl-core` (shared types/traits/errors), `browser` (PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer), `agent` (agent loop, 21 tools, sub-agent fork/join, CrawlState), `render` (markdown rendering, tool output formatting, OutputSink), `mcp-server` (built-in MCP server + IDE installer), and `acrawl-tui` (Ratatui terminal UI). The transitional `crawler` shim has been removed entirely.
+
+- **Dependency graph corrected** — `api` and `browser` crates no longer depend on `runtime` (previously inverted). `ApiClient`/`ApiRequest` traits and `config_home_dir`/`OAuthConfig` moved to `acrawl-core`; OAuth module moved to `api`. All internal crates use direct imports instead of re-export shims.
+
+## [0.6.4] - 2026-05-26
+
+### Added
+
+- **`screenshot` save to disk** — the `screenshot` tool accepts two new optional parameters: `save` (boolean, default `false`) and `filename` (string). When `save` is `true`, the captured PNG is decoded from base64 and written to the configured `output_dir`. If `filename` is omitted a timestamped default (`screenshot_<unix_ms>.png`) is used. Existing callers that pass no parameters continue to receive `screenshot_base64` in the response unchanged.
+
+### Fixed
+
+- **`acrawl update` fails on large binary downloads** — GitHub's Azure Blob CDN closes connections without sending the TLS `close_notify` alert after transmitting all data. `rustls` treated this as a fatal error, causing `error decoding response body` during self-update. The downloader now uses chunked streaming that accepts the connection-close when `Content-Length` bytes have already been received; SHA256 checksum verification still catches actual corruption.
+
+## [0.6.3] - 2026-05-26
+
+### Added
+
+- **Paste masking** — large pastes (>150 bytes or >30 lines, whichever triggers first) are stored behind a dim italic placeholder pill instead of flooding the input area. Bracketed paste sequences and `Ctrl+V` both route through this path. Atomic cursor navigation skips over masks as a single unit; `Backspace`, `Delete`, and `Ctrl+W` delete the entire mask in one keystroke; clipboard cut expands the mask before yanking; and pressing Enter expands all masks before submitting the message.
+- **`acrawl mcp uninstall`** — removes the MCP server configuration from any previously configured IDE (Claude Code, Cursor, Windsurf, VS Code/Copilot, OpenCode). Presents a styled confirmation prompt and degrades gracefully when stdin is not a TTY.
+
+### Fixed
+
+- **Install override behavior** — `acrawl mcp install` now correctly removes and re-adds an existing MCP entry when reinstalling, instead of silently appending a duplicate.
+- **Stray Enter events from pasted newlines** — terminals that bypass bracketed paste and deliver content character-by-character no longer cause a premature submission when a pasted newline arrives; the paste-burst accumulator suppresses the Enter until the burst is flushed.
+- **Paste-burst must not arm Enter suppression mid-paste** — flushing a burst while another burst is in progress no longer incorrectly activates the Enter-suppression gate, preventing legitimate Enter keystrokes from being swallowed after a paste.
+
+### Performance
+
+- **Slash overlay skipped when input has no leading `/`** — `refresh_slash_overlay` is a no-op on every keystroke that does not start with `/`, eliminating the scan on the hot path for normal typing.
+
 ## [0.6.2] - 2026-05-23
 
 ### Added
@@ -410,6 +456,11 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.1
+[0.7.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.0
+[0.6.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.4
+[0.6.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.3
+[0.6.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.0
 [0.5.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.5.1

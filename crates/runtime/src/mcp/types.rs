@@ -162,6 +162,7 @@ pub struct McpToolCallResult {
     pub meta: Option<JsonValue>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct McpListResourcesParams {
@@ -169,6 +170,7 @@ pub struct McpListResourcesParams {
     pub cursor: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpResource {
     pub uri: String,
@@ -184,6 +186,7 @@ pub struct McpResource {
     pub meta: Option<JsonValue>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct McpListResourcesResult {
@@ -192,12 +195,14 @@ pub struct McpListResourcesResult {
     pub next_cursor: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct McpReadResourceParams {
     pub uri: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpResourceContents {
     pub uri: String,
@@ -211,6 +216,7 @@ pub struct McpResourceContents {
     pub meta: Option<JsonValue>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpReadResourceResult {
     pub contents: Vec<McpResourceContents>,

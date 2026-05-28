@@ -49,11 +49,17 @@ Small, well-scoped PRs are reviewed faster than large ones.
 
 ```
 crates/
-  acrawl-cli/   CLI binary, TUI REPL, session management
+  core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          LLM provider clients (Anthropic, OpenAI, Codex)
+  browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext
+  agent/        Browser tools, agent loop, sub-agent fork/join
+  runtime/      ConversationRuntime, config, sessions, MCP client
+  render/       Markdown rendering, tool output formatting
+  mcp-server/   Built-in MCP server, IDE installer
+  tui/          Ratatui terminal UI (acrawl-tui)
+  cli/          Thin binary entry point, orchestration
   commands/     Slash command registry
-  crawler/      Browser tools, agent loop, CloakBrowser bridge
-  runtime/      ConversationRuntime, config, permissions, sessions
+  crawler/      Transitional re-export shim (will be removed)
 ```
 
 ## License

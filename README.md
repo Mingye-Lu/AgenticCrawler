@@ -535,14 +535,20 @@ flowchart LR
 
 ```
 crates/
-  acrawl-cli/   CLI binary, TUI REPL, MCP server (`mcp_server.rs`), MCP installer (`mcp_install.rs`), arg parsing, session management
+  core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
+  browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer
+  agent/        21 tools, agent loop, sub-agent fork/join, CrawlState
+  runtime/      ConversationRuntime, config, sessions, MCP client stack, OAuth PKCE
+  render/       Markdown rendering, tool output formatting, OutputSink
+  mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer
+  tui/          Ratatui terminal UI (acrawl-tui)
+  cli/          Thin binary entry point, LiveCli orchestration, session management
   commands/     17 slash commands with resume-safety annotations
-  crawler/      21 tools, agent loop, FetchRouter, PlaywrightBridge, ExtensionBridge, sub-agent fork/join
-  runtime/      ConversationRuntime, config, sessions, MCP server manager, OAuth PKCE
+  crawler/      Transitional re-export shim (will be removed)
 ```
 
-5 crates, ~38K lines of Rust, 770 tests.
+11 crates, ~38K lines of Rust, 770 tests.
 
 ## Development
 

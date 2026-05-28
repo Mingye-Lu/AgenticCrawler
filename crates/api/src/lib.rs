@@ -1,14 +1,15 @@
-pub mod bedrock;
+mod bedrock;
 mod client;
-pub mod codex;
+mod codex;
 pub mod copilot;
 pub mod credentials;
 mod error;
-pub mod gemini;
+mod gemini;
 pub mod models;
-pub mod openai;
+pub mod oauth;
+mod openai;
 pub mod provider;
-pub mod responses;
+mod responses;
 mod sse;
 mod types;
 

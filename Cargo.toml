@@ -1,15 +1,25 @@
 [workspace]
 members = [
-    "crates/acrawl-cli",
+    "crates/agent",
+    "crates/cli",
+    "crates/mcp-server",
+    "crates/render",
     "crates/runtime",
     "crates/api",
     "crates/commands",
-    "crates/crawler",
+    "crates/core",
+    "crates/browser",
+    "crates/tui",
 ]
 resolver = "2"
 
+[workspace.dependencies]
+agent = { path = "crates/agent" }
+mcp-server = { path = "crates/mcp-server" }
+render = { path = "crates/render" }
+
 [workspace.package]
-version = "0.6.2"
+version = "0.7.1"
 edition = "2021"
 license = "MIT"
 publish = false

@@ -1,0 +1,18 @@
+[package]
+name = "render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+commands = { path = "../commands" }
+crossterm = "0.28"
+pulldown-cmark = "0.13"
+ratatui = "0.30.0"
+runtime = { path = "../runtime" }
+serde_json = "1"
+unicode-width = "0.2"
+
+[lints]
+workspace = true

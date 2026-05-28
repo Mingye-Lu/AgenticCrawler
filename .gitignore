@@ -41,3 +41,7 @@ crates/graphify-out/
 
 # Superpowers specs (local, not committed)
 docs/superpowers/
+# Added by code-review-graph
+.code-review-graph/
+.mcp.json
+.opencode.json
