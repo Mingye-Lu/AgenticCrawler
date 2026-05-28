@@ -2259,6 +2259,18 @@ fn handle_session_modal_outcome(
                     match guard.switch_to_session_handle(handle) {
                         Ok(message_count) => {
                             let _ = guard.persist_session();
+                            // Bulk-load messages from the newly switched session
+                            let loaded_messages = guard.session_messages();
+                            state.messages = loaded_messages;
+                            state.live_tool_calls.clear();
+                            state.typewriter.chars.clear();
+                            state.typewriter.live.clear();
+                            state.busy = false;
+                            state.cancelling = false;
+                            state.current_tool = None;
+                            state.follow_bottom = true;
+                            state.child_tab_panel = child_tabs::ChildTabPanel::default();
+                            state.status_line = "Ready".to_string();
                             state.push_system_card(
                                 "Session",
                                 &format!(
@@ -5531,6 +5543,56 @@ mod tests {
         assert_eq!(state.typewriter.chars[0], 'a');
         assert_eq!(state.typewriter.chars[1], 'b');
         assert_eq!(state.typewriter.chars[2], 'c');
+    }
+
+    #[test]
+    fn drain_events_messages_loaded_resets_state() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+        state.busy = true;
+        state.live_tool_calls.push((
+            "tool".to_string(),
+            "".to_string(),
+            ToolCallStatus::Running,
+        ));
+        state.typewriter.chars.push_back('x');
+        state.typewriter.live.push('y');
+        state.current_tool = Some("navigate".to_string());
+
+        let msgs = vec![ConversationMessage::user_text("hi")];
+        tx.send(ReplTuiEvent::MessagesLoaded(msgs)).unwrap();
+        state.drain_events(&rx);
+
+        assert_eq!(state.messages.len(), 1);
+        assert!(!state.busy);
+        assert!(state.live_tool_calls.is_empty());
+        assert!(state.typewriter.chars.is_empty());
+        assert!(state.typewriter.live.is_empty());
+        assert!(state.current_tool.is_none());
+        assert!(state.follow_bottom);
+        assert_eq!(state.status_line, "Ready");
+    }
+
+    #[test]
+    fn session_switch_bulk_loads_messages_into_state() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+        state.busy = true;
+        state.current_tool = Some("execute_js".to_string());
+
+        let msgs = vec![
+            ConversationMessage::user_text("first"),
+            ConversationMessage::user_text("second"),
+        ];
+        tx.send(ReplTuiEvent::MessagesLoaded(msgs)).unwrap();
+        state.drain_events(&rx);
+
+        assert_eq!(state.messages.len(), 2);
+        assert_eq!(state.messages[0].role, MessageRole::User);
+        assert_eq!(state.messages[1].role, MessageRole::User);
+        assert!(!state.busy);
+        assert!(state.current_tool.is_none());
+        assert!(!state.cancelling);
     }
 
     // ── Integration tests: modal state machine ─────────────────────────────────

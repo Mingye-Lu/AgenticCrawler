@@ -292,6 +292,10 @@ impl LiveCli {
         self.session.id.as_str()
     }
 
+    pub(crate) fn session_messages(&self) -> Vec<runtime::ConversationMessage> {
+        self.runtime.session().messages.clone()
+    }
+
     pub(crate) fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<ChildEvent>> {
         self.child_event_rx.take()
     }

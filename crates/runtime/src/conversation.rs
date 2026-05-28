@@ -220,6 +220,9 @@ where
                     .collect::<Vec<_>>();
 
                 self.session.messages.push(assistant_message.clone());
+                if let Some(ref mut observer) = self.observer {
+                    observer.on_message_completed(&assistant_message);
+                }
                 assistant_messages.push(assistant_message);
 
                 if pending_tool_uses.is_empty() {

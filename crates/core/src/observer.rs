@@ -1,4 +1,4 @@
-use crate::{message::TokenUsage, ToolEffect};
+use crate::{message::ConversationMessage, message::TokenUsage, ToolEffect};
 
 /// Observer that receives events from `ConversationRuntime`.
 /// All methods have default no-op implementations.
@@ -33,5 +33,9 @@ pub trait RuntimeObserver: Send {
 
     fn on_usage(&mut self, usage: &TokenUsage) {
         let _ = usage;
+    }
+
+    fn on_message_completed(&mut self, msg: &ConversationMessage) {
+        let _ = msg;
     }
 }
