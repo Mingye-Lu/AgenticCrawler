@@ -1,6 +1,8 @@
 use std::cmp::min;
+use std::collections::HashMap;
 use std::io;
 
+use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 use crossterm::{event, execute};
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
@@ -16,10 +18,11 @@ use crate::app::LiveCli;
 use crate::display_width::{split_at_display_width, text_display_width};
 use crate::format::VERSION;
 use crate::markdown::strip_ansi;
-use crate::tool_format::format_tool_success_line;
+use crate::tool_format::{format_tool_success_line, tool_input_summary};
+use crate::tool_pairing::ToolResultInfo;
 
 use super::repl_app::{
-    HeaderSnapshot, ReplTuiState, ToolCallStatus, TranscriptEntry, SLASH_OVERLAY_HINT_TEXT,
+    HeaderSnapshot, ReplTuiState, ToolCallStatus, SLASH_OVERLAY_HINT_TEXT,
     SLASH_OVERLAY_VISIBLE_ITEMS, WELCOME_BOX_MAX_WIDTH, WELCOME_BOX_MIN_WIDTH,
     WELCOME_BOX_SIDE_GUTTER,
 };
@@ -388,7 +391,9 @@ fn looks_like_base64(s: &str) -> bool {
 
 #[allow(clippy::too_many_lines)]
 pub(super) fn build_wrapped_list(
-    entries: &[TranscriptEntry],
+    messages: &[ConversationMessage],
+    tool_results: &HashMap<String, ToolResultInfo>,
+    live_tool_calls: &[(String, String, crate::repl_app::ToolCallStatus)],
     width: u16,
     live_text: Option<&str>,
     spinner_char: char,
@@ -404,175 +409,96 @@ pub(super) fn build_wrapped_list(
     let user_prefix_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
-    let parent_prefix_style = Style::default()
-        .fg(Color::Green)
-        .add_modifier(Modifier::BOLD);
+    for message in messages {
+        match message.role {
+            MessageRole::User => {
+                let text_blocks = message.blocks.iter().filter_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text),
+                    _ => None,
+                });
 
-    for entry in entries {
-        match entry {
-            TranscriptEntry::System(text) => {
-                for row in wrap_plain_text(text, width) {
-                    text_out.push(row.clone());
-                    out.push(ListItem::new(Line::from(Span::styled(row, system_style))));
-                }
-            }
-            TranscriptEntry::User(text) => {
-                let prefixed = format!("  You {text}");
-                let rows = wrap_plain_text(&prefixed, width);
                 let user_bg = Color::Rgb(35, 45, 60); // Subtle blue-gray background
-                for (idx, row) in rows.into_iter().enumerate() {
-                    let line = if idx == 0 && row.trim_start().starts_with("You ") {
-                        let trimmed = row.trim_start();
-                        let rest = trimmed.get(4..).unwrap_or("").to_string();
-                        Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled("You ", user_prefix_style),
-                            Span::raw(rest),
-                        ])
-                    } else {
-                        Line::from(Span::raw(row))
-                    };
-                    text_out.push(line_to_plain_text(&line));
-                    out.push(ListItem::new(line).bg(user_bg));
-                }
-            }
-            TranscriptEntry::Parent(text) => {
-                let prefixed = format!("  Parent {text}");
-                let rows = wrap_plain_text(&prefixed, width);
-                let parent_bg = Color::Rgb(30, 45, 35);
-                for (idx, row) in rows.into_iter().enumerate() {
-                    let line = if idx == 0 && row.trim_start().starts_with("Parent ") {
-                        let trimmed = row.trim_start();
-                        let rest = trimmed.get("Parent ".len()..).unwrap_or("").to_string();
-                        Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled("Parent ", parent_prefix_style),
-                            Span::raw(rest),
-                        ])
-                    } else {
-                        Line::from(Span::raw(row))
-                    };
-                    text_out.push(line_to_plain_text(&line));
-                    out.push(ListItem::new(line).bg(parent_bg));
-                }
-            }
-            TranscriptEntry::Status(text) => {
-                let status_style = Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC);
-                for row in wrap_plain_text(text, width) {
-                    text_out.push(row.clone());
-                    out.push(ListItem::new(Line::from(Span::styled(row, status_style))));
-                }
-            }
-            TranscriptEntry::Stream(line) => {
-                for wrapped in wrap_ansi_line(line.clone(), width) {
-                    text_out.push(line_to_plain_text(&wrapped));
-                    out.push(ListItem::new(wrapped));
-                }
-            }
-            TranscriptEntry::SystemCard { title, rows } => {
-                let border_style = Style::default().fg(Color::Yellow);
-                let key_style = Style::default()
-                    .fg(Color::LightYellow)
-                    .add_modifier(Modifier::BOLD);
-                let w = usize::from(width);
-
-                // Header: ┌─ title ───────┐
-                let title_prefix = format!("┌─ {title} ");
-                let title_fill = w
-                    .saturating_sub(title_prefix.chars().count())
-                    .saturating_sub(1);
-                let header = format!("{title_prefix}{}┐", "─".repeat(title_fill));
-                text_out.push(header.clone());
-                out.push(ListItem::new(Line::from(Span::styled(
-                    header,
-                    border_style,
-                ))));
-
-                // Content rows: │ key  value   │
-                let max_key_len = rows
-                    .iter()
-                    .map(|(k, _)| text_display_width(k))
-                    .max()
-                    .unwrap_or(0);
-                let key_col = max_key_len.max(w.saturating_sub(8).clamp(8, 30));
-                let val_col = w.saturating_sub(key_col + 5).max(8);
-
-                for (key, value) in rows {
-                    let wrapped = textwrap::wrap(value, val_col);
-                    for (idx, line) in wrapped.into_iter().enumerate() {
-                        let line_str = line.into_owned();
-                        let line_width = text_display_width(&line_str);
-                        let pad = w.saturating_sub(2 + key_col + 1 + line_width + 2);
-
-                        let plain_line = if idx == 0 {
-                            format!("│ {key:key_col$} {line_str}{} │", " ".repeat(pad))
+                for text in text_blocks {
+                    let prefixed = format!("  You {text}");
+                    let rows = wrap_plain_text(&prefixed, width);
+                    for (idx, row) in rows.into_iter().enumerate() {
+                        let line = if idx == 0 && row.trim_start().starts_with("You ") {
+                            let trimmed = row.trim_start();
+                            let rest = trimmed.get(4..).unwrap_or("").to_string();
+                            Line::from(vec![
+                                Span::raw("  "),
+                                Span::styled("You ", user_prefix_style),
+                                Span::raw(rest),
+                            ])
                         } else {
-                            format!("│ {} {line_str}{} │", " ".repeat(key_col), " ".repeat(pad))
+                            Line::from(Span::raw(row))
                         };
-                        text_out.push(plain_line);
+                        text_out.push(line_to_plain_text(&line));
+                        out.push(ListItem::new(line).bg(user_bg));
+                    }
 
-                        let spans = if idx == 0 {
-                            vec![
-                                Span::styled("│ ", border_style),
-                                Span::styled(format!("{key:key_col$}"), key_style),
-                                Span::raw(" "),
-                                Span::raw(line_str),
-                                Span::raw(" ".repeat(pad)),
-                                Span::styled(" │", border_style),
-                            ]
-                        } else {
-                            vec![
-                                Span::styled("│ ", border_style),
-                                Span::raw(" ".repeat(key_col)),
-                                Span::raw(" "),
-                                Span::raw(line_str),
-                                Span::raw(" ".repeat(pad)),
-                                Span::styled(" │", border_style),
-                            ]
-                        };
-                        out.push(ListItem::new(Line::from(spans)));
+                    out.push(ListItem::new(Line::from(" ")));
+                    text_out.push(" ".to_string());
+                }
+            }
+            MessageRole::Assistant => {
+                for block in &message.blocks {
+                    match block {
+                        ContentBlock::Text { text } => {
+                            for line in crate::markdown::render_lines(text) {
+                                for wrapped in wrap_ansi_line(line, width) {
+                                    text_out.push(line_to_plain_text(&wrapped));
+                                    out.push(ListItem::new(wrapped));
+                                }
+                            }
+                        }
+                        ContentBlock::ToolUse { id, name, input } => {
+                            let input_summary = tool_input_summary(name, input);
+                            let status = match tool_results.get(id) {
+                                Some(result) if result.is_error => {
+                                    ToolCallStatus::Error(result.output.clone())
+                                }
+                                Some(result) => ToolCallStatus::Success {
+                                    output: result.output.clone(),
+                                },
+                                None => ToolCallStatus::Interrupted,
+                            };
+                            let (call_items, call_text) = render_tool_call_lines(
+                                name,
+                                &input_summary,
+                                &status,
+                                width,
+                                spinner_char,
+                                debug_mode,
+                            );
+                            out.extend(call_items);
+                            text_out.extend(call_text);
+                        }
+                        ContentBlock::Reasoning { data } => {
+                            for row in wrap_plain_text(data, width) {
+                                text_out.push(row.clone());
+                                out.push(ListItem::new(Line::from(Span::styled(row, system_style))));
+                            }
+                        }
+                        ContentBlock::ToolResult { .. } => {}
                     }
                 }
-
-                // Footer: └───────────────┘
-                let bottom_fill = w.saturating_sub(2);
-                let bottom = format!("└{}┘", "─".repeat(bottom_fill));
-                text_out.push(bottom.clone());
-                out.push(ListItem::new(Line::from(Span::styled(
-                    bottom,
-                    border_style,
-                ))));
             }
-            TranscriptEntry::ToolCall {
-                name,
-                input_summary,
-                status,
-            } => {
-                let (call_items, call_text) = render_tool_call_lines(
-                    name,
-                    input_summary,
-                    status,
-                    width,
-                    spinner_char,
-                    debug_mode,
-                );
-                out.extend(call_items);
-                text_out.extend(call_text);
-            }
+            MessageRole::Tool | MessageRole::System => {}
         }
+    }
 
-        // Add a blank separator line after User/Parent messages or Cards to separate blocks
-        match entry {
-            TranscriptEntry::User(_)
-            | TranscriptEntry::Parent(_)
-            | TranscriptEntry::SystemCard { .. } => {
-                out.push(ListItem::new(Line::from(" ")));
-                text_out.push(" ".to_string());
-            }
-            _ => {}
-        }
+    for (name, input_summary, status) in live_tool_calls {
+        let (call_items, call_text) = render_tool_call_lines(
+            name,
+            input_summary,
+            status,
+            width,
+            spinner_char,
+            debug_mode,
+        );
+        out.extend(call_items);
+        text_out.extend(call_text);
     }
 
     // Live typewriter line shown at the bottom during streaming
@@ -588,6 +514,117 @@ pub(super) fn build_wrapped_list(
     }
     debug_assert_eq!(text_out.len(), out.len());
     (out, text_out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plain_lines(items: &[String]) -> Vec<String> {
+        items.to_vec()
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_user_message() {
+        let messages = vec![ConversationMessage::user_text("hello")];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(plain_lines(&text).iter().any(|line| line.contains("You hello")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_assistant_text() {
+        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::Text {
+            text: "assistant reply".to_string(),
+        }])];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("assistant reply")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_tool_success() {
+        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+            id: "tool_1".to_string(),
+            name: "navigate".to_string(),
+            input: r#"{"url":"https://example.com"}"#.to_string(),
+        }])];
+        let tool_results = HashMap::from([(
+            "tool_1".to_string(),
+            ToolResultInfo {
+                output: "navigation complete".to_string(),
+                is_error: false,
+            },
+        )]);
+
+        let (_, text) = build_wrapped_list(&messages, &tool_results, &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("navigate")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_tool_interrupted() {
+        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+            id: "tool_1".to_string(),
+            name: "click".to_string(),
+            input: r##"{"selector":"#go"}"##.to_string(),
+        }])];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("interrupted")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_reasoning_dimmed() {
+        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::Reasoning {
+            data: "thinking...".to_string(),
+        }])];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("thinking...")));
+    }
+
+    #[test]
+    fn build_wrapped_list_skips_tool_role_messages() {
+        let messages = vec![
+            ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                id: "tool_1".to_string(),
+                name: "navigate".to_string(),
+                input: r#"{"url":"https://example.com"}"#.to_string(),
+            }]),
+            ConversationMessage::tool_result(
+                "tool_1",
+                "navigate",
+                "navigation complete",
+                false,
+            ),
+        ];
+        let tool_results = HashMap::from([(
+            "tool_1".to_string(),
+            ToolResultInfo {
+                output: "navigation complete".to_string(),
+                is_error: false,
+            },
+        )]);
+
+        let (_, text) = build_wrapped_list(&messages, &tool_results, &[], 80, None, '⠋', false);
+
+        assert_eq!(
+            text.iter().filter(|line| line.contains("navigate")).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_live_text_after_messages() {
+        let (_, text) = build_wrapped_list(&[], &HashMap::new(), &[], 80, Some("hello"), '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("hello")));
+    }
 }
 
 pub(super) fn rect_contains_mouse(r: Rect, col: u16, row: u16) -> bool {
@@ -1049,8 +1086,15 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
 
     state.last_transcript_rect = main_inner;
 
-    let (wrapped, wrapped_text) =
-        build_wrapped_list(&tab.entries, main_inner.width, None, spinner, debug_mode);
+    let (wrapped, wrapped_text) = build_wrapped_list(
+        &[],
+        &HashMap::new(),
+        &[],
+        main_inner.width,
+        None,
+        spinner,
+        debug_mode,
+    );
 
     let scroll_offset = {
         tab.last_wrapped_len = wrapped.len();
@@ -1236,7 +1280,9 @@ pub(super) fn draw_chat(
         Some(state.typewriter.live.as_str())
     };
     let (wrapped, wrapped_text) = build_wrapped_list(
-        &state.entries,
+        &[],
+        &HashMap::new(),
+        &[],
         main_inner.width,
         live_line,
         state.spinner_char(),
