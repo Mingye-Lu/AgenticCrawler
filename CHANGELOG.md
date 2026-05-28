@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-05-28
+
+### Fixed
+
+- **`acrawl update` now updates CloakBrowser** — previously `install_cloakbrowser_if_needed()` only ran when the acrawl binary itself had a new version. If the binary was already current, the function was unreachable and CloakBrowser would sit on a stale version indefinitely. The update now always checks CloakBrowser regardless of binary version.
+- **CloakBrowser update no longer fails silently** — added Node.js version detection (requires 20+), operation timeouts (2min npm, 5min browser download), stderr capture with tail output on failure, and actionable remediation messages. Also fixed npm/npx not being found on Windows (tokio `Command` doesn't resolve `.cmd` files).
+- **TUI no longer corrupted by child process stderr** — PlaywrightBridge and MCP stdio processes used `Stdio::inherit()` for stderr, causing Node.js warnings, CloakBrowser update notices, and MCP server debug output to write directly into the terminal and corrupt the Ratatui display. Child stderr is now redirected to `~/.acrawl/stderr.log` when the TUI is active.
+
 ## [0.7.1] - 2026-05-28
 
 ### Fixed
@@ -456,6 +464,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.0
 [0.6.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.6.4
