@@ -448,6 +448,7 @@ mod tests {
                     usage: None,
                 },
             ],
+            child_sessions: Vec::new(),
         };
         let exported = render_export_text(&session);
         assert!(exported.contains("# Conversation Export"));
@@ -471,6 +472,7 @@ mod tests {
                 }],
                 usage: None,
             }],
+            child_sessions: Vec::new(),
         };
         let filename = default_export_filename(&session);
         assert!(Path::new(&filename)
@@ -487,6 +489,7 @@ mod tests {
             model: None,
             title: None,
             messages: vec![],
+            child_sessions: Vec::new(),
         };
         let filename = default_export_filename(&session);
         assert_eq!(filename, "conversation.txt");

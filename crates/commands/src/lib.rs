@@ -494,6 +494,7 @@ mod tests {
                     text: "recent".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let result = handle_slash_command(
