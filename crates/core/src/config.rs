@@ -1,3 +1,4 @@
+use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,12 +26,28 @@ pub fn is_tui_active() -> bool {
 }
 
 #[must_use]
+pub fn stderr_log_path() -> PathBuf {
+    config_home_dir().join("stderr.log")
+}
+
+#[must_use]
 pub fn child_stderr() -> Stdio {
     if is_tui_active() {
-        Stdio::null()
+        open_stderr_log().unwrap_or_else(Stdio::null)
     } else {
         Stdio::inherit()
     }
+}
+
+fn open_stderr_log() -> Option<Stdio> {
+    let path = stderr_log_path();
+    let _ = fs::create_dir_all(path.parent()?);
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()
+        .map(Stdio::from)
 }
 
 /// Platform-specific home directory.
@@ -80,22 +97,34 @@ mod tests {
     }
 
     #[test]
-    fn child_stderr_returns_null_when_tui_active() {
-        set_tui_active(true);
-        let stdio = child_stderr();
+    fn child_stderr_redirects_to_log_file() {
+        let log_path = stderr_log_path();
+        let before_len = fs::metadata(&log_path).map_or(0, |m| m.len());
+
+        let stdio = open_stderr_log().expect("should open stderr log");
         let result = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
             .args(if cfg!(windows) {
-                &["/C", "echo error_output 1>&2"][..]
+                &["/C", "echo tui_stderr_test 1>&2"][..]
             } else {
-                &["-c", "echo error_output >&2"][..]
+                &["-c", "echo tui_stderr_test >&2"][..]
             })
             .stderr(stdio)
             .stdout(std::process::Stdio::null())
-            .output();
+            .status();
         assert!(result.is_ok());
-        let output = result.unwrap();
-        assert!(output.status.success());
-        assert!(output.stderr.is_empty());
-        set_tui_active(false);
+        assert!(result.unwrap().success());
+
+        let after_len = fs::metadata(&log_path).map_or(0, |m| m.len());
+        assert!(
+            after_len > before_len,
+            "stderr.log should have grown: before={before_len}, after={after_len}"
+        );
+    }
+
+    #[test]
+    fn stderr_log_path_is_inside_config_home() {
+        let path = stderr_log_path();
+        assert!(path.starts_with(config_home_dir()));
+        assert!(path.ends_with("stderr.log"));
     }
 }
