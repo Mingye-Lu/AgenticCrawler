@@ -8,11 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
 use crate::auth::ProviderChoice;
 use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
 use crate::format::render_repl_help;
-use crate::markdown::{drain_safe_boundary, render_lines};
 use crate::tool_format::tool_input_summary;
 use crate::tui::active_modal::ActiveModal;
 use crate::tui::auth_modal::{AuthModal, AuthModalStep};
@@ -249,7 +249,8 @@ pub(super) struct TypewriterState {
 #[allow(clippy::struct_excessive_bools)]
 pub(super) struct ReplTuiState {
     ui_state: AppUiState,
-    pub(super) entries: Vec<TranscriptEntry>,
+    pub(super) messages: Vec<ConversationMessage>,
+    pub(super) live_tool_calls: Vec<(String, String, ToolCallStatus)>,
     pub(super) list_state: ListState,
     pub(super) follow_bottom: bool,
     pub(super) last_transcript_rect: Rect,
@@ -282,7 +283,6 @@ pub(super) struct ReplTuiState {
     live_model_catalog: ModelCatalogState,
     exit: bool,
     pub(super) current_tool: Option<String>,
-    status_entry_index: Option<usize>,
     persist_on_exit: bool,
     cursor_on: bool,
     cursor_blink_deadline: Instant,
@@ -321,7 +321,8 @@ impl ReplTuiState {
     fn new() -> Self {
         Self {
             ui_state: AppUiState::WelcomeMode,
-            entries: Vec::new(),
+            messages: Vec::new(),
+            live_tool_calls: Vec::new(),
             list_state: ListState::default(),
             follow_bottom: true,
             last_transcript_rect: Rect::default(),
@@ -350,7 +351,6 @@ impl ReplTuiState {
             exit: false,
             persist_on_exit: false,
             current_tool: None,
-            status_entry_index: None,
             cursor_on: true,
             cursor_blink_deadline: Instant::now() + Duration::from_millis(530),
             slash_overlay: None,
@@ -440,23 +440,12 @@ impl ReplTuiState {
                 Some(c) => self.typewriter.live.push(c),
             }
         }
-        while let Some(styled_lines) = drain_safe_boundary(&mut self.typewriter.live) {
-            for line in styled_lines {
-                self.entries.push(TranscriptEntry::Stream(line));
-            }
-        }
     }
 
     fn flush_typewriter(&mut self) {
         if !self.typewriter.chars.is_empty() {
             let count = self.typewriter.chars.len();
             self.tick_typewriter(count);
-        }
-        if !self.typewriter.live.is_empty() {
-            let pending: String = std::mem::take(&mut self.typewriter.live);
-            for styled_line in render_lines(&pending) {
-                self.entries.push(TranscriptEntry::Stream(styled_line));
-            }
         }
     }
 
@@ -1423,16 +1412,6 @@ impl ReplTuiState {
     }
 
     fn handle_tool_call_start(&mut self, name: String, input: &str) {
-        if !self.typewriter.chars.is_empty() {
-            let count = self.typewriter.chars.len();
-            self.tick_typewriter(count);
-        }
-        if !self.typewriter.live.is_empty() {
-            let pending: String = std::mem::take(&mut self.typewriter.live);
-            for styled_line in render_lines(&pending) {
-                self.entries.push(TranscriptEntry::Stream(styled_line));
-            }
-        }
         if name == "wait_for_human" {
             self.last_wait_for_human_reason = serde_json::from_str::<serde_json::Value>(input)
                 .ok()
@@ -1440,11 +1419,9 @@ impl ReplTuiState {
         }
         let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
-        self.entries.push(TranscriptEntry::ToolCall {
-            name,
-            input_summary,
-            status: ToolCallStatus::Running,
-        });
+        self.current_tool = Some(name.clone());
+        self.live_tool_calls
+            .push((name, input_summary, ToolCallStatus::Running));
     }
 
     fn handle_tool_call_complete(&mut self, name: &str, output: String, is_error: bool) {
@@ -1459,19 +1436,11 @@ impl ReplTuiState {
         // (e.g. two navigate calls in one assistant turn) because completions
         // arrive in the same order the calls were started, and each completion
         // consumes exactly the first still-Running entry.
-        if let Some(TranscriptEntry::ToolCall {
-            status: entry_status,
-            ..
-        }) = self.entries.iter_mut().find(|entry| {
-            matches!(
-                entry,
-                TranscriptEntry::ToolCall {
-                    name: entry_name,
-                    status: ToolCallStatus::Running,
-                    ..
-                } if entry_name == name
-            )
-        }) {
+        if let Some((_, _, entry_status)) = self.live_tool_calls.iter_mut().rev().find(
+            |(entry_name, _, entry_status)| {
+                entry_name == name && matches!(entry_status, ToolCallStatus::Running)
+            },
+        ) {
             *entry_status = status;
         }
     }
@@ -1907,28 +1876,44 @@ impl ReplTuiState {
 
     fn push_user_line(&mut self, text: &str) {
         self.ui_state = AppUiState::ChatMode;
-        self.entries
-            .push(TranscriptEntry::User(text.trim().to_string()));
+        self.messages.push(ConversationMessage::user_text(text.trim()));
         self.follow_bottom = true;
     }
 
     fn push_system(&mut self, msg: &str) {
         self.ui_state = AppUiState::ChatMode;
-        for row in msg.lines() {
-            if row.is_empty() {
-                self.entries.push(TranscriptEntry::System(" ".to_string()));
-            } else {
-                self.entries.push(TranscriptEntry::System(row.to_string()));
-            }
-        }
+        let text = if msg.is_empty() { " ".to_string() } else { msg.to_string() };
+        self.messages.push(ConversationMessage {
+            role: MessageRole::System,
+            blocks: vec![ContentBlock::Text { text }],
+            usage: None,
+        });
         self.follow_bottom = true;
     }
 
     fn push_system_card(&mut self, title: impl Into<String>, report: &str) {
         self.ui_state = AppUiState::ChatMode;
-        self.entries.push(TranscriptEntry::SystemCard {
-            title: title.into(),
-            rows: parse_report_rows(report),
+        let title = title.into();
+        let rows = parse_report_rows(report)
+            .into_iter()
+            .map(|(label, value)| {
+                if value.is_empty() {
+                    label
+                } else {
+                    format!("{label}: {value}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = if rows.is_empty() {
+            title
+        } else {
+            format!("{title}\n{rows}")
+        };
+        self.messages.push(ConversationMessage {
+            role: MessageRole::System,
+            blocks: vec![ContentBlock::Text { text }],
+            usage: None,
         });
         self.follow_bottom = true;
     }
@@ -2046,12 +2031,9 @@ impl ReplTuiState {
                 }
                 ReplTuiEvent::TurnStarting => {
                     self.busy = true;
+                    self.live_tool_calls.clear();
                     self.current_tool = None;
                     self.status_line = "Thinking...".to_string();
-                    self.status_entry_index = Some(self.entries.len());
-                    self.entries.push(TranscriptEntry::Status(
-                        "· Thinking about next move...".to_string(),
-                    ));
                 }
                 ReplTuiEvent::ToolCallStart { name, input } => {
                     self.handle_tool_call_start(name, &input);
@@ -2067,39 +2049,37 @@ impl ReplTuiState {
                     self.busy = false;
                     self.cancelling = false;
                     self.current_tool = None;
-
-                    for entry in &mut self.entries {
-                        if let TranscriptEntry::ToolCall {
-                            status: status @ ToolCallStatus::Running,
-                            ..
-                        } = entry
-                        {
-                            *status = ToolCallStatus::Interrupted;
-                        }
-                    }
+                    self.live_tool_calls.clear();
 
                     self.status_line = match &result {
                         Ok(()) => "Ready".to_string(),
                         Err(e) => format!("Error: {e}"),
                     };
 
-                    // Flush any remaining characters in the typewriter and clear status
                     self.flush_typewriter();
-
-                    // Remove status line on finish
-                    if let Some(idx) = self.status_entry_index.take() {
-                        if idx < self.entries.len()
-                            && matches!(self.entries[idx], TranscriptEntry::Status(_))
-                        {
-                            self.entries.remove(idx);
-                        }
-                    }
                     if let Err(e) = result {
                         self.push_system(&format!("Error: {e}"));
                     }
                 }
                 ReplTuiEvent::SystemMessage(s) => {
                     self.push_system(&s);
+                }
+                ReplTuiEvent::MessageCompleted(message) => {
+                    self.typewriter.chars.clear();
+                    self.typewriter.live.clear();
+                    self.messages.push(message);
+                    self.follow_bottom = true;
+                }
+                ReplTuiEvent::MessagesLoaded(messages) => {
+                    self.messages = messages;
+                    self.live_tool_calls.clear();
+                    self.typewriter.chars.clear();
+                    self.typewriter.live.clear();
+                    self.current_tool = None;
+                    self.busy = false;
+                    self.cancelling = false;
+                    self.status_line = "Ready".to_string();
+                    self.follow_bottom = true;
                 }
                 ReplTuiEvent::AuthOAuthComplete { provider, result } => {
                     if let Some(modal) = self
@@ -2191,9 +2171,7 @@ impl ReplTuiState {
                     self.pause_reason = String::new();
                     self.status_line = "Thinking...".to_string();
                 }
-                ReplTuiEvent::ChildEvent(_)
-                | ReplTuiEvent::MessageCompleted(_)
-                | ReplTuiEvent::MessagesLoaded(_) => {}
+                ReplTuiEvent::ChildEvent(_) => {}
                 ReplTuiEvent::ExtensionBridgeResult { success, message } => {
                     let title = if success {
                         "Extension"
@@ -3743,7 +3721,8 @@ fn run_loop(
                                             ));
                                         } else {
                                             state.ui_state = AppUiState::WelcomeMode;
-                                            state.entries.clear();
+                                            state.messages.clear();
+                                            state.live_tool_calls.clear();
                                         }
                                     }
                                     Err(_) => {
@@ -4150,8 +4129,9 @@ mod tests {
 
     use super::{
         count_lines, expand_masks, format_paste_placeholder, normalize_pasted_text,
-        should_mask_paste, PasteEntry, ReplTuiState, ToolCallStatus, TranscriptEntry,
+        should_mask_paste, PasteEntry, ReplTuiState, ToolCallStatus,
     };
+    use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 
     /// Smallest valid `ReplTuiState` for paste-masking unit tests.
     fn test_state() -> ReplTuiState {
@@ -5246,14 +5226,10 @@ mod tests {
         .unwrap();
         state.drain_events(&rx);
 
-        assert!(state.entries.len() >= 2);
-        assert!(matches!(state.entries[0], TranscriptEntry::Stream(_)));
+        assert_eq!(state.live_tool_calls.len(), 1);
         assert!(matches!(
-            state.entries[1],
-            TranscriptEntry::ToolCall {
-                status: ToolCallStatus::Running,
-                ..
-            }
+            state.live_tool_calls[0],
+            (_, _, ToolCallStatus::Running)
         ));
     }
 
@@ -5262,11 +5238,11 @@ mod tests {
         let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
         let mut state = ReplTuiState::new();
 
-        state.entries.push(TranscriptEntry::ToolCall {
-            name: "bash".to_string(),
-            input_summary: "ls".to_string(),
-            status: ToolCallStatus::Running,
-        });
+        state.live_tool_calls.push((
+            "bash".to_string(),
+            "ls".to_string(),
+            ToolCallStatus::Running,
+        ));
 
         tx.send(ReplTuiEvent::ToolCallComplete {
             name: "bash".to_string(),
@@ -5276,13 +5252,10 @@ mod tests {
         .unwrap();
         state.drain_events(&rx);
 
-        assert_eq!(state.entries.len(), 1);
+        assert_eq!(state.live_tool_calls.len(), 1);
         assert!(matches!(
-            state.entries[0],
-            TranscriptEntry::ToolCall {
-                status: ToolCallStatus::Success { .. },
-                ..
-            }
+            state.live_tool_calls[0],
+            (_, _, ToolCallStatus::Success { .. })
         ));
     }
 
@@ -5291,11 +5264,11 @@ mod tests {
         let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
         let mut state = ReplTuiState::new();
 
-        state.entries.push(TranscriptEntry::ToolCall {
-            name: "bash".to_string(),
-            input_summary: "bad cmd".to_string(),
-            status: ToolCallStatus::Running,
-        });
+        state.live_tool_calls.push((
+            "bash".to_string(),
+            "bad cmd".to_string(),
+            ToolCallStatus::Running,
+        ));
 
         tx.send(ReplTuiEvent::ToolCallComplete {
             name: "bash".to_string(),
@@ -5305,13 +5278,10 @@ mod tests {
         .unwrap();
         state.drain_events(&rx);
 
-        assert_eq!(state.entries.len(), 1);
+        assert_eq!(state.live_tool_calls.len(), 1);
         assert!(matches!(
-            state.entries[0],
-            TranscriptEntry::ToolCall {
-                status: ToolCallStatus::Error(_),
-                ..
-            }
+            state.live_tool_calls[0],
+            (_, _, ToolCallStatus::Error(_))
         ));
     }
 
@@ -5469,7 +5439,7 @@ mod tests {
         let state = ReplTuiState::new();
         assert!(!state.busy);
         assert!(!state.exit);
-        assert!(state.entries.is_empty());
+        assert!(state.messages.is_empty());
         assert_eq!(state.input.text, "");
         assert_eq!(state.input.cursor, 0);
     }
@@ -5496,7 +5466,7 @@ mod tests {
 
         assert!(state.busy);
         assert_eq!(state.status_line, "Thinking...");
-        assert!(!state.entries.is_empty());
+        assert!(state.live_tool_calls.is_empty());
     }
 
     #[test]
@@ -5524,8 +5494,28 @@ mod tests {
             .unwrap();
         state.drain_events(&rx);
 
-        assert_eq!(state.entries.len(), 1);
-        assert!(matches!(&state.entries[0], TranscriptEntry::System(s) if s == "hello system"));
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(state.messages[0].role, MessageRole::System);
+        assert_eq!(
+            state.messages[0].blocks,
+            vec![ContentBlock::Text {
+                text: "hello system".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn drain_events_message_completed_appends_to_messages() {
+        let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+        let mut state = ReplTuiState::new();
+        let user_msg = ConversationMessage::user_text("hello");
+
+        tx.send(ReplTuiEvent::MessageCompleted(user_msg.clone()))
+            .unwrap();
+        state.drain_events(&rx);
+
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(state.messages[0].role, MessageRole::User);
     }
 
     #[test]

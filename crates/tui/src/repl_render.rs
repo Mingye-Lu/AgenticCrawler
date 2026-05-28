@@ -19,7 +19,7 @@ use crate::display_width::{split_at_display_width, text_display_width};
 use crate::format::VERSION;
 use crate::markdown::strip_ansi;
 use crate::tool_format::{format_tool_success_line, tool_input_summary};
-use crate::tool_pairing::ToolResultInfo;
+use crate::tool_pairing::{build_tool_result_index, ToolResultInfo};
 
 use super::repl_app::{
     HeaderSnapshot, ReplTuiState, ToolCallStatus, SLASH_OVERLAY_HINT_TEXT,
@@ -1086,9 +1086,11 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
 
     state.last_transcript_rect = main_inner;
 
+    let tab_messages: Vec<ConversationMessage> = Vec::new();
+    let tab_tool_results = HashMap::new();
     let (wrapped, wrapped_text) = build_wrapped_list(
-        &[],
-        &HashMap::new(),
+        &tab_messages,
+        &tab_tool_results,
         &[],
         main_inner.width,
         None,
@@ -1279,10 +1281,11 @@ pub(super) fn draw_chat(
     } else {
         Some(state.typewriter.live.as_str())
     };
+    let tool_results = build_tool_result_index(&state.messages);
     let (wrapped, wrapped_text) = build_wrapped_list(
-        &[],
-        &HashMap::new(),
-        &[],
+        &state.messages,
+        &tool_results,
+        &state.live_tool_calls,
         main_inner.width,
         live_line,
         state.spinner_char(),
