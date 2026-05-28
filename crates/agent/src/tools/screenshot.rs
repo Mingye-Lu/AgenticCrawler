@@ -1,4 +1,4 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use base64::Engine as _;
 use serde_json::Value;
@@ -68,8 +68,9 @@ pub async fn execute(
     };
 
     let settings = runtime::load_settings();
-    let output_dir = runtime::settings_get_output_dir(&settings).to_string();
-    let target = PathBuf::from(&output_dir).join(&filename);
+    let override_dir = input.get("output_dir").and_then(|v| v.as_str());
+    let output_dir = runtime::resolve_output_dir(&settings, override_dir);
+    let target = output_dir.join(&filename);
 
     tokio::fs::create_dir_all(&output_dir)
         .await
@@ -93,6 +94,7 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::OnceLock;
 
     use async_trait::async_trait;

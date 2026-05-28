@@ -195,6 +195,33 @@ pub fn settings_get_output_dir(s: &Settings) -> &str {
     s.output_dir.as_deref().unwrap_or("output")
 }
 
+/// Resolve the effective output directory as an absolute path.
+///
+/// If `override_dir` is provided (from a tool-call parameter), it is used directly:
+/// absolute paths as-is, relative paths resolved against the current working directory.
+///
+/// If `override_dir` is `None`, the settings-level `output_dir` is used:
+/// absolute paths as-is, relative paths resolved against `config_home_dir()` (e.g. `~/.acrawl/output`).
+#[must_use]
+pub fn resolve_output_dir(settings: &Settings, override_dir: Option<&str>) -> PathBuf {
+    if let Some(dir) = override_dir {
+        let p = PathBuf::from(dir);
+        if p.is_absolute() {
+            p
+        } else {
+            std::env::current_dir().unwrap_or_default().join(p)
+        }
+    } else {
+        let configured = settings_get_output_dir(settings);
+        let p = PathBuf::from(configured);
+        if p.is_absolute() {
+            p
+        } else {
+            core_config_home_dir().join(p)
+        }
+    }
+}
+
 /// Get `auto_compact_input_tokens` setting, with default fallback.
 #[must_use]
 pub fn settings_get_auto_compact_tokens(s: &Settings) -> u64 {
@@ -454,6 +481,54 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(settings_get_output_dir(&settings_none), "output");
+    }
+
+    #[test]
+    fn test_resolve_output_dir_override_absolute() {
+        let settings = Settings::default();
+        let abs_path = std::env::temp_dir().join("acrawl_test_abs");
+        let abs_str = abs_path.to_string_lossy().to_string();
+        let result = resolve_output_dir(&settings, Some(&abs_str));
+        assert_eq!(result, abs_path);
+    }
+
+    #[test]
+    fn test_resolve_output_dir_override_relative() {
+        let settings = Settings::default();
+        let result = resolve_output_dir(&settings, Some("local_dir"));
+        let cwd = std::env::current_dir().unwrap_or_default();
+        assert_eq!(result, cwd.join("local_dir"));
+    }
+
+    #[test]
+    fn test_resolve_output_dir_settings_absolute() {
+        let abs_path = std::env::temp_dir().join("acrawl_test_settings_abs");
+        let settings = Settings {
+            output_dir: Some(abs_path.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+        let result = resolve_output_dir(&settings, None);
+        assert_eq!(result, abs_path);
+    }
+
+    #[test]
+    fn test_resolve_output_dir_settings_relative() {
+        let settings = Settings {
+            output_dir: Some("relative_out".to_string()),
+            ..Default::default()
+        };
+        let result = resolve_output_dir(&settings, None);
+        assert_eq!(result, core_config_home_dir().join("relative_out"));
+    }
+
+    #[test]
+    fn test_resolve_output_dir_default() {
+        let settings = Settings {
+            output_dir: None,
+            ..Default::default()
+        };
+        let result = resolve_output_dir(&settings, None);
+        assert_eq!(result, core_config_home_dir().join("output"));
     }
 
     #[test]
