@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 
-use crawler::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
-use runtime::RuntimeObserver;
+use acrawl_core::RuntimeObserver;
+use agent::{ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender};
 
 #[test]
 fn sender_delivers_text_delta() {

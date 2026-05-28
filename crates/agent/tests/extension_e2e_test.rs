@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use acrawl_core::ToolExecutor;
 use agent::CrawlerAgent;
-use crawler::{BrowserBackend, ExtensionBridge, SharedBridge, WsBridgeServer};
+use browser::{BrowserBackend, ExtensionBridge, SharedBridge, WsBridgeServer};
 use futures_util::{SinkExt, StreamExt};
-use runtime::ToolExecutor;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;

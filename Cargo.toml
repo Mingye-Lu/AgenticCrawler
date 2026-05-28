@@ -7,7 +7,6 @@ members = [
     "crates/runtime",
     "crates/api",
     "crates/commands",
-    "crates/crawler",
     "crates/core",
     "crates/browser",
     "crates/tui",

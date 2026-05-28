@@ -72,10 +72,12 @@ dependencies = [
  "base64",
  "browser",
  "csv",
+ "futures-util",
  "regex",
  "runtime",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -642,20 +644,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b2a41393f66f16b0823bb79094d54ac5fbd34ab292ddafb9a0456ac9f87d201"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "crawler"
-version = "0.6.4"
-dependencies = [
- "acrawl-core",
- "agent",
- "browser",
- "futures-util",
- "runtime",
- "serde_json",
- "tokio",
- "tokio-tungstenite",
 ]
 
 [[package]]

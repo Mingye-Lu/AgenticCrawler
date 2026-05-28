@@ -17,7 +17,9 @@ tokio = { version = "1", features = ["sync", "time", "fs"] }
 
 [dev-dependencies]
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
+tokio-tungstenite = "0.26"
 
 [lints]
 workspace = true

@@ -1,6 +1,6 @@
+use acrawl_core::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolEffect, ToolExecutor};
 use agent::{CrawlerAgent, ToolRegistry};
-use crawler::{FetchedPage, ToolEffect};
-use runtime::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolExecutor};
+use browser::FetchedPage;
 use serde_json::{json, Value};
 
 struct MockApiClient {
