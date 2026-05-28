@@ -203,10 +203,10 @@ impl CrawlerAgent {
         child_agent.api_client_arc = Some(child_api_client.clone());
 
         let child_objective = task.objective.clone();
-        let runtime_handle = tokio::runtime::Handle::current();
-        let join_handle = tokio::task::spawn_blocking(move || {
-            runtime_handle
-                .block_on(child_agent.run(&child_objective, child_api_client))
+        let join_handle = tokio::spawn(async move {
+            child_agent
+                .run(&child_objective, child_api_client)
+                .await
                 .ok()
                 .map(|crawl_result| crawl_result.extracted_data)
         });

@@ -655,7 +655,7 @@ fn flush_text_block(text: &mut String, blocks: &mut Vec<ContentBlock>) {
     }
 }
 
-type ToolHandler = Box<dyn FnMut(&str) -> Result<ToolOutcome, ToolError>>;
+type ToolHandler = Box<dyn FnMut(&str) -> Result<ToolOutcome, ToolError> + Send>;
 
 #[derive(Default)]
 pub struct StaticToolExecutor {
@@ -672,7 +672,7 @@ impl StaticToolExecutor {
     pub fn register(
         mut self,
         tool_name: impl Into<String>,
-        handler: impl FnMut(&str) -> Result<ToolOutcome, ToolError> + 'static,
+        handler: impl FnMut(&str) -> Result<ToolOutcome, ToolError> + Send + 'static,
     ) -> Self {
         self.handlers.insert(tool_name.into(), Box::new(handler));
         self
@@ -680,10 +680,19 @@ impl StaticToolExecutor {
 }
 
 impl ToolExecutor for StaticToolExecutor {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<ToolOutcome, ToolError> {
-        self.handlers
-            .get_mut(tool_name)
-            .ok_or_else(|| ToolError::new(format!("unknown tool: {tool_name}")))?(input)
+    #[allow(clippy::manual_async_fn)]
+    fn execute(
+        &mut self,
+        tool_name: &str,
+        input: &str,
+    ) -> impl std::future::Future<Output = Result<ToolOutcome, ToolError>> + Send {
+        async move {
+            self.handlers
+                .get_mut(tool_name)
+                .ok_or_else(|| ToolError::new(format!("unknown tool: {tool_name}")))?(
+                input
+            )
+        }
     }
 }
 

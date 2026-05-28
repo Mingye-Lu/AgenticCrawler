@@ -61,19 +61,26 @@ impl CliToolExecutor {
 }
 
 impl ToolExecutor for CliToolExecutor {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<ToolOutcome, ToolError> {
-        if self
-            .allowed_tools
-            .as_ref()
-            .is_some_and(|allowed| !allowed.contains(tool_name))
-        {
-            return Err(ToolError::new(format!(
-                "tool `{tool_name}` is not enabled by the current --allowedTools setting"
-            )));
-        }
-        match self.agent.execute(tool_name, input).await {
-            Ok(output) => Ok(output),
-            Err(error) => Err(error),
+    #[allow(clippy::manual_async_fn)]
+    fn execute(
+        &mut self,
+        tool_name: &str,
+        input: &str,
+    ) -> impl std::future::Future<Output = Result<ToolOutcome, ToolError>> + Send {
+        async move {
+            if self
+                .allowed_tools
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(tool_name))
+            {
+                return Err(ToolError::new(format!(
+                    "tool `{tool_name}` is not enabled by the current --allowedTools setting"
+                )));
+            }
+            match self.agent.execute(tool_name, input).await {
+                Ok(output) => Ok(output),
+                Err(error) => Err(error),
+            }
         }
     }
 }

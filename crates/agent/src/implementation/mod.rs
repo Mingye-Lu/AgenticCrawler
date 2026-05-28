@@ -361,72 +361,79 @@ impl Drop for CrawlerAgent {
 }
 
 impl ToolExecutor for CrawlerAgent {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<ToolOutcome, ToolError> {
-        if self
-            .allowed_tools
-            .as_ref()
-            .is_some_and(|allowed| !allowed.contains(tool_name))
-        {
-            return Err(ToolError::new(format!(
-                "tool `{tool_name}` is not enabled by the current allowlist"
-            )));
-        }
-
-        let input_value: Value = if input.is_empty() {
-            Value::Object(serde_json::Map::new())
-        } else {
-            serde_json::from_str(input)
-                .map_err(|error| ToolError::new(format!("invalid JSON input: {error}")))?
-        };
-
-        let tool_effect = if let Some(handler) = self.registry.get(tool_name) {
-            match handler(&input_value) {
-                Ok(effect) => effect,
-                Err(error) if error.is_requires_async() => {
-                    if !Self::supports_async(tool_name) {
-                        // Forward the canonical phrasing to the runtime
-                        // executor (which uses its own `ToolError` type).
-                        return Err(ToolError::new(error.to_string()));
-                    }
-
-                    self.ensure_browser().await?;
-                    let browser = self
-                        .browser
-                        .as_mut()
-                        .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
-                    self.registry
-                        .execute_async(tool_name, &input_value, browser)
-                        .await
-                        .map_err(|error| ToolError::new(error.to_string()))?
-                }
-                Err(error) => return Err(ToolError::new(error.to_string())),
+    #[allow(clippy::manual_async_fn)]
+    fn execute(
+        &mut self,
+        tool_name: &str,
+        input: &str,
+    ) -> impl std::future::Future<Output = Result<ToolOutcome, ToolError>> + Send {
+        async move {
+            if self
+                .allowed_tools
+                .as_ref()
+                .is_some_and(|allowed| !allowed.contains(tool_name))
+            {
+                return Err(ToolError::new(format!(
+                    "tool `{tool_name}` is not enabled by the current allowlist"
+                )));
             }
-        } else if Self::supports_async(tool_name) {
-            self.ensure_browser().await?;
-            let browser = self
-                .browser
-                .as_mut()
-                .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
-            self.registry
-                .execute_async(tool_name, &input_value, browser)
-                .await
-                .map_err(|error| ToolError::new(error.to_string()))?
-        } else {
-            return Err(ToolError::new(format!("unknown tool: `{tool_name}`")));
-        };
 
-        let observed_effect = match &tool_effect {
-            ToolEffect::Reply(_) => None,
-            effect => Some(effect.clone()),
-        };
-
-        self.dispatch_tool_effect(tool_effect).await.map(|text| {
-            if let Some(effect) = observed_effect {
-                ToolOutcome::with_effect(text, effect)
+            let input_value: Value = if input.is_empty() {
+                Value::Object(serde_json::Map::new())
             } else {
-                ToolOutcome::reply(text)
-            }
-        })
+                serde_json::from_str(input)
+                    .map_err(|error| ToolError::new(format!("invalid JSON input: {error}")))?
+            };
+
+            let tool_effect = if let Some(handler) = self.registry.get(tool_name) {
+                match handler(&input_value) {
+                    Ok(effect) => effect,
+                    Err(error) if error.is_requires_async() => {
+                        if !Self::supports_async(tool_name) {
+                            // Forward the canonical phrasing to the runtime
+                            // executor (which uses its own `ToolError` type).
+                            return Err(ToolError::new(error.to_string()));
+                        }
+
+                        self.ensure_browser().await?;
+                        let browser = self
+                            .browser
+                            .as_mut()
+                            .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+                        self.registry
+                            .execute_async(tool_name, &input_value, browser)
+                            .await
+                            .map_err(|error| ToolError::new(error.to_string()))?
+                    }
+                    Err(error) => return Err(ToolError::new(error.to_string())),
+                }
+            } else if Self::supports_async(tool_name) {
+                self.ensure_browser().await?;
+                let browser = self
+                    .browser
+                    .as_mut()
+                    .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+                self.registry
+                    .execute_async(tool_name, &input_value, browser)
+                    .await
+                    .map_err(|error| ToolError::new(error.to_string()))?
+            } else {
+                return Err(ToolError::new(format!("unknown tool: `{tool_name}`")));
+            };
+
+            let observed_effect = match &tool_effect {
+                ToolEffect::Reply(_) => None,
+                effect => Some(effect.clone()),
+            };
+
+            self.dispatch_tool_effect(tool_effect).await.map(|text| {
+                if let Some(effect) = observed_effect {
+                    ToolOutcome::with_effect(text, effect)
+                } else {
+                    ToolOutcome::reply(text)
+                }
+            })
+        }
     }
 }
 

@@ -1,6 +1,11 @@
+use std::future::Future;
+
 use crate::{error::ToolError, ToolOutcome};
 
-#[allow(async_fn_in_trait)]
 pub trait ToolExecutor {
-    async fn execute(&mut self, tool_name: &str, input: &str) -> Result<ToolOutcome, ToolError>;
+    fn execute(
+        &mut self,
+        tool_name: &str,
+        input: &str,
+    ) -> impl Future<Output = Result<ToolOutcome, ToolError>> + Send;
 }
