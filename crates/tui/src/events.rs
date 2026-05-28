@@ -1,4 +1,5 @@
-﻿use crate::tui::model_list::ModelInfo as PickerModelInfo;
+﻿use acrawl_core::message::ConversationMessage;
+use crate::tui::model_list::ModelInfo as PickerModelInfo;
 use agent::ChildEvent;
 use api::provider::ModelInfo;
 
@@ -50,6 +51,10 @@ pub enum ReplTuiEvent {
     /// Event streamed from a forked child agent.
     #[allow(dead_code)]
     ChildEvent(ChildEvent),
+    /// A message has been completed and is ready for display.
+    MessageCompleted(ConversationMessage),
+    /// A batch of messages has been loaded from storage or session.
+    MessagesLoaded(Vec<ConversationMessage>),
 }
 
 #[cfg(test)]
@@ -77,5 +82,12 @@ mod tests {
         let _auth_models_loaded = ReplTuiEvent::AuthModelsLoaded(Ok(Vec::new()));
 
         let _catalog_ready = ReplTuiEvent::ModelCatalogReady(Vec::new());
+    }
+
+    #[test]
+    fn message_events_constructible() {
+        let msg = ConversationMessage::user_text("hi");
+        let _completed = ReplTuiEvent::MessageCompleted(msg.clone());
+        let _loaded = ReplTuiEvent::MessagesLoaded(vec![msg]);
     }
 }
