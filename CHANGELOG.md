@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-05-29
+
+### Changed
+
+- **God modules decomposed into focused submodules** — six large single-file modules (1.5k–5.7k lines each) have been split into directory modules with logical subfiles. Affected modules: `browser::playwright` (bridge, script, backend, types), `cli::app` (session, slash, turn), `runtime::compact` (summarize, transform), `runtime::conversation`, `tui::modals::auth` (draw, handlers), and `tui::repl_app` (event_loop, input_editor, layout, oauth_spawn, slash_commands, types). Public API and behavior are unchanged.
+
+### Fixed
+
+- **TUI prompt width regression** — the refactoring inadvertently altered the prompt width calculation; restored to the correct value.
+- **Compact truncation test assertion** — a test assertion was tightened to match the actual compaction output.
+
 ## [0.7.3] - 2026-05-29
 
 ### Changed
@@ -485,6 +496,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.4
 [0.7.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.3
 [0.7.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.1
