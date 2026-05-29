@@ -34,8 +34,9 @@ use acrawl_tui::events::ReplTuiEvent;
 use agent::mvp_tool_specs;
 use commands::{slash_command_specs, MemoryAction, SlashCommand};
 use runtime::{
-    build_memory_episode, CompactionConfig, ContentBlock, ControlState, ConversationMessage,
-    ConversationRuntime, EpisodeStore, EvidenceStore, MemoryContextBudget, MemoryContextLoader,
+    aggregate_evidence_from_episodes, build_memory_episode, CompactionConfig, ContentBlock,
+    ControlState, ConversationMessage, ConversationRuntime, EpisodeStore,
+    EvidenceAggregationConfig, EvidenceStore, MemoryContextBudget, MemoryContextLoader,
     MemoryContextQuery, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput, MemoryEpisodeResult,
     MessageRole, RuntimeError, Session, TokenUsage,
 };
@@ -599,6 +600,18 @@ impl LiveCli {
                 action: MemoryAction::Context,
             } => {
                 println!("{}", self.memory_context_command());
+                false
+            }
+            SlashCommand::Memory {
+                action: MemoryAction::BuildEvidence,
+            } => {
+                println!(
+                    "{}",
+                    memory_build_evidence_report(
+                        &EpisodeStore::default_for_config_home(),
+                        &EvidenceStore::default_for_config_home(),
+                    )
+                );
                 false
             }
             SlashCommand::Unknown(name) => {
@@ -1252,6 +1265,55 @@ fn truncate_str(s: &str, max: usize) -> String {
         }
         format!("{}...", &s[..end])
     }
+}
+
+const MEMORY_BUILD_EPISODE_LIMIT: usize = 500;
+
+pub(crate) fn memory_build_evidence_report(
+    episode_store: &EpisodeStore,
+    evidence_store: &EvidenceStore,
+) -> String {
+    let path = episode_store.episodes_path();
+    if !path.exists() {
+        return "Memory\n  Result           skipped".to_string();
+    }
+
+    let episodes = match episode_store.load_recent_episodes(MEMORY_BUILD_EPISODE_LIMIT) {
+        Ok(eps) => eps,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+
+    let config = EvidenceAggregationConfig::default();
+    let result = aggregate_evidence_from_episodes(&episodes, config);
+
+    let task_count = result.task_evidence.len();
+    let domain_count = result.domain_evidence.len();
+
+    if task_count == 0 && domain_count == 0 {
+        return format!(
+            "Memory\n  Result           skipped\n  Episodes read    {}",
+            episodes.len()
+        );
+    }
+
+    for evidence in &result.task_evidence {
+        if let Err(err) = evidence_store.save_task_evidence(evidence) {
+            return format!("Memory\n  Result           failed ({err})");
+        }
+    }
+
+    for evidence in &result.domain_evidence {
+        if let Err(err) = evidence_store.save_domain_evidence(evidence) {
+            return format!("Memory\n  Result           failed ({err})");
+        }
+    }
+
+    format!(
+        "Memory\n  Result           built evidence\n  Episodes read    {}\n  Task evidence    {}\n  Domain evidence  {}",
+        episodes.len(),
+        task_count,
+        domain_count,
+    )
 }
 
 pub(crate) fn collect_tool_uses(summary: &runtime::TurnSummary) -> Vec<serde_json::Value> {
@@ -2055,6 +2117,132 @@ mod tests {
             assert!(!report.contains("ep1"), "report: {report}");
             assert!(report.contains("ep4"), "report: {report}");
             assert!(report.contains("ep5"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_build_evidence_missing_episodes_file_skips() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            let report = memory_build_evidence_report(&episode_store, &evidence_store);
+            assert!(report.contains("skipped"), "report: {report}");
+            assert!(
+                !evidence_store.evidence_dir().join("tasks").exists(),
+                "task dir should not exist"
+            );
+            assert!(
+                !evidence_store.evidence_dir().join("domains").exists(),
+                "domain dir should not exist"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_build_evidence_no_promotable_episodes_skips() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            episode_store
+                .append_episode(&runtime::MemoryEpisode {
+                    id: "ep1".to_string(),
+                    task_class: Some("scrape".to_string()),
+                    user_goal: "scrape titles".to_string(),
+                    route: vec!["navigate: example.com".to_string()],
+                    domains: vec!["example.com".to_string()],
+                    tools: vec!["navigate".to_string()],
+                    result: MemoryEpisodeResult::Success,
+                    output_summary: None,
+                    created_at_epoch_secs: 1,
+                    promote_candidate: false,
+                })
+                .unwrap();
+            let report = memory_build_evidence_report(&episode_store, &evidence_store);
+            assert!(report.contains("skipped"), "report: {report}");
+            assert!(report.contains("Episodes read    1"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_build_evidence_promotable_writes_task_and_domain_evidence() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            episode_store
+                .append_episode(&runtime::MemoryEpisode {
+                    id: "ep1".to_string(),
+                    task_class: Some("scrape".to_string()),
+                    user_goal: "scrape titles".to_string(),
+                    route: vec!["navigate: example.com".to_string()],
+                    domains: vec!["example.com".to_string()],
+                    tools: vec!["navigate".to_string()],
+                    result: MemoryEpisodeResult::Success,
+                    output_summary: None,
+                    created_at_epoch_secs: 1,
+                    promote_candidate: true,
+                })
+                .unwrap();
+            let report = memory_build_evidence_report(&episode_store, &evidence_store);
+            assert!(report.contains("built evidence"), "report: {report}");
+            assert!(report.contains("Episodes read    1"), "report: {report}");
+            assert!(report.contains("Task evidence    1"), "report: {report}");
+            assert!(report.contains("Domain evidence  1"), "report: {report}");
+            assert!(
+                evidence_store
+                    .evidence_dir()
+                    .join("tasks")
+                    .join("scrape.json")
+                    .exists(),
+                "task evidence file should exist"
+            );
+            assert!(
+                evidence_store
+                    .evidence_dir()
+                    .join("domains")
+                    .join("example.com.json")
+                    .exists(),
+                "domain evidence file should exist"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_build_evidence_does_not_write_access_evidence() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            episode_store
+                .append_episode(&runtime::MemoryEpisode {
+                    id: "ep1".to_string(),
+                    task_class: Some("scrape".to_string()),
+                    user_goal: "scrape titles".to_string(),
+                    route: vec!["navigate: example.com".to_string()],
+                    domains: vec!["example.com".to_string()],
+                    tools: vec!["navigate".to_string()],
+                    result: MemoryEpisodeResult::Success,
+                    output_summary: None,
+                    created_at_epoch_secs: 1,
+                    promote_candidate: true,
+                })
+                .unwrap();
+            let _ = memory_build_evidence_report(&episode_store, &evidence_store);
+            assert!(
+                !evidence_store.evidence_dir().join("access").exists(),
+                "access evidence dir should not exist"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_build_evidence_failed_episode_load_reports_failed() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            // Create a directory where the episodes file would be to cause a read failure
+            fs::create_dir_all(episode_store.episodes_path())
+                .expect("create directory at episodes path");
+            let report = memory_build_evidence_report(&episode_store, &evidence_store);
+            assert!(report.contains("failed"), "report: {report}");
         });
     }
 }
