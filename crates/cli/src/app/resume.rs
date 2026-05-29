@@ -103,6 +103,7 @@ pub(crate) fn run_resume_command(
         }
         SlashCommand::Debug
         | SlashCommand::Model { .. }
+        | SlashCommand::Memory { .. }
         | SlashCommand::Sessions
         | SlashCommand::Auth { .. }
         | SlashCommand::Headed

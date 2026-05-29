@@ -1,6 +1,6 @@
 //! Slash command registry and parsing for the acrawl REPL.
 //!
-//! This crate provides the canonical set of 17 slash commands available in the interactive REPL,
+//! This crate provides the canonical set of 18 slash commands available in the interactive REPL,
 //! along with parsing, help rendering, and execution logic. Each command is defined as a
 //! [`SlashCommandSpec`] with metadata including name, summary, optional argument hints, and
 //! whether it is resume-safe.
@@ -12,7 +12,7 @@
 //! `/help`, `/status`, `/compact`, `/clear`, `/cost`, `/config`, `/version`, and `/export`.
 //!
 //! Commands that are not resume-safe (e.g., `/model`, `/sessions`, `/auth`, `/headed`,
-//! `/headless`, `/debug`, `/exit`) are skipped during session replay because they either:
+//! `/headless`, `/debug`, `/exit`, `/memory`) are skipped during session replay because they either:
 //! - Require user interaction or runtime state (e.g., `/model` to switch providers)
 //! - Are only meaningful in the live REPL (e.g., `/sessions` opens an interactive picker)
 //! - Modify browser or authentication state that should not be replayed
@@ -20,7 +20,7 @@
 //! ## Command Registry Pattern
 //!
 //! The module exports:
-//! - [`slash_command_specs()`] — returns the full 17-command spec list
+//! - [`slash_command_specs()`] — returns the full 18-command spec list
 //! - [`resume_supported_slash_commands()`] — filters to the 8 resume-safe commands
 //! - [`SlashCommand::parse()`] — parses user input into a [`SlashCommand`] enum
 //! - [`handle_slash_command()`] — executes a command and returns a [`SlashCommandResult`]
@@ -164,6 +164,12 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: false,
     },
     SlashCommandSpec {
+        name: "memory",
+        summary: "Save current session as a memory episode",
+        argument_hint: Some("save"),
+        resume_supported: false,
+    },
+    SlashCommandSpec {
         name: "exit",
         summary: "Exit the REPL and save the session",
         argument_hint: None,
@@ -189,6 +195,7 @@ pub enum SlashCommand {
     Headless,
     Extension { stop: bool },
     CloakBrowser,
+    Memory { save: bool },
     Unknown(String),
 }
 
@@ -245,6 +252,14 @@ impl SlashCommand {
                 }
             }
             "cloakbrowser" => Self::CloakBrowser,
+            "memory" => {
+                let sub = parts.next().map(str::to_ascii_lowercase);
+                let extra = parts.next();
+                match (sub.as_deref(), extra) {
+                    (Some("save"), None) => Self::Memory { save: true },
+                    _ => Self::Unknown("memory".to_string()),
+                }
+            }
             other => Self::Unknown(other.to_string()),
         })
     }
@@ -330,6 +345,7 @@ pub fn handle_slash_command(
         | SlashCommand::Headless
         | SlashCommand::Extension { .. }
         | SlashCommand::CloakBrowser
+        | SlashCommand::Memory { .. }
         | SlashCommand::Unknown(_) => None,
     }
 }
@@ -413,6 +429,19 @@ mod tests {
             SlashCommand::parse("/cloakbrowser"),
             Some(SlashCommand::CloakBrowser)
         );
+        assert_eq!(
+            SlashCommand::parse("/memory save"),
+            Some(SlashCommand::Memory { save: true })
+        );
+        // /memory without "save" is rejected
+        assert_eq!(
+            SlashCommand::parse("/memory load"),
+            Some(SlashCommand::Unknown("memory".to_string()))
+        );
+        assert_eq!(
+            SlashCommand::parse("/memory"),
+            Some(SlashCommand::Unknown("memory".to_string()))
+        );
     }
 
     #[test]
@@ -431,6 +460,10 @@ mod tests {
             Some(SlashCommand::Export {
                 path: Some("Notes.txt".to_string()),
             })
+        );
+        assert_eq!(
+            SlashCommand::parse("/MEMORY SAVE"),
+            Some(SlashCommand::Memory { save: true })
         );
     }
 
@@ -455,8 +488,9 @@ mod tests {
         assert!(help.contains("/headless"));
         assert!(help.contains("/extension [stop]"));
         assert!(help.contains("/cloakbrowser"));
+        assert!(help.contains("/memory save"));
         assert!(!help.contains("/resume"));
-        assert_eq!(slash_command_specs().len(), 17);
+        assert_eq!(slash_command_specs().len(), 18);
         assert_eq!(resume_supported_slash_commands().len(), 8);
     }
 
@@ -542,6 +576,9 @@ mod tests {
         );
         assert!(
             handle_slash_command("/cloakbrowser", &session, CompactionConfig::default()).is_none()
+        );
+        assert!(
+            handle_slash_command("/memory save", &session, CompactionConfig::default()).is_none()
         );
     }
 }

@@ -2573,6 +2573,17 @@ fn handle_slash_command_tui(
             }
             _ => unreachable!(),
         },
+        SlashCommand::Memory { save: true } => {
+            let mut g = cli.lock().expect("cli lock");
+            let report = g.memory_save_command();
+            state.push_system_card("Memory", &report);
+        }
+        SlashCommand::Memory { save: false } => {
+            state.push_system_card(
+                "Memory",
+                "Memory\n  Result           unknown subcommand (try /memory save)",
+            );
+        }
         SlashCommand::Auth { provider } => {
             if state.busy {
                 state.push_system("Please wait for the current task to finish.");

@@ -11,6 +11,7 @@ use std::fs;
 use std::io::{self, IsTerminal};
 use std::str::FromStr;
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::CliError;
 use crate::output_sink::ChannelSink;
@@ -33,7 +34,9 @@ use acrawl_tui::events::ReplTuiEvent;
 use agent::mvp_tool_specs;
 use commands::{slash_command_specs, SlashCommand};
 use runtime::{
-    CompactionConfig, ControlState, ConversationRuntime, RuntimeError, Session, TokenUsage,
+    build_memory_episode, CompactionConfig, ContentBlock, ControlState, ConversationMessage,
+    ConversationRuntime, EpisodeStore, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput,
+    MemoryEpisodeResult, MessageRole, RuntimeError, Session, TokenUsage,
 };
 use serde_json::json;
 
@@ -573,6 +576,14 @@ impl LiveCli {
                 println!("{message}");
                 false
             }
+            SlashCommand::Memory { save: true } => {
+                println!("{}", self.memory_save_command());
+                false
+            }
+            SlashCommand::Memory { save: false } => {
+                println!("Memory\n  Result           unknown subcommand (try /memory save)");
+                false
+            }
             SlashCommand::Unknown(name) => {
                 eprintln!("unknown slash command: /{name}");
                 false
@@ -595,6 +606,13 @@ impl LiveCli {
         }
         self.runtime.session().save_to_path(&self.session.path)?;
         Ok(())
+    }
+
+    pub(crate) fn memory_save_command(&mut self) -> String {
+        memory_save_report(
+            self.runtime.session(),
+            &runtime::EpisodeStore::default_for_config_home(),
+        )
     }
 
     fn capture_child_sessions(&mut self) {
@@ -1030,6 +1048,76 @@ pub(crate) fn final_assistant_text(summary: &runtime::TurnSummary) -> String {
                 .join("")
         })
         .unwrap_or_default()
+}
+
+pub(crate) fn first_user_text(messages: &[ConversationMessage]) -> String {
+    messages
+        .iter()
+        .find(|m| m.role == MessageRole::User)
+        .and_then(|m| {
+            m.blocks.iter().find_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+pub(crate) fn last_assistant_text(messages: &[ConversationMessage]) -> Option<String> {
+    let text = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == MessageRole::Assistant)
+        .map(|m| {
+            m.blocks
+                .iter()
+                .filter_map(|block| match block {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+pub(crate) fn memory_save_report(session: &Session, store: &EpisodeStore) -> String {
+    if session.messages.is_empty() {
+        return "Memory\n  Result           skipped".to_string();
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let now_epoch_secs = now.as_secs();
+    let id = format!("episode-{}", now.as_millis());
+    let user_goal = first_user_text(&session.messages);
+    let output_summary = last_assistant_text(&session.messages);
+    let input = MemoryEpisodeBuildInput {
+        id,
+        task_class: None,
+        user_goal,
+        result: MemoryEpisodeResult::Success,
+        output_summary,
+        messages: &session.messages,
+        created_at_epoch_secs: now_epoch_secs,
+        promote_candidate: true,
+    };
+    let episode = build_memory_episode(input, MemoryEpisodeBuildConfig::default());
+    match store.append_episode(&episode) {
+        Ok(()) => format!(
+            "Memory\n  Result           saved\n  Episode          {}\n  Domains          {}\n  Tools            {}\n  Route steps      {}",
+            episode.id,
+            episode.domains.len(),
+            episode.tools.len(),
+            episode.route.len(),
+        ),
+        Err(err) => format!("Memory\n  Result           failed ({err})"),
+    }
 }
 
 pub(crate) fn collect_tool_uses(summary: &runtime::TurnSummary) -> Vec<serde_json::Value> {
@@ -1504,5 +1592,98 @@ mod tests {
 
         assert_eq!(session.child_sessions.len(), 1);
         assert_eq!(session.child_sessions[0].id, "child-1");
+    }
+
+    #[test]
+    fn first_user_text_returns_first_user_message() {
+        let messages = vec![
+            ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "assistant first".to_string(),
+            }]),
+            ConversationMessage::user_text("hello"),
+            ConversationMessage::user_text("second user"),
+        ];
+        assert_eq!(first_user_text(&messages), "hello");
+    }
+
+    #[test]
+    fn first_user_text_returns_unknown_when_no_user() {
+        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::Text {
+            text: "only assistant".to_string(),
+        }])];
+        assert_eq!(first_user_text(&messages), "unknown");
+    }
+
+    #[test]
+    fn last_assistant_text_returns_last_assistant_text() {
+        let messages = vec![
+            ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "first reply".to_string(),
+            }]),
+            ConversationMessage::user_text("user says"),
+            ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "final reply".to_string(),
+            }]),
+        ];
+        assert_eq!(
+            last_assistant_text(&messages),
+            Some("final reply".to_string())
+        );
+    }
+
+    #[test]
+    fn last_assistant_text_returns_none_when_no_assistant() {
+        let messages = vec![ConversationMessage::user_text("only user")];
+        assert_eq!(last_assistant_text(&messages), None);
+    }
+
+    #[test]
+    fn memory_save_report_empty_session_skips() {
+        with_clean_config_env(|| {
+            let session = Session::new();
+            let store = EpisodeStore::default_for_config_home();
+            let report = memory_save_report(&session, &store);
+            assert!(report.contains("skipped"));
+            assert!(!store.episodes_path().exists());
+        });
+    }
+
+    #[test]
+    fn memory_save_report_writes_episode() {
+        with_clean_config_env(|| {
+            let mut session = Session::new();
+            session.messages = vec![
+                ConversationMessage::user_text("extract titles from example.com"),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "Got 5 titles".to_string(),
+                }]),
+            ];
+            let store = EpisodeStore::default_for_config_home();
+            let report = memory_save_report(&session, &store);
+            assert!(report.contains("saved"));
+            assert!(report.contains("Episode"));
+            assert!(store.episodes_path().exists());
+            let episodes = store.load_recent_episodes(1).expect("episode should load");
+            assert_eq!(episodes.len(), 1);
+            assert!(episodes[0].id.starts_with("episode-"));
+            assert_eq!(episodes[0].user_goal, "extract titles from example.com");
+            assert_eq!(episodes[0].output_summary.as_deref(), Some("Got 5 titles"));
+        });
+    }
+
+    #[test]
+    fn memory_save_report_uses_unknown_without_user_text() {
+        with_clean_config_env(|| {
+            let mut session = Session::new();
+            session.messages = vec![ConversationMessage::assistant(vec![ContentBlock::Text {
+                text: "only assistant".to_string(),
+            }])];
+            let store = EpisodeStore::default_for_config_home();
+            let report = memory_save_report(&session, &store);
+            assert!(report.contains("saved"));
+            assert!(store.episodes_path().exists());
+            let episodes = store.load_recent_episodes(1).expect("episode should load");
+            assert_eq!(episodes[0].user_goal, "unknown");
+        });
     }
 }
