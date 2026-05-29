@@ -210,7 +210,7 @@ impl ReplTuiState {
             let mut spans: Vec<Span<'static>> = Vec::new();
 
             if has_prompt {
-                spans.push(Span::styled("❀", Style::default().fg(Color::LightCyan)));
+                spans.push(Span::styled("❯ ", Style::default().fg(Color::LightCyan)));
             } else if skip > 0 && i == 0 {
                 // If skipped first line with prompt, no visual space pad needed per standard terminal behavior
             }
@@ -222,7 +222,7 @@ impl ReplTuiState {
             if is_placeholder && i == 0 {
                 spans.push(Span::styled(row, text_style));
                 let prompt_width = if has_prompt {
-                    u16::try_from(text_display_width("❀")).unwrap_or(u16::MAX)
+                    u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX)
                 } else {
                     0
                 };
@@ -245,7 +245,7 @@ impl ReplTuiState {
                     // apply selection-splitting on the full visual line.
                     let full: String = left.clone() + &right;
                     let prompt_width = if has_prompt {
-                        u16::try_from(text_display_width("❀")).unwrap_or(u16::MAX)
+                        u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX)
                     } else {
                         0
                     };
@@ -374,7 +374,7 @@ impl ReplTuiState {
                     let left = row.chars().take(marker_char_idx).collect::<String>();
                     let right = row.chars().skip(marker_char_idx + 1).collect::<String>();
                     let prompt_width = if has_prompt {
-                        u16::try_from(text_display_width("❀")).unwrap_or(u16::MAX)
+                        u16::try_from(text_display_width("❯ ")).unwrap_or(u16::MAX)
                     } else {
                         0
                     };
