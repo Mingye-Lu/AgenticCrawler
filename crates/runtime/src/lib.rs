@@ -39,7 +39,8 @@ pub use mcp::{
     McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
 pub use memory::{
-    AccessEvidence, AccessStatus, DomainEvidence, EpisodeStore, EvidenceStore, MemoryEpisode,
+    AccessEvidence, AccessStatus, DomainEvidence, EpisodeStore, EvidenceStore, MemoryContext,
+    MemoryContextBudget, MemoryContextLoader, MemoryContextQuery, MemoryEpisode,
     MemoryEpisodeResult, MemoryError, TaskEvidence,
 };
 pub use observer::RuntimeObserver;

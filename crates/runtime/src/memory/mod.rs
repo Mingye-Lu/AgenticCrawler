@@ -1,4 +1,6 @@
+pub mod context;
 pub mod evidence;
+pub use context::{MemoryContext, MemoryContextBudget, MemoryContextLoader, MemoryContextQuery};
 pub use evidence::{AccessEvidence, AccessStatus, DomainEvidence, EvidenceStore, TaskEvidence};
 
 use serde::{Deserialize, Serialize};
