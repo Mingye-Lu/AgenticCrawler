@@ -39,11 +39,12 @@ pub use mcp::{
     McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
 pub use memory::{
-    aggregate_evidence_from_episodes, build_memory_episode, AccessEvidence, AccessStatus,
-    DomainEvidence, EpisodeStore, EvidenceAggregationConfig, EvidenceAggregationResult,
-    EvidenceStore, MemoryContext, MemoryContextBudget, MemoryContextLoader, MemoryContextQuery,
-    MemoryEpisode, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput, MemoryEpisodeResult,
-    MemoryError, TaskEvidence,
+    aggregate_evidence_from_episodes, build_memory_episode, suggest_skills_from_evidence,
+    AccessEvidence, AccessStatus, DomainEvidence, EpisodeStore, EvidenceAggregationConfig,
+    EvidenceAggregationResult, EvidenceStore, MemoryContext, MemoryContextBudget,
+    MemoryContextLoader, MemoryContextQuery, MemoryEpisode, MemoryEpisodeBuildConfig,
+    MemoryEpisodeBuildInput, MemoryEpisodeResult, MemoryError, SkillSuggestion,
+    SkillSuggestionConfig, SkillSuggestionKind, TaskEvidence,
 };
 pub use observer::RuntimeObserver;
 pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};

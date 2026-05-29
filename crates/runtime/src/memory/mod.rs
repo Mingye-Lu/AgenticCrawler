@@ -2,6 +2,7 @@ pub mod context;
 pub mod episode_builder;
 pub mod evidence;
 pub mod evidence_aggregator;
+pub mod skill_suggestions;
 pub use context::{MemoryContext, MemoryContextBudget, MemoryContextLoader, MemoryContextQuery};
 pub use episode_builder::{
     build_memory_episode, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput,
@@ -9,6 +10,9 @@ pub use episode_builder::{
 pub use evidence::{AccessEvidence, AccessStatus, DomainEvidence, EvidenceStore, TaskEvidence};
 pub use evidence_aggregator::{
     aggregate_evidence_from_episodes, EvidenceAggregationConfig, EvidenceAggregationResult,
+};
+pub use skill_suggestions::{
+    suggest_skills_from_evidence, SkillSuggestion, SkillSuggestionConfig, SkillSuggestionKind,
 };
 
 use serde::{Deserialize, Serialize};

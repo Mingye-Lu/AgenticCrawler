@@ -34,11 +34,12 @@ use acrawl_tui::events::ReplTuiEvent;
 use agent::mvp_tool_specs;
 use commands::{slash_command_specs, MemoryAction, SlashCommand};
 use runtime::{
-    aggregate_evidence_from_episodes, build_memory_episode, CompactionConfig, ContentBlock,
-    ControlState, ConversationMessage, ConversationRuntime, EpisodeStore,
-    EvidenceAggregationConfig, EvidenceStore, MemoryContextBudget, MemoryContextLoader,
-    MemoryContextQuery, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput, MemoryEpisodeResult,
-    MessageRole, RuntimeError, Session, TokenUsage,
+    aggregate_evidence_from_episodes, build_memory_episode, suggest_skills_from_evidence,
+    CompactionConfig, ContentBlock, ControlState, ConversationMessage, ConversationRuntime,
+    EpisodeStore, EvidenceAggregationConfig, EvidenceStore, MemoryContextBudget,
+    MemoryContextLoader, MemoryContextQuery, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput,
+    MemoryEpisodeResult, MessageRole, RuntimeError, Session, SkillSuggestionConfig,
+    SkillSuggestionKind, TokenUsage,
 };
 use serde_json::json;
 
@@ -620,6 +621,15 @@ impl LiveCli {
                 println!(
                     "{}",
                     memory_evidence_report(&EvidenceStore::default_for_config_home())
+                );
+                false
+            }
+            SlashCommand::Memory {
+                action: MemoryAction::SuggestSkills,
+            } => {
+                println!(
+                    "{}",
+                    memory_suggest_skills_report(&EvidenceStore::default_for_config_home())
                 );
                 false
             }
@@ -1421,6 +1431,45 @@ pub(crate) fn memory_evidence_report(evidence_store: &EvidenceStore) -> String {
             let remaining = access.len() - MEMORY_EVIDENCE_PREVIEW_LIMIT;
             lines.push(format!("  ... and {remaining} more access record(s)"));
         }
+    }
+
+    lines.join("\n")
+}
+
+pub(crate) fn memory_suggest_skills_report(evidence_store: &EvidenceStore) -> String {
+    let tasks = match evidence_store.load_all_task_evidence() {
+        Ok(t) => t,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let domains = match evidence_store.load_all_domain_evidence() {
+        Ok(d) => d,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+
+    let config = SkillSuggestionConfig::default();
+    let suggestions = suggest_skills_from_evidence(&tasks, &domains, config);
+
+    if suggestions.is_empty() {
+        return "Memory\n  Result           skipped\n  Suggestions      0\n\n(no skill suggestions)".to_string();
+    }
+
+    let count = suggestions.len();
+    let mut lines = vec![format!(
+        "Memory\n  Result           skill suggestions\n  Suggestions      {count}"
+    )];
+
+    lines.push(String::new());
+    lines.push("Suggestions".to_string());
+
+    for s in &suggestions {
+        let kind = match s.kind {
+            SkillSuggestionKind::Task => "task",
+            SkillSuggestionKind::Domain => "domain",
+        };
+        lines.push(format!(
+            "  - {kind} {} confidence={:.2} success={} failure={} reason={}",
+            s.key, s.confidence, s.success_count, s.failure_count, s.reason,
+        ));
     }
 
     lines.join("\n")
@@ -2477,6 +2526,106 @@ mod tests {
             fs::write(tasks_dir.join("bad.json"), "not valid json").unwrap();
 
             let report = memory_evidence_report(&store);
+            assert!(report.contains("failed"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_suggest_skills_no_suggestions() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let report = memory_suggest_skills_report(&store);
+            assert!(report.contains("skipped"), "report: {report}");
+            assert!(report.contains("Suggestions      0"), "report: {report}");
+            assert!(
+                report.contains("(no skill suggestions)"),
+                "report: {report}"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_suggest_skills_with_task_evidence() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let task = runtime::TaskEvidence {
+                task_class: "scrape-prices".to_string(),
+                successful_routes: vec![vec!["navigate".to_string()]],
+                tools: vec!["navigate".to_string(), "extract".to_string()],
+                output_fields: vec![],
+                success_count: 5,
+                failure_count: 1,
+                last_used_epoch_secs: 1,
+            };
+            store.save_task_evidence(&task).unwrap();
+
+            let report = memory_suggest_skills_report(&store);
+            assert!(report.contains("skill suggestions"), "report: {report}");
+            assert!(report.contains("Suggestions      1"), "report: {report}");
+            assert!(report.contains("scrape-prices"), "report: {report}");
+            assert!(report.contains("success=5"), "report: {report}");
+            assert!(report.contains("failure=1"), "report: {report}");
+            assert!(report.contains("confidence=0.83"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_suggest_skills_with_domain_evidence() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let domain = runtime::DomainEvidence {
+                domain: "example.com".to_string(),
+                task_classes: vec!["scrape".to_string()],
+                successful_routes: vec![vec!["navigate".to_string()]],
+                field_hints: vec![],
+                success_count: 10,
+                failure_count: 0,
+                last_verified_epoch_secs: 1,
+            };
+            store.save_domain_evidence(&domain).unwrap();
+
+            let report = memory_suggest_skills_report(&store);
+            assert!(report.contains("domain"), "report: {report}");
+            assert!(report.contains("example.com"), "report: {report}");
+            assert!(report.contains("success=10"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_suggest_skills_bounded_to_ten() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            for i in 1..=12 {
+                store
+                    .save_task_evidence(&runtime::TaskEvidence {
+                        task_class: format!("task-{i:02}"),
+                        successful_routes: vec![vec!["navigate".to_string()]],
+                        tools: vec!["navigate".to_string()],
+                        output_fields: vec![],
+                        success_count: 5,
+                        failure_count: 0,
+                        last_used_epoch_secs: 1,
+                    })
+                    .unwrap();
+            }
+
+            let report = memory_suggest_skills_report(&store);
+            assert!(report.contains("Suggestions      10"), "report: {report}");
+            assert!(report.contains("task-01"), "report: {report}");
+            assert!(report.contains("task-10"), "report: {report}");
+            assert!(!report.contains("task-11"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_suggest_skills_read_failure_reports_failed() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let tasks_dir = store.evidence_dir().join("tasks");
+            fs::create_dir_all(&tasks_dir).unwrap();
+            fs::write(tasks_dir.join("bad.json"), "not valid json").unwrap();
+
+            let report = memory_suggest_skills_report(&store);
             assert!(report.contains("failed"), "report: {report}");
         });
     }
