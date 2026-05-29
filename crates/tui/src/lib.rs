@@ -94,11 +94,11 @@ impl CliOutputFormat {
 // ── TUI utility modules (moved from CLI in T30) ──
 
 pub(crate) mod active_modal;
-pub(crate) mod child_tabs;
+pub mod child_tabs;
 pub mod events;
 pub(crate) mod modal;
 pub(crate) mod model_list;
-pub(crate) mod tool_pairing;
+pub mod tool_pairing;
 
 pub mod modals;
 
@@ -111,7 +111,7 @@ pub(crate) use modals::session as session_modal;
 // ── The moved REPL files (source of truth now lives here) ──
 
 pub mod repl_app;
-pub(crate) mod repl_render;
+pub mod repl_render;
 
 // ── Compatibility module: provides `crate::tui::*` paths that the moved files expect ──
 

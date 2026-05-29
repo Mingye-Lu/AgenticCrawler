@@ -116,7 +116,7 @@ pub(super) enum ViewMode {
 }
 
 #[derive(Clone, Debug)]
-pub(super) enum ToolCallStatus {
+pub enum ToolCallStatus {
     Running,
     Interrupted,
     Success { output: String },

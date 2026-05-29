@@ -264,7 +264,7 @@ impl ChildTabPanel {
 
 /// Restore a `ChildTabPanel` from persisted child sessions.
 /// All restored children are marked `Done` since they completed in a prior session.
-pub(crate) fn hydrate_from_child_sessions(sessions: &[ChildSession]) -> ChildTabPanel {
+pub fn hydrate_from_child_sessions(sessions: &[ChildSession]) -> ChildTabPanel {
     let mut panel = ChildTabPanel::default();
     for child in sessions {
         let mut tab = ChildTabState::new(child.id.clone(), child.goal.clone());
