@@ -26,7 +26,7 @@ use crate::tui::ReplTuiEvent;
 use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 use agent::{ChildControlRegistry, ChildEvent, ChildEventKind};
 use browser::{BrowserState, SharedBridge};
-use commands::{slash_command_specs, SlashCommand};
+use commands::{slash_command_specs, MemoryAction, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -2573,16 +2573,21 @@ fn handle_slash_command_tui(
             }
             _ => unreachable!(),
         },
-        SlashCommand::Memory { save: true } => {
+        SlashCommand::Memory {
+            action: MemoryAction::Save,
+        } => {
             let mut g = cli.lock().expect("cli lock");
             let report = g.memory_save_command();
             state.push_system_card("Memory", &report);
         }
-        SlashCommand::Memory { save: false } => {
-            state.push_system_card(
-                "Memory",
-                "Memory\n  Result           unknown subcommand (try /memory save)",
+        SlashCommand::Memory {
+            action: MemoryAction::Status,
+        } => {
+            let report = crate::app::memory_status_report(
+                &runtime::EpisodeStore::default_for_config_home(),
+                &runtime::EvidenceStore::default_for_config_home(),
             );
+            state.push_system_card("Memory", &report);
         }
         SlashCommand::Auth { provider } => {
             if state.busy {

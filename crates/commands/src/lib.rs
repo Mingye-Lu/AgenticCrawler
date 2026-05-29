@@ -165,8 +165,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         name: "memory",
-        summary: "Save current session as a memory episode",
-        argument_hint: Some("save"),
+        summary: "Save current session or show memory status",
+        argument_hint: Some("save|status"),
         resume_supported: false,
     },
     SlashCommandSpec {
@@ -176,6 +176,12 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: false,
     },
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryAction {
+    Save,
+    Status,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
@@ -195,7 +201,7 @@ pub enum SlashCommand {
     Headless,
     Extension { stop: bool },
     CloakBrowser,
-    Memory { save: bool },
+    Memory { action: MemoryAction },
     Unknown(String),
 }
 
@@ -256,7 +262,12 @@ impl SlashCommand {
                 let sub = parts.next().map(str::to_ascii_lowercase);
                 let extra = parts.next();
                 match (sub.as_deref(), extra) {
-                    (Some("save"), None) => Self::Memory { save: true },
+                    (Some("save"), None) => Self::Memory {
+                        action: MemoryAction::Save,
+                    },
+                    (Some("status"), None) => Self::Memory {
+                        action: MemoryAction::Status,
+                    },
                     _ => Self::Unknown("memory".to_string()),
                 }
             }
@@ -354,7 +365,7 @@ pub fn handle_slash_command(
 mod tests {
     use super::{
         handle_slash_command, render_slash_command_help, resume_supported_slash_commands,
-        slash_command_specs, SlashCommand,
+        slash_command_specs, MemoryAction, SlashCommand,
     };
     use runtime::{CompactionConfig, ContentBlock, ConversationMessage, MessageRole, Session};
 
@@ -431,15 +442,27 @@ mod tests {
         );
         assert_eq!(
             SlashCommand::parse("/memory save"),
-            Some(SlashCommand::Memory { save: true })
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Save
+            })
         );
-        // /memory without "save" is rejected
+        assert_eq!(
+            SlashCommand::parse("/memory status"),
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Status
+            })
+        );
+        // /memory without known subcommand is rejected
         assert_eq!(
             SlashCommand::parse("/memory load"),
             Some(SlashCommand::Unknown("memory".to_string()))
         );
         assert_eq!(
             SlashCommand::parse("/memory"),
+            Some(SlashCommand::Unknown("memory".to_string()))
+        );
+        assert_eq!(
+            SlashCommand::parse("/memory unknown"),
             Some(SlashCommand::Unknown("memory".to_string()))
         );
     }
@@ -463,7 +486,15 @@ mod tests {
         );
         assert_eq!(
             SlashCommand::parse("/MEMORY SAVE"),
-            Some(SlashCommand::Memory { save: true })
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Save
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/MEMORY STATUS"),
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Status
+            })
         );
     }
 
@@ -488,7 +519,7 @@ mod tests {
         assert!(help.contains("/headless"));
         assert!(help.contains("/extension [stop]"));
         assert!(help.contains("/cloakbrowser"));
-        assert!(help.contains("/memory save"));
+        assert!(help.contains("/memory save|status"));
         assert!(!help.contains("/resume"));
         assert_eq!(slash_command_specs().len(), 18);
         assert_eq!(resume_supported_slash_commands().len(), 8);
@@ -579,6 +610,9 @@ mod tests {
         );
         assert!(
             handle_slash_command("/memory save", &session, CompactionConfig::default()).is_none()
+        );
+        assert!(
+            handle_slash_command("/memory status", &session, CompactionConfig::default()).is_none()
         );
     }
 }

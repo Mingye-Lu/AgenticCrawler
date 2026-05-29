@@ -32,11 +32,11 @@ use crate::events::ReplTuiEvent;
 #[cfg(not(feature = "tui-crate-context"))]
 use acrawl_tui::events::ReplTuiEvent;
 use agent::mvp_tool_specs;
-use commands::{slash_command_specs, SlashCommand};
+use commands::{slash_command_specs, MemoryAction, SlashCommand};
 use runtime::{
     build_memory_episode, CompactionConfig, ContentBlock, ControlState, ConversationMessage,
-    ConversationRuntime, EpisodeStore, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput,
-    MemoryEpisodeResult, MessageRole, RuntimeError, Session, TokenUsage,
+    ConversationRuntime, EpisodeStore, EvidenceStore, MemoryEpisodeBuildConfig,
+    MemoryEpisodeBuildInput, MemoryEpisodeResult, MessageRole, RuntimeError, Session, TokenUsage,
 };
 use serde_json::json;
 
@@ -576,12 +576,22 @@ impl LiveCli {
                 println!("{message}");
                 false
             }
-            SlashCommand::Memory { save: true } => {
+            SlashCommand::Memory {
+                action: MemoryAction::Save,
+            } => {
                 println!("{}", self.memory_save_command());
                 false
             }
-            SlashCommand::Memory { save: false } => {
-                println!("Memory\n  Result           unknown subcommand (try /memory save)");
+            SlashCommand::Memory {
+                action: MemoryAction::Status,
+            } => {
+                println!(
+                    "{}",
+                    memory_status_report(
+                        &EpisodeStore::default_for_config_home(),
+                        &EvidenceStore::default_for_config_home(),
+                    )
+                );
                 false
             }
             SlashCommand::Unknown(name) => {
@@ -1117,6 +1127,74 @@ pub(crate) fn memory_save_report(session: &Session, store: &EpisodeStore) -> Str
             episode.route.len(),
         ),
         Err(err) => format!("Memory\n  Result           failed ({err})"),
+    }
+}
+
+pub(crate) fn memory_status_report(
+    episode_store: &EpisodeStore,
+    evidence_store: &EvidenceStore,
+) -> String {
+    let episodes_file = if episode_store.episodes_path().exists() {
+        "present"
+    } else {
+        "missing"
+    };
+
+    let recent_result = episode_store.load_recent_episodes(3);
+
+    let task_count = count_json_files(&evidence_store.evidence_dir().join("tasks"));
+    let domain_count = count_json_files(&evidence_store.evidence_dir().join("domains"));
+    let access_count = count_json_files(&evidence_store.evidence_dir().join("access"));
+
+    let (recent, recent_status) = match recent_result {
+        Ok(recent) => {
+            let count = recent.len();
+            (recent, count.to_string())
+        }
+        Err(err) => (Vec::new(), format!("failed ({err})")),
+    };
+
+    let mut lines = vec![format!(
+        "Memory\n  Episodes file    {episodes_file}\n  Recent episodes  {recent_status}\n  Task evidence    {task_count}\n  Domain evidence  {domain_count}\n  Access evidence  {access_count}",
+    )];
+
+    if !recent.is_empty() {
+        lines.push(String::new());
+        lines.push("Recent".to_string());
+        for ep in &recent {
+            let truncated = truncate_str(&ep.user_goal, 60);
+            let result_str = match ep.result {
+                MemoryEpisodeResult::Success => "success",
+                MemoryEpisodeResult::Partial => "partial",
+                MemoryEpisodeResult::Failure => "failure",
+            };
+            lines.push(format!("  {:<14} {:<8} {}", ep.id, result_str, truncated));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn count_json_files(dir: &std::path::Path) -> usize {
+    match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+            .count(),
+        Err(_) => 0,
+    }
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        let mut end = max.saturating_sub(3);
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &s[..end])
     }
 }
 
@@ -1684,6 +1762,110 @@ mod tests {
             assert!(store.episodes_path().exists());
             let episodes = store.load_recent_episodes(1).expect("episode should load");
             assert_eq!(episodes[0].user_goal, "unknown");
+        });
+    }
+
+    #[test]
+    fn memory_status_report_missing_dir_reports_zero() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            let report = memory_status_report(&episode_store, &evidence_store);
+            assert!(report.contains("Episodes file"), "report: {report}");
+            assert!(report.contains("missing"), "report: {report}");
+            assert!(report.contains("Recent episodes  0"), "report: {report}");
+            assert!(report.contains("Task evidence    0"), "report: {report}");
+            assert!(report.contains("Domain evidence  0"), "report: {report}");
+            assert!(report.contains("Access evidence  0"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_status_report_counts_episodes_after_save() {
+        with_clean_config_env(|| {
+            let mut session = Session::new();
+            session.messages = vec![
+                ConversationMessage::user_text("scrape example.com"),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "Done".to_string(),
+                }]),
+            ];
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+
+            let _save_report = memory_save_report(&session, &episode_store);
+
+            let report = memory_status_report(&episode_store, &evidence_store);
+            assert!(
+                report.contains("Episodes file    present"),
+                "report: {report}"
+            );
+            assert!(report.contains("Recent episodes  1"), "report: {report}");
+            assert!(report.contains("Recent"), "report: {report}");
+            assert!(report.contains("scrape example.com"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_status_report_reports_episode_load_failure() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            fs::create_dir_all(episode_store.episodes_path())
+                .expect("create directory at episodes path");
+            let evidence_store = EvidenceStore::default_for_config_home();
+
+            let report = memory_status_report(&episode_store, &evidence_store);
+            assert!(
+                report.contains("Episodes file    present"),
+                "report: {report}"
+            );
+            assert!(
+                report.contains("Recent episodes  failed"),
+                "report: {report}"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_status_report_evidence_counts_work() {
+        with_clean_config_env(|| {
+            let evidence_store = EvidenceStore::default_for_config_home();
+
+            let task = runtime::TaskEvidence {
+                task_class: "test-task".to_string(),
+                successful_routes: vec![],
+                tools: vec![],
+                output_fields: vec![],
+                success_count: 1,
+                failure_count: 0,
+                last_used_epoch_secs: 1,
+            };
+            let domain = runtime::DomainEvidence {
+                domain: "example.com".to_string(),
+                task_classes: vec![],
+                successful_routes: vec![],
+                field_hints: vec![],
+                success_count: 1,
+                failure_count: 0,
+                last_verified_epoch_secs: 1,
+            };
+            let access = runtime::AccessEvidence {
+                domain: "example.com".to_string(),
+                status: runtime::AccessStatus::LoggedInObserved,
+                extension_mode: false,
+                last_confirmed_epoch_secs: 1,
+                notes: None,
+            };
+
+            evidence_store.save_task_evidence(&task).unwrap();
+            evidence_store.save_domain_evidence(&domain).unwrap();
+            evidence_store.save_access_evidence(&access).unwrap();
+
+            let episode_store = EpisodeStore::default_for_config_home();
+            let report = memory_status_report(&episode_store, &evidence_store);
+            assert!(report.contains("Task evidence    1"), "report: {report}");
+            assert!(report.contains("Domain evidence  1"), "report: {report}");
+            assert!(report.contains("Access evidence  1"), "report: {report}");
         });
     }
 }
