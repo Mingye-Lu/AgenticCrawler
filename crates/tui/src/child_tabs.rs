@@ -1,11 +1,31 @@
 use agent::ChildEventKind;
+use ratatui::text::Line;
 use ratatui::widgets::ListState;
 use runtime::ChildSession;
 
-use super::repl_app::{ToolCallStatus, TranscriptEntry};
+use super::repl_app::ToolCallStatus;
 use crate::markdown::{drain_safe_boundary, render_lines};
 
 const MAX_ENTRIES: usize = 1000;
+
+#[allow(dead_code)]
+#[derive(Clone)]
+pub(super) enum TranscriptEntry {
+    System(String),
+    Status(String),
+    User(String),
+    Parent(String),
+    Stream(Line<'static>),
+    SystemCard {
+        title: String,
+        rows: Vec<(String, String)>,
+    },
+    ToolCall {
+        name: String,
+        input_summary: String,
+        status: ToolCallStatus,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChildTabStatus {

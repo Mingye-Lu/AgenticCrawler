@@ -1,5 +1,5 @@
-﻿use acrawl_core::message::ConversationMessage;
 use crate::tui::model_list::ModelInfo as PickerModelInfo;
+use acrawl_core::message::ConversationMessage;
 use agent::ChildEvent;
 use api::provider::ModelInfo;
 

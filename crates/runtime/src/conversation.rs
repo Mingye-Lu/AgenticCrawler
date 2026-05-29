@@ -983,20 +983,20 @@ mod tests {
 
         let text = "word ".repeat(200);
         let session = Session {
-          version: 1,
-          model: None,
-          title: None,
-          messages: vec![
-              crate::session::ConversationMessage::user_text(&text),
-              crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
-                  text: text.clone(),
-              }]),
-              crate::session::ConversationMessage::user_text(&text),
-              crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
-                  text: "done".to_string(),
-              }]),
-          ],
-          child_sessions: Vec::new(),
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![
+                crate::session::ConversationMessage::user_text(&text),
+                crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: text.clone(),
+                }]),
+                crate::session::ConversationMessage::user_text(&text),
+                crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "done".to_string(),
+                }]),
+            ],
+            child_sessions: Vec::new(),
         };
         let config = CompactionConfig {
             llm_summarization: false,
@@ -1036,20 +1036,20 @@ mod tests {
         }
 
         let session = Session {
-          version: 1,
-          model: None,
-          title: None,
-          messages: vec![
-              crate::session::ConversationMessage::user_text("one"),
-              crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
-                  text: "two".to_string(),
-              }]),
-              crate::session::ConversationMessage::user_text("three"),
-              crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
-                  text: "four".to_string(),
-              }]),
-          ],
-          child_sessions: Vec::new(),
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![
+                crate::session::ConversationMessage::user_text("one"),
+                crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "two".to_string(),
+                }]),
+                crate::session::ConversationMessage::user_text("three"),
+                crate::session::ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "four".to_string(),
+                }]),
+            ],
+            child_sessions: Vec::new(),
         };
 
         let mut runtime = ConversationRuntime::new(

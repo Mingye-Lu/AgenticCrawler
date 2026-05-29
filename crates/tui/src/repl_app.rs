@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 use crate::app::{slash_command_completion_candidates, AllowedToolSet, LiveCli};
 use crate::auth::ProviderChoice;
 use crate::display_width::{char_count_for_display_col, char_display_width, text_display_width};
@@ -24,6 +23,7 @@ use crate::tui::repl_render::{
 };
 use crate::tui::session_modal::SessionModalEntry;
 use crate::tui::ReplTuiEvent;
+use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 use agent::{ChildControlRegistry, ChildEvent, ChildEventKind};
 use browser::{BrowserState, SharedBridge};
 use commands::{slash_command_specs, SlashCommand};
@@ -121,24 +121,6 @@ pub(super) enum ToolCallStatus {
     Interrupted,
     Success { output: String },
     Error(String),
-}
-
-#[derive(Clone)]
-pub(super) enum TranscriptEntry {
-    System(String),
-    Status(String),
-    User(String),
-    Parent(String),
-    Stream(Line<'static>),
-    SystemCard {
-        title: String,
-        rows: Vec<(String, String)>,
-    },
-    ToolCall {
-        name: String,
-        input_summary: String,
-        status: ToolCallStatus,
-    },
 }
 
 #[derive(Debug, Clone)]
@@ -1436,11 +1418,14 @@ impl ReplTuiState {
         // (e.g. two navigate calls in one assistant turn) because completions
         // arrive in the same order the calls were started, and each completion
         // consumes exactly the first still-Running entry.
-        if let Some((_, _, entry_status)) = self.live_tool_calls.iter_mut().rev().find(
-            |(entry_name, _, entry_status)| {
-                entry_name == name && matches!(entry_status, ToolCallStatus::Running)
-            },
-        ) {
+        if let Some((_, _, entry_status)) =
+            self.live_tool_calls
+                .iter_mut()
+                .rev()
+                .find(|(entry_name, _, entry_status)| {
+                    entry_name == name && matches!(entry_status, ToolCallStatus::Running)
+                })
+        {
             *entry_status = status;
         }
     }
@@ -1876,13 +1861,18 @@ impl ReplTuiState {
 
     fn push_user_line(&mut self, text: &str) {
         self.ui_state = AppUiState::ChatMode;
-        self.messages.push(ConversationMessage::user_text(text.trim()));
+        self.messages
+            .push(ConversationMessage::user_text(text.trim()));
         self.follow_bottom = true;
     }
 
     fn push_system(&mut self, msg: &str) {
         self.ui_state = AppUiState::ChatMode;
-        let text = if msg.is_empty() { " ".to_string() } else { msg.to_string() };
+        let text = if msg.is_empty() {
+            " ".to_string()
+        } else {
+            msg.to_string()
+        };
         self.messages.push(ConversationMessage {
             role: MessageRole::System,
             blocks: vec![ContentBlock::Text { text }],
@@ -5555,11 +5545,9 @@ mod tests {
         let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
         let mut state = ReplTuiState::new();
         state.busy = true;
-        state.live_tool_calls.push((
-            "tool".to_string(),
-            "".to_string(),
-            ToolCallStatus::Running,
-        ));
+        state
+            .live_tool_calls
+            .push(("tool".to_string(), String::new(), ToolCallStatus::Running));
         state.typewriter.chars.push_back('x');
         state.typewriter.live.push('y');
         state.current_tool = Some("navigate".to_string());

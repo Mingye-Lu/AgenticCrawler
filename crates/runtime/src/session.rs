@@ -156,7 +156,11 @@ impl Session {
         let child_sessions = object
             .get("child_sessions")
             .and_then(JsonValue::as_array)
-            .map(|arr| arr.iter().map(child_session_from_json).collect::<Result<Vec<_>, _>>())
+            .map(|arr| {
+                arr.iter()
+                    .map(child_session_from_json)
+                    .collect::<Result<Vec<_>, _>>()
+            })
             .transpose()?
             .unwrap_or_default();
         Ok(Self {
@@ -492,8 +496,8 @@ mod tests {
 
     #[test]
     fn v1_session_loads_with_empty_child_sessions() {
-        let json = crate::json::JsonValue::parse(r#"{"version":1,"messages":[]}"#)
-            .expect("valid json");
+        let json =
+            crate::json::JsonValue::parse(r#"{"version":1,"messages":[]}"#).expect("valid json");
         let session = Session::from_json(&json).expect("v1 session should load");
         assert!(session.child_sessions.is_empty());
     }
@@ -501,7 +505,9 @@ mod tests {
     #[test]
     fn v2_session_roundtrips_child_sessions() {
         let mut session = Session::new();
-        session.messages.push(ConversationMessage::user_text("hello"));
+        session
+            .messages
+            .push(ConversationMessage::user_text("hello"));
 
         let child = ChildSession {
             id: "child-1".to_string(),

@@ -832,10 +832,16 @@ mod tests {
         manager.lock().await.register_root("test-agent");
 
         let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
-        let handle1: tokio::task::JoinHandle<Option<CrawlResult>> =
-            tokio::spawn(async { Some(crawl_result_with(vec![serde_json::json!({"from": "child-1"})])) });
-        let handle2: tokio::task::JoinHandle<Option<CrawlResult>> =
-            tokio::spawn(async { Some(crawl_result_with(vec![serde_json::json!({"from": "child-2"})])) });
+        let handle1: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async {
+            Some(crawl_result_with(vec![
+                serde_json::json!({"from": "child-1"}),
+            ]))
+        });
+        let handle2: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async {
+            Some(crawl_result_with(vec![
+                serde_json::json!({"from": "child-2"}),
+            ]))
+        });
         agent
             .child_tasks
             .insert("child-1".to_string(), ("goal-1".to_string(), handle1, None));
@@ -1170,9 +1176,10 @@ mod tests {
         };
         let handle: tokio::task::JoinHandle<Option<CrawlResult>> =
             tokio::spawn(async move { Some(child_result) });
-        agent
-            .child_tasks
-            .insert("child-1".to_string(), ("test goal".to_string(), handle, None));
+        agent.child_tasks.insert(
+            "child-1".to_string(),
+            ("test goal".to_string(), handle, None),
+        );
 
         let _result = agent
             .handle_wait_effect(WaitSpec { child_ids: None })

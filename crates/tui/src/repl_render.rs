@@ -477,7 +477,10 @@ pub(super) fn build_wrapped_list(
                         ContentBlock::Reasoning { data } => {
                             for row in wrap_plain_text(data, width) {
                                 text_out.push(row.clone());
-                                out.push(ListItem::new(Line::from(Span::styled(row, system_style))));
+                                out.push(ListItem::new(Line::from(Span::styled(
+                                    row,
+                                    system_style,
+                                ))));
                             }
                         }
                         ContentBlock::ToolResult { .. } => {}
@@ -489,14 +492,8 @@ pub(super) fn build_wrapped_list(
     }
 
     for (name, input_summary, status) in live_tool_calls {
-        let (call_items, call_text) = render_tool_call_lines(
-            name,
-            input_summary,
-            status,
-            width,
-            spinner_char,
-            debug_mode,
-        );
+        let (call_items, call_text) =
+            render_tool_call_lines(name, input_summary, status, width, spinner_char, debug_mode);
         out.extend(call_items);
         text_out.extend(call_text);
     }
@@ -514,117 +511,6 @@ pub(super) fn build_wrapped_list(
     }
     debug_assert_eq!(text_out.len(), out.len());
     (out, text_out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn plain_lines(items: &[String]) -> Vec<String> {
-        items.to_vec()
-    }
-
-    #[test]
-    fn build_wrapped_list_renders_user_message() {
-        let messages = vec![ConversationMessage::user_text("hello")];
-
-        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
-
-        assert!(plain_lines(&text).iter().any(|line| line.contains("You hello")));
-    }
-
-    #[test]
-    fn build_wrapped_list_renders_assistant_text() {
-        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::Text {
-            text: "assistant reply".to_string(),
-        }])];
-
-        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
-
-        assert!(text.iter().any(|line| line.contains("assistant reply")));
-    }
-
-    #[test]
-    fn build_wrapped_list_renders_tool_success() {
-        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-            id: "tool_1".to_string(),
-            name: "navigate".to_string(),
-            input: r#"{"url":"https://example.com"}"#.to_string(),
-        }])];
-        let tool_results = HashMap::from([(
-            "tool_1".to_string(),
-            ToolResultInfo {
-                output: "navigation complete".to_string(),
-                is_error: false,
-            },
-        )]);
-
-        let (_, text) = build_wrapped_list(&messages, &tool_results, &[], 80, None, '⠋', false);
-
-        assert!(text.iter().any(|line| line.contains("navigate")));
-    }
-
-    #[test]
-    fn build_wrapped_list_renders_tool_interrupted() {
-        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-            id: "tool_1".to_string(),
-            name: "click".to_string(),
-            input: r##"{"selector":"#go"}"##.to_string(),
-        }])];
-
-        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
-
-        assert!(text.iter().any(|line| line.contains("interrupted")));
-    }
-
-    #[test]
-    fn build_wrapped_list_renders_reasoning_dimmed() {
-        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::Reasoning {
-            data: "thinking...".to_string(),
-        }])];
-
-        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
-
-        assert!(text.iter().any(|line| line.contains("thinking...")));
-    }
-
-    #[test]
-    fn build_wrapped_list_skips_tool_role_messages() {
-        let messages = vec![
-            ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-                id: "tool_1".to_string(),
-                name: "navigate".to_string(),
-                input: r#"{"url":"https://example.com"}"#.to_string(),
-            }]),
-            ConversationMessage::tool_result(
-                "tool_1",
-                "navigate",
-                "navigation complete",
-                false,
-            ),
-        ];
-        let tool_results = HashMap::from([(
-            "tool_1".to_string(),
-            ToolResultInfo {
-                output: "navigation complete".to_string(),
-                is_error: false,
-            },
-        )]);
-
-        let (_, text) = build_wrapped_list(&messages, &tool_results, &[], 80, None, '⠋', false);
-
-        assert_eq!(
-            text.iter().filter(|line| line.contains("navigate")).count(),
-            1
-        );
-    }
-
-    #[test]
-    fn build_wrapped_list_renders_live_text_after_messages() {
-        let (_, text) = build_wrapped_list(&[], &HashMap::new(), &[], 80, Some("hello"), '⠋', false);
-
-        assert!(text.iter().any(|line| line.contains("hello")));
-    }
 }
 
 pub(super) fn rect_contains_mouse(r: Rect, col: u16, row: u16) -> bool {
@@ -1509,4 +1395,119 @@ pub(super) fn draw_chat(
     }
 
     state.last_slash_overlay_rect = draw_slash_overlay(frame, state, input_area, main_area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plain_lines(items: &[String]) -> Vec<String> {
+        items.to_vec()
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_user_message() {
+        let messages = vec![ConversationMessage::user_text("hello")];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(plain_lines(&text)
+            .iter()
+            .any(|line| line.contains("You hello")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_assistant_text() {
+        let messages = vec![ConversationMessage::assistant(vec![ContentBlock::Text {
+            text: "assistant reply".to_string(),
+        }])];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("assistant reply")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_tool_success() {
+        let messages = vec![ConversationMessage::assistant(vec![
+            ContentBlock::ToolUse {
+                id: "tool_1".to_string(),
+                name: "navigate".to_string(),
+                input: r#"{"url":"https://example.com"}"#.to_string(),
+            },
+        ])];
+        let tool_results = HashMap::from([(
+            "tool_1".to_string(),
+            ToolResultInfo {
+                output: "navigation complete".to_string(),
+                is_error: false,
+            },
+        )]);
+
+        let (_, text) = build_wrapped_list(&messages, &tool_results, &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("navigate")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_tool_interrupted() {
+        let messages = vec![ConversationMessage::assistant(vec![
+            ContentBlock::ToolUse {
+                id: "tool_1".to_string(),
+                name: "click".to_string(),
+                input: r##"{"selector":"#go"}"##.to_string(),
+            },
+        ])];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("interrupted")));
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_reasoning_dimmed() {
+        let messages = vec![ConversationMessage::assistant(vec![
+            ContentBlock::Reasoning {
+                data: "thinking...".to_string(),
+            },
+        ])];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("thinking...")));
+    }
+
+    #[test]
+    fn build_wrapped_list_skips_tool_role_messages() {
+        let messages = vec![
+            ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+                id: "tool_1".to_string(),
+                name: "navigate".to_string(),
+                input: r#"{"url":"https://example.com"}"#.to_string(),
+            }]),
+            ConversationMessage::tool_result("tool_1", "navigate", "navigation complete", false),
+        ];
+        let tool_results = HashMap::from([(
+            "tool_1".to_string(),
+            ToolResultInfo {
+                output: "navigation complete".to_string(),
+                is_error: false,
+            },
+        )]);
+
+        let (_, text) = build_wrapped_list(&messages, &tool_results, &[], 80, None, '⠋', false);
+
+        assert_eq!(
+            text.iter().filter(|line| line.contains("navigate")).count(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_wrapped_list_renders_live_text_after_messages() {
+        let (_, text) =
+            build_wrapped_list(&[], &HashMap::new(), &[], 80, Some("hello"), '⠋', false);
+
+        assert!(text.iter().any(|line| line.contains("hello")));
+    }
 }
