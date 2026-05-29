@@ -2269,7 +2269,12 @@ fn handle_session_modal_outcome(
                             state.cancelling = false;
                             state.current_tool = None;
                             state.follow_bottom = true;
-                            state.child_tab_panel = child_tabs::ChildTabPanel::default();
+                            let child_sessions_data = guard.session_child_sessions();
+                            state.child_tab_panel = if child_sessions_data.is_empty() {
+                                child_tabs::ChildTabPanel::default()
+                            } else {
+                                child_tabs::hydrate_from_child_sessions(&child_sessions_data)
+                            };
                             state.status_line = "Ready".to_string();
                             state.push_system_card(
                                 "Session",

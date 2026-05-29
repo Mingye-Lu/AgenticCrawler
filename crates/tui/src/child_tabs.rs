@@ -1,5 +1,6 @@
 use agent::ChildEventKind;
 use ratatui::widgets::ListState;
+use runtime::ChildSession;
 
 use super::repl_app::{ToolCallStatus, TranscriptEntry};
 use crate::markdown::{drain_safe_boundary, render_lines};
@@ -241,9 +242,61 @@ impl ChildTabPanel {
     }
 }
 
+/// Restore a `ChildTabPanel` from persisted child sessions.
+/// All restored children are marked `Done` since they completed in a prior session.
+pub(crate) fn hydrate_from_child_sessions(sessions: &[ChildSession]) -> ChildTabPanel {
+    let mut panel = ChildTabPanel::default();
+    for child in sessions {
+        let mut tab = ChildTabState::new(child.id.clone(), child.goal.clone());
+        tab.status = ChildTabStatus::Done;
+        tab.entries.push(TranscriptEntry::System(format!(
+            "Restored from session ({} messages)",
+            child.messages.len()
+        )));
+        panel.tabs.push(tab);
+    }
+    panel
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acrawl_core::message::ConversationMessage;
+
+    #[test]
+    fn child_tabs_restored_from_session_fixture() {
+        let sessions = vec![
+            ChildSession {
+                id: "c1".to_string(),
+                goal: "scrape prices".to_string(),
+                messages: vec![
+                    ConversationMessage::user_text("scrape"),
+                    ConversationMessage::assistant(vec![]),
+                ],
+            },
+            ChildSession {
+                id: "c2".to_string(),
+                goal: "fetch reviews".to_string(),
+                messages: vec![ConversationMessage::user_text("fetch")],
+            },
+        ];
+
+        let panel = hydrate_from_child_sessions(&sessions);
+
+        assert_eq!(panel.tabs.len(), 2);
+        assert_eq!(panel.tabs[0].child_id, "c1");
+        assert_eq!(panel.tabs[1].child_id, "c2");
+        assert_eq!(panel.tabs[0].status, ChildTabStatus::Done);
+        assert_eq!(panel.tabs[1].status, ChildTabStatus::Done);
+        assert!(panel.tabs[0]
+            .entries
+            .iter()
+            .any(|e| matches!(e, TranscriptEntry::System(msg) if msg.contains("2 messages"))));
+        assert!(panel.tabs[1]
+            .entries
+            .iter()
+            .any(|e| matches!(e, TranscriptEntry::System(msg) if msg.contains("1 messages"))));
+    }
 
     #[test]
     fn child_tab_panel_event_state_transitions() {
