@@ -35,8 +35,9 @@ use agent::mvp_tool_specs;
 use commands::{slash_command_specs, MemoryAction, SlashCommand};
 use runtime::{
     build_memory_episode, CompactionConfig, ContentBlock, ControlState, ConversationMessage,
-    ConversationRuntime, EpisodeStore, EvidenceStore, MemoryEpisodeBuildConfig,
-    MemoryEpisodeBuildInput, MemoryEpisodeResult, MessageRole, RuntimeError, Session, TokenUsage,
+    ConversationRuntime, EpisodeStore, EvidenceStore, MemoryContextBudget, MemoryContextLoader,
+    MemoryContextQuery, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput, MemoryEpisodeResult,
+    MessageRole, RuntimeError, Session, TokenUsage,
 };
 use serde_json::json;
 
@@ -594,6 +595,12 @@ impl LiveCli {
                 );
                 false
             }
+            SlashCommand::Memory {
+                action: MemoryAction::Context,
+            } => {
+                println!("{}", self.memory_context_command());
+                false
+            }
             SlashCommand::Unknown(name) => {
                 eprintln!("unknown slash command: /{name}");
                 false
@@ -622,6 +629,13 @@ impl LiveCli {
         memory_save_report(
             self.runtime.session(),
             &runtime::EpisodeStore::default_for_config_home(),
+        )
+    }
+
+    pub(crate) fn memory_context_command(&self) -> String {
+        memory_context_report(
+            self.runtime.session(),
+            &MemoryContextLoader::default_for_config_home(),
         )
     }
 
@@ -1173,6 +1187,48 @@ pub(crate) fn memory_status_report(
     }
 
     lines.join("\n")
+}
+
+pub(crate) fn memory_context_report(session: &Session, loader: &MemoryContextLoader) -> String {
+    if session.messages.is_empty() {
+        return "Memory\n  Result           skipped\n  Reason           empty session".to_string();
+    }
+
+    let episode = build_memory_episode(
+        MemoryEpisodeBuildInput {
+            id: "preview".to_string(),
+            task_class: None,
+            user_goal: first_user_text(&session.messages),
+            result: MemoryEpisodeResult::Success,
+            output_summary: last_assistant_text(&session.messages),
+            messages: &session.messages,
+            created_at_epoch_secs: 0,
+            promote_candidate: false,
+        },
+        MemoryEpisodeBuildConfig::default(),
+    );
+
+    let query = MemoryContextQuery {
+        task_class: None,
+        domains: episode.domains,
+        include_access: true,
+        recent_episode_limit: 2,
+    };
+
+    let budget = MemoryContextBudget::default();
+
+    match loader.load(&query, budget) {
+        Ok(context) => {
+            let rendered = loader.render_context(&context, budget);
+            if rendered.is_empty() {
+                "Memory\n  Result           empty\n  Reason           no relevant memory"
+                    .to_string()
+            } else {
+                format!("Memory\n  Result           context\n\n{rendered}")
+            }
+        }
+        Err(err) => format!("Memory\n  Result           failed ({err})"),
+    }
 }
 
 fn count_json_files(dir: &std::path::Path) -> usize {
@@ -1866,6 +1922,139 @@ mod tests {
             assert!(report.contains("Task evidence    1"), "report: {report}");
             assert!(report.contains("Domain evidence  1"), "report: {report}");
             assert!(report.contains("Access evidence  1"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_context_report_empty_session_skips() {
+        with_clean_config_env(|| {
+            let session = Session::new();
+            let loader = MemoryContextLoader::default_for_config_home();
+            let report = memory_context_report(&session, &loader);
+            assert!(report.contains("skipped"));
+            assert!(report.contains("empty session"));
+        });
+    }
+
+    #[test]
+    fn memory_context_report_no_relevant_memory() {
+        with_clean_config_env(|| {
+            let mut session = Session::new();
+            session.messages = vec![
+                ConversationMessage::user_text("navigate to https://example.com"),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "Done".to_string(),
+                }]),
+            ];
+            let loader = MemoryContextLoader::default_for_config_home();
+            let report = memory_context_report(&session, &loader);
+            assert!(report.contains("empty"));
+            assert!(report.contains("no relevant memory"));
+        });
+    }
+
+    #[test]
+    fn memory_context_report_with_domain_evidence() {
+        with_clean_config_env(|| {
+            let evidence_store = EvidenceStore::default_for_config_home();
+            let domain = runtime::DomainEvidence {
+                domain: "example.com".to_string(),
+                task_classes: vec!["scrape".to_string()],
+                successful_routes: vec![vec!["navigate".to_string()]],
+                field_hints: vec!["title".to_string()],
+                success_count: 3,
+                failure_count: 1,
+                last_verified_epoch_secs: 1,
+            };
+            evidence_store.save_domain_evidence(&domain).unwrap();
+
+            let mut session = Session::new();
+            session.messages = vec![
+                ConversationMessage::user_text("navigate to https://example.com"),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "Done".to_string(),
+                }]),
+            ];
+            let loader = MemoryContextLoader::default_for_config_home();
+            let report = memory_context_report(&session, &loader);
+            assert!(report.contains("context"), "report: {report}");
+            assert!(report.contains("example.com"), "report: {report}");
+            assert!(report.contains("Domain evidence"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_context_report_includes_access_evidence() {
+        with_clean_config_env(|| {
+            let evidence_store = EvidenceStore::default_for_config_home();
+            let access = runtime::AccessEvidence {
+                domain: "example.com".to_string(),
+                status: runtime::AccessStatus::LoggedInObserved,
+                extension_mode: false,
+                last_confirmed_epoch_secs: 1,
+                notes: None,
+            };
+            evidence_store.save_access_evidence(&access).unwrap();
+
+            let domain = runtime::DomainEvidence {
+                domain: "example.com".to_string(),
+                task_classes: vec![],
+                successful_routes: vec![],
+                field_hints: vec![],
+                success_count: 1,
+                failure_count: 0,
+                last_verified_epoch_secs: 1,
+            };
+            evidence_store.save_domain_evidence(&domain).unwrap();
+
+            let mut session = Session::new();
+            session.messages = vec![
+                ConversationMessage::user_text("navigate to https://example.com"),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "Done".to_string(),
+                }]),
+            ];
+            let loader = MemoryContextLoader::default_for_config_home();
+            let report = memory_context_report(&session, &loader);
+            assert!(report.contains("Access evidence"), "report: {report}");
+            assert!(report.contains("LoggedInObserved"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_context_report_episode_limit_bounded() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            for i in 1..=5 {
+                episode_store
+                    .append_episode(&runtime::MemoryEpisode {
+                        id: format!("ep{i}"),
+                        task_class: None,
+                        user_goal: format!("goal {i}"),
+                        route: vec![],
+                        domains: vec![],
+                        tools: vec![],
+                        result: MemoryEpisodeResult::Success,
+                        output_summary: None,
+                        created_at_epoch_secs: i * 100,
+                        promote_candidate: false,
+                    })
+                    .unwrap();
+            }
+
+            let mut session = Session::new();
+            session.messages = vec![
+                ConversationMessage::user_text("navigate to https://example.com"),
+                ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "Done".to_string(),
+                }]),
+            ];
+            let loader = MemoryContextLoader::default_for_config_home();
+            let report = memory_context_report(&session, &loader);
+            assert!(report.contains("Recent episodes"), "report: {report}");
+            assert!(!report.contains("ep1"), "report: {report}");
+            assert!(report.contains("ep4"), "report: {report}");
+            assert!(report.contains("ep5"), "report: {report}");
         });
     }
 }

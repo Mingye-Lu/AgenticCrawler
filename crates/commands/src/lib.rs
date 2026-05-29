@@ -165,8 +165,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         name: "memory",
-        summary: "Save current session or show memory status",
-        argument_hint: Some("save|status"),
+        summary: "Save, show status, or preview memory context",
+        argument_hint: Some("save|status|context"),
         resume_supported: false,
     },
     SlashCommandSpec {
@@ -181,6 +181,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
 pub enum MemoryAction {
     Save,
     Status,
+    Context,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,6 +268,9 @@ impl SlashCommand {
                     },
                     (Some("status"), None) => Self::Memory {
                         action: MemoryAction::Status,
+                    },
+                    (Some("context"), None) => Self::Memory {
+                        action: MemoryAction::Context,
                     },
                     _ => Self::Unknown("memory".to_string()),
                 }
@@ -452,6 +456,12 @@ mod tests {
                 action: MemoryAction::Status
             })
         );
+        assert_eq!(
+            SlashCommand::parse("/memory context"),
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Context
+            })
+        );
         // /memory without known subcommand is rejected
         assert_eq!(
             SlashCommand::parse("/memory load"),
@@ -496,6 +506,12 @@ mod tests {
                 action: MemoryAction::Status
             })
         );
+        assert_eq!(
+            SlashCommand::parse("/MEMORY CONTEXT"),
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Context
+            })
+        );
     }
 
     #[test]
@@ -519,7 +535,7 @@ mod tests {
         assert!(help.contains("/headless"));
         assert!(help.contains("/extension [stop]"));
         assert!(help.contains("/cloakbrowser"));
-        assert!(help.contains("/memory save|status"));
+        assert!(help.contains("/memory save|status|context"));
         assert!(!help.contains("/resume"));
         assert_eq!(slash_command_specs().len(), 18);
         assert_eq!(resume_supported_slash_commands().len(), 8);
@@ -613,6 +629,10 @@ mod tests {
         );
         assert!(
             handle_slash_command("/memory status", &session, CompactionConfig::default()).is_none()
+        );
+        assert!(
+            handle_slash_command("/memory context", &session, CompactionConfig::default())
+                .is_none()
         );
     }
 }

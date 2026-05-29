@@ -2589,6 +2589,13 @@ fn handle_slash_command_tui(
             );
             state.push_system_card("Memory", &report);
         }
+        SlashCommand::Memory {
+            action: MemoryAction::Context,
+        } => {
+            let g = cli.lock().expect("cli lock");
+            let report = g.memory_context_command();
+            state.push_system_card("Memory", &report);
+        }
         SlashCommand::Auth { provider } => {
             if state.busy {
                 state.push_system("Please wait for the current task to finish.");
