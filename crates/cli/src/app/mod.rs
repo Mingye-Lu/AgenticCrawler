@@ -292,6 +292,14 @@ impl LiveCli {
         self.session.id.as_str()
     }
 
+    pub(crate) fn session_messages(&self) -> Vec<runtime::ConversationMessage> {
+        self.runtime.session().messages.clone()
+    }
+
+    pub(crate) fn session_child_sessions(&self) -> Vec<runtime::ChildSession> {
+        self.runtime.session().child_sessions.clone()
+    }
+
     pub(crate) fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<ChildEvent>> {
         self.child_event_rx.take()
     }
@@ -352,6 +360,7 @@ impl LiveCli {
         let result = block_on_runtime_future(self.runtime.run_turn(input));
         let finish: Result<(), String> = match &result {
             Ok(summary) => {
+                self.capture_child_sessions();
                 if let Some(ev) = summary.auto_compaction {
                     let msg = format_auto_compaction_notice(ev.removed_message_count);
                     if let Some(tx) = self.event_sender() {
@@ -380,6 +389,7 @@ impl LiveCli {
         let result = block_on_runtime_future(self.runtime.run_turn(input));
         match result {
             Ok(summary) => {
+                self.capture_child_sessions();
                 spinner.finish(
                     "✨ Done",
                     TerminalRenderer::new().color_theme(),
@@ -429,6 +439,7 @@ impl LiveCli {
             self.output_mode.observer(),
         )?;
         let summary = block_on_runtime_future(runtime.run_turn(input))?;
+        capture_child_sessions_into_session(&mut runtime);
         self.runtime = runtime;
         self.persist_session()?;
         println!(
@@ -481,8 +492,8 @@ impl LiveCli {
                 println!("{}", result.message);
                 result.persist_after
             }
-            SlashCommand::Clear { confirm } => {
-                let result = self.clear_session_command(confirm)?;
+            SlashCommand::Clear => {
+                let result = self.clear_session_command()?;
                 println!("{}", result.message);
                 result.persist_after
             }
@@ -570,9 +581,10 @@ impl LiveCli {
     }
 
     pub(crate) fn persist_session(&mut self) -> Result<(), CliError> {
+        if self.runtime.session().messages.is_empty() {
+            return Ok(());
+        }
         if self.runtime.session().title.is_none() {
-            // Recover from a poisoned mutex (e.g. title-generation thread
-            // panicked) instead of silently dropping the pending title.
             let mut guard = self
                 .pending_title
                 .lock()
@@ -583,6 +595,10 @@ impl LiveCli {
         }
         self.runtime.session().save_to_path(&self.session.path)?;
         Ok(())
+    }
+
+    fn capture_child_sessions(&mut self) {
+        capture_child_sessions_into_session(&mut self.runtime);
     }
 
     fn maybe_dispatch_title_generation(&mut self, user_input: &str) {
@@ -854,18 +870,7 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn clear_session_command(
-        &mut self,
-        confirm: bool,
-    ) -> Result<CommandUiResult, CliError> {
-        if !confirm {
-            return Ok(CommandUiResult {
-                message:
-                    "clear: confirmation required; run /clear --confirm to start a fresh session."
-                        .to_string(),
-                persist_after: false,
-            });
-        }
+    pub(crate) fn clear_session_command(&mut self) -> Result<CommandUiResult, CliError> {
         self.session = create_managed_session_handle();
         self.title_dispatched = false;
         if let Ok(mut guard) = self.pending_title.lock() {
@@ -885,7 +890,7 @@ impl LiveCli {
                 self.model,
                 self.session.id
             ),
-            persist_after: true,
+            persist_after: false,
         })
     }
 
@@ -993,6 +998,20 @@ impl LiveCli {
             persist_after: false,
         })
     }
+}
+
+fn capture_child_sessions_into_session(
+    runtime: &mut ConversationRuntime<LlmRuntimeClient, CliToolExecutor>,
+) {
+    let child_sessions = runtime.tool_executor_mut().take_captured_child_sessions();
+    merge_child_sessions(runtime.session_mut(), child_sessions);
+}
+
+fn merge_child_sessions(session: &mut Session, child_sessions: Vec<runtime::ChildSession>) {
+    if child_sessions.is_empty() {
+        return;
+    }
+    session.child_sessions.extend(child_sessions);
 }
 
 pub(crate) fn final_assistant_text(summary: &runtime::TurnSummary) -> String {
@@ -1466,5 +1485,24 @@ mod tests {
         };
 
         assert_eq!(final_assistant_text(&summary), "hello world");
+    }
+
+    #[test]
+    fn merge_child_sessions_extends_session() {
+        let mut session = Session::new();
+
+        merge_child_sessions(
+            &mut session,
+            vec![runtime::ChildSession {
+                id: "child-1".to_string(),
+                goal: "scrape prices".to_string(),
+                messages: vec![ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "done".to_string(),
+                }])],
+            }],
+        );
+
+        assert_eq!(session.child_sessions.len(), 1);
+        assert_eq!(session.child_sessions[0].id, "child-1");
     }
 }

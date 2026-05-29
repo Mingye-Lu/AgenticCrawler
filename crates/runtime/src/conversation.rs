@@ -220,6 +220,9 @@ where
                     .collect::<Vec<_>>();
 
                 self.session.messages.push(assistant_message.clone());
+                if let Some(ref mut observer) = self.observer {
+                    observer.on_message_completed(&assistant_message);
+                }
                 assistant_messages.push(assistant_message);
 
                 if pending_tool_uses.is_empty() {
@@ -626,6 +629,9 @@ fn notify_observer_tool_result(
             observer.on_tool_result(tool_name, output, *is_error);
         }
     }
+    // Also emit MessageCompleted so the TUI can track tool-result messages
+    // for pairing with ToolUse blocks in historical rendering.
+    observer.on_message_completed(result_message);
 }
 
 fn notify_observer_turn_finished(
@@ -993,6 +999,7 @@ mod tests {
                     text: "done".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
         let config = CompactionConfig {
             llm_summarization: false,
@@ -1045,6 +1052,7 @@ mod tests {
                     text: "four".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let mut runtime = ConversationRuntime::new(

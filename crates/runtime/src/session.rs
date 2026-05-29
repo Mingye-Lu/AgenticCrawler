@@ -9,11 +9,19 @@ use crate::json::{JsonError, JsonValue};
 pub use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole, TokenUsage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildSession {
+    pub id: String,
+    pub goal: String,
+    pub messages: Vec<ConversationMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub version: u32,
     pub model: Option<String>,
     pub title: Option<String>,
     pub messages: Vec<ConversationMessage>,
+    pub child_sessions: Vec<ChildSession>,
 }
 
 #[derive(Debug)]
@@ -51,10 +59,11 @@ impl Session {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            version: 1,
+            version: 2,
             model: None,
             title: None,
             messages: Vec::new(),
+            child_sessions: Vec::new(),
         }
     }
 
@@ -102,6 +111,15 @@ impl Session {
                     .collect(),
             ),
         );
+        object.insert(
+            "child_sessions".to_string(),
+            JsonValue::Array(
+                self.child_sessions
+                    .iter()
+                    .map(child_session_to_json)
+                    .collect(),
+            ),
+        );
         JsonValue::Object(object)
     }
 
@@ -115,7 +133,7 @@ impl Session {
             .ok_or_else(|| SessionError::Format("missing version".to_string()))?;
         let version = u32::try_from(version)
             .map_err(|_| SessionError::Format("version out of range".to_string()))?;
-        if version != 1 {
+        if version != 1 && version != 2 {
             return Err(SessionError::Format(format!(
                 "unsupported session version {version}"
             )));
@@ -135,11 +153,22 @@ impl Session {
             .iter()
             .map(conversation_message_from_json)
             .collect::<Result<Vec<_>, _>>()?;
+        let child_sessions = object
+            .get("child_sessions")
+            .and_then(JsonValue::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .map(child_session_from_json)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
-            version,
+            version: 2,
             model,
             title,
             messages,
+            child_sessions,
         })
     }
 }
@@ -343,9 +372,42 @@ fn required_u32(object: &BTreeMap<String, JsonValue>, key: &str) -> Result<u32, 
     u32::try_from(value).map_err(|_| SessionError::Format(format!("{key} out of range")))
 }
 
+fn child_session_to_json(child: &ChildSession) -> JsonValue {
+    let mut object = BTreeMap::new();
+    object.insert("id".to_string(), JsonValue::String(child.id.clone()));
+    object.insert("goal".to_string(), JsonValue::String(child.goal.clone()));
+    object.insert(
+        "messages".to_string(),
+        JsonValue::Array(
+            child
+                .messages
+                .iter()
+                .map(conversation_message_to_json)
+                .collect(),
+        ),
+    );
+    JsonValue::Object(object)
+}
+
+fn child_session_from_json(value: &JsonValue) -> Result<ChildSession, SessionError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| SessionError::Format("child_session must be an object".to_string()))?;
+    let id = required_string(object, "id")?;
+    let goal = required_string(object, "goal")?;
+    let messages = object
+        .get("messages")
+        .and_then(JsonValue::as_array)
+        .ok_or_else(|| SessionError::Format("missing messages in child_session".to_string()))?
+        .iter()
+        .map(conversation_message_from_json)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ChildSession { id, goal, messages })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ContentBlock, ConversationMessage, MessageRole, Session};
+    use super::{ChildSession, ContentBlock, ConversationMessage, MessageRole, Session};
     use crate::usage::TokenUsage;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -430,5 +492,37 @@ mod tests {
         let error = Session::from_json(&value).expect_err("version should be rejected");
 
         assert!(error.to_string().contains("unsupported session version"));
+    }
+
+    #[test]
+    fn v1_session_loads_with_empty_child_sessions() {
+        let json =
+            crate::json::JsonValue::parse(r#"{"version":1,"messages":[]}"#).expect("valid json");
+        let session = Session::from_json(&json).expect("v1 session should load");
+        assert!(session.child_sessions.is_empty());
+    }
+
+    #[test]
+    fn v2_session_roundtrips_child_sessions() {
+        let mut session = Session::new();
+        session
+            .messages
+            .push(ConversationMessage::user_text("hello"));
+
+        let child = ChildSession {
+            id: "child-1".to_string(),
+            goal: "scrape titles".to_string(),
+            messages: vec![ConversationMessage::user_text("child goal")],
+        };
+        session.child_sessions.push(child);
+
+        let json = session.to_json();
+        let restored = Session::from_json(&json).expect("v2 session should roundtrip");
+
+        assert_eq!(restored, session);
+        assert_eq!(restored.child_sessions.len(), 1);
+        assert_eq!(restored.child_sessions[0].id, "child-1");
+        assert_eq!(restored.child_sessions[0].goal, "scrape titles");
+        assert_eq!(restored.child_sessions[0].messages.len(), 1);
     }
 }

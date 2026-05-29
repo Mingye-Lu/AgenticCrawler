@@ -57,6 +57,15 @@ impl CliToolExecutor {
     pub(crate) async fn export_current_state(&mut self) -> Option<BrowserState> {
         self.agent.export_browser_state().await
     }
+
+    pub(crate) fn take_captured_child_sessions(&mut self) -> Vec<runtime::ChildSession> {
+        self.agent.take_captured_child_sessions()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push_captured_child_session_for_test(&mut self, session: runtime::ChildSession) {
+        self.agent.push_captured_child_session_for_test(session);
+    }
 }
 
 impl ToolExecutor for CliToolExecutor {

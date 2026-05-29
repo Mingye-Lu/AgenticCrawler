@@ -1,10 +1,33 @@
+use acrawl_core::message::{ContentBlock, MessageRole};
 use agent::ChildEventKind;
+use ratatui::text::Line;
 use ratatui::widgets::ListState;
+use render::markdown::{drain_safe_boundary, render_lines};
+use render::tool_format::tool_input_summary;
+use runtime::ChildSession;
 
-use super::repl_app::{ToolCallStatus, TranscriptEntry};
-use crate::markdown::{drain_safe_boundary, render_lines};
+use super::repl_app::ToolCallStatus;
 
 const MAX_ENTRIES: usize = 1000;
+
+#[allow(dead_code)]
+#[derive(Clone)]
+pub(super) enum TranscriptEntry {
+    System(String),
+    Status(String),
+    User(String),
+    Parent(String),
+    Stream(Line<'static>),
+    SystemCard {
+        title: String,
+        rows: Vec<(String, String)>,
+    },
+    ToolCall {
+        name: String,
+        input_summary: String,
+        status: ToolCallStatus,
+    },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChildTabStatus {
@@ -31,6 +54,7 @@ pub struct ChildTabState {
 }
 
 impl ChildTabState {
+    #[must_use]
     pub fn new(child_id: String, sub_goal: String) -> Self {
         let entries = vec![TranscriptEntry::Parent(sub_goal)];
         Self {
@@ -230,20 +254,113 @@ impl ChildTabPanel {
         }
     }
 
+    #[must_use]
     pub fn active_tab_is_paused(&self) -> bool {
         self.tabs
             .get(self.active_tab)
             .is_some_and(|t| matches!(t.status, ChildTabStatus::Paused { .. }))
     }
 
+    #[must_use]
     pub fn active_child_id(&self) -> Option<&str> {
         self.tabs.get(self.active_tab).map(|t| t.child_id.as_str())
     }
 }
 
+/// Restore a `ChildTabPanel` from persisted child sessions.
+/// All restored children are marked `Done` since they completed in a prior session.
+#[must_use]
+pub fn hydrate_from_child_sessions(sessions: &[ChildSession]) -> ChildTabPanel {
+    let mut panel = ChildTabPanel::default();
+    for child in sessions {
+        let mut tab = ChildTabState::new(child.id.clone(), child.goal.clone());
+        tab.status = ChildTabStatus::Done;
+
+        for message in &child.messages {
+            match message.role {
+                MessageRole::User => {
+                    for block in &message.blocks {
+                        if let ContentBlock::Text { text } = block {
+                            tab.entries.push(TranscriptEntry::Parent(text.clone()));
+                        }
+                    }
+                }
+                MessageRole::Assistant => {
+                    for block in &message.blocks {
+                        match block {
+                            ContentBlock::Text { text } => {
+                                for line in render_lines(text) {
+                                    tab.entries.push(TranscriptEntry::Stream(line));
+                                }
+                            }
+                            ContentBlock::ToolUse { name, input, .. } => {
+                                tab.entries.push(TranscriptEntry::ToolCall {
+                                    name: name.clone(),
+                                    input_summary: tool_input_summary(name, input),
+                                    status: ToolCallStatus::Success {
+                                        output: String::new(),
+                                    },
+                                });
+                            }
+                            ContentBlock::ToolResult { .. } | ContentBlock::Reasoning { .. } => {}
+                        }
+                    }
+                }
+                MessageRole::System | MessageRole::Tool => {}
+            }
+        }
+
+        panel.tabs.push(tab);
+    }
+    panel
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use acrawl_core::message::ConversationMessage;
+
+    #[test]
+    fn child_tabs_restored_from_session_fixture() {
+        let sessions = vec![
+            ChildSession {
+                id: "c1".to_string(),
+                goal: "scrape prices".to_string(),
+                messages: vec![
+                    ConversationMessage::user_text("scrape"),
+                    ConversationMessage::assistant(vec![ContentBlock::Text {
+                        text: "Found prices".to_string(),
+                    }]),
+                ],
+            },
+            ChildSession {
+                id: "c2".to_string(),
+                goal: "fetch reviews".to_string(),
+                messages: vec![ConversationMessage::user_text("fetch")],
+            },
+        ];
+
+        let panel = hydrate_from_child_sessions(&sessions);
+
+        assert_eq!(panel.tabs.len(), 2);
+        assert_eq!(panel.tabs[0].child_id, "c1");
+        assert_eq!(panel.tabs[1].child_id, "c2");
+        assert_eq!(panel.tabs[0].status, ChildTabStatus::Done);
+        assert_eq!(panel.tabs[1].status, ChildTabStatus::Done);
+        assert!(panel.tabs[0].entries.len() > 2);
+        assert!(panel.tabs[0]
+            .entries
+            .iter()
+            .any(|e| matches!(e, TranscriptEntry::Parent(text) if text == "scrape")));
+        assert!(panel.tabs[1]
+            .entries
+            .iter()
+            .any(|e| matches!(e, TranscriptEntry::Parent(text) if text == "fetch")));
+        assert!(panel.tabs[0]
+            .entries
+            .iter()
+            .any(|e| matches!(e, TranscriptEntry::Stream(_))));
+    }
 
     #[test]
     fn child_tab_panel_event_state_transitions() {

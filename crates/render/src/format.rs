@@ -386,7 +386,8 @@ mod tests {
         assert!(help.contains("/help"));
         assert!(help.contains("/status"));
         assert!(help.contains("/model [model]"));
-        assert!(help.contains("/clear [--confirm]"));
+        assert!(help.contains("/clear"));
+        assert!(!help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
         assert!(help.contains("/config [model]"));
         assert!(help.contains("/debug"));
@@ -448,6 +449,7 @@ mod tests {
                     usage: None,
                 },
             ],
+            child_sessions: Vec::new(),
         };
         let exported = render_export_text(&session);
         assert!(exported.contains("# Conversation Export"));
@@ -471,6 +473,7 @@ mod tests {
                 }],
                 usage: None,
             }],
+            child_sessions: Vec::new(),
         };
         let filename = default_export_filename(&session);
         assert!(Path::new(&filename)
@@ -487,6 +490,7 @@ mod tests {
             model: None,
             title: None,
             messages: vec![],
+            child_sessions: Vec::new(),
         };
         let filename = default_export_filename(&session);
         assert_eq!(filename, "conversation.txt");

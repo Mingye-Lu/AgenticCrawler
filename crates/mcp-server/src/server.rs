@@ -1062,6 +1062,7 @@ mod tests {
                 summary: "Finished crawl".to_string(),
                 extracted_data: vec![json!({"title": "Example"})],
                 steps_executed: 3,
+                messages: Vec::new(),
             }),
         };
 

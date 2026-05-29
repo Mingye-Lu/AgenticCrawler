@@ -10,7 +10,7 @@ use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetFor
 use crossterm::terminal::{Clear, ClearType};
 use crossterm::{execute, queue};
 
-use runtime::{RuntimeObserver, TokenUsage};
+use runtime::{ConversationMessage, RuntimeObserver, TokenUsage};
 
 use crate::markdown::{MarkdownStreamState, TerminalRenderer};
 use crate::tool_format::{
@@ -28,6 +28,7 @@ pub trait OutputSink: Send {
     fn on_turn_finished(&mut self, result: &Result<(), String>);
     fn on_pause_started(&mut self, _reason: &str) {}
     fn on_pause_ended(&mut self) {}
+    fn on_message_completed(&mut self, _msg: &ConversationMessage) {}
 }
 
 pub struct StdoutSink {
@@ -455,6 +456,10 @@ impl RuntimeObserver for Box<dyn OutputSink + Send + '_> {
 
     fn on_pause_ended(&mut self) {
         (**self).on_pause_ended();
+    }
+
+    fn on_message_completed(&mut self, msg: &runtime::ConversationMessage) {
+        (**self).on_message_completed(msg);
     }
 }
 

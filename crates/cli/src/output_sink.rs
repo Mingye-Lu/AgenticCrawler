@@ -3,6 +3,7 @@
 use std::sync::mpsc;
 
 use render::sink::OutputSink;
+use runtime::ConversationMessage;
 
 #[cfg(feature = "tui-crate-context")]
 use crate::events::ReplTuiEvent;
@@ -55,6 +56,10 @@ impl OutputSink for ChannelSink {
 
     fn on_pause_ended(&mut self) {
         let _ = self.tx.send(ReplTuiEvent::PauseEnded);
+    }
+
+    fn on_message_completed(&mut self, msg: &ConversationMessage) {
+        let _ = self.tx.send(ReplTuiEvent::MessageCompleted(msg.clone()));
     }
 }
 

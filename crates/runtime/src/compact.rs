@@ -228,6 +228,7 @@ pub fn compact_session(session: &Session, config: CompactionConfig) -> Compactio
             model: session.model.clone(),
             title: session.title.clone(),
             messages: compacted_messages,
+            child_sessions: session.child_sessions.clone(),
         },
         removed_message_count: removed.len(),
     }
@@ -671,6 +672,7 @@ mod tests {
             model: None,
             title: None,
             messages: vec![ConversationMessage::user_text("hello")],
+            child_sessions: Vec::new(),
         };
 
         let result = compact_session(&session, CompactionConfig::default());
@@ -700,6 +702,7 @@ mod tests {
                     usage: None,
                 },
             ],
+            child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -799,6 +802,7 @@ mod tests {
                     text: "done".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -851,6 +855,7 @@ mod tests {
                     text: "final".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -915,6 +920,7 @@ mod tests {
             model: None,
             title: None,
             messages: vec![],
+            child_sessions: Vec::new(),
         };
         assert_eq!(super::compacted_summary_prefix_len(&session), 0);
     }
@@ -1085,6 +1091,7 @@ mod tests {
                     text: "done".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1137,6 +1144,7 @@ mod tests {
                     text: "done".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1184,6 +1192,7 @@ mod tests {
                 }]),
                 ConversationMessage::user_text(&large),
             ],
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1224,6 +1233,7 @@ mod tests {
                 }]),
                 ConversationMessage::user_text(&large),
             ],
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1255,6 +1265,7 @@ mod tests {
                 ConversationMessage::user_text(&text),
                 ConversationMessage::assistant(vec![ContentBlock::Text { text: text.clone() }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1292,6 +1303,7 @@ mod tests {
                     text: "done".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1337,6 +1349,7 @@ mod tests {
                     text: "recent".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let result = compact_session(
@@ -1430,6 +1443,7 @@ mod tests {
             model: Some("claude-sonnet-4-6".to_string()),
             title: Some("QA Test 1".to_string()),
             messages,
+            child_sessions: Vec::new(),
         };
 
         let config = CompactionConfig {
@@ -1521,6 +1535,7 @@ mod tests {
                     text: "Here are the titles extracted.".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         let result1 = compact_session(&session1, config);
@@ -1633,6 +1648,7 @@ mod tests {
             model: None,
             title: None,
             messages,
+            child_sessions: Vec::new(),
         };
 
         // Budget of ~15K tokens (15000 * 4 chars ≈ 60K chars budget)
@@ -1767,6 +1783,7 @@ mod tests {
                     text: "All extracted.".to_string(),
                 }]),
             ],
+            child_sessions: Vec::new(),
         };
 
         // Config 1: small preservation window

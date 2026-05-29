@@ -208,7 +208,6 @@ impl CrawlerAgent {
                 .run(&child_objective, child_api_client)
                 .await
                 .ok()
-                .map(|crawl_result| crawl_result.extracted_data)
         });
         self.child_tasks.insert(
             child_id.clone(),
@@ -285,7 +284,8 @@ impl CrawlerAgent {
             }
 
             match tokio::time::timeout(remaining, &mut handle).await {
-                Ok(Ok(Some(items))) => {
+                Ok(Ok(Some(crawl_result))) => {
+                    let items = crawl_result.extracted_data;
                     let item_count = items.len();
                     finished_entries.push(finished_snapshot(
                         &child_id, &sub_goal, true, item_count, None,
@@ -297,9 +297,16 @@ impl CrawlerAgent {
                     });
                     self.crawl_state.child_blocks.push(ChildBlock {
                         child_id: child_id.clone(),
-                        sub_goal,
+                        sub_goal: sub_goal.clone(),
                         items,
                     });
+                    self.crawl_state
+                        .captured_child_sessions
+                        .push(runtime::ChildSession {
+                            id: child_id.clone(),
+                            goal: sub_goal,
+                            messages: crawl_result.messages,
+                        });
                     self.cleanup_finished(&child_id).await;
                 }
                 Ok(Ok(None)) => {
@@ -325,9 +332,16 @@ impl CrawlerAgent {
                     });
                     self.crawl_state.child_blocks.push(ChildBlock {
                         child_id: child_id.clone(),
-                        sub_goal,
+                        sub_goal: sub_goal.clone(),
                         items: Vec::new(),
                     });
+                    self.crawl_state
+                        .captured_child_sessions
+                        .push(runtime::ChildSession {
+                            id: child_id.clone(),
+                            goal: sub_goal,
+                            messages: Vec::new(),
+                        });
                     self.cleanup_finished(&child_id).await;
                 }
                 Ok(Err(error)) => {
@@ -346,9 +360,16 @@ impl CrawlerAgent {
                     });
                     self.crawl_state.child_blocks.push(ChildBlock {
                         child_id: child_id.clone(),
-                        sub_goal,
+                        sub_goal: sub_goal.clone(),
                         items: Vec::new(),
                     });
+                    self.crawl_state
+                        .captured_child_sessions
+                        .push(runtime::ChildSession {
+                            id: child_id.clone(),
+                            goal: sub_goal,
+                            messages: Vec::new(),
+                        });
                     self.cleanup_finished(&child_id).await;
                 }
                 Err(_) => {
@@ -423,6 +444,13 @@ impl CrawlerAgent {
                         sub_goal: sub_goal.clone(),
                         items: Vec::new(),
                     });
+                    self.crawl_state
+                        .captured_child_sessions
+                        .push(runtime::ChildSession {
+                            id: child_id.clone(),
+                            goal: sub_goal.clone(),
+                            messages: Vec::new(),
+                        });
                     cancelled.push(serde_json::json!({
                         "child_id": child_id,
                         "sub_goal": sub_goal,
@@ -543,7 +571,14 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use crate::BrowserBackend;
+    use crate::{BrowserBackend, CrawlResult};
+
+    fn crawl_result_with(items: Vec<Value>) -> CrawlResult {
+        CrawlResult {
+            extracted_data: items,
+            ..Default::default()
+        }
+    }
 
     struct TextOnlyApiClient;
 
@@ -775,7 +810,7 @@ mod tests {
         manager.lock().await.register_root("test-agent");
 
         let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
-        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async { None });
+        let handle: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async { None });
         agent
             .child_tasks
             .insert("child-1".to_string(), ("search".to_string(), handle, None));
@@ -797,10 +832,16 @@ mod tests {
         manager.lock().await.register_root("test-agent");
 
         let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
-        let handle1: tokio::task::JoinHandle<Option<Vec<Value>>> =
-            tokio::spawn(async { Some(vec![serde_json::json!({"from": "child-1"})]) });
-        let handle2: tokio::task::JoinHandle<Option<Vec<Value>>> =
-            tokio::spawn(async { Some(vec![serde_json::json!({"from": "child-2"})]) });
+        let handle1: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async {
+            Some(crawl_result_with(vec![
+                serde_json::json!({"from": "child-1"}),
+            ]))
+        });
+        let handle2: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async {
+            Some(crawl_result_with(vec![
+                serde_json::json!({"from": "child-2"}),
+            ]))
+        });
         agent
             .child_tasks
             .insert("child-1".to_string(), ("goal-1".to_string(), handle1, None));
@@ -828,8 +869,8 @@ mod tests {
     #[tokio::test]
     async fn test_wait_with_nonexistent_ids_returns_empty_snapshot() {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
-            tokio::spawn(async { Some(vec![serde_json::json!({"data": 1})]) });
+        let handle: tokio::task::JoinHandle<Option<CrawlResult>> =
+            tokio::spawn(async { Some(crawl_result_with(vec![serde_json::json!({"data": 1})])) });
         agent
             .child_tasks
             .insert("real-child".to_string(), ("goal".to_string(), handle, None));
@@ -855,13 +896,13 @@ mod tests {
         manager.lock().await.register_root("test-agent");
 
         let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
-        let handle1: tokio::task::JoinHandle<Option<Vec<Value>>> =
-            tokio::spawn(async { Some(vec![serde_json::json!({"a": 1})]) });
-        let handle2: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
-            Some(vec![
+        let handle1: tokio::task::JoinHandle<Option<CrawlResult>> =
+            tokio::spawn(async { Some(crawl_result_with(vec![serde_json::json!({"a": 1})])) });
+        let handle2: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async {
+            Some(crawl_result_with(vec![
                 serde_json::json!({"b": 2}),
                 serde_json::json!({"c": 3}),
-            ])
+            ]))
         });
         agent
             .child_tasks
@@ -898,8 +939,8 @@ mod tests {
         let mut agent = CrawlerAgent::new_for_testing(mock_registry())
             .with_agent_manager(manager)
             .with_child_event_sender(tx);
-        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> =
-            tokio::spawn(async { Some(vec![serde_json::json!({"a": 1})]) });
+        let handle: tokio::task::JoinHandle<Option<CrawlResult>> =
+            tokio::spawn(async { Some(crawl_result_with(vec![serde_json::json!({"a": 1})])) });
         agent
             .child_tasks
             .insert("child-1".to_string(), ("goal-1".to_string(), handle, None));
@@ -938,9 +979,9 @@ mod tests {
             .with_agent_manager(manager)
             .with_child_event_sender(tx)
             .with_child_control_registry(registry.clone());
-        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
+        let handle: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            Some(Vec::new())
+            Some(crawl_result_with(Vec::new()))
         });
         agent
             .child_tasks
@@ -992,9 +1033,9 @@ mod tests {
             .with_agent_manager(manager)
             .with_child_event_sender(tx)
             .with_child_control_registry(registry.clone());
-        let handle: tokio::task::JoinHandle<Option<Vec<Value>>> = tokio::spawn(async {
+        let handle: tokio::task::JoinHandle<Option<CrawlResult>> = tokio::spawn(async {
             tokio::time::sleep(Duration::from_mins(1)).await;
-            Some(Vec::new())
+            Some(crawl_result_with(Vec::new()))
         });
         agent
             .child_tasks
@@ -1110,5 +1151,47 @@ mod tests {
             6,
             "next_child_id must produce unique IDs even after drains: {ids:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn fork_captures_child_session() {
+        let manager = super::super::default_agent_manager();
+        manager.lock().await.register_root("test-agent");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry()).with_agent_manager(manager);
+
+        // Simulate a child that returns a CrawlResult with messages
+        let child_messages = vec![runtime::ConversationMessage {
+            role: runtime::MessageRole::Assistant,
+            blocks: vec![acrawl_core::ContentBlock::Text {
+                text: "Child output".to_string(),
+            }],
+            usage: None,
+        }];
+        let child_result = CrawlResult {
+            summary: "done".to_string(),
+            extracted_data: vec![serde_json::json!({"key": "value"})],
+            steps_executed: 1,
+            messages: child_messages.clone(),
+        };
+        let handle: tokio::task::JoinHandle<Option<CrawlResult>> =
+            tokio::spawn(async move { Some(child_result) });
+        agent.child_tasks.insert(
+            "child-1".to_string(),
+            ("test goal".to_string(), handle, None),
+        );
+
+        let _result = agent
+            .handle_wait_effect(WaitSpec { child_ids: None })
+            .await
+            .unwrap();
+
+        // Verify the child session was captured
+        assert_eq!(agent.crawl_state.captured_child_sessions.len(), 1);
+        let captured = &agent.crawl_state.captured_child_sessions[0];
+        assert_eq!(captured.id, "child-1");
+        assert_eq!(captured.goal, "test goal");
+        assert_eq!(captured.messages.len(), 1);
+        assert_eq!(captured.messages[0].role, runtime::MessageRole::Assistant);
     }
 }
