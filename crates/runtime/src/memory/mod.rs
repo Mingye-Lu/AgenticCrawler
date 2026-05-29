@@ -1,3 +1,6 @@
+pub mod evidence;
+pub use evidence::{AccessEvidence, AccessStatus, DomainEvidence, EvidenceStore, TaskEvidence};
+
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::fs;

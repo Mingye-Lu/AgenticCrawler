@@ -38,7 +38,10 @@ pub use mcp::{
     JsonRpcError, JsonRpcId, JsonRpcResponse, ManagedMcpTool, McpServerManagerError,
     McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
-pub use memory::{EpisodeStore, MemoryEpisode, MemoryEpisodeResult, MemoryError};
+pub use memory::{
+    AccessEvidence, AccessStatus, DomainEvidence, EpisodeStore, EvidenceStore, MemoryEpisode,
+    MemoryEpisodeResult, MemoryError, TaskEvidence,
+};
 pub use observer::RuntimeObserver;
 pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};
 pub use session::{
