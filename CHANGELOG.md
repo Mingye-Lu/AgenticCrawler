@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-05-29
+
+### Changed
+
+- **TUI renders directly from `ConversationMessage`** — the transcript view no longer converts messages to an intermediate `TranscriptEntry` representation. The parent view now renders assistant text, tool calls, and user messages directly from the persisted message model, improving consistency between what is displayed and what is saved.
+- **Session schema v2 with `child_sessions`** — sessions now persist sub-agent (child) tabs alongside the main conversation. On session load, child tabs are restored with their full transcript history.
+- **`/clear` simplified** — removed the `--confirm` flag. Clearing now also resets child tab state and uses lazy session persistence (empty sessions are not written to disk).
+
+### Added
+
+- **Child tab persistence and restoration** — forked sub-agent sessions are captured on completion and stored in the session file. Switching sessions or resuming restores child tabs with their original transcript.
+- **Tool result pairing** — a `build_tool_result_index` utility maps `tool_use_id` to tool outcomes, enabling correct historical rendering of completed tool calls (previously displayed as "interrupted" after turn end).
+
+### Fixed
+
+- **Child tab view no longer renders blank** — `draw_child_view` previously passed empty data to the renderer; it now renders from the child tab's actual transcript entries.
+- **Tool calls no longer show as "interrupted" after turn completes** — tool-result messages are now propagated to TUI state, allowing the result index to pair them with their corresponding tool-use blocks.
+- **`/clear` no longer leaves stale child tabs** — clearing a session resets the child tab panel and returns to the parent view.
+- **Session schema migration** — v1 sessions are normalized to v2 on load, preventing ambiguous hybrid files on re-save.
+- **`--resume /clear` no longer writes empty session files** — the resumed file is deleted instead of being overwritten with an empty session, matching the lazy-persistence design.
+
 ## [0.7.2] - 2026-05-28
 
 ### Fixed
@@ -464,6 +485,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.3
 [0.7.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.0
