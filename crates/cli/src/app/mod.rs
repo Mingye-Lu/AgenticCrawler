@@ -360,6 +360,7 @@ impl LiveCli {
         let result = block_on_runtime_future(self.runtime.run_turn(input));
         let finish: Result<(), String> = match &result {
             Ok(summary) => {
+                self.capture_child_sessions();
                 if let Some(ev) = summary.auto_compaction {
                     let msg = format_auto_compaction_notice(ev.removed_message_count);
                     if let Some(tx) = self.event_sender() {
@@ -388,6 +389,7 @@ impl LiveCli {
         let result = block_on_runtime_future(self.runtime.run_turn(input));
         match result {
             Ok(summary) => {
+                self.capture_child_sessions();
                 spinner.finish(
                     "✨ Done",
                     TerminalRenderer::new().color_theme(),
@@ -437,6 +439,7 @@ impl LiveCli {
             self.output_mode.observer(),
         )?;
         let summary = block_on_runtime_future(runtime.run_turn(input))?;
+        capture_child_sessions_into_session(&mut runtime);
         self.runtime = runtime;
         self.persist_session()?;
         println!(
@@ -591,6 +594,10 @@ impl LiveCli {
         }
         self.runtime.session().save_to_path(&self.session.path)?;
         Ok(())
+    }
+
+    fn capture_child_sessions(&mut self) {
+        capture_child_sessions_into_session(&mut self.runtime);
     }
 
     fn maybe_dispatch_title_generation(&mut self, user_input: &str) {
@@ -1001,6 +1008,20 @@ impl LiveCli {
             persist_after: false,
         })
     }
+}
+
+fn capture_child_sessions_into_session(
+    runtime: &mut ConversationRuntime<LlmRuntimeClient, CliToolExecutor>,
+) {
+    let child_sessions = runtime.tool_executor_mut().take_captured_child_sessions();
+    merge_child_sessions(runtime.session_mut(), child_sessions);
+}
+
+fn merge_child_sessions(session: &mut Session, child_sessions: Vec<runtime::ChildSession>) {
+    if child_sessions.is_empty() {
+        return;
+    }
+    session.child_sessions.extend(child_sessions);
 }
 
 pub(crate) fn final_assistant_text(summary: &runtime::TurnSummary) -> String {
@@ -1474,5 +1495,24 @@ mod tests {
         };
 
         assert_eq!(final_assistant_text(&summary), "hello world");
+    }
+
+    #[test]
+    fn merge_child_sessions_extends_session() {
+        let mut session = Session::new();
+
+        merge_child_sessions(
+            &mut session,
+            vec![runtime::ChildSession {
+                id: "child-1".to_string(),
+                goal: "scrape prices".to_string(),
+                messages: vec![ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: "done".to_string(),
+                }])],
+            }],
+        );
+
+        assert_eq!(session.child_sessions.len(), 1);
+        assert_eq!(session.child_sessions[0].id, "child-1");
     }
 }

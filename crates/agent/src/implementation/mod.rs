@@ -119,6 +119,15 @@ pub struct CrawlerAgent {
 
 impl CrawlerAgent {
     #[must_use]
+    pub fn take_captured_child_sessions(&mut self) -> Vec<runtime::ChildSession> {
+        std::mem::take(&mut self.crawl_state.captured_child_sessions)
+    }
+
+    pub fn push_captured_child_session_for_test(&mut self, session: runtime::ChildSession) {
+        self.crawl_state.captured_child_sessions.push(session);
+    }
+
+    #[must_use]
     pub fn new(browser: BrowserContext, registry: ToolRegistry) -> Self {
         Self {
             shared_bridge: Some(browser.bridge().clone()),

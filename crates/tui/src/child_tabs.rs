@@ -1,10 +1,12 @@
+use acrawl_core::message::{ContentBlock, MessageRole};
 use agent::ChildEventKind;
 use ratatui::text::Line;
 use ratatui::widgets::ListState;
+use render::markdown::{drain_safe_boundary, render_lines};
+use render::tool_format::tool_input_summary;
 use runtime::ChildSession;
 
 use super::repl_app::ToolCallStatus;
-use crate::markdown::{drain_safe_boundary, render_lines};
 
 const MAX_ENTRIES: usize = 1000;
 
@@ -273,10 +275,41 @@ pub fn hydrate_from_child_sessions(sessions: &[ChildSession]) -> ChildTabPanel {
     for child in sessions {
         let mut tab = ChildTabState::new(child.id.clone(), child.goal.clone());
         tab.status = ChildTabStatus::Done;
-        tab.entries.push(TranscriptEntry::System(format!(
-            "Restored from session ({} messages)",
-            child.messages.len()
-        )));
+
+        for message in &child.messages {
+            match message.role {
+                MessageRole::User => {
+                    for block in &message.blocks {
+                        if let ContentBlock::Text { text } = block {
+                            tab.entries.push(TranscriptEntry::Parent(text.clone()));
+                        }
+                    }
+                }
+                MessageRole::Assistant => {
+                    for block in &message.blocks {
+                        match block {
+                            ContentBlock::Text { text } => {
+                                for line in render_lines(text) {
+                                    tab.entries.push(TranscriptEntry::Stream(line));
+                                }
+                            }
+                            ContentBlock::ToolUse { name, input, .. } => {
+                                tab.entries.push(TranscriptEntry::ToolCall {
+                                    name: name.clone(),
+                                    input_summary: tool_input_summary(name, input),
+                                    status: ToolCallStatus::Success {
+                                        output: String::new(),
+                                    },
+                                });
+                            }
+                            ContentBlock::ToolResult { .. } | ContentBlock::Reasoning { .. } => {}
+                        }
+                    }
+                }
+                MessageRole::System | MessageRole::Tool => {}
+            }
+        }
+
         panel.tabs.push(tab);
     }
     panel
@@ -295,7 +328,9 @@ mod tests {
                 goal: "scrape prices".to_string(),
                 messages: vec![
                     ConversationMessage::user_text("scrape"),
-                    ConversationMessage::assistant(vec![]),
+                    ConversationMessage::assistant(vec![ContentBlock::Text {
+                        text: "Found prices".to_string(),
+                    }]),
                 ],
             },
             ChildSession {
@@ -312,14 +347,19 @@ mod tests {
         assert_eq!(panel.tabs[1].child_id, "c2");
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Done);
         assert_eq!(panel.tabs[1].status, ChildTabStatus::Done);
+        assert!(panel.tabs[0].entries.len() > 2);
         assert!(panel.tabs[0]
             .entries
             .iter()
-            .any(|e| matches!(e, TranscriptEntry::System(msg) if msg.contains("2 messages"))));
+            .any(|e| matches!(e, TranscriptEntry::Parent(text) if text == "scrape")));
         assert!(panel.tabs[1]
             .entries
             .iter()
-            .any(|e| matches!(e, TranscriptEntry::System(msg) if msg.contains("1 messages"))));
+            .any(|e| matches!(e, TranscriptEntry::Parent(text) if text == "fetch")));
+        assert!(panel.tabs[0]
+            .entries
+            .iter()
+            .any(|e| matches!(e, TranscriptEntry::Stream(_))));
     }
 
     #[test]
