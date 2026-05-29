@@ -39,7 +39,8 @@ pub use mcp::{
     McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
 pub use memory::{
-    build_memory_episode, AccessEvidence, AccessStatus, DomainEvidence, EpisodeStore,
+    aggregate_evidence_from_episodes, build_memory_episode, AccessEvidence, AccessStatus,
+    DomainEvidence, EpisodeStore, EvidenceAggregationConfig, EvidenceAggregationResult,
     EvidenceStore, MemoryContext, MemoryContextBudget, MemoryContextLoader, MemoryContextQuery,
     MemoryEpisode, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput, MemoryEpisodeResult,
     MemoryError, TaskEvidence,

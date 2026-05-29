@@ -1,11 +1,15 @@
 pub mod context;
 pub mod episode_builder;
 pub mod evidence;
+pub mod evidence_aggregator;
 pub use context::{MemoryContext, MemoryContextBudget, MemoryContextLoader, MemoryContextQuery};
 pub use episode_builder::{
     build_memory_episode, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput,
 };
 pub use evidence::{AccessEvidence, AccessStatus, DomainEvidence, EvidenceStore, TaskEvidence};
+pub use evidence_aggregator::{
+    aggregate_evidence_from_episodes, EvidenceAggregationConfig, EvidenceAggregationResult,
+};
 
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
