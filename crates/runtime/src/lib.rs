@@ -4,6 +4,7 @@ mod control;
 mod conversation;
 mod json;
 mod mcp;
+pub mod memory;
 pub mod observer;
 mod prompt;
 mod session;
@@ -37,6 +38,7 @@ pub use mcp::{
     JsonRpcError, JsonRpcId, JsonRpcResponse, ManagedMcpTool, McpServerManagerError,
     McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
+pub use memory::{EpisodeStore, MemoryEpisode, MemoryEpisodeResult, MemoryError};
 pub use observer::RuntimeObserver;
 pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};
 pub use session::{
