@@ -307,7 +307,7 @@ fn child_wait_for_human_pause_and_resume_via_registry() {
 
 #[test]
 fn repl_app_keeps_child_pause_auto_navigation_logic() {
-    let source = include_str!("../../tui/src/repl_app.rs");
+    let source = include_str!("../../tui/src/repl_app/event_loop.rs");
 
     assert!(source.contains("ChildEventKind::PauseRequested { .. }"));
     assert!(source.contains("matches!(self.view_mode, ViewMode::Parent)"));
