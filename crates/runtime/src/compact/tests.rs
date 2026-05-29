@@ -292,7 +292,7 @@ fn prune_tool_outputs_truncates_large_old_outputs() {
     let block = &messages[2].blocks[0];
     if let ContentBlock::ToolResult { output, .. } = block {
         assert!(
-            output.contains("[≈?output truncated from 10000 chars]"),
+            output.contains("[… output truncated from 10000 chars]"),
             "large old output should be truncated"
         );
         assert!(
