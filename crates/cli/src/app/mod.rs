@@ -633,6 +633,15 @@ impl LiveCli {
                 );
                 false
             }
+            SlashCommand::Memory {
+                action: MemoryAction::SkillPlan,
+            } => {
+                println!(
+                    "{}",
+                    memory_skill_plan_report(&EvidenceStore::default_for_config_home())
+                );
+                false
+            }
             SlashCommand::Unknown(name) => {
                 eprintln!("unknown slash command: /{name}");
                 false
@@ -1470,6 +1479,54 @@ pub(crate) fn memory_suggest_skills_report(evidence_store: &EvidenceStore) -> St
             "  - {kind} {} confidence={:.2} success={} failure={} reason={}",
             s.key, s.confidence, s.success_count, s.failure_count, s.reason,
         ));
+    }
+
+    lines.join("\n")
+}
+
+pub(crate) fn memory_skill_plan_report(evidence_store: &EvidenceStore) -> String {
+    let tasks = match evidence_store.load_all_task_evidence() {
+        Ok(t) => t,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let domains = match evidence_store.load_all_domain_evidence() {
+        Ok(d) => d,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+
+    let config = SkillSuggestionConfig::default();
+    let suggestions = suggest_skills_from_evidence(&tasks, &domains, config);
+
+    if suggestions.is_empty() {
+        return "Memory\n  Result           skipped\n  Suggestions      0\n\n(no skill plan)"
+            .to_string();
+    }
+
+    let count = suggestions.len();
+    let mut lines = vec![format!(
+        "Memory\n  Result           skill plan\n  Suggestions      {count}"
+    )];
+
+    lines.push(String::new());
+    lines.push("# Skill Update Plan".to_string());
+    lines.push(String::new());
+    lines.push("## Candidates".to_string());
+
+    for (i, s) in suggestions.iter().enumerate() {
+        let kind = match s.kind {
+            SkillSuggestionKind::Task => "task",
+            SkillSuggestionKind::Domain => "domain",
+        };
+        lines.push(String::new());
+        lines.push(format!("### {}. {}: {}", i + 1, kind, s.key));
+        lines.push(format!("- Confidence: {:.2}", s.confidence));
+        lines.push(format!("- Successes: {}", s.success_count));
+        lines.push(format!("- Failures: {}", s.failure_count));
+        lines.push(format!("- Reason: {}", s.reason));
+        lines.push(
+            "- Proposed action: Review whether an existing skill should document this workflow."
+                .to_string(),
+        );
     }
 
     lines.join("\n")
@@ -2627,6 +2684,131 @@ mod tests {
 
             let report = memory_suggest_skills_report(&store);
             assert!(report.contains("failed"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_skill_plan_no_suggestions_skips() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let report = memory_skill_plan_report(&store);
+            assert!(report.contains("skipped"), "report: {report}");
+            assert!(report.contains("Suggestions      0"), "report: {report}");
+            assert!(report.contains("(no skill plan)"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_skill_plan_with_task_evidence_renders_markdown() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let task = runtime::TaskEvidence {
+                task_class: "scrape-prices".to_string(),
+                successful_routes: vec![vec!["navigate".to_string()]],
+                tools: vec!["navigate".to_string(), "extract".to_string()],
+                output_fields: vec![],
+                success_count: 5,
+                failure_count: 1,
+                last_used_epoch_secs: 1,
+            };
+            store.save_task_evidence(&task).unwrap();
+
+            let report = memory_skill_plan_report(&store);
+            assert!(report.contains("skill plan"), "report: {report}");
+            assert!(report.contains("Suggestions      1"), "report: {report}");
+            assert!(report.contains("# Skill Update Plan"), "report: {report}");
+            assert!(report.contains("## Candidates"), "report: {report}");
+            assert!(
+                report.contains("### 1. task: scrape-prices"),
+                "report: {report}"
+            );
+            assert!(report.contains("Confidence: 0.83"), "report: {report}");
+            assert!(report.contains("Successes: 5"), "report: {report}");
+            assert!(report.contains("Failures: 1"), "report: {report}");
+            assert!(
+                report.contains("Proposed action: Review whether an existing skill should document this workflow."),
+                "report: {report}"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_skill_plan_with_domain_evidence() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let domain = runtime::DomainEvidence {
+                domain: "example.com".to_string(),
+                task_classes: vec!["scrape".to_string()],
+                successful_routes: vec![vec!["navigate".to_string()]],
+                field_hints: vec![],
+                success_count: 10,
+                failure_count: 0,
+                last_verified_epoch_secs: 1,
+            };
+            store.save_domain_evidence(&domain).unwrap();
+
+            let report = memory_skill_plan_report(&store);
+            assert!(report.contains("domain"), "report: {report}");
+            assert!(report.contains("example.com"), "report: {report}");
+            assert!(report.contains("###"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_skill_plan_bounded_to_ten() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            for i in 1..=12 {
+                store
+                    .save_task_evidence(&runtime::TaskEvidence {
+                        task_class: format!("task-{i:02}"),
+                        successful_routes: vec![vec!["navigate".to_string()]],
+                        tools: vec!["navigate".to_string()],
+                        output_fields: vec![],
+                        success_count: 5,
+                        failure_count: 0,
+                        last_used_epoch_secs: 1,
+                    })
+                    .unwrap();
+            }
+
+            let report = memory_skill_plan_report(&store);
+            assert!(report.contains("Suggestions      10"), "report: {report}");
+            assert!(report.contains("### 1."), "report: {report}");
+            assert!(report.contains("### 10."), "report: {report}");
+            assert!(!report.contains("### 11."), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_skill_plan_read_failure_reports_failed() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let tasks_dir = store.evidence_dir().join("tasks");
+            fs::create_dir_all(&tasks_dir).unwrap();
+            fs::write(tasks_dir.join("bad.json"), "not valid json").unwrap();
+
+            let report = memory_skill_plan_report(&store);
+            assert!(report.contains("failed"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_skill_plan_access_evidence_alone_produces_no_plan() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let access = runtime::AccessEvidence {
+                domain: "example.com".to_string(),
+                status: runtime::AccessStatus::LoggedInObserved,
+                extension_mode: false,
+                last_confirmed_epoch_secs: 1,
+                notes: None,
+            };
+            store.save_access_evidence(&access).unwrap();
+
+            let report = memory_skill_plan_report(&store);
+            assert!(report.contains("skipped"), "report: {report}");
+            assert!(report.contains("(no skill plan)"), "report: {report}");
         });
     }
 }
