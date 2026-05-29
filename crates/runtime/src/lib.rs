@@ -39,9 +39,10 @@ pub use mcp::{
     McpToolCallContent, McpToolCallParams, McpToolCallResult, UnsupportedMcpServer,
 };
 pub use memory::{
-    AccessEvidence, AccessStatus, DomainEvidence, EpisodeStore, EvidenceStore, MemoryContext,
-    MemoryContextBudget, MemoryContextLoader, MemoryContextQuery, MemoryEpisode,
-    MemoryEpisodeResult, MemoryError, TaskEvidence,
+    build_memory_episode, AccessEvidence, AccessStatus, DomainEvidence, EpisodeStore,
+    EvidenceStore, MemoryContext, MemoryContextBudget, MemoryContextLoader, MemoryContextQuery,
+    MemoryEpisode, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput, MemoryEpisodeResult,
+    MemoryError, TaskEvidence,
 };
 pub use observer::RuntimeObserver;
 pub use prompt::{prepend_bullets, PromptBuildError, SystemPromptBuilder};

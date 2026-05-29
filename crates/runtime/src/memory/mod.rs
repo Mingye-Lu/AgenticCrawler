@@ -1,6 +1,10 @@
 pub mod context;
+pub mod episode_builder;
 pub mod evidence;
 pub use context::{MemoryContext, MemoryContextBudget, MemoryContextLoader, MemoryContextQuery};
+pub use episode_builder::{
+    build_memory_episode, MemoryEpisodeBuildConfig, MemoryEpisodeBuildInput,
+};
 pub use evidence::{AccessEvidence, AccessStatus, DomainEvidence, EvidenceStore, TaskEvidence};
 
 use serde::{Deserialize, Serialize};
