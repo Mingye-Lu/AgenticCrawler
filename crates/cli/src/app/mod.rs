@@ -492,8 +492,8 @@ impl LiveCli {
                 println!("{}", result.message);
                 result.persist_after
             }
-            SlashCommand::Clear { confirm } => {
-                let result = self.clear_session_command(confirm)?;
+            SlashCommand::Clear => {
+                let result = self.clear_session_command()?;
                 println!("{}", result.message);
                 result.persist_after
             }
@@ -581,9 +581,10 @@ impl LiveCli {
     }
 
     pub(crate) fn persist_session(&mut self) -> Result<(), CliError> {
+        if self.runtime.session().messages.is_empty() {
+            return Ok(());
+        }
         if self.runtime.session().title.is_none() {
-            // Recover from a poisoned mutex (e.g. title-generation thread
-            // panicked) instead of silently dropping the pending title.
             let mut guard = self
                 .pending_title
                 .lock()
@@ -869,18 +870,7 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn clear_session_command(
-        &mut self,
-        confirm: bool,
-    ) -> Result<CommandUiResult, CliError> {
-        if !confirm {
-            return Ok(CommandUiResult {
-                message:
-                    "clear: confirmation required; run /clear --confirm to start a fresh session."
-                        .to_string(),
-                persist_after: false,
-            });
-        }
+    pub(crate) fn clear_session_command(&mut self) -> Result<CommandUiResult, CliError> {
         self.session = create_managed_session_handle();
         self.title_dispatched = false;
         if let Ok(mut guard) = self.pending_title.lock() {
@@ -900,7 +890,7 @@ impl LiveCli {
                 self.model,
                 self.session.id
             ),
-            persist_after: true,
+            persist_after: false,
         })
     }
 

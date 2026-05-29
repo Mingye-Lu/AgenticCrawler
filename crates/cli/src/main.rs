@@ -1043,14 +1043,11 @@ mod tests {
     }
 
     #[test]
-    fn clear_command_requires_explicit_confirmation_flag() {
-        assert_eq!(
-            SlashCommand::parse("/clear"),
-            Some(SlashCommand::Clear { confirm: false })
-        );
+    fn clear_command_takes_no_arguments() {
+        assert_eq!(SlashCommand::parse("/clear"), Some(SlashCommand::Clear));
         assert_eq!(
             SlashCommand::parse("/clear --confirm"),
-            Some(SlashCommand::Clear { confirm: true })
+            Some(SlashCommand::Unknown("clear".to_string()))
         );
     }
 

@@ -43,15 +43,7 @@ pub(crate) fn run_resume_command(
                 message: Some(format_compact_report(removed, kept, skipped)),
             })
         }
-        SlashCommand::Clear { confirm } => {
-            if !confirm {
-                return Ok(ResumeCommandOutcome {
-                    session: session.clone(),
-                    message: Some(
-                        "clear: confirmation required; rerun with /clear --confirm".to_string(),
-                    ),
-                });
-            }
+        SlashCommand::Clear => {
             let cleared = Session::new();
             cleared.save_to_path(session_path)?;
             Ok(ResumeCommandOutcome {
@@ -157,12 +149,17 @@ mod tests {
     }
 
     #[test]
-    fn resume_clear_without_confirm_warns() {
-        let session = Session::new();
+    fn resume_clear_clears_session() {
+        let session = Session {
+            version: 1,
+            model: None,
+            title: None,
+            messages: vec![runtime::ConversationMessage::user_text("test message")],
+            child_sessions: Vec::new(),
+        };
         let path = PathBuf::from("/tmp/test-session.json");
-        let outcome =
-            run_resume_command(&path, &session, &SlashCommand::Clear { confirm: false }).unwrap();
-        let msg = outcome.message.expect("should produce warning");
-        assert!(msg.contains("confirm"));
+        let outcome = run_resume_command(&path, &session, &SlashCommand::Clear).unwrap();
+        assert!(outcome.message.is_some());
+        assert!(outcome.session.messages.is_empty());
     }
 }

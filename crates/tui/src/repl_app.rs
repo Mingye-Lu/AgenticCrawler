@@ -2300,12 +2300,19 @@ fn handle_session_modal_outcome(
             let new_current_id = if is_current {
                 match cli.lock() {
                     Ok(mut guard) => {
-                        if let Err(e) = guard.clear_session_command(true) {
+                        if let Err(e) = guard.clear_session_command() {
                             state.push_system_card(
                                 "Session Error",
                                 &format!("Deleted current session but failed to reset: {e}"),
                             );
                         }
+                        state.messages.clear();
+                        state.live_tool_calls.clear();
+                        state.typewriter.chars.clear();
+                        state.typewriter.live.clear();
+                        state.busy = false;
+                        state.current_tool = None;
+                        state.follow_bottom = true;
                         guard.session_id().to_string()
                     }
                     Err(_) => id.clone(),
@@ -2425,12 +2432,16 @@ fn handle_slash_command_tui(
             }
             state.push_system_card("Compact", &result.message);
         }
-        SlashCommand::Clear { confirm } => {
+        SlashCommand::Clear => {
             let mut g = cli.lock().expect("cli lock");
-            let result = g.clear_session_command(confirm)?;
-            if result.persist_after {
-                g.persist_session()?;
-            }
+            let result = g.clear_session_command()?;
+            state.messages.clear();
+            state.live_tool_calls.clear();
+            state.typewriter.chars.clear();
+            state.typewriter.live.clear();
+            state.busy = false;
+            state.current_tool = None;
+            state.follow_bottom = true;
             state.push_system_card("Session", &result.message);
         }
         SlashCommand::Config { section } => {

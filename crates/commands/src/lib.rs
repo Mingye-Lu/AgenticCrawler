@@ -94,7 +94,7 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     SlashCommandSpec {
         name: "clear",
         summary: "Start a fresh local session",
-        argument_hint: Some("[--confirm]"),
+        argument_hint: None,
         resume_supported: true,
     },
     SlashCommandSpec {
@@ -178,7 +178,7 @@ pub enum SlashCommand {
     Compact,
     Debug,
     Model { model: Option<String> },
-    Clear { confirm: bool },
+    Clear,
     Cost,
     Config { section: Option<String> },
     Version,
@@ -213,15 +213,12 @@ impl SlashCommand {
                 model: parts.next().map(ToOwned::to_owned),
             },
             "clear" => {
-                // Strict parse so `/clear --comfirm` (or any other trailing
-                // garbage) doesn't silently behave like `/clear` without
-                // confirmation and wipe the session.
+                // /clear takes no arguments. Any trailing args are rejected.
                 let next = parts.next();
-                let extra = parts.next();
-                match (next, extra) {
-                    (None, _) => Self::Clear { confirm: false },
-                    (Some("--confirm"), None) => Self::Clear { confirm: true },
-                    _ => Self::Unknown(command_raw.to_string()),
+                if next.is_some() {
+                    Self::Unknown(command_raw.to_string())
+                } else {
+                    Self::Clear
                 }
             }
             "cost" => Self::Cost,
@@ -322,7 +319,7 @@ pub fn handle_slash_command(
         SlashCommand::Status
         | SlashCommand::Debug
         | SlashCommand::Model { .. }
-        | SlashCommand::Clear { .. }
+        | SlashCommand::Clear
         | SlashCommand::Cost
         | SlashCommand::Config { .. }
         | SlashCommand::Version
@@ -361,22 +358,10 @@ mod tests {
             SlashCommand::parse("/model"),
             Some(SlashCommand::Model { model: None })
         );
-        assert_eq!(
-            SlashCommand::parse("/clear"),
-            Some(SlashCommand::Clear { confirm: false })
-        );
+        assert_eq!(SlashCommand::parse("/clear"), Some(SlashCommand::Clear));
+        // /clear with any trailing args is rejected
         assert_eq!(
             SlashCommand::parse("/clear --confirm"),
-            Some(SlashCommand::Clear { confirm: true })
-        );
-        // Typo'd flag must not silently behave like `/clear` (no confirm).
-        assert_eq!(
-            SlashCommand::parse("/clear --comfirm"),
-            Some(SlashCommand::Unknown("clear".to_string()))
-        );
-        // Trailing garbage after a real confirm flag is also rejected.
-        assert_eq!(
-            SlashCommand::parse("/clear --confirm extra"),
             Some(SlashCommand::Unknown("clear".to_string()))
         );
         assert_eq!(SlashCommand::parse("/cost"), Some(SlashCommand::Cost));
@@ -458,7 +443,8 @@ mod tests {
         assert!(help.contains("/compact"));
         assert!(help.contains("/debug"));
         assert!(help.contains("/model [model]"));
-        assert!(help.contains("/clear [--confirm]"));
+        assert!(help.contains("/clear"));
+        assert!(!help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
         assert!(help.contains("/config [model]"));
         assert!(help.contains("/version"));
@@ -531,10 +517,6 @@ mod tests {
             handle_slash_command("/model claude", &session, CompactionConfig::default()).is_none()
         );
         assert!(handle_slash_command("/clear", &session, CompactionConfig::default()).is_none());
-        assert!(
-            handle_slash_command("/clear --confirm", &session, CompactionConfig::default())
-                .is_none()
-        );
         assert!(handle_slash_command("/cost", &session, CompactionConfig::default()).is_none());
         assert!(handle_slash_command("/config", &session, CompactionConfig::default()).is_none());
         assert!(

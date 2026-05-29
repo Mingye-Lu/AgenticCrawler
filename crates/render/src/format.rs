@@ -386,7 +386,8 @@ mod tests {
         assert!(help.contains("/help"));
         assert!(help.contains("/status"));
         assert!(help.contains("/model [model]"));
-        assert!(help.contains("/clear [--confirm]"));
+        assert!(help.contains("/clear"));
+        assert!(!help.contains("/clear [--confirm]"));
         assert!(help.contains("/cost"));
         assert!(help.contains("/config [model]"));
         assert!(help.contains("/debug"));
