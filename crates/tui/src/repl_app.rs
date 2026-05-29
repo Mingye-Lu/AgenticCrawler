@@ -2629,6 +2629,15 @@ fn handle_slash_command_tui(
             );
             state.push_system_card("Memory", &report);
         }
+        SlashCommand::Memory {
+            action: MemoryAction::Workflow,
+        } => {
+            let report = crate::app::memory_workflow_report(
+                &runtime::EpisodeStore::default_for_config_home(),
+                &runtime::EvidenceStore::default_for_config_home(),
+            );
+            state.push_system_card("Memory", &report);
+        }
         SlashCommand::Auth { provider } => {
             if state.busy {
                 state.push_system("Please wait for the current task to finish.");

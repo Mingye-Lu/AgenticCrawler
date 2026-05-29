@@ -642,6 +642,18 @@ impl LiveCli {
                 );
                 false
             }
+            SlashCommand::Memory {
+                action: MemoryAction::Workflow,
+            } => {
+                println!(
+                    "{}",
+                    memory_workflow_report(
+                        &EpisodeStore::default_for_config_home(),
+                        &EvidenceStore::default_for_config_home(),
+                    )
+                );
+                false
+            }
             SlashCommand::Unknown(name) => {
                 eprintln!("unknown slash command: /{name}");
                 false
@@ -1527,6 +1539,80 @@ pub(crate) fn memory_skill_plan_report(evidence_store: &EvidenceStore) -> String
             "- Proposed action: Review whether an existing skill should document this workflow."
                 .to_string(),
         );
+    }
+
+    lines.join("\n")
+}
+
+pub(crate) fn memory_workflow_report(
+    episode_store: &EpisodeStore,
+    evidence_store: &EvidenceStore,
+) -> String {
+    const EPISODE_LIMIT: usize = 10_000;
+
+    let episodes = match episode_store.load_recent_episodes(EPISODE_LIMIT) {
+        Ok(eps) => eps,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let episode_count = episodes.len();
+
+    let tasks = match evidence_store.load_all_task_evidence() {
+        Ok(t) => t,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let task_count = tasks.len();
+
+    let domains = match evidence_store.load_all_domain_evidence() {
+        Ok(d) => d,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let domain_count = domains.len();
+
+    let access = match evidence_store.load_all_access_evidence() {
+        Ok(a) => a,
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let access_count = access.len();
+
+    let suggestions =
+        suggest_skills_from_evidence(&tasks, &domains, SkillSuggestionConfig::default());
+    let suggestion_count = suggestions.len();
+
+    let skill_plan = if suggestion_count > 0 {
+        "available"
+    } else {
+        "none"
+    };
+
+    let mut lines = vec![
+        "Memory".to_string(),
+        "  Result           workflow".to_string(),
+        format!("  Episodes         {episode_count}"),
+        format!("  Task evidence    {task_count}"),
+        format!("  Domain evidence  {domain_count}"),
+        format!("  Access evidence  {access_count}"),
+        format!("  Suggestions      {suggestion_count}"),
+        format!("  Skill plan       {skill_plan}"),
+        String::new(),
+        "Next steps".to_string(),
+    ];
+
+    if episode_count == 0 {
+        lines.push("  - /memory save".to_string());
+    }
+
+    if task_count == 0 && domain_count == 0 && episode_count > 0 {
+        lines.push("  - /memory build-evidence".to_string());
+    }
+
+    if task_count > 0 || domain_count > 0 {
+        lines.push("  - /memory evidence".to_string());
+        if suggestion_count > 0 {
+            lines.push("  - /memory suggest-skills".to_string());
+            lines.push("  - /memory skill-plan".to_string());
+        } else {
+            lines.push("  - /memory suggest-skills".to_string());
+        }
     }
 
     lines.join("\n")
@@ -2809,6 +2895,174 @@ mod tests {
             let report = memory_skill_plan_report(&store);
             assert!(report.contains("skipped"), "report: {report}");
             assert!(report.contains("(no skill plan)"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_workflow_empty_reports_all_zero_and_suggests_save() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            let report = memory_workflow_report(&episode_store, &evidence_store);
+            assert!(
+                report.contains("Result           workflow"),
+                "report: {report}"
+            );
+            assert!(report.contains("Episodes         0"), "report: {report}");
+            assert!(report.contains("Task evidence    0"), "report: {report}");
+            assert!(report.contains("Domain evidence  0"), "report: {report}");
+            assert!(report.contains("Access evidence  0"), "report: {report}");
+            assert!(report.contains("Suggestions      0"), "report: {report}");
+            assert!(report.contains("Skill plan       none"), "report: {report}");
+            assert!(report.contains("Next steps"), "report: {report}");
+            assert!(report.contains("- /memory save"), "report: {report}");
+            assert!(
+                !report.contains("- /memory build-evidence"),
+                "report: {report}"
+            );
+            assert!(!report.contains("- /memory evidence"), "report: {report}");
+            assert!(
+                !report.contains("- /memory suggest-skills"),
+                "report: {report}"
+            );
+            assert!(!report.contains("- /memory skill-plan"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_workflow_episodes_without_evidence_suggests_build() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            let evidence_store = EvidenceStore::default_for_config_home();
+            episode_store
+                .append_episode(&runtime::MemoryEpisode {
+                    id: "ep1".to_string(),
+                    task_class: None,
+                    user_goal: "scrape titles".to_string(),
+                    route: vec![],
+                    domains: vec![],
+                    tools: vec![],
+                    result: MemoryEpisodeResult::Success,
+                    output_summary: None,
+                    created_at_epoch_secs: 1,
+                    promote_candidate: false,
+                })
+                .unwrap();
+            let report = memory_workflow_report(&episode_store, &evidence_store);
+            assert!(report.contains("Episodes         1"), "report: {report}");
+            assert!(report.contains("Task evidence    0"), "report: {report}");
+            assert!(report.contains("Domain evidence  0"), "report: {report}");
+            assert!(report.contains("Next steps"), "report: {report}");
+            assert!(
+                report.contains("- /memory build-evidence"),
+                "report: {report}"
+            );
+            assert!(
+                !report.contains("- /memory save"),
+                "should not suggest save when episodes exist, report: {report}"
+            );
+            assert!(!report.contains("- /memory evidence"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_workflow_evidence_without_suggestions_shows_suggest_skills() {
+        with_clean_config_env(|| {
+            let evidence_store = EvidenceStore::default_for_config_home();
+            let episode_store = EpisodeStore::default_for_config_home();
+
+            let task = runtime::TaskEvidence {
+                task_class: "query".to_string(),
+                successful_routes: vec![],
+                tools: vec![],
+                output_fields: vec![],
+                success_count: 1,
+                failure_count: 0,
+                last_used_epoch_secs: 1,
+            };
+            evidence_store.save_task_evidence(&task).unwrap();
+
+            let report = memory_workflow_report(&episode_store, &evidence_store);
+            assert!(report.contains("Task evidence    1"), "report: {report}");
+            assert!(report.contains("Suggestions      0"), "report: {report}");
+            assert!(report.contains("Skill plan       none"), "report: {report}");
+            assert!(report.contains("- /memory evidence"), "report: {report}");
+            assert!(
+                report.contains("- /memory suggest-skills"),
+                "report: {report}"
+            );
+            assert!(
+                !report.contains("- /memory skill-plan"),
+                "should not suggest skill-plan when no suggestions, report: {report}"
+            );
+            assert!(
+                !report.contains("- /memory build-evidence"),
+                "report: {report}"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_workflow_evidence_with_suggestions_shows_skill_plan_available() {
+        with_clean_config_env(|| {
+            let evidence_store = EvidenceStore::default_for_config_home();
+            let episode_store = EpisodeStore::default_for_config_home();
+
+            let task = runtime::TaskEvidence {
+                task_class: "scrape-prices".to_string(),
+                successful_routes: vec![vec!["navigate".to_string()]],
+                tools: vec!["navigate".to_string(), "extract".to_string()],
+                output_fields: vec![],
+                success_count: 5,
+                failure_count: 1,
+                last_used_epoch_secs: 1,
+            };
+            evidence_store.save_task_evidence(&task).unwrap();
+
+            let report = memory_workflow_report(&episode_store, &evidence_store);
+            assert!(report.contains("Task evidence    1"), "report: {report}");
+            assert!(report.contains("Suggestions      1"), "report: {report}");
+            assert!(
+                report.contains("Skill plan       available"),
+                "report: {report}"
+            );
+            assert!(report.contains("- /memory evidence"), "report: {report}");
+            assert!(
+                report.contains("- /memory suggest-skills"),
+                "report: {report}"
+            );
+            assert!(report.contains("- /memory skill-plan"), "report: {report}");
+            assert!(
+                !report.contains("- /memory build-evidence"),
+                "report: {report}"
+            );
+        });
+    }
+
+    #[test]
+    fn memory_workflow_evidence_load_failure_reports_failed() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let tasks_dir = store.evidence_dir().join("tasks");
+            fs::create_dir_all(&tasks_dir).unwrap();
+            fs::write(tasks_dir.join("bad.json"), "not valid json").unwrap();
+            let episode_store = EpisodeStore::default_for_config_home();
+
+            let report = memory_workflow_report(&episode_store, &store);
+            assert!(report.contains("failed"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_workflow_episode_load_failure_reports_failed() {
+        with_clean_config_env(|| {
+            let episode_store = EpisodeStore::default_for_config_home();
+            fs::create_dir_all(episode_store.episodes_path())
+                .expect("create directory at episodes path");
+            let evidence_store = EvidenceStore::default_for_config_home();
+
+            let report = memory_workflow_report(&episode_store, &evidence_store);
+            assert!(report.contains("failed"), "report: {report}");
         });
     }
 }
