@@ -614,6 +614,15 @@ impl LiveCli {
                 );
                 false
             }
+            SlashCommand::Memory {
+                action: MemoryAction::Evidence,
+            } => {
+                println!(
+                    "{}",
+                    memory_evidence_report(&EvidenceStore::default_for_config_home())
+                );
+                false
+            }
             SlashCommand::Unknown(name) => {
                 eprintln!("unknown slash command: /{name}");
                 false
@@ -1314,6 +1323,107 @@ pub(crate) fn memory_build_evidence_report(
         task_count,
         domain_count,
     )
+}
+
+pub(crate) const MEMORY_EVIDENCE_PREVIEW_LIMIT: usize = 5;
+
+pub(crate) fn memory_evidence_report(evidence_store: &EvidenceStore) -> String {
+    let tasks = match evidence_store.load_all_task_evidence() {
+        Ok(t) => {
+            let mut sorted: Vec<_> = t;
+            sorted.sort_by(|a, b| a.task_class.cmp(&b.task_class));
+            sorted
+        }
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let domains = match evidence_store.load_all_domain_evidence() {
+        Ok(d) => {
+            let mut sorted: Vec<_> = d;
+            sorted.sort_by(|a, b| a.domain.cmp(&b.domain));
+            sorted
+        }
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+    let access = match evidence_store.load_all_access_evidence() {
+        Ok(a) => {
+            let mut sorted: Vec<_> = a;
+            sorted.sort_by(|a, b| a.domain.cmp(&b.domain));
+            sorted
+        }
+        Err(err) => return format!("Memory\n  Result           failed ({err})"),
+    };
+
+    let task_count = tasks.len();
+    let domain_count = domains.len();
+    let access_count = access.len();
+
+    if task_count == 0 && domain_count == 0 && access_count == 0 {
+        return format!(
+            "Memory\n  Result           skipped\n  Task evidence    {task_count}\n  Domain evidence  {domain_count}\n  Access evidence  {access_count}\n\n(no evidence)"
+        );
+    }
+
+    let mut lines = vec![format!(
+        "Memory\n  Result           evidence\n  Task evidence    {task_count}\n  Domain evidence  {domain_count}\n  Access evidence  {access_count}"
+    )];
+
+    if !tasks.is_empty() {
+        lines.push(String::new());
+        lines.push("Tasks".to_string());
+        let preview: Vec<_> = tasks.iter().take(MEMORY_EVIDENCE_PREVIEW_LIMIT).collect();
+        for t in &preview {
+            lines.push(format!(
+                "  - {} success={} failure={} routes={} tools={}",
+                t.task_class,
+                t.success_count,
+                t.failure_count,
+                t.successful_routes.len(),
+                t.tools.len(),
+            ));
+        }
+        if tasks.len() > MEMORY_EVIDENCE_PREVIEW_LIMIT {
+            let remaining = tasks.len() - MEMORY_EVIDENCE_PREVIEW_LIMIT;
+            lines.push(format!("  ... and {remaining} more task(s)"));
+        }
+    }
+
+    if !domains.is_empty() {
+        lines.push(String::new());
+        lines.push("Domains".to_string());
+        let preview: Vec<_> = domains.iter().take(MEMORY_EVIDENCE_PREVIEW_LIMIT).collect();
+        for d in &preview {
+            lines.push(format!(
+                "  - {} success={} failure={} task_classes={} routes={}",
+                d.domain,
+                d.success_count,
+                d.failure_count,
+                d.task_classes.len(),
+                d.successful_routes.len(),
+            ));
+        }
+        if domains.len() > MEMORY_EVIDENCE_PREVIEW_LIMIT {
+            let remaining = domains.len() - MEMORY_EVIDENCE_PREVIEW_LIMIT;
+            lines.push(format!("  ... and {remaining} more domain(s)"));
+        }
+    }
+
+    if !access.is_empty() {
+        lines.push(String::new());
+        lines.push("Access".to_string());
+        let preview: Vec<_> = access.iter().take(MEMORY_EVIDENCE_PREVIEW_LIMIT).collect();
+        for a in &preview {
+            lines.push(format!(
+                "  - {} status={:?} last_checked={}",
+                a.domain, a.status, a.last_confirmed_epoch_secs,
+            ));
+        }
+        if access.len() > MEMORY_EVIDENCE_PREVIEW_LIMIT {
+            let remaining = access.len() - MEMORY_EVIDENCE_PREVIEW_LIMIT;
+            lines.push(format!("  ... and {remaining} more access record(s)"));
+        }
+    }
+
+    lines.join("\n")
 }
 
 pub(crate) fn collect_tool_uses(summary: &runtime::TurnSummary) -> Vec<serde_json::Value> {
@@ -2242,6 +2352,131 @@ mod tests {
             fs::create_dir_all(episode_store.episodes_path())
                 .expect("create directory at episodes path");
             let report = memory_build_evidence_report(&episode_store, &evidence_store);
+            assert!(report.contains("failed"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_evidence_report_no_evidence() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let report = memory_evidence_report(&store);
+            assert!(report.contains("skipped"), "report: {report}");
+            assert!(report.contains("Task evidence    0"), "report: {report}");
+            assert!(report.contains("Domain evidence  0"), "report: {report}");
+            assert!(report.contains("Access evidence  0"), "report: {report}");
+            assert!(report.contains("(no evidence)"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_evidence_report_with_all_types() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+
+            let task = runtime::TaskEvidence {
+                task_class: "scrape-prices".to_string(),
+                successful_routes: vec![vec!["navigate".to_string()]],
+                tools: vec!["navigate".to_string(), "extract".to_string()],
+                output_fields: vec![],
+                success_count: 5,
+                failure_count: 2,
+                last_used_epoch_secs: 1_717_000_000,
+            };
+            store.save_task_evidence(&task).unwrap();
+
+            let domain = runtime::DomainEvidence {
+                domain: "example.com".to_string(),
+                task_classes: vec!["scrape".to_string(), "form-fill".to_string()],
+                successful_routes: vec![vec!["navigate".to_string(), "click".to_string()]],
+                field_hints: vec![],
+                success_count: 10,
+                failure_count: 1,
+                last_verified_epoch_secs: 1_717_000_000,
+            };
+            store.save_domain_evidence(&domain).unwrap();
+
+            let access = runtime::AccessEvidence {
+                domain: "shop.example.com".to_string(),
+                status: runtime::AccessStatus::LoggedInObserved,
+                extension_mode: false,
+                last_confirmed_epoch_secs: 1_717_000_000,
+                notes: None,
+            };
+            store.save_access_evidence(&access).unwrap();
+
+            let report = memory_evidence_report(&store);
+            assert!(report.contains("Task evidence    1"), "report: {report}");
+            assert!(report.contains("Domain evidence  1"), "report: {report}");
+            assert!(report.contains("Access evidence  1"), "report: {report}");
+            assert!(report.contains("scrape-prices"), "report: {report}");
+            assert!(report.contains("success=5"), "report: {report}");
+            assert!(report.contains("failure=2"), "report: {report}");
+            assert!(report.contains("routes=1"), "report: {report}");
+            assert!(report.contains("tools=2"), "report: {report}");
+            assert!(report.contains("example.com"), "report: {report}");
+            assert!(report.contains("task_classes=2"), "report: {report}");
+            assert!(report.contains("shop.example.com"), "report: {report}");
+            assert!(report.contains("LoggedInObserved"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_evidence_report_bounded_to_five_preview() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            for i in 1..=7 {
+                store
+                    .save_task_evidence(&runtime::TaskEvidence {
+                        task_class: format!("task-{i:02}"),
+                        successful_routes: vec![],
+                        tools: vec![],
+                        output_fields: vec![],
+                        success_count: i,
+                        failure_count: 0,
+                        last_used_epoch_secs: 1,
+                    })
+                    .unwrap();
+            }
+            let report = memory_evidence_report(&store);
+            assert!(report.contains("task-01"), "report: {report}");
+            assert!(report.contains("task-05"), "report: {report}");
+            assert!(!report.contains("task-06"), "report: {report}");
+            assert!(report.contains("and 2 more"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_evidence_report_empty_sections_not_displayed() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let task = runtime::TaskEvidence {
+                task_class: "only-task".to_string(),
+                successful_routes: vec![],
+                tools: vec![],
+                output_fields: vec![],
+                success_count: 1,
+                failure_count: 0,
+                last_used_epoch_secs: 1,
+            };
+            store.save_task_evidence(&task).unwrap();
+
+            let report = memory_evidence_report(&store);
+            assert!(report.contains("\nTasks\n"), "report: {report}");
+            assert!(!report.contains("\nDomains\n"), "report: {report}");
+            assert!(!report.contains("\nAccess\n"), "report: {report}");
+        });
+    }
+
+    #[test]
+    fn memory_evidence_report_load_failure_reports_failed() {
+        with_clean_config_env(|| {
+            let store = EvidenceStore::default_for_config_home();
+            let tasks_dir = store.evidence_dir().join("tasks");
+            fs::create_dir_all(&tasks_dir).unwrap();
+            fs::write(tasks_dir.join("bad.json"), "not valid json").unwrap();
+
+            let report = memory_evidence_report(&store);
             assert!(report.contains("failed"), "report: {report}");
         });
     }

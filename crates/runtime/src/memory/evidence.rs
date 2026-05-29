@@ -163,6 +163,44 @@ impl EvidenceStore {
         let evidence: AccessEvidence = serde_json::from_str(&data)?;
         Ok(Some(evidence))
     }
+
+    pub fn load_all_task_evidence(&self) -> Result<Vec<TaskEvidence>, MemoryError> {
+        load_all_from_dir::<TaskEvidence>(&self.tasks_dir())
+    }
+
+    pub fn load_all_domain_evidence(&self) -> Result<Vec<DomainEvidence>, MemoryError> {
+        load_all_from_dir::<DomainEvidence>(&self.domains_dir())
+    }
+
+    pub fn load_all_access_evidence(&self) -> Result<Vec<AccessEvidence>, MemoryError> {
+        load_all_from_dir::<AccessEvidence>(&self.access_dir())
+    }
+}
+
+fn load_all_from_dir<T: for<'de> Deserialize<'de>>(
+    dir: &std::path::Path,
+) -> Result<Vec<T>, MemoryError> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(MemoryError::Io(e)),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+
+    let mut items: Vec<T> = Vec::new();
+    for path in paths {
+        let data = fs::read_to_string(&path)?;
+        let item: T = serde_json::from_str(&data)?;
+        items.push(item);
+    }
+    Ok(items)
 }
 
 #[cfg(test)]
@@ -369,6 +407,87 @@ mod tests {
             .unwrap()
             .expect("should load");
         assert_eq!(loaded, evidence);
+        remove_temp(&store);
+    }
+
+    #[test]
+    fn missing_evidence_dirs_return_empty_vec() {
+        let store = temp_store();
+        assert!(store.load_all_task_evidence().unwrap().is_empty());
+        assert!(store.load_all_domain_evidence().unwrap().is_empty());
+        assert!(store.load_all_access_evidence().unwrap().is_empty());
+        remove_temp(&store);
+    }
+
+    #[test]
+    fn list_task_domain_access_evidence_roundtrip() {
+        let store = temp_store();
+
+        let t1 = make_task_evidence("scrape-prices");
+        let t2 = make_task_evidence("form-fill");
+        store.save_task_evidence(&t1).unwrap();
+        store.save_task_evidence(&t2).unwrap();
+        let tasks = store.load_all_task_evidence().unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].task_class, "form-fill");
+        assert_eq!(tasks[1].task_class, "scrape-prices");
+
+        let d1 = make_domain_evidence("example.com");
+        let d2 = make_domain_evidence("alpha.com");
+        store.save_domain_evidence(&d1).unwrap();
+        store.save_domain_evidence(&d2).unwrap();
+        let domains = store.load_all_domain_evidence().unwrap();
+        assert_eq!(domains.len(), 2);
+        assert_eq!(domains[0].domain, "alpha.com");
+        assert_eq!(domains[1].domain, "example.com");
+
+        let a1 = make_access_evidence("shop.example.com");
+        let a2 = make_access_evidence("app.example.com");
+        store.save_access_evidence(&a1).unwrap();
+        store.save_access_evidence(&a2).unwrap();
+        let access = store.load_all_access_evidence().unwrap();
+        assert_eq!(access.len(), 2);
+        assert_eq!(access[0].domain, "app.example.com");
+        assert_eq!(access[1].domain, "shop.example.com");
+
+        remove_temp(&store);
+    }
+
+    #[test]
+    fn list_ignores_non_json_files() {
+        let store = temp_store();
+        let t1 = make_task_evidence("real-task");
+        store.save_task_evidence(&t1).unwrap();
+
+        let tasks_dir = store.tasks_dir();
+        fs::write(tasks_dir.join("README.md"), "# tasks").unwrap();
+        fs::write(tasks_dir.join(".gitkeep"), "").unwrap();
+
+        let tasks = store.load_all_task_evidence().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].task_class, "real-task");
+
+        remove_temp(&store);
+    }
+
+    #[test]
+    fn list_output_is_stably_sorted_by_filename() {
+        let store = temp_store();
+
+        store
+            .save_task_evidence(&make_task_evidence("z-task"))
+            .unwrap();
+        store
+            .save_task_evidence(&make_task_evidence("a-task"))
+            .unwrap();
+        store
+            .save_task_evidence(&make_task_evidence("m-task"))
+            .unwrap();
+
+        let tasks = store.load_all_task_evidence().unwrap();
+        let classes: Vec<_> = tasks.iter().map(|task| task.task_class.as_str()).collect();
+        assert_eq!(classes, vec!["a-task", "m-task", "z-task"]);
+
         remove_temp(&store);
     }
 }

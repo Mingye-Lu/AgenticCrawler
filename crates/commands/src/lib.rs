@@ -165,8 +165,8 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
     },
     SlashCommandSpec {
         name: "memory",
-        summary: "Save, show status, preview context, or build evidence",
-        argument_hint: Some("save|status|context|build-evidence"),
+        summary: "Save, show status, preview context, build evidence, or inspect evidence",
+        argument_hint: Some("save|status|context|build-evidence|evidence"),
         resume_supported: false,
     },
     SlashCommandSpec {
@@ -183,6 +183,7 @@ pub enum MemoryAction {
     Status,
     Context,
     BuildEvidence,
+    Evidence,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -275,6 +276,9 @@ impl SlashCommand {
                     },
                     (Some("build-evidence"), None) => Self::Memory {
                         action: MemoryAction::BuildEvidence,
+                    },
+                    (Some("evidence"), None) => Self::Memory {
+                        action: MemoryAction::Evidence,
                     },
                     _ => Self::Unknown("memory".to_string()),
                 }
@@ -472,6 +476,12 @@ mod tests {
                 action: MemoryAction::BuildEvidence
             })
         );
+        assert_eq!(
+            SlashCommand::parse("/memory evidence"),
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Evidence
+            })
+        );
         // /memory without known subcommand is rejected
         assert_eq!(
             SlashCommand::parse("/memory load"),
@@ -528,6 +538,12 @@ mod tests {
                 action: MemoryAction::BuildEvidence
             })
         );
+        assert_eq!(
+            SlashCommand::parse("/MEMORY EVIDENCE"),
+            Some(SlashCommand::Memory {
+                action: MemoryAction::Evidence
+            })
+        );
     }
 
     #[test]
@@ -551,7 +567,7 @@ mod tests {
         assert!(help.contains("/headless"));
         assert!(help.contains("/extension [stop]"));
         assert!(help.contains("/cloakbrowser"));
-        assert!(help.contains("/memory save|status|context|build-evidence"));
+        assert!(help.contains("/memory save|status|context|build-evidence|evidence"));
         assert!(!help.contains("/resume"));
         assert_eq!(slash_command_specs().len(), 18);
         assert_eq!(resume_supported_slash_commands().len(), 8);
@@ -656,5 +672,9 @@ mod tests {
             CompactionConfig::default()
         )
         .is_none());
+        assert!(
+            handle_slash_command("/memory evidence", &session, CompactionConfig::default())
+                .is_none()
+        );
     }
 }
