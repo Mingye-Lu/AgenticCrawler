@@ -26,7 +26,7 @@ pub struct ToolResultInfo {
 /// # Returns
 ///
 /// A `HashMap` where keys are `tool_use_id` strings and values are `ToolResultInfo` structs.
-#[allow(dead_code)]
+#[must_use]
 pub fn build_tool_result_index(
     messages: &[ConversationMessage],
 ) -> HashMap<String, ToolResultInfo> {

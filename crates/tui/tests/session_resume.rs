@@ -20,7 +20,7 @@ fn empty_session_renders_nothing_but_padding() {
 
     let (items, text_lines) = render_messages(&messages, &tool_results);
 
-    assert!(items.len() >= 1, "expected at least 1 padding item");
+    assert!(!items.is_empty(), "expected at least 1 padding item");
     assert!(
         items.len() <= 2,
         "expected at most 2 items for empty session, got {}",
@@ -83,11 +83,13 @@ fn tool_use_with_result_shows_success() {
 
 #[test]
 fn tool_use_without_result_shows_interrupted() {
-    let messages = vec![ConversationMessage::assistant(vec![ContentBlock::ToolUse {
-        id: "t2".to_string(),
-        name: "click".to_string(),
-        input: r#"{"selector": ".btn"}"#.to_string(),
-    }])];
+    let messages = vec![ConversationMessage::assistant(vec![
+        ContentBlock::ToolUse {
+            id: "t2".to_string(),
+            name: "click".to_string(),
+            input: r#"{"selector": ".btn"}"#.to_string(),
+        },
+    ])];
     let tool_results: HashMap<String, ToolResultInfo> = HashMap::new();
 
     let (_items, text_lines) = render_messages(&messages, &tool_results);

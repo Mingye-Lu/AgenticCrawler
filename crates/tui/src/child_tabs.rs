@@ -52,6 +52,7 @@ pub struct ChildTabState {
 }
 
 impl ChildTabState {
+    #[must_use]
     pub fn new(child_id: String, sub_goal: String) -> Self {
         let entries = vec![TranscriptEntry::Parent(sub_goal)];
         Self {
@@ -251,12 +252,14 @@ impl ChildTabPanel {
         }
     }
 
+    #[must_use]
     pub fn active_tab_is_paused(&self) -> bool {
         self.tabs
             .get(self.active_tab)
             .is_some_and(|t| matches!(t.status, ChildTabStatus::Paused { .. }))
     }
 
+    #[must_use]
     pub fn active_child_id(&self) -> Option<&str> {
         self.tabs.get(self.active_tab).map(|t| t.child_id.as_str())
     }
@@ -264,6 +267,7 @@ impl ChildTabPanel {
 
 /// Restore a `ChildTabPanel` from persisted child sessions.
 /// All restored children are marked `Done` since they completed in a prior session.
+#[must_use]
 pub fn hydrate_from_child_sessions(sessions: &[ChildSession]) -> ChildTabPanel {
     let mut panel = ChildTabPanel::default();
     for child in sessions {

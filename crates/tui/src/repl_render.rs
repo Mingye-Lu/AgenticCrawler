@@ -390,9 +390,10 @@ fn looks_like_base64(s: &str) -> bool {
 }
 
 #[allow(clippy::too_many_lines)]
-pub fn build_wrapped_list(
+#[must_use]
+pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
     messages: &[ConversationMessage],
-    tool_results: &HashMap<String, ToolResultInfo>,
+    tool_results: &HashMap<String, ToolResultInfo, S>,
     live_tool_calls: &[(String, String, crate::repl_app::ToolCallStatus)],
     width: u16,
     live_text: Option<&str>,
