@@ -164,7 +164,7 @@ impl Session {
             .transpose()?
             .unwrap_or_default();
         Ok(Self {
-            version,
+            version: 2,
             model,
             title,
             messages,

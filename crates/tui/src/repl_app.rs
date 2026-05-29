@@ -2442,6 +2442,8 @@ fn handle_slash_command_tui(
             state.busy = false;
             state.current_tool = None;
             state.follow_bottom = true;
+            state.child_tab_panel = super::child_tabs::ChildTabPanel::default();
+            state.view_mode = ViewMode::Parent;
             state.push_system_card("Session", &result.message);
         }
         SlashCommand::Config { section } => {

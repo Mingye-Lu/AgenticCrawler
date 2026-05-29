@@ -45,7 +45,9 @@ pub(crate) fn run_resume_command(
         }
         SlashCommand::Clear => {
             let cleared = Session::new();
-            cleared.save_to_path(session_path)?;
+            if session_path.exists() {
+                std::fs::remove_file(session_path)?;
+            }
             Ok(ResumeCommandOutcome {
                 session: cleared,
                 message: Some(format!(

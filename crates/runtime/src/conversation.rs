@@ -629,6 +629,9 @@ fn notify_observer_tool_result(
             observer.on_tool_result(tool_name, output, *is_error);
         }
     }
+    // Also emit MessageCompleted so the TUI can track tool-result messages
+    // for pairing with ToolUse blocks in historical rendering.
+    observer.on_message_completed(result_message);
 }
 
 fn notify_observer_turn_finished(

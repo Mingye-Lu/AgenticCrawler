@@ -514,6 +514,134 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
     (out, text_out)
 }
 
+pub(super) fn build_child_entry_list(
+    entries: &[super::child_tabs::TranscriptEntry],
+    live: &str,
+    width: u16,
+    spinner_char: char,
+    debug_mode: bool,
+) -> (Vec<ListItem<'static>>, Vec<String>) {
+    use super::child_tabs::TranscriptEntry;
+
+    let mut out: Vec<ListItem<'static>> = Vec::new();
+    let mut text_out: Vec<String> = Vec::new();
+
+    out.push(ListItem::new(Line::from(" ")));
+    text_out.push(" ".to_string());
+
+    let system_style = Style::default().fg(Color::DarkGray).italic();
+    let user_prefix_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let user_bg = Color::Rgb(35, 45, 60);
+
+    for entry in entries {
+        match entry {
+            TranscriptEntry::System(text) | TranscriptEntry::Status(text) => {
+                for row in wrap_plain_text(text, width) {
+                    text_out.push(row.clone());
+                    out.push(ListItem::new(Line::from(Span::styled(row, system_style))));
+                }
+            }
+            TranscriptEntry::User(text) | TranscriptEntry::Parent(text) => {
+                let prefixed = format!("  ▸ {text}");
+                let rows = wrap_plain_text(&prefixed, width);
+                for (idx, row) in rows.into_iter().enumerate() {
+                    let row_line = if idx == 0 && row.trim_start().starts_with("▸ ") {
+                        let trimmed = row.trim_start();
+                        let rest = trimmed.get(4..).unwrap_or("").to_string();
+                        Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled("▸ ", user_prefix_style),
+                            Span::raw(rest),
+                        ])
+                    } else {
+                        Line::from(Span::raw(row))
+                    };
+                    text_out.push(line_to_plain_text(&row_line));
+                    out.push(ListItem::new(row_line).bg(user_bg));
+                }
+                out.push(ListItem::new(Line::from(" ")));
+                text_out.push(" ".to_string());
+            }
+            TranscriptEntry::Stream(styled) => {
+                for wrapped in wrap_ansi_line(styled.clone(), width) {
+                    text_out.push(line_to_plain_text(&wrapped));
+                    out.push(ListItem::new(wrapped));
+                }
+            }
+            TranscriptEntry::SystemCard { title, rows } => {
+                render_system_card(title, rows, system_style, &mut out, &mut text_out);
+            }
+            TranscriptEntry::ToolCall {
+                name,
+                input_summary,
+                status,
+            } => {
+                let (call_items, call_text) = render_tool_call_lines(
+                    name,
+                    input_summary,
+                    status,
+                    width,
+                    spinner_char,
+                    debug_mode,
+                );
+                out.extend(call_items);
+                text_out.extend(call_text);
+            }
+        }
+    }
+
+    if !live.is_empty() {
+        for line in crate::markdown::render_lines(live) {
+            for wrapped_line in wrap_ansi_line(line, width) {
+                text_out.push(line_to_plain_text(&wrapped_line));
+                out.push(ListItem::new(wrapped_line));
+            }
+        }
+    }
+
+    debug_assert_eq!(text_out.len(), out.len());
+    (out, text_out)
+}
+
+fn render_system_card(
+    title: &str,
+    rows: &[(String, String)],
+    system_style: Style,
+    out: &mut Vec<ListItem<'static>>,
+    text_out: &mut Vec<String>,
+) {
+    let header_line = Line::from(vec![
+        Span::styled("╭─ ", system_style),
+        Span::styled(
+            title.to_owned(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    text_out.push(line_to_plain_text(&header_line));
+    out.push(ListItem::new(header_line));
+    for (k, v) in rows {
+        let row_line = Line::from(vec![
+            Span::styled("│ ", system_style),
+            Span::styled(
+                format!("{k}: "),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+            Span::raw(v.clone()),
+        ]);
+        text_out.push(line_to_plain_text(&row_line));
+        out.push(ListItem::new(row_line));
+    }
+    let footer_line = Line::from(Span::styled("╰─", system_style));
+    text_out.push(line_to_plain_text(&footer_line));
+    out.push(ListItem::new(footer_line));
+    out.push(ListItem::new(Line::from(" ")));
+    text_out.push(" ".to_string());
+}
+
 pub(super) fn rect_contains_mouse(r: Rect, col: u16, row: u16) -> bool {
     if r.width == 0 || r.height == 0 {
         return false;
@@ -973,14 +1101,10 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
 
     state.last_transcript_rect = main_inner;
 
-    let tab_messages: Vec<ConversationMessage> = Vec::new();
-    let tab_tool_results = HashMap::new();
-    let (wrapped, wrapped_text) = build_wrapped_list(
-        &tab_messages,
-        &tab_tool_results,
-        &[],
+    let (wrapped, wrapped_text) = build_child_entry_list(
+        &tab.entries,
+        &tab.live,
         main_inner.width,
-        None,
         spinner,
         debug_mode,
     );
