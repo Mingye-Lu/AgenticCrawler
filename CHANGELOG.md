@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **6 resource-processing tools** — new `crates/processing/` crate with pure-Rust format handlers and 6 new agent tools, raising the total from 21 to 27:
+  - **`read_pdf`** — text extraction from PDFs with page-range selection (`"3"`, `"1-5"`, `"10-"`), metadata mode, and 100 MB file cap.
+  - **`read_document`** — plain-text extraction from DOCX, PPTX, EPUB, RTF, and ODT via ZIP+XML parsing (no native dependencies).
+  - **`read_spreadsheet`** — XLSX, CSV, and ODS reading with sheet selection, cell-range filtering (`"headers"`, `"first_100"`, `"A1:D10"`), and configurable row limits (default 1 000).
+  - **`view_image`** — loads and resizes PNG/JPEG/WebP/GIF/BMP/TIFF to a configurable max dimension (default 1 568 px, Lanczos3) and returns base64 for LLM vision; JPEG at 85 % quality, PNG preserved for alpha images.
+  - **`transcribe_media`** — Whisper-based audio transcription (MP3/WAV/FLAC/OGG/AAC); gated behind the optional `transcription` Cargo feature (requires cmake). Returns helpful guidance when the model or feature is unavailable.
+  - **`list_archive`** — lists ZIP/TAR archive contents and supports single-entry safe extraction (zip-slip and zip-bomb protection, 1 GB decompressed limit).
+- **`acrawl model` subcommand** — manages Whisper models: `acrawl model download tiny|small|large-turbo` (downloads from HuggingFace with a progress bar), `acrawl model list` (shows download status), `acrawl model path`.
+- **MCP server unchanged** — all 6 new tools are internal agent tools, excluded from the MCP surface. MCP still exposes exactly 17 tools (16 browser + `run_goal`).
+- **CI: cmake support** — release workflow installs cmake/g++ on all targets; a new `test-transcription` job validates `--features transcription` compilation.
+
 ## [0.7.4] - 2026-05-29
 
 ### Changed

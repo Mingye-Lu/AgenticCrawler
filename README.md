@@ -208,6 +208,17 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `wait_for_subagents` | Wait for specific or all sub-agents to finish and collect results. |
 | `done` | Signal task completion. Auto-waits for any active sub-agents and merges their data. |
 
+#### Resource Processing
+
+| Tool | Description |
+|------|-------------|
+| `read_pdf` | Extract text from PDF files. Supports page ranges (`pages`: `"3"`, `"1-5"`, `"10-"`) and metadata-only mode. Returns page count, content, and truncation status. |
+| `read_document` | Extract plain text from DOCX, PPTX, EPUB, RTF, and ODT files. Returns word count and format. |
+| `read_spreadsheet` | Read data from XLSX, CSV, and ODS files. Supports sheet selection, row/cell ranges (`range`: `"headers"`, `"first_100"`, `"A1:D10"`), and row limits (default 1000). |
+| `view_image` | Load and resize an image for LLM vision. Automatically resizes to `max_dimension` (default 1568px, Lanczos3). Supports PNG, JPEG, WebP, GIF (first frame), BMP, TIFF. |
+| `transcribe_media` | Transcribe audio files (MP3, WAV, FLAC, OGG, AAC) to text using Whisper. Requires `acrawl model download tiny` first. Optional `language` hint and `timestamps`. |
+| `list_archive` | List contents of ZIP and TAR archives. Use `extract` to safely pull out a single entry (zip-slip protected, 1 GB decompressed limit). |
+
 ### Sub-Agent Parallelism
 
 The agent can fork child agents to crawl multiple pages concurrently. Each child gets its own browser tab, step budget, and independent state.
@@ -538,7 +549,8 @@ crates/
   core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer
-   agent/        27 tools, agent loop, sub-agent fork/join, CrawlState
+  agent/        27 tools, agent loop, sub-agent fork/join, CrawlState
+  processing/   PDF, document, spreadsheet, image, archive, transcription handlers (acrawl-processing)
   runtime/      ConversationRuntime, config, sessions, MCP client stack, OAuth PKCE
   render/       Markdown rendering, tool output formatting, OutputSink
   mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer
@@ -548,7 +560,7 @@ crates/
   crawler/      Transitional re-export shim (will be removed)
 ```
 
-11 crates, ~38K lines of Rust, 770 tests.
+11 crates, ~40K lines of Rust, 870 tests.
 
 ## Development
 
