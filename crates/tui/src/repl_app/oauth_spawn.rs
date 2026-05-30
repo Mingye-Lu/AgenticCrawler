@@ -259,7 +259,7 @@ pub(super) fn spawn_anthropic_oauth_thread(
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
             let token_set = rt
                 .block_on(client.exchange_oauth_code(&oauth, &exchange))
-                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
+                .map_err(|e| -> Box<dyn std::error::Error + Send> { Box::new(std::io::Error::other(e.to_string())) })?;
             let mut store = crate::auth::load_credentials_or_warn();
             api::credentials::set_provider_config(
                 &mut store,
@@ -277,7 +277,7 @@ pub(super) fn spawn_anthropic_oauth_thread(
                 },
             );
             api::credentials::save_credentials(&store)
-                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
+                .map_err(|e| -> Box<dyn std::error::Error + Send> { Box::new(std::io::Error::other(e.to_string())) })?;
             Ok(())
         })();
         let _ = ui_tx.send(ReplTuiEvent::AuthOAuthComplete {
@@ -365,7 +365,7 @@ pub(super) fn spawn_openai_oauth_thread(
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
             let token_set = rt
                 .block_on(client.exchange_oauth_code(&login_request.config, &exchange))
-                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
+                .map_err(|e| -> Box<dyn std::error::Error + Send> { Box::new(std::io::Error::other(e.to_string())) })?;
             let account_id = extract_openai_account_id(&token_set.access_token);
             let oauth_tokens = api::StoredOAuthTokens {
                 access_token: token_set.access_token,
@@ -380,7 +380,7 @@ pub(super) fn spawn_openai_oauth_thread(
             cfg.oauth = Some(oauth_tokens);
             api::credentials::set_provider_config(&mut store, "openai", cfg);
             api::credentials::save_credentials(&store)
-                .map_err(|e| Box::new(std::io::Error::other(e.to_string())) as _)?;
+                .map_err(|e| -> Box<dyn std::error::Error + Send> { Box::new(std::io::Error::other(e.to_string())) })?;
             Ok(())
         })();
         let _ = ui_tx.send(ReplTuiEvent::AuthOAuthComplete {

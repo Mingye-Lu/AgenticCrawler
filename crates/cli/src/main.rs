@@ -6,6 +6,7 @@ mod auth;
 mod display_width;
 mod error;
 mod output_sink;
+mod model_download;
 mod self_update;
 #[allow(dead_code)]
 mod session_mgr;
@@ -98,6 +99,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::Mcp => mcp_server::run_mcp_server(),
         CliAction::McpInstall => mcp_server::run_install()?,
         CliAction::McpUninstall => mcp_server::run_uninstall()?,
+        CliAction::ModelDownload { subcommand } => {
+            let rt = TOKIO_RUNTIME.get().expect("tokio runtime not initialized");
+            rt.block_on(model_download::run_model_command(subcommand))?;
+        }
         CliAction::Repl {
             model,
             allowed_tools,
@@ -137,11 +142,21 @@ enum CliAction {
     Mcp,
     McpInstall,
     McpUninstall,
+    ModelDownload {
+        subcommand: ModelSubcommand,
+    },
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
     },
     Help,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ModelSubcommand {
+    Download { size: String },
+    List,
+    Path,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,6 +305,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             purge: rest.iter().any(|a| a == "--purge"),
         }),
         "install-browser" => Ok(CliAction::InstallBrowser),
+        "model" => parse_model_subcommand(&rest[1..]),
         "mcp" => match rest.get(1).map(String::as_str) {
             None => Ok(CliAction::Mcp),
             Some("install") if rest.len() == 2 => Ok(CliAction::McpInstall),
@@ -379,6 +395,34 @@ fn parse_system_prompt_args(args: &[String]) -> Result<CliAction, String> {
         return Err(format!("unknown system-prompt option: {other}"));
     }
     Ok(CliAction::PrintSystemPrompt)
+}
+
+fn parse_model_subcommand(args: &[String]) -> Result<CliAction, String> {
+    match args.first().map(String::as_str) {
+        Some("path") if args.len() == 1 => Ok(CliAction::ModelDownload {
+            subcommand: ModelSubcommand::Path,
+        }),
+        Some("list") if args.len() == 1 => Ok(CliAction::ModelDownload {
+            subcommand: ModelSubcommand::List,
+        }),
+        Some("download") if args.len() == 2 => Ok(CliAction::ModelDownload {
+            subcommand: ModelSubcommand::Download {
+                size: args[1].clone(),
+            },
+        }),
+        Some("download") => Err(
+            "Usage: acrawl model download <size>\n  Sizes: tiny (~75MB), small (~466MB), large-turbo (~547MB)".to_string(),
+        ),
+        Some("--help" | "-h" | "help") => Err(
+            "Usage: acrawl model <download|list|path>\n\nSubcommands:\n  download <size>  Download a whisper model (tiny, small, large-turbo)\n  list             Show available models and download status\n  path             Print the models directory path".to_string(),
+        ),
+        Some(other) => Err(format!(
+            "unknown model subcommand: {other} (supported: download, list, path)"
+        )),
+        None => Err(
+            "Usage: acrawl model <download|list|path>".to_string(),
+        ),
+    }
 }
 
 fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
