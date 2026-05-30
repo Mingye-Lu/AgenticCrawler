@@ -78,7 +78,10 @@ pub fn list_archive(path: &Path) -> Result<ArchiveOutput, ProcessingError> {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
-            if stem.ends_with(".tar") {
+            if std::path::Path::new(stem)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("tar"))
+            {
                 "tar"
             } else {
                 return Err(ProcessingError::UnsupportedFormat(format!(
@@ -91,7 +94,10 @@ pub fn list_archive(path: &Path) -> Result<ArchiveOutput, ProcessingError> {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
-            if stem.ends_with(".tar") {
+            if std::path::Path::new(stem)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("tar"))
+            {
                 "tar"
             } else {
                 return Err(ProcessingError::UnsupportedFormat(format!(

@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 use crate::{BrowserContext, ToolEffect, ToolExecutionError};
 
+#[allow(clippy::unused_async)]
 pub async fn execute(
     input: &Value,
     _browser: &mut BrowserContext,
@@ -16,8 +17,12 @@ pub async fn execute(
 
     let max_dimension = input
         .get("max_dimension")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u32);
+        .and_then(Value::as_u64)
+        .map(|n| {
+            #[allow(clippy::cast_possible_truncation)]
+            let v = n as u32;
+            v
+        });
 
     let output = image_proc::view_image(Path::new(path_str), max_dimension)
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;

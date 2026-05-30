@@ -49,6 +49,7 @@ pub struct SpreadsheetOutput {
 ///
 /// Returns `ProcessingError` on I/O failures, unsupported formats,
 /// oversized files, missing sheets, or corrupt data.
+#[allow(clippy::needless_pass_by_value)]
 pub fn read_spreadsheet(
     path: &Path,
     opts: SpreadsheetOptions,
@@ -118,7 +119,7 @@ fn read_csv(
 
     let all_records: Vec<csv::StringRecord> = rdr
         .records()
-        .filter_map(|r| r.ok())
+        .filter_map(std::result::Result::ok)
         .collect();
     let total_rows = all_records.len();
 
@@ -203,7 +204,7 @@ fn read_workbook(
     let mut workbook = open_workbook_auto(path)
         .map_err(|e| ProcessingError::FormatError(format!("Failed to open workbook: {e}")))?;
 
-    let sheet_names: Vec<String> = workbook.sheet_names().to_vec();
+    let sheet_names: Vec<String> = workbook.sheet_names().clone();
 
     if sheet_names.is_empty() {
         return Ok(SpreadsheetOutput {
@@ -348,10 +349,12 @@ fn apply_range_workbook(
 fn cell_to_string(cell: Option<&Data>) -> String {
     match cell {
         None | Some(Data::Empty) => String::new(),
-        Some(Data::String(s)) => s.clone(),
+        Some(Data::String(s) | Data::DateTimeIso(s) | Data::DurationIso(s)) => s.clone(),
         Some(Data::Int(i)) => i.to_string(),
         Some(Data::Float(f)) => {
-            if f.fract() == 0.0 && f.abs() < f64::from(i64::MAX as f32) {
+            #[allow(clippy::cast_precision_loss)]
+            let limit = f64::from(i64::MAX as f32);
+            if f.fract() == 0.0 && f.abs() < limit {
                 #[allow(clippy::cast_possible_truncation)]
                 let i = *f as i64;
                 i.to_string()
@@ -362,8 +365,6 @@ fn cell_to_string(cell: Option<&Data>) -> String {
         Some(Data::Bool(b)) => b.to_string(),
         Some(Data::Error(e)) => format!("#ERR:{e:?}"),
         Some(Data::DateTime(dt)) => dt.to_string(),
-        Some(Data::DateTimeIso(s)) => s.clone(),
-        Some(Data::DurationIso(s)) => s.clone(),
     }
 }
 
@@ -382,12 +383,12 @@ mod tests {
     fn create_test_csv() -> NamedTempFile {
         let mut f = NamedTempFile::with_suffix(".csv").unwrap();
         writeln!(f, "name,age,city,score").unwrap();
-        for i in 1..=15 {
+        for i in 1..=15_usize {
             writeln!(
                 f,
                 "person{i},{},{},{}",
                 20 + i,
-                ["NYC", "LA", "CHI"][(i as usize) % 3],
+                ["NYC", "LA", "CHI"][i % 3],
                 i * 10
             )
             .unwrap();

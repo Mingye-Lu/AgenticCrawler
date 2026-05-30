@@ -571,14 +571,14 @@ mod tests {
 
     #[test]
     fn strip_xml_to_text_basic() {
-        let xml = r#"<root><p>Hello</p><p>World</p></root>"#;
+        let xml = r"<root><p>Hello</p><p>World</p></root>";
         let text = strip_xml_to_text(xml);
         assert_eq!(text, "Hello World");
     }
 
     #[test]
     fn strip_xml_handles_nested_tags() {
-        let xml = r#"<w:p><w:r><w:t>foo</w:t></w:r><w:r><w:t>bar</w:t></w:r></w:p>"#;
+        let xml = r"<w:p><w:r><w:t>foo</w:t></w:r><w:r><w:t>bar</w:t></w:r></w:p>";
         let text = strip_xml_to_text(xml);
         assert_eq!(text, "foo bar");
     }

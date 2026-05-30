@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 use crate::{BrowserContext, ToolEffect, ToolExecutionError};
 
+#[allow(clippy::unused_async)]
 pub async fn execute(
     input: &Value,
     _browser: &mut BrowserContext,
@@ -24,8 +25,12 @@ pub async fn execute(
         .map(parse_cell_range);
     let max_rows = input
         .get("max_rows")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize);
+        .and_then(Value::as_u64)
+        .map(|n| {
+            #[allow(clippy::cast_possible_truncation)]
+            let v = n as usize;
+            v
+        });
 
     let opts = SpreadsheetOptions {
         sheet,

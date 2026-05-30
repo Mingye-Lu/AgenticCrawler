@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use crate::{BrowserContext, ToolEffect, ToolExecutionError};
 
+#[allow(clippy::unused_async)]
 pub async fn execute(
     input: &Value,
     _browser: &mut BrowserContext,
@@ -21,7 +22,7 @@ pub async fn execute(
         .map(String::from);
     let timestamps = input
         .get("timestamps")
-        .and_then(|v| v.as_bool())
+        .and_then(Value::as_bool)
         .unwrap_or(false);
 
     let model_path = acrawl_core::config_home_dir()

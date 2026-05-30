@@ -67,18 +67,20 @@ pub fn view_image(path: &Path, max_dimension: Option<u32>) -> Result<ImageOutput
     let longest = w.max(h);
     let (new_w, new_h) = if longest > max_dim {
         let ratio = f64::from(max_dim) / f64::from(longest);
-        (
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let dims = (
             (f64::from(w) * ratio) as u32,
             (f64::from(h) * ratio) as u32,
-        )
+        );
+        dims
     } else {
         (w, h)
     };
 
-    let resized = if (new_w, new_h) != (w, h) {
-        img.resize(new_w, new_h, FilterType::Lanczos3)
-    } else {
+    let resized = if (new_w, new_h) == (w, h) {
         img
+    } else {
+        img.resize(new_w, new_h, FilterType::Lanczos3)
     };
 
     let resized_dimensions = (resized.width(), resized.height());
@@ -131,6 +133,7 @@ mod tests {
 
     fn create_test_image(width: u32, height: u32) -> NamedTempFile {
         let img = ImageBuffer::<Rgb<u8>, _>::from_fn(width, height, |x, _y| {
+            #[allow(clippy::cast_possible_truncation)]
             Rgb([255u8, (x % 256) as u8, 0u8])
         });
         let mut f = NamedTempFile::with_suffix(".png").unwrap();
@@ -145,6 +148,7 @@ mod tests {
 
     fn create_rgba_test_image(width: u32, height: u32) -> NamedTempFile {
         let img = ImageBuffer::<Rgba<u8>, _>::from_fn(width, height, |x, y| {
+            #[allow(clippy::cast_possible_truncation)]
             Rgba([
                 (x % 256) as u8,
                 (y % 256) as u8,

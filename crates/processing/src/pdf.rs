@@ -280,14 +280,14 @@ mod tests {
         pdf.extend_from_slice(b"xref\n");
         pdf.extend_from_slice(b"0 9\n");
         pdf.extend_from_slice(format!("{:010} 65535 f \n", 0).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj1_offset).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj2_offset).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj3_offset).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj4_offset).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj5_offset).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj6_offset).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj7_offset).as_bytes());
-        pdf.extend_from_slice(format!("{:010} 00000 n \n", obj8_offset).as_bytes());
+        pdf.extend_from_slice(format!("{obj1_offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(format!("{obj2_offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(format!("{obj3_offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(format!("{obj4_offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(format!("{obj5_offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(format!("{obj6_offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(format!("{obj7_offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(format!("{obj8_offset:010} 00000 n \n").as_bytes());
 
         // Trailer
         pdf.extend_from_slice(b"trailer\n");

@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 
 use crate::{BrowserContext, ToolEffect, ToolExecutionError};
 
+#[allow(clippy::unused_async)]
 pub async fn execute(
     input: &Value,
     _browser: &mut BrowserContext,
