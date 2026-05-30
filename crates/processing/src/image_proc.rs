@@ -68,10 +68,7 @@ pub fn view_image(path: &Path, max_dimension: Option<u32>) -> Result<ImageOutput
     let (new_w, new_h) = if longest > max_dim {
         let ratio = f64::from(max_dim) / f64::from(longest);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let dims = (
-            (f64::from(w) * ratio) as u32,
-            (f64::from(h) * ratio) as u32,
-        );
+        let dims = ((f64::from(w) * ratio) as u32, (f64::from(h) * ratio) as u32);
         dims
     } else {
         (w, h)

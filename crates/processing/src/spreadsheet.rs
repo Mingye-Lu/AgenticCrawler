@@ -117,10 +117,8 @@ fn read_csv(
         });
     }
 
-    let all_records: Vec<csv::StringRecord> = rdr
-        .records()
-        .filter_map(std::result::Result::ok)
-        .collect();
+    let all_records: Vec<csv::StringRecord> =
+        rdr.records().filter_map(std::result::Result::ok).collect();
     let total_rows = all_records.len();
 
     let (rows, truncated) = apply_range_csv(&all_records, &range, max_rows, total_cols);

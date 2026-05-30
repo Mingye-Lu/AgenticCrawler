@@ -5,8 +5,8 @@ mod auth;
 #[allow(dead_code)]
 mod display_width;
 mod error;
-mod output_sink;
 mod model_download;
+mod output_sink;
 mod self_update;
 #[allow(dead_code)]
 mod session_mgr;

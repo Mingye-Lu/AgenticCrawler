@@ -283,9 +283,7 @@ fn extract_odt_text<R: Read + std::io::Seek>(
 fn extract_rtf_text(path: &Path) -> Result<String, ProcessingError> {
     let raw = std::fs::read_to_string(path)?;
     if !raw.starts_with("{\\rtf") {
-        return Err(ProcessingError::CorruptFile(
-            "Not a valid RTF file".into(),
-        ));
+        return Err(ProcessingError::CorruptFile("Not a valid RTF file".into()));
     }
 
     let mut result = String::new();

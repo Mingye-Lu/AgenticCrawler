@@ -20,8 +20,7 @@ pub async fn execute(
 
     if let Some(entry_path) = extract_entry {
         let output_dir = std::env::temp_dir().join("acrawl_extract");
-        std::fs::create_dir_all(&output_dir)
-            .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+        std::fs::create_dir_all(&output_dir).map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
         let extracted = archive::extract_entry(path, entry_path, &output_dir)
             .map_err(|e| ToolExecutionError::new(e.to_string()))?;
@@ -33,8 +32,7 @@ pub async fn execute(
         })));
     }
 
-    let output =
-        archive::list_archive(path).map_err(|e| ToolExecutionError::new(e.to_string()))?;
+    let output = archive::list_archive(path).map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     Ok(ToolEffect::reply_json(&json!({
         "format": output.format,

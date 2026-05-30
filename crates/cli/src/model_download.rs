@@ -31,7 +31,8 @@ const MODELS: &[ModelInfo] = &[
         display_name: "large-turbo",
         filename: "ggml-large-v3-turbo-q5_0.bin",
         size_display: "~547MB",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+        url:
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
     },
 ];
 
@@ -133,10 +134,6 @@ async fn download_model(size: &str) -> Result<(), Box<dyn std::error::Error>> {
         pb.finish_with_message("Download complete");
     }
 
-    println!(
-        "Downloaded {} to {}",
-        model.display_name,
-        dest.display()
-    );
+    println!("Downloaded {} to {}", model.display_name, dest.display());
     Ok(())
 }

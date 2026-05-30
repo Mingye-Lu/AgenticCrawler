@@ -91,7 +91,11 @@ pub fn extract_text(path: &Path, pages: Option<PageRange>) -> Result<PdfOutput, 
     };
 
     let pages_extracted = selected.len();
-    let mut content = selected.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n");
+    let mut content = selected
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
     let mut truncated = false;
 
     // Truncate at a valid UTF-8 char boundary
@@ -179,7 +183,11 @@ fn get_string_from_dict(dict: &pdf_extract::Dictionary, key: &[u8]) -> Option<St
     dict.get(key).ok().and_then(|obj| match obj {
         pdf_extract::Object::String(bytes, _) => {
             let s = pdf_to_utf8(bytes);
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         }
         _ => None,
     })
@@ -237,16 +245,11 @@ mod tests {
 
         // Object 6: Resources dictionary
         let obj6_offset = pdf.len();
-        pdf.extend_from_slice(
-            b"6 0 obj\n<< /Font << /F1 5 0 R >> >>\nendobj\n",
-        );
+        pdf.extend_from_slice(b"6 0 obj\n<< /Font << /F1 5 0 R >> >>\nendobj\n");
 
         // Page 1 content stream
         let page1_content = b"BT /F1 12 Tf 100 700 Td (Hello Page One) Tj ET";
-        let page1_stream = format!(
-            "7 0 obj\n<< /Length {} >>\nstream\n",
-            page1_content.len()
-        );
+        let page1_stream = format!("7 0 obj\n<< /Length {} >>\nstream\n", page1_content.len());
         let obj7_offset = pdf.len();
         pdf.extend_from_slice(page1_stream.as_bytes());
         pdf.extend_from_slice(page1_content);
@@ -254,10 +257,7 @@ mod tests {
 
         // Page 2 content stream
         let page2_content = b"BT /F1 12 Tf 100 700 Td (Hello Page Two) Tj ET";
-        let page2_stream = format!(
-            "8 0 obj\n<< /Length {} >>\nstream\n",
-            page2_content.len()
-        );
+        let page2_stream = format!("8 0 obj\n<< /Length {} >>\nstream\n", page2_content.len());
         let obj8_offset = pdf.len();
         pdf.extend_from_slice(page2_stream.as_bytes());
         pdf.extend_from_slice(page2_content);

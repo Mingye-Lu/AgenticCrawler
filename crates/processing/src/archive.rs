@@ -74,10 +74,7 @@ pub fn list_archive(path: &Path) -> Result<ArchiveOutput, ProcessingError> {
         "zip" => "zip",
         "tar" | "tgz" => "tar",
         "gz" => {
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if std::path::Path::new(stem)
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("tar"))
@@ -90,10 +87,7 @@ pub fn list_archive(path: &Path) -> Result<ArchiveOutput, ProcessingError> {
             }
         }
         "bz2" => {
-            let stem = path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             if std::path::Path::new(stem)
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("tar"))
@@ -258,9 +252,9 @@ pub fn extract_entry(
     let mut archive =
         ZipArchive::new(file).map_err(|e| ProcessingError::CorruptFile(e.to_string()))?;
 
-    let mut entry = archive.by_name(entry_path).map_err(|_| {
-        ProcessingError::FormatError(format!("Entry not found: {entry_path}"))
-    })?;
+    let mut entry = archive
+        .by_name(entry_path)
+        .map_err(|_| ProcessingError::FormatError(format!("Entry not found: {entry_path}")))?;
 
     let entry_size = entry.size();
     if entry_size > MAX_ENTRY_SIZE {
@@ -332,7 +326,11 @@ mod tests {
         assert_eq!(result.total_files, 2);
         assert_eq!(result.entries.len(), 3);
 
-        let hello = result.entries.iter().find(|e| e.path == "hello.txt").unwrap();
+        let hello = result
+            .entries
+            .iter()
+            .find(|e| e.path == "hello.txt")
+            .unwrap();
         assert_eq!(hello.size, 15);
         assert!(!hello.is_directory);
 
@@ -384,8 +382,7 @@ mod tests {
         let zip_file = create_test_zip();
         let output_dir = tempfile::tempdir().unwrap();
 
-        let result =
-            extract_entry(zip_file.path(), "data/world.txt", output_dir.path()).unwrap();
+        let result = extract_entry(zip_file.path(), "data/world.txt", output_dir.path()).unwrap();
 
         assert_eq!(result.size, 10);
         assert_eq!(result.content.as_deref(), Some("World data"));

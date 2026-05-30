@@ -79,7 +79,8 @@ fn extract_nested_entry_from_zip() {
     use acrawl_processing::archive::extract_entry;
 
     let path = ensure_sample_zip();
-    let out_dir = std::env::temp_dir().join(format!("acrawl_int_test_nested_{}", std::process::id()));
+    let out_dir =
+        std::env::temp_dir().join(format!("acrawl_int_test_nested_{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).unwrap();
 
     let extracted = extract_entry(&path, "data/numbers.txt", &out_dir).unwrap();
@@ -95,7 +96,8 @@ fn extract_nonexistent_entry_errors() {
     use acrawl_processing::archive::extract_entry;
 
     let path = ensure_sample_zip();
-    let out_dir = std::env::temp_dir().join(format!("acrawl_int_test_noent_{}", std::process::id()));
+    let out_dir =
+        std::env::temp_dir().join(format!("acrawl_int_test_noent_{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).unwrap();
 
     let result = extract_entry(&path, "does_not_exist.txt", &out_dir);

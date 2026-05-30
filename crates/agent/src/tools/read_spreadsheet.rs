@@ -23,14 +23,11 @@ pub async fn execute(
         .get("range")
         .and_then(|v| v.as_str())
         .map(parse_cell_range);
-    let max_rows = input
-        .get("max_rows")
-        .and_then(Value::as_u64)
-        .map(|n| {
-            #[allow(clippy::cast_possible_truncation)]
-            let v = n as usize;
-            v
-        });
+    let max_rows = input.get("max_rows").and_then(Value::as_u64).map(|n| {
+        #[allow(clippy::cast_possible_truncation)]
+        let v = n as usize;
+        v
+    });
 
     let opts = SpreadsheetOptions {
         sheet,

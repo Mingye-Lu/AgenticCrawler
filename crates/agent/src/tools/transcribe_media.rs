@@ -42,20 +42,16 @@ pub async fn execute(
             "segments": output.segments,
             "metadata": output.metadata
         }))),
-        Err(ProcessingError::FeatureDisabled(feature)) => {
-            Ok(ToolEffect::reply_json(&json!({
-                "error": "transcription feature not enabled",
-                "details": format!("Build acrawl with --features {feature} to enable transcription"),
-                "note": "This feature requires cmake and C++ build tools"
-            })))
-        }
-        Err(ProcessingError::ModelNotFound(path)) => {
-            Ok(ToolEffect::reply_json(&json!({
-                "error": "Whisper model not found",
-                "model_path": path.to_string_lossy(),
-                "fix": "Run `acrawl model download tiny` to download the model (~75MB)"
-            })))
-        }
+        Err(ProcessingError::FeatureDisabled(feature)) => Ok(ToolEffect::reply_json(&json!({
+            "error": "transcription feature not enabled",
+            "details": format!("Build acrawl with --features {feature} to enable transcription"),
+            "note": "This feature requires cmake and C++ build tools"
+        }))),
+        Err(ProcessingError::ModelNotFound(path)) => Ok(ToolEffect::reply_json(&json!({
+            "error": "Whisper model not found",
+            "model_path": path.to_string_lossy(),
+            "fix": "Run `acrawl model download tiny` to download the model (~75MB)"
+        }))),
         Err(e) => Err(ToolExecutionError::new(e.to_string())),
     }
 }
