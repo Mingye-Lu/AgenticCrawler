@@ -24,6 +24,12 @@ const ASYNC_TOOLS: &[&str] = &[
     "switch_tab",
     "list_resources",
     "save_file",
+    "read_pdf",
+    "read_document",
+    "read_spreadsheet",
+    "view_image",
+    "transcribe_media",
+    "list_archive",
 ];
 
 #[derive(Default)]
@@ -42,7 +48,7 @@ impl ToolRegistry {
         Self::new_with_options(true)
     }
 
-    /// Create a registry with all 21 core tools.
+    /// Create a registry with all 27 core tools.
     /// `is_interactive` controls whether `wait_for_human` is allowed to pause.
     #[must_use]
     pub fn new_with_options(is_interactive: bool) -> Self {
@@ -126,6 +132,12 @@ impl ToolRegistry {
             "switch_tab" => crate::tools::switch_tab::execute(input, browser).await,
             "list_resources" => crate::tools::list_resources::execute(input, browser).await,
             "save_file" => crate::tools::save_file::execute(input, browser).await,
+            "read_pdf" => crate::tools::read_pdf::execute(input, browser).await,
+            "read_document" => crate::tools::read_document::execute(input, browser).await,
+            "read_spreadsheet" => crate::tools::read_spreadsheet::execute(input, browser).await,
+            "view_image" => crate::tools::view_image::execute(input, browser).await,
+            "transcribe_media" => crate::tools::transcribe_media::execute(input, browser).await,
+            "list_archive" => crate::tools::list_archive::execute(input, browser).await,
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -142,7 +154,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_twenty_one() {
+    fn new_with_core_tools_registers_all_twenty_seven() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -151,7 +163,7 @@ mod tests {
             "subagent_status",
             "wait_for_human",
         ];
-        assert_eq!(registry.len(), 21);
+        assert_eq!(registry.len(), 27);
         for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
             assert!(registry.contains(name), "missing core tool: {name}");
         }
