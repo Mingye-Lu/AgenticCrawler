@@ -33,6 +33,12 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "cancel_subagent",
     "subagent_status",
     "wait_for_human",
+    "read_pdf",
+    "read_document",
+    "read_spreadsheet",
+    "view_image",
+    "transcribe_media",
+    "list_archive",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
