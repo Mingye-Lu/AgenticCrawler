@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 acrawl-core = { path = "../core" }
+acrawl-processing = { path = "../processing" }
 base64 = "0.22"
 browser = { path = "../browser" }
 csv = "1"
