@@ -381,6 +381,7 @@ async function bootstrap() {
                 : el.placeholder || '';
               return {
                 name: el.name || '',
+                id: el.id || '',
                 type: el.type || el.tagName.toLowerCase(),
                 label,
                 required: Boolean(el.required),
