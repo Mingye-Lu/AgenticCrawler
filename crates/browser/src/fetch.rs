@@ -137,6 +137,15 @@ fn extract_charset(content_type: &str) -> Option<&str> {
 
 fn decode_body_with_charset(bytes: &[u8], charset: &str) -> String {
     if charset.eq_ignore_ascii_case("utf-8") || charset.eq_ignore_ascii_case("us-ascii") {
+        if let Ok(s) = String::from_utf8(bytes.to_vec()) {
+            return s;
+        }
+        // Bytes declared/assumed UTF-8 but invalid — try GBK as fallback
+        // for Chinese servers that omit Content-Type headers.
+        let (decoded, _, had_errors) = encoding_rs::GBK.decode(bytes);
+        if !had_errors {
+            return decoded.into_owned();
+        }
         return String::from_utf8_lossy(bytes).into_owned();
     }
     let encoding =
