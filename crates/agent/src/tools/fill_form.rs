@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -87,6 +88,8 @@ pub async fn execute(
             .evaluate(&js)
             .await
             .map_err(|e| ToolExecutionError::new(format!("failed to submit form: {e}")))?;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
     let page_state = super::feedback::post_action_page_state(browser).await;
