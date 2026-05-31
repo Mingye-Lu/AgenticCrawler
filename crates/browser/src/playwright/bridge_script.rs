@@ -11,12 +11,21 @@ function parseHeadless() {
 
 async function resolveFillSelector(pg, raw) {
   if (/[#.\[\]:>~+\s]/.test(raw)) return raw;
+  const lower = raw.toLowerCase();
   const candidates = [
     `#${raw}`,
+    `#${lower}`,
     `[name="${raw}"]`,
+    `[name="${lower}"]`,
     `input[name="${raw}"]`,
+    `input[name="${lower}"]`,
     `textarea[name="${raw}"]`,
+    `textarea[name="${lower}"]`,
     `select[name="${raw}"]`,
+    `select[name="${lower}"]`,
+    `[placeholder="${raw}"]`,
+    `input[aria-label="${raw}"]`,
+    `textarea[aria-label="${raw}"]`,
   ];
   for (const sel of candidates) {
     try {
@@ -24,6 +33,35 @@ async function resolveFillSelector(pg, raw) {
       if (el) return sel;
     } catch (_) {}
   }
+  try {
+    const resolved = await pg.evaluate((labelText) => {
+      const labels = document.querySelectorAll('label');
+      for (const lbl of labels) {
+        const text = lbl.textContent.trim();
+        if (text.toLowerCase() === labelText.toLowerCase()) {
+          const forAttr = lbl.getAttribute('for');
+          if (forAttr) {
+            const target = document.getElementById(forAttr);
+            if (target) return `#${forAttr}`;
+          }
+          const input = lbl.querySelector('input, textarea, select');
+          if (input) {
+            if (input.id) return `#${input.id}`;
+            if (input.name) return `[name="${input.name}"]`;
+            const type = input.getAttribute('type') || 'text';
+            return `label:has-text("${text}") ${input.tagName.toLowerCase()}[type="${type}"]`;
+          }
+        }
+      }
+      return null;
+    }, raw);
+    if (resolved) {
+      try {
+        const el = await pg.$(resolved);
+        if (el) return resolved;
+      } catch (_) {}
+    }
+  } catch (_) {}
   return raw;
 }
 
