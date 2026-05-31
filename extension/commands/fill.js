@@ -16,7 +16,7 @@ async function handleFill(tabId, payload) {
   const res = await cdp(tabId, 'Runtime.evaluate', {
     expression: `(() => {
       function resolveElement(raw) {
-        if (/[#.\\[\\]:>~+\\s]/.test(raw)) return document.querySelector(raw);
+        if (/^[#.\\[]/.test(raw) || /[\\[\\]:>~+]/.test(raw)) return document.querySelector(raw);
         const lower = raw.toLowerCase();
         const candidates = [
           '#' + raw,

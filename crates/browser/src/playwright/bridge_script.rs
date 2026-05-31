@@ -10,7 +10,7 @@ function parseHeadless() {
 }
 
 async function resolveFillSelector(pg, raw) {
-  if (/[#.\[\]:>~+\s]/.test(raw)) return raw;
+  if (/^[#.\[]/.test(raw) || /[\[\]:>~+]/.test(raw)) return raw;
   const lower = raw.toLowerCase();
   const candidates = [
     `#${raw}`,
