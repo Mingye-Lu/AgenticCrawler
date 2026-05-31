@@ -191,6 +191,22 @@ Write-Host ""
 Write-Host "  acrawl v$version installed successfully!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Get started:" -ForegroundColor Cyan
-Write-Host "    acrawl auth anthropic    # configure your LLM provider"
-Write-Host "    acrawl                   # launch interactive REPL"
+Write-Host "    acrawl                   # launch REPL (guides you through setup on first run)"
+Write-Host "    acrawl mcp install       # use as MCP server in Claude Code, Cursor, etc."
+Write-Host "    acrawl --help            # see all options"
+Write-Host ""
+Write-Host "  Useful slash commands inside the REPL:" -ForegroundColor Cyan
+Write-Host "    /auth          configure or switch LLM providers"
+Write-Host "    /model         switch models (supports 25 providers)"
+Write-Host "    /headed        watch the browser in real time"
+Write-Host "    /extension     crawl with your real browser (existing cookies, logins, extensions)"
+Write-Host "    /help          see all commands"
+Write-Host ""
+Write-Host "  Connect your browser (skip logins — use your existing sessions):" -ForegroundColor Cyan
+Write-Host "    1. Download acrawl-extension.zip from the latest GitHub release"
+Write-Host "    2. Load as unpacked extension in Chrome/Edge (enable Developer mode)"
+Write-Host "    3. Run /extension in the REPL — acrawl now drives your real browser"
+Write-Host "    Switch back anytime with /cloakbrowser (stealth headless mode, the default)."
+Write-Host ""
+Write-Host "  Tip: If ANTHROPIC_API_KEY or OPENAI_API_KEY is already set, acrawl picks it up automatically." -ForegroundColor Gray
 Write-Host ""
