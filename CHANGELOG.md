@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-06-01
+
+### Added
+
+- **Form field `id` in page_map** — `page_map` now includes the `id` attribute for form fields, making it easier for agents to target inputs by ID.
+
+### Fixed
+
+- **SPA content readiness** — `navigate` now waits for network idle (up to 3s) after `domcontentloaded`, ensuring SPA frameworks finish fetching data and rendering before page content and `page_map` are captured. Previously, SPA pages returned only nav/footer content.
+- **HTTP response encoding** — enabled gzip/deflate/brotli decompression in the HTTP fetcher. Added charset-aware decoding: responses with explicit `Content-Type: charset=X` are transcoded via `encoding_rs`. Responses without a Content-Type header that appear to be GBK-encoded (detected via script heuristic) are decoded as GBK instead of producing mojibake.
+- **`fill_form` selector resolution** — fields are now resolved by label text, case-insensitive ID, placeholder, and `aria-label` in addition to CSS selectors. Relaxed CSS detection heuristic to allow text containing dots and spaces.
+- **`fill_form` SPA submit** — clicking the submit button (or dispatching a submit event) instead of calling `form.submit()`, which bypasses SPA framework handlers.
+- **Post-action page state timing** — `click` and `fill_form` now detect URL changes (polling every 50ms for up to 2s) before capturing `page_state`, replacing a fixed sleep. This handles async SPA navigation that completes after the DOM action returns.
+- **Empty SPA content fallback** — `navigate` falls back to visible page text when the main content extraction (`<main>`/`<article>`) yields empty for JavaScript-rendered pages.
+
 ## [0.7.4] - 2026-05-29
 
 ### Changed
@@ -496,6 +511,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.5
 [0.7.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.4
 [0.7.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.3
 [0.7.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.2
