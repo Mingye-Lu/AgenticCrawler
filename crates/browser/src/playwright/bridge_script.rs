@@ -242,7 +242,16 @@ async function bootstrap() {
 
     if (command.action === 'click') {
       try {
+        const urlBefore = page.url();
         await page.click(command.selector, { timeout: 5000 });
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline) {
+          if (page.url() !== urlBefore) {
+            await page.waitForLoadState('domcontentloaded').catch(() => {});
+            break;
+          }
+          await new Promise(r => setTimeout(r, 50));
+        }
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { clicked: true } }) + '\n');
       } catch (mainError) {
         let clickedInFrame = false;

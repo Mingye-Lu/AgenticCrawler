@@ -69,6 +69,12 @@ pub async fn execute(
     }
 
     if params.submit {
+        let pre_url = match browser.acquire_bridge().await {
+            Ok(mut b) => b.evaluate("window.location.href").await.ok()
+                .and_then(|v| v.as_str().map(String::from)),
+            Err(_) => None,
+        };
+
         let js = format!(
             r#"(() => {{
                 const form = document.querySelector('{}');
@@ -89,7 +95,21 @@ pub async fn execute(
             .await
             .map_err(|e| ToolExecutionError::new(format!("failed to submit form: {e}")))?;
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Some(ref old_url) = pre_url {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+            while tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                let current = match browser.acquire_bridge().await {
+                    Ok(mut b) => b.evaluate("window.location.href").await.ok()
+                        .and_then(|v| v.as_str().map(String::from)),
+                    Err(_) => None,
+                };
+                if current.as_deref() != Some(old_url.as_str()) {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    break;
+                }
+            }
+        }
     }
 
     let page_state = super::feedback::post_action_page_state(browser).await;
