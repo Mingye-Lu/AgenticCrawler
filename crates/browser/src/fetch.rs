@@ -138,10 +138,13 @@ fn extract_charset(content_type: &str) -> Option<&str> {
 fn decode_body_with_charset(bytes: &[u8], charset: &str) -> String {
     if charset.eq_ignore_ascii_case("utf-8") || charset.eq_ignore_ascii_case("us-ascii") {
         if let Ok(s) = String::from_utf8(bytes.to_vec()) {
-            return s;
+            if !looks_like_misinterpreted_gbk(&s) {
+                return s;
+            }
         }
-        // Bytes declared/assumed UTF-8 but invalid — try GBK as fallback
-        // for Chinese servers that omit Content-Type headers.
+        // Bytes are either invalid UTF-8 or valid UTF-8 that looks like
+        // GBK misinterpreted as UTF-8 (common with Chinese APIs that omit
+        // Content-Type). Try GBK decoding.
         let (decoded, _, had_errors) = encoding_rs::GBK.decode(bytes);
         if !had_errors {
             return decoded.into_owned();
@@ -152,6 +155,32 @@ fn decode_body_with_charset(bytes: &[u8], charset: &str) -> String {
         encoding_rs::Encoding::for_label(charset.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     let (decoded, _, _) = encoding.decode(bytes);
     decoded.into_owned()
+}
+
+/// GBK byte pairs (0x81-0xFE lead, 0x40-0xFE trail) that happen to be valid
+/// UTF-8 typically produce characters in Armenian (U+0530-058F), Georgian
+/// (U+10A0-10FF), or modifier ranges. If the non-ASCII portion of a string
+/// is dominated by these scripts (and no actual CJK), the bytes are almost
+/// certainly GBK misread as UTF-8.
+fn looks_like_misinterpreted_gbk(text: &str) -> bool {
+    let mut suspicious = 0u32;
+    let mut total_non_ascii = 0u32;
+    for ch in text.chars() {
+        if !ch.is_ascii() {
+            total_non_ascii += 1;
+            let cp = ch as u32;
+            if (0x0080..=0x024F).contains(&cp)      // Latin Extended / IPA
+                || (0x0370..=0x03FF).contains(&cp)   // Greek
+                || (0x0400..=0x04FF).contains(&cp)   // Cyrillic
+                || (0x0530..=0x058F).contains(&cp)   // Armenian
+                || (0x10A0..=0x10FF).contains(&cp)
+            // Georgian
+            {
+                suspicious += 1;
+            }
+        }
+    }
+    total_non_ascii >= 4 && suspicious * 2 > total_non_ascii
 }
 
 fn extract_title(html: &str) -> Option<String> {
