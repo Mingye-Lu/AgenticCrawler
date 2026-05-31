@@ -146,6 +146,11 @@ async function bootstrap() {
     if (command.action === 'navigate') {
       try {
         await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        // Wait for SPA API calls to complete. Cap at 3s so pages with
+        // persistent connections (WebSocket, SSE, polling) don't hang.
+        try {
+          await page.waitForLoadState('networkidle', { timeout: 3000 });
+        } catch (_) { /* networkidle timed out — proceed with current state */ }
         // `bypassTurnstileIfPresent` already calls `page.content()` after
         // any nudge it performs, so reuse that html instead of fetching
         // again — the earlier `html = await page.content()` overwrite was

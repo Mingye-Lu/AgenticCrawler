@@ -70,7 +70,10 @@ pub async fn execute(
 
     if params.submit {
         let pre_url = match browser.acquire_bridge().await {
-            Ok(mut b) => b.evaluate("window.location.href").await.ok()
+            Ok(mut b) => b
+                .evaluate("window.location.href")
+                .await
+                .ok()
                 .and_then(|v| v.as_str().map(String::from)),
             Err(_) => None,
         };
@@ -100,7 +103,10 @@ pub async fn execute(
             while tokio::time::Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 let current = match browser.acquire_bridge().await {
-                    Ok(mut b) => b.evaluate("window.location.href").await.ok()
+                    Ok(mut b) => b
+                        .evaluate("window.location.href")
+                        .await
+                        .ok()
                         .and_then(|v| v.as_str().map(String::from)),
                     Err(_) => None,
                 };
