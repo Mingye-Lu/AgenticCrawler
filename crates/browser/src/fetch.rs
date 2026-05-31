@@ -1,7 +1,7 @@
 use std::fmt;
 use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE, USER_AGENT};
 use reqwest::{Client, StatusCode};
 
 use crate::BrowserContext;
@@ -122,6 +122,27 @@ fn needs_escalation(status: StatusCode, body: &str) -> bool {
     }
 
     false
+}
+
+fn extract_charset(content_type: &str) -> Option<&str> {
+    content_type.split(';').find_map(|part| {
+        let part = part.trim();
+        if part.to_ascii_lowercase().starts_with("charset=") {
+            Some(part[8..].trim_matches('"').trim())
+        } else {
+            None
+        }
+    })
+}
+
+fn decode_body_with_charset(bytes: &[u8], charset: &str) -> String {
+    if charset.eq_ignore_ascii_case("utf-8") || charset.eq_ignore_ascii_case("us-ascii") {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    let encoding =
+        encoding_rs::Encoding::for_label(charset.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+    let (decoded, _, _) = encoding.decode(bytes);
+    decoded.into_owned()
 }
 
 fn extract_title(html: &str) -> Option<String> {
@@ -261,6 +282,14 @@ impl HttpFetcher {
         let status = resp.status();
         let final_url = resp.url().to_string();
 
+        let charset = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(extract_charset)
+            .unwrap_or("utf-8")
+            .to_string();
+
         // Reject up front if the server advertises a body over the limit so we
         // don't even start downloading the payload.
         if let Some(declared) = resp.content_length() {
@@ -285,10 +314,7 @@ impl HttpFetcher {
             bytes.extend_from_slice(&chunk);
         }
 
-        // Match reqwest's text() in being lossy on invalid UTF-8 — the
-        // downstream HTML/markdown pipelines can tolerate replacement chars,
-        // and erroring here would break legitimately mojibake'd pages.
-        let body = String::from_utf8_lossy(&bytes).into_owned();
+        let body = decode_body_with_charset(&bytes, &charset);
 
         Ok(HttpResponse {
             url: final_url,
