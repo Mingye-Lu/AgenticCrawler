@@ -69,7 +69,15 @@ pub async fn execute(
 
     if params.submit {
         let js = format!(
-            "document.querySelector('{}').submit()",
+            r#"(() => {{
+                const form = document.querySelector('{}');
+                if (!form) return 'form_not_found';
+                const btn = form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+                if (btn) {{ btn.click(); return 'clicked'; }}
+                const evt = new Event('submit', {{ bubbles: true, cancelable: true }});
+                if (form.dispatchEvent(evt)) form.submit();
+                return 'dispatched';
+            }})()"#,
             params.form_selector.replace('\'', "\\'")
         );
         browser
