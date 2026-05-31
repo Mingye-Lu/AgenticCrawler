@@ -203,10 +203,20 @@ fn resolve_content(
             match format {
                 "markdown" => {
                     let md = html_to_markdown(&main_html);
-                    cap_content(&md, max_chars)
+                    if md.trim().is_empty() && !text.trim().is_empty() {
+                        cap_content(text, max_chars)
+                    } else {
+                        cap_content(&md, max_chars)
+                    }
                 }
                 "text" => cap_content(text, max_chars),
-                "html" => cap_content(&main_html, max_chars),
+                "html" => {
+                    if main_html.trim().is_empty() && !html.trim().is_empty() {
+                        cap_content(html, max_chars)
+                    } else {
+                        cap_content(&main_html, max_chars)
+                    }
+                }
                 _ => unreachable!(),
             }
         }
