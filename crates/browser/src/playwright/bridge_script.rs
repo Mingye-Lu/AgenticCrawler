@@ -244,7 +244,7 @@ async function bootstrap() {
       try {
         const urlBefore = page.url();
         await page.click(command.selector, { timeout: 5000 });
-        const deadline = Date.now() + 1000;
+        const deadline = Date.now() + 2000;
         while (Date.now() < deadline) {
           if (page.url() !== urlBefore) {
             await page.waitForLoadState('domcontentloaded').catch(() => {});

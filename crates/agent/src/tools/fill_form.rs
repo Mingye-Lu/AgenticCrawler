@@ -96,7 +96,7 @@ pub async fn execute(
             .map_err(|e| ToolExecutionError::new(format!("failed to submit form: {e}")))?;
 
         if let Some(ref old_url) = pre_url {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
             while tokio::time::Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 let current = match browser.acquire_bridge().await {
