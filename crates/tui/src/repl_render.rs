@@ -4,6 +4,7 @@ use std::io;
 
 use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 use crossterm::{event, execute};
+use serde_json;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
@@ -476,7 +477,13 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
                             text_out.extend(call_text);
                         }
                         ContentBlock::Reasoning { data } => {
-                            for row in wrap_plain_text(data, width) {
+                            let thinking_text = serde_json::from_str::<serde_json::Value>(data)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("reasoning_content")?.as_str().map(String::from)
+                                })
+                                .unwrap_or_else(|| data.clone());
+                            for row in wrap_plain_text(&thinking_text, width) {
                                 text_out.push(row.clone());
                                 out.push(ListItem::new(Line::from(Span::styled(
                                     row,
