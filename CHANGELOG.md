@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI requires explicit subcommand** — `acrawl <words>` no longer silently treats bare words as a prompt. Produces a clear error with usage hint; use `acrawl prompt "..."` or `-p "..."`.
 - **Duplicate help hint** — removed duplicate "try --help" message on CLI error output.
 - **Build date** — replaced hardcoded `DEFAULT_DATE` with CI-injected `BUILD_DATE` env var. Dev builds show "unknown".
+- **`install-browser` on Windows** — `npx` (a `.cmd` file) was not found by `std::process::Command`. Now routes through `cmd /C npx` matching the existing self-update fix.
 
 ### Removed
 
