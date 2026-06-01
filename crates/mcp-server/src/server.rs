@@ -352,6 +352,12 @@ fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOu
             message: "missing required parameter: goal".to_string(),
         });
     }
+    if goal.len() > 100_000 {
+        return Err(RunGoalOutcome::JsonRpcError {
+            code: -32602,
+            message: "goal exceeds maximum length (100,000 characters)".to_string(),
+        });
+    }
 
     let model = resolve_model(arguments.get("model").and_then(Value::as_str)).map_err(|error| {
         RunGoalOutcome::JsonRpcError {

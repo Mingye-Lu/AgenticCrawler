@@ -1,6 +1,7 @@
 use super::oauth_spawn::{
     spawn_anthropic_oauth_thread, spawn_extension_connection_watch_from_receiver,
 };
+
 use super::*;
 
 impl ReplTuiState {
@@ -252,16 +253,24 @@ pub(super) fn handle_slash_command_tui(
             state.push_system_card("Slash Help", &render_repl_help());
         }
         SlashCommand::Status => {
-            let report = cli.lock().expect("cli lock").status_report();
+            let report = cli
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .status_report();
             state.push_system_card("Status", &report);
         }
         SlashCommand::Cost => {
-            let report = cli.lock().expect("cli lock").cost_report();
+            let report = cli
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .cost_report();
             state.push_system_card("Cost", &report);
         }
         SlashCommand::Model { model } => {
             if let Some(model_name) = model {
-                let mut g = cli.lock().expect("cli lock");
+                let mut g = cli
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let result = g.model_command(Some(model_name))?;
                 if result.persist_after {
                     g.persist_session()?;
@@ -272,7 +281,11 @@ pub(super) fn handle_slash_command_tui(
             } else {
                 let credentials = api::load_credentials().unwrap_or_default();
                 let registry = api::provider::ProviderRegistry::from_credentials(&credentials);
-                let current_model = cli.lock().expect("cli lock").model_name().to_string();
+                let current_model = cli
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .model_name()
+                    .to_string();
                 let (catalog, catalog_source) = match &state.live_model_catalog {
                     ModelCatalogState::Ready(models) => {
                         (models.clone(), crate::tui::model_modal::CatalogSource::Live)
@@ -297,7 +310,9 @@ pub(super) fn handle_slash_command_tui(
             }
         }
         SlashCommand::Compact => {
-            let mut g = cli.lock().expect("cli lock");
+            let mut g = cli
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let result = g.compact_command()?;
             if result.persist_after {
                 g.persist_session()?;
@@ -305,7 +320,9 @@ pub(super) fn handle_slash_command_tui(
             state.push_system_card("Compact", &result.message);
         }
         SlashCommand::Clear => {
-            let mut g = cli.lock().expect("cli lock");
+            let mut g = cli
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let result = g.clear_session_command()?;
             state.messages.clear();
             state.live_tool_calls.clear();
@@ -329,7 +346,7 @@ pub(super) fn handle_slash_command_tui(
         SlashCommand::Export { path } => {
             let report = cli
                 .lock()
-                .expect("cli lock")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .export_session_report(path.as_deref())?;
             state.push_system_card("Export", &report);
         }
@@ -338,7 +355,11 @@ pub(super) fn handle_slash_command_tui(
                 state.push_system_card("Sessions", "Cannot open the session picker while busy.");
                 return Ok(());
             }
-            let current_id = cli.lock().expect("cli lock").session_id().to_string();
+            let current_id = cli
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .session_id()
+                .to_string();
             let entries = build_session_modal_entries(&current_id)?;
             state.active_modal = Some(ActiveModal::Session(
                 crate::tui::session_modal::SessionModal::new(entries),
@@ -357,7 +378,11 @@ pub(super) fn handle_slash_command_tui(
             ));
         }
         SlashCommand::Headed => {
-            if cli.lock().expect("cli lock").is_extension_mode_active() {
+            if cli
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_extension_mode_active()
+            {
                 state.push_system_card(
                     "Browser Mode",
                     "Browser mode\n  Ignored          extension mode is active (browser is already visible)",
@@ -374,7 +399,9 @@ pub(super) fn handle_slash_command_tui(
                     let _ = runtime::update_settings(|s| {
                         s.headless = Some(false);
                     });
-                    cli.lock().expect("cli lock").reset_browser();
+                    cli.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .reset_browser();
                     state.push_system_card(
                         "Browser Mode",
                         "Browser mode\n  Result           switched to headed (visible)",
@@ -388,7 +415,11 @@ pub(super) fn handle_slash_command_tui(
             }
         }
         SlashCommand::Headless => {
-            if cli.lock().expect("cli lock").is_extension_mode_active() {
+            if cli
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_extension_mode_active()
+            {
                 state.push_system_card(
                     "Browser Mode",
                     "Browser mode\n  Ignored          extension mode is active (browser is already visible)",
@@ -398,7 +429,9 @@ pub(super) fn handle_slash_command_tui(
                 let _ = runtime::update_settings(|s| {
                     s.headless = Some(true);
                 });
-                cli.lock().expect("cli lock").reset_browser();
+                cli.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .reset_browser();
                 state.push_system_card(
                     "Browser Mode",
                     "Browser mode\n  Result           switched to headless",
@@ -408,12 +441,16 @@ pub(super) fn handle_slash_command_tui(
         cmd @ (SlashCommand::Extension { .. } | SlashCommand::CloakBrowser) => match cmd {
             SlashCommand::Extension { stop } => {
                 if stop {
-                    let mut g = cli.lock().expect("cli lock");
+                    let mut g = cli
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let msg = g.stop_extension_server();
                     state.push_system_card("Extension", &msg);
                     return Ok(());
                 }
-                let mut g = cli.lock().expect("cli lock");
+                let mut g = cli
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(status) = g.extension_bridge_status() {
                     state.push_system_card("Extension", &status);
                 } else {
@@ -439,7 +476,9 @@ pub(super) fn handle_slash_command_tui(
                 }
             }
             SlashCommand::CloakBrowser => {
-                let mut g = cli.lock().expect("cli lock");
+                let mut g = cli
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let msg = g.switch_to_cloakbrowser();
                 state.push_system_card("Browser Mode", &msg);
             }
@@ -467,7 +506,9 @@ pub(super) fn handle_slash_command_tui(
         }
         other @ SlashCommand::Unknown(_) => {
             suspend_for_stdout(terminal, || {
-                let mut g = cli.lock().expect("cli lock");
+                let mut g = cli
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let _ = g.handle_repl_command(other);
             })?;
             state.push_system("(slash command output printed to stdout)");

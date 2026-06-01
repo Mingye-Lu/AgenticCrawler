@@ -166,6 +166,22 @@ pub fn save_credentials_to_path(
             .map_err(|e| CredentialError::Io(e.to_string()))?;
     }
 
+    #[cfg(windows)]
+    {
+        if let (Some(path_str), Ok(username)) = (temp_path.to_str(), std::env::var("USERNAME")) {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("icacls")
+                .args([
+                    path_str,
+                    "/inheritance:r",
+                    "/grant:r",
+                    &format!("{username}:(R,W)"),
+                ])
+                .creation_flags(0x0800_0000)
+                .output();
+        }
+    }
+
     // Atomic rename
     std::fs::rename(&temp_path, path).map_err(|e| CredentialError::Io(e.to_string()))?;
 

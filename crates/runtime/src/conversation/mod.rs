@@ -169,126 +169,31 @@ where
         Ok(())
     }
 
-    #[allow(clippy::too_many_lines)]
     pub async fn run_turn(
         &mut self,
         user_input: impl Into<String>,
     ) -> Result<TurnSummary, RuntimeError> {
         let result = async {
-            self.session
-                .messages
-                .push(ConversationMessage::user_text(user_input.into()));
+            self.push_user_message(user_input.into());
 
             let mut assistant_messages = Vec::new();
             let mut tool_results = Vec::new();
             let mut iterations = 0;
 
             loop {
-                if self.control_state.is_cancelled() {
-                    self.control_state.reset();
-                    return Err(RuntimeError::new("interrupted by user"));
-                }
+                iterations = self.prepare_iteration(iterations).await?;
 
-                self.check_pause().await?;
+                let assistant_message = self.stream_assistant_message()?;
+                let pending_tool_uses = collect_pending_tool_uses(&assistant_message);
 
-                iterations += 1;
-                if iterations > self.max_iterations {
-                    return Err(RuntimeError::new(
-                        "conversation loop exceeded the maximum number of iterations",
-                    ));
-                }
-
-                let request = ApiRequest {
-                    system_prompt: self.system_prompt.clone(),
-                    messages: self.session.messages.clone(),
-                };
-                let events = self.api_client.stream(request)?;
-                notify_observer_about_events(&mut self.observer, &events);
-                let (assistant_message, usage) = build_assistant_message(events)?;
-                if let Some(usage) = usage {
-                    self.usage_tracker.record(usage);
-                }
-                let pending_tool_uses = assistant_message
-                    .blocks
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::ToolUse { id, name, input } => {
-                            Some((id.clone(), name.clone(), input.clone()))
-                        }
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-
-                self.session.messages.push(assistant_message.clone());
-                if let Some(ref mut observer) = self.observer {
-                    observer.on_message_completed(&assistant_message);
-                }
-                assistant_messages.push(assistant_message);
+                self.store_assistant_message(&mut assistant_messages, assistant_message);
 
                 if pending_tool_uses.is_empty() {
                     break;
                 }
 
-                let mut interrupted_at = None;
-                for (idx, (tool_use_id, tool_name, input)) in pending_tool_uses.iter().enumerate() {
-                    if interrupted_at.is_some() {
-                        let stub = ConversationMessage::tool_result(
-                            tool_use_id.clone(),
-                            tool_name.clone(),
-                            "Tool execution interrupted by user.".to_string(),
-                            true,
-                        );
-                        notify_observer_tool_result(&mut self.observer, &stub);
-                        self.session.messages.push(stub.clone());
-                        tool_results.push(stub);
-                        continue;
-                    }
-
-                    let execute_fut = self.tool_executor.execute(tool_name, input);
-                    let result_message = tokio::select! {
-                        biased;
-                        () = self.control_state.cancelled() => {
-                            interrupted_at = Some(idx);
-                            let stub = ConversationMessage::tool_result(
-                                tool_use_id.clone(),
-                                tool_name.clone(),
-                                "Tool execution interrupted by user.".to_string(),
-                                true,
-                            );
-                            notify_observer_tool_result(&mut self.observer, &stub);
-                            self.session.messages.push(stub.clone());
-                            tool_results.push(stub);
-                            continue;
-                        }
-                        result = execute_fut => {
-                            let (output, is_error) = match result {
-                                Ok(outcome) => {
-                                    if let Some(ref mut observer) = self.observer {
-                                        if let Some(effect) = outcome.effect.as_ref() {
-                                            observer.on_tool_effect(effect);
-                                        }
-                                    }
-                                    (outcome.text, false)
-                                }
-                                Err(error) => (error.to_string(), true),
-                            };
-                            ConversationMessage::tool_result(
-                                tool_use_id.clone(),
-                                tool_name.clone(),
-                                output,
-                                is_error,
-                            )
-                        }
-                    };
-                    notify_observer_tool_result(&mut self.observer, &result_message);
-                    self.session.messages.push(result_message.clone());
-                    tool_results.push(result_message);
-                }
-
-                if interrupted_at.is_some() {
-                    self.control_state.reset();
-                    return Err(RuntimeError::new("interrupted by user"));
-                }
+                self.execute_pending_tool_uses(&pending_tool_uses, &mut tool_results)
+                    .await?;
 
                 self.check_pause().await?;
             }
@@ -340,6 +245,133 @@ where
 
     pub fn tool_executor_mut(&mut self) -> &mut T {
         &mut self.tool_executor
+    }
+
+    fn push_user_message(&mut self, user_input: String) {
+        self.session
+            .messages
+            .push(ConversationMessage::user_text(user_input));
+    }
+
+    async fn prepare_iteration(&mut self, iterations: usize) -> Result<usize, RuntimeError> {
+        self.fail_if_cancelled()?;
+        self.check_pause().await?;
+
+        let next_iterations = iterations + 1;
+        if next_iterations > self.max_iterations {
+            return Err(RuntimeError::new(
+                "conversation loop exceeded the maximum number of iterations",
+            ));
+        }
+
+        Ok(next_iterations)
+    }
+
+    fn fail_if_cancelled(&mut self) -> Result<(), RuntimeError> {
+        if self.control_state.is_cancelled() {
+            self.control_state.reset();
+            return Err(RuntimeError::new("interrupted by user"));
+        }
+
+        Ok(())
+    }
+
+    fn stream_assistant_message(&mut self) -> Result<ConversationMessage, RuntimeError> {
+        let events = self.api_client.stream(self.build_api_request())?;
+        notify_observer_about_events(&mut self.observer, &events);
+        let (assistant_message, usage) = build_assistant_message(events)?;
+        if let Some(usage) = usage {
+            self.usage_tracker.record(usage);
+        }
+
+        Ok(assistant_message)
+    }
+
+    fn build_api_request(&self) -> ApiRequest {
+        ApiRequest {
+            system_prompt: self.system_prompt.clone(),
+            messages: self.session.messages.clone(),
+        }
+    }
+
+    fn store_assistant_message(
+        &mut self,
+        assistant_messages: &mut Vec<ConversationMessage>,
+        assistant_message: ConversationMessage,
+    ) {
+        self.session.messages.push(assistant_message.clone());
+        if let Some(ref mut observer) = self.observer {
+            observer.on_message_completed(&assistant_message);
+        }
+        assistant_messages.push(assistant_message);
+    }
+
+    async fn execute_pending_tool_uses(
+        &mut self,
+        pending_tool_uses: &[(String, String, String)],
+        tool_results: &mut Vec<ConversationMessage>,
+    ) -> Result<(), RuntimeError> {
+        let mut interrupted = false;
+
+        for (idx, (tool_use_id, tool_name, input)) in pending_tool_uses.iter().enumerate() {
+            if interrupted {
+                self.store_tool_result(
+                    tool_results,
+                    interrupted_tool_result(tool_use_id.clone(), tool_name.clone()),
+                );
+                continue;
+            }
+
+            if let Some(result_message) = self
+                .execute_tool_use(idx, tool_use_id, tool_name, input)
+                .await?
+            {
+                self.store_tool_result(tool_results, result_message);
+            } else {
+                interrupted = true;
+                self.store_tool_result(
+                    tool_results,
+                    interrupted_tool_result(tool_use_id.clone(), tool_name.clone()),
+                );
+            }
+        }
+
+        if interrupted {
+            self.control_state.reset();
+            return Err(RuntimeError::new("interrupted by user"));
+        }
+
+        Ok(())
+    }
+
+    async fn execute_tool_use(
+        &mut self,
+        idx: usize,
+        tool_use_id: &str,
+        tool_name: &str,
+        input: &str,
+    ) -> Result<Option<ConversationMessage>, RuntimeError> {
+        let execute_fut = self.tool_executor.execute(tool_name, input);
+        let result_message = tokio::select! {
+            biased;
+            () = self.control_state.cancelled() => {
+                let _ = idx;
+                return Ok(None);
+            }
+            result = execute_fut => build_tool_result_message(&mut self.observer, tool_use_id, tool_name, result),
+        };
+
+        Ok(Some(result_message))
+    }
+
+    fn store_tool_result(
+        &mut self,
+        tool_results: &mut Vec<ConversationMessage>,
+        result_message: ConversationMessage,
+    ) {
+        notify_observer_tool_result(&mut self.observer, &result_message);
+        self.session.messages.push(result_message.clone());
+        tool_results.push(result_message);
     }
 
     fn maybe_auto_compact(&mut self) -> Option<AutoCompactionEvent> {
@@ -410,6 +442,56 @@ where
             removed_message_count: result.removed_message_count,
         })
     }
+}
+
+fn collect_pending_tool_uses(
+    assistant_message: &ConversationMessage,
+) -> Vec<(String, String, String)> {
+    assistant_message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { id, name, input } => {
+                Some((id.clone(), name.clone(), input.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn interrupted_tool_result(tool_use_id: String, tool_name: String) -> ConversationMessage {
+    ConversationMessage::tool_result(
+        tool_use_id,
+        tool_name,
+        "Tool execution interrupted by user.".to_string(),
+        true,
+    )
+}
+
+fn build_tool_result_message(
+    observer: &mut Option<Box<dyn RuntimeObserver + Send>>,
+    tool_use_id: &str,
+    tool_name: &str,
+    result: Result<ToolOutcome, ToolError>,
+) -> ConversationMessage {
+    let (output, is_error) = match result {
+        Ok(outcome) => {
+            if let Some(ref mut observer) = observer {
+                if let Some(effect) = outcome.effect.as_ref() {
+                    observer.on_tool_effect(effect);
+                }
+            }
+            (outcome.text, false)
+        }
+        Err(error) => (error.to_string(), true),
+    };
+
+    ConversationMessage::tool_result(
+        tool_use_id.to_string(),
+        tool_name.to_string(),
+        output,
+        is_error,
+    )
 }
 
 fn try_llm_summarize<C: ApiClient>(

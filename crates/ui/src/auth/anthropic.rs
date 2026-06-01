@@ -26,17 +26,17 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
     match choice.trim() {
         "2" | "oauth" => {
             run_login()?;
-            let oauth = load_oauth_credentials()?
+            let mut oauth = load_oauth_credentials()?
                 .ok_or("Anthropic OAuth completed, but no saved token was found")?;
             persist_provider_credentials(
                 Provider::Anthropic,
                 api::StoredProviderConfig {
                     auth_method: "oauth".to_string(),
                     oauth: Some(api::StoredOAuthTokens {
-                        access_token: oauth.access_token,
-                        refresh_token: oauth.refresh_token,
+                        access_token: std::mem::take(&mut oauth.access_token),
+                        refresh_token: oauth.refresh_token.take(),
                         expires_at: oauth.expires_at.and_then(|v| i64::try_from(v).ok()),
-                        scopes: oauth.scopes,
+                        scopes: std::mem::take(&mut oauth.scopes),
                         account_id: None,
                     }),
                     ..Default::default()

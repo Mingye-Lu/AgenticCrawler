@@ -4,7 +4,6 @@ use std::io;
 
 use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
 use crossterm::{event, execute};
-use serde_json;
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
@@ -14,6 +13,7 @@ use ratatui::widgets::{
 };
 use ratatui::DefaultTerminal;
 use runtime::{format_usd, pricing_for_model};
+use serde_json;
 
 use crate::app::LiveCli;
 use crate::display_width::{split_at_display_width, text_display_width};
