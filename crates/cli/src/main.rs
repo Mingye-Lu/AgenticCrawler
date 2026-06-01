@@ -528,7 +528,14 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
         );
     } else {
         println!("Installing CloakBrowser...");
-        let status = Command::new("npm")
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "npm"]);
+            c
+        } else {
+            Command::new("npm")
+        };
+        let status = cmd
             .args([
                 "install",
                 "--prefix",
@@ -574,7 +581,14 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
 
     // Download the browser binary
     println!("Ensuring browser binary is downloaded...");
-    let status = Command::new("npx")
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "npx"]);
+        c
+    } else {
+        Command::new("npx")
+    };
+    let status = cmd
         .args([
             "--prefix",
             &config_home.to_string_lossy(),
