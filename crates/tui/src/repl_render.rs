@@ -463,6 +463,10 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
                                 Some(result) => ToolCallStatus::Success {
                                     output: result.output.clone(),
                                 },
+                                None if !live_tool_calls.is_empty() => {
+                                    // Rendered via live_tool_calls below; skip duplicate.
+                                    continue;
+                                }
                                 None => ToolCallStatus::Interrupted,
                             };
                             let (call_items, call_text) = render_tool_call_lines(
@@ -1594,6 +1598,29 @@ mod tests {
         let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
 
         assert!(text.iter().any(|line| line.contains("interrupted")));
+    }
+
+    #[test]
+    fn build_wrapped_list_skips_unresolved_tool_use_when_live_tools_active() {
+        let messages = vec![ConversationMessage::assistant(vec![
+            ContentBlock::ToolUse {
+                id: "tool_1".to_string(),
+                name: "navigate".to_string(),
+                input: r#"{"url":"https://example.com"}"#.to_string(),
+            },
+        ])];
+        let live = vec![(
+            "navigate".to_string(),
+            "https://example.com".to_string(),
+            ToolCallStatus::Running,
+        )];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &live, 80, None, '⠋', false);
+
+        assert!(
+            !text.iter().any(|line| line.contains("interrupted")),
+            "should not show interrupted when live_tool_calls is active"
+        );
     }
 
     #[test]
