@@ -422,7 +422,7 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
 
 /// How to add a new provider:
 /// 1. Add a `ProviderPreset` entry to `BUILTIN_PRESETS` and keep the array size in sync.
-/// 2. Add matching catalog entries in `catalog.rs` so aliases, pricing, and provider IDs line up.
+/// 2. Add matching catalog entries in `catalog.rs` so pricing and provider IDs line up.
 /// 3. Wire auth prompts in `acrawl-cli` if the provider needs anything beyond the default API-key flow.
 /// 4. Add or extend `ProviderProtocol` and client builders for non-standard transports.
 /// 5. Give the preset clear `model_prefixes` so provider-specific UX stays predictable.

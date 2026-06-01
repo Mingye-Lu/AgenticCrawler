@@ -1186,7 +1186,7 @@ fn goal_title_shows_reasoning_effort_for_reasoning_model() {
 #[test]
 fn goal_title_omits_effort_for_non_reasoning_model() {
     let header = super::HeaderSnapshot {
-        model: "claude-sonnet-4-6".to_string(),
+        model: "anthropic/claude-sonnet-4-6".to_string(),
         reasoning_effort: None,
         ..Default::default()
     };
@@ -1198,7 +1198,7 @@ fn goal_title_omits_effort_for_non_reasoning_model() {
     } else {
         format!(" Goal · {} ", state.cached_header.model)
     };
-    assert_eq!(title, " Goal · claude-sonnet-4-6 ");
+    assert_eq!(title, " Goal · anthropic/claude-sonnet-4-6 ");
 }
 
 #[test]
@@ -1206,7 +1206,7 @@ fn goal_title_cycles_through_all_effort_levels() {
     let efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];
     for effort in &efforts {
         let header = super::HeaderSnapshot {
-            model: "gpt-5.3-codex".to_string(),
+            model: "openai/gpt-5.3-codex".to_string(),
             reasoning_effort: Some(effort.to_string()),
             ..Default::default()
         };
@@ -1506,7 +1506,7 @@ fn calculate_input_dimensions_empty_input_various_widths() {
     for width in [20u16, 40, 80, 120, 200] {
         let mut state = ReplTuiState::new();
         let (height, lines, _total_visual, cursor_pos) =
-            state.calculate_input_dimensions(width, "claude-sonnet-4-6");
+            state.calculate_input_dimensions(width, "anthropic/claude-sonnet-4-6");
 
         assert!(height > 0, "height must be > 0 for width={width}");
         assert!(!lines.is_empty(), "must produce at least 1 render line");

@@ -779,7 +779,7 @@ fn qa_large_tool_output_pruning() {
 
     let session = Session {
         version: 1,
-        model: Some("claude-sonnet-4-6".to_string()),
+        model: Some("anthropic/claude-sonnet-4-6".to_string()),
         title: Some("QA Test 1".to_string()),
         messages,
         child_sessions: Vec::new(),

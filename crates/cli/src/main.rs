@@ -702,7 +702,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         .join(", ");
     writeln!(out, "Resume-safe commands: {resume_commands}")?;
     writeln!(out, "Examples:")?;
-    writeln!(out, "  acrawl --model claude-opus \"summarize this repo\"")?;
+    writeln!(out, "  acrawl --model anthropic/claude-opus-4-6 prompt \"summarize this repo\"")?;
     writeln!(
         out,
         "  acrawl --output-format json prompt \"explain src/main.rs\""
@@ -773,7 +773,7 @@ mod tests {
         with_clean_config_env(|| {
             let args = vec![
                 "--model".to_string(),
-                "claude-sonnet-4-6".to_string(),
+                "anthropic/claude-sonnet-4-6".to_string(),
                 "prompt".to_string(),
                 "hello".to_string(),
                 "world".to_string(),
@@ -782,7 +782,7 @@ mod tests {
                 parse_args(&args).expect("args should parse"),
                 CliAction::Prompt {
                     prompt: "hello world".to_string(),
-                    model: "claude-sonnet-4-6".to_string(),
+                    model: "anthropic/claude-sonnet-4-6".to_string(),
                     output_format: CliOutputFormat::Text,
                     allowed_tools: None,
                 }
@@ -796,7 +796,7 @@ mod tests {
             let args = vec![
                 "--output-format=json".to_string(),
                 "--model".to_string(),
-                "claude-opus".to_string(),
+                "anthropic/claude-opus-4-6".to_string(),
                 "prompt".to_string(),
                 "explain".to_string(),
                 "this".to_string(),
@@ -805,7 +805,7 @@ mod tests {
                 parse_args(&args).expect("args should parse"),
                 CliAction::Prompt {
                     prompt: "explain this".to_string(),
-                    model: "claude-opus".to_string(),
+                    model: "anthropic/claude-opus-4-6".to_string(),
                     output_format: CliOutputFormat::Json,
                     allowed_tools: None,
                 }
@@ -818,7 +818,7 @@ mod tests {
         with_clean_config_env(|| {
             let args = vec![
                 "--model".to_string(),
-                "claude-opus-4-6".to_string(),
+                "anthropic/claude-opus-4-6".to_string(),
                 "prompt".to_string(),
                 "explain".to_string(),
                 "this".to_string(),
@@ -827,7 +827,7 @@ mod tests {
                 parse_args(&args).expect("args should parse"),
                 CliAction::Prompt {
                     prompt: "explain this".to_string(),
-                    model: "claude-opus-4-6".to_string(),
+                    model: "anthropic/claude-opus-4-6".to_string(),
                     output_format: CliOutputFormat::Text,
                     allowed_tools: None,
                 }

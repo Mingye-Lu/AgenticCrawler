@@ -349,9 +349,9 @@ mod tests {
         assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));
         assert_eq!(SlashCommand::parse("/debug"), Some(SlashCommand::Debug));
         assert_eq!(
-            SlashCommand::parse("/model claude-opus"),
+            SlashCommand::parse("/model anthropic/claude-opus-4-6"),
             Some(SlashCommand::Model {
-                model: Some("claude-opus".to_string()),
+                model: Some("anthropic/claude-opus-4-6".to_string()),
             })
         );
         assert_eq!(
@@ -421,9 +421,9 @@ mod tests {
         assert_eq!(SlashCommand::parse("/STATUS"), Some(SlashCommand::Status));
         assert_eq!(SlashCommand::parse("/COMPACT"), Some(SlashCommand::Compact));
         assert_eq!(
-            SlashCommand::parse("/Model claude-opus"),
+            SlashCommand::parse("/Model anthropic/claude-opus-4-6"),
             Some(SlashCommand::Model {
-                model: Some("claude-opus".to_string()),
+                model: Some("anthropic/claude-opus-4-6".to_string()),
             })
         );
         assert_eq!(

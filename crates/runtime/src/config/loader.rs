@@ -213,12 +213,12 @@ mod tests {
 
         fs::write(
             home.parent().expect("home parent").join(".acrawl.json"),
-            r#"{"model":"haiku","env":{"A":"1"},"mcpServers":{"home":{"command":"uvx","args":["home"]}}}"#,
+            r#"{"model":"anthropic/claude-haiku-4-5-20251213","env":{"A":"1"},"mcpServers":{"home":{"command":"uvx","args":["home"]}}}"#,
         )
         .expect("write user compat config");
         fs::write(
             home.join("settings.json"),
-            r#"{"model":"sonnet","env":{"A2":"1"}}"#,
+            r#"{"model":"anthropic/claude-sonnet-4-6","env":{"A2":"1"}}"#,
         )
         .expect("write user settings");
 
@@ -229,9 +229,9 @@ mod tests {
         assert_eq!(loaded.loaded_entries()[0].source, ConfigSource::User);
         assert_eq!(
             loaded.get("model"),
-            Some(&JsonValue::String("sonnet".to_string()))
+            Some(&JsonValue::String("anthropic/claude-sonnet-4-6".to_string()))
         );
-        assert_eq!(loaded.model(), Some("sonnet"));
+        assert_eq!(loaded.model(), Some("anthropic/claude-sonnet-4-6"));
         assert_eq!(
             loaded
                 .get("env")

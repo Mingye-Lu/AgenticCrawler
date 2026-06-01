@@ -1,6 +1,6 @@
 //! Built-in model catalog and `models.dev` integration.
 //!
-//! Provides model metadata (aliases, token limits, capabilities, pricing)
+//! Provides model metadata (token limits, capabilities, pricing)
 //! so the rest of the codebase never needs to hardcode model-specific values.
 
 use super::{ModelCapabilities, ModelInfo, ModelPricing};
@@ -58,7 +58,6 @@ fn anthropic_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-opus-4-6".into(),
             display_name: "Claude Opus 4.6".into(),
-            aliases: vec![],
             provider_id: "anthropic".into(),
             max_output_tokens: 32_000,
             context_window: 200_000,
@@ -79,7 +78,6 @@ fn anthropic_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-sonnet-4-6".into(),
             display_name: "Claude Sonnet 4.6".into(),
-            aliases: vec![],
             provider_id: "anthropic".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -100,7 +98,6 @@ fn anthropic_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-haiku-4-5-20251213".into(),
             display_name: "Claude Haiku 4.5".into(),
-            aliases: vec![],
             provider_id: "anthropic".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -128,7 +125,6 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4o".into(),
             display_name: "GPT-4o".into(),
-            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 16_384,
             context_window: 128_000,
@@ -149,7 +145,6 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4-turbo".into(),
             display_name: "GPT-4 Turbo".into(),
-            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 4_096,
             context_window: 128_000,
@@ -170,7 +165,6 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "o3".into(),
             display_name: "o3".into(),
-            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 100_000,
             context_window: 200_000,
@@ -191,7 +185,6 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "o4-mini".into(),
             display_name: "o4 Mini".into(),
-            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 100_000,
             context_window: 200_000,
@@ -212,7 +205,6 @@ fn openai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "codex-mini-latest".into(),
             display_name: "Codex Mini".into(),
-            aliases: vec![],
             provider_id: "openai".into(),
             max_output_tokens: 100_000,
             context_window: 200_000,
@@ -233,7 +225,6 @@ fn groq_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama-3.3-70b-versatile".into(),
             display_name: "Llama 3.3 70B".into(),
-            aliases: vec![],
             provider_id: "groq".into(),
             max_output_tokens: 8_192,
             context_window: 128_000,
@@ -254,7 +245,6 @@ fn groq_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama-3.1-8b-instant".into(),
             display_name: "Llama 3.1 8B Instant".into(),
-            aliases: vec![],
             provider_id: "groq".into(),
             max_output_tokens: 8_192,
             context_window: 128_000,
@@ -275,7 +265,6 @@ fn groq_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gemma2-9b-it".into(),
             display_name: "Gemma 2 9B".into(),
-            aliases: vec![],
             provider_id: "groq".into(),
             max_output_tokens: 8_192,
             context_window: 8_192,
@@ -291,7 +280,6 @@ fn groq_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "mixtral-8x7b-32768".into(),
             display_name: "Mixtral 8x7B".into(),
-            aliases: vec![],
             provider_id: "groq".into(),
             max_output_tokens: 32_768,
             context_window: 32_768,
@@ -312,7 +300,6 @@ fn mistral_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "mistral-large-latest".into(),
             display_name: "Mistral Large".into(),
-            aliases: vec![],
             provider_id: "mistral".into(),
             max_output_tokens: 131_072,
             context_window: 131_072,
@@ -328,7 +315,6 @@ fn mistral_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "mistral-small-latest".into(),
             display_name: "Mistral Small".into(),
-            aliases: vec![],
             provider_id: "mistral".into(),
             max_output_tokens: 32_768,
             context_window: 32_768,
@@ -344,7 +330,6 @@ fn mistral_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "codestral-latest".into(),
             display_name: "Codestral".into(),
-            aliases: vec![],
             provider_id: "mistral".into(),
             max_output_tokens: 32_768,
             context_window: 32_768,
@@ -360,7 +345,6 @@ fn mistral_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "mistral-medium-latest".into(),
             display_name: "Mistral Medium".into(),
-            aliases: vec![],
             provider_id: "mistral".into(),
             max_output_tokens: 32_768,
             context_window: 32_768,
@@ -381,7 +365,6 @@ fn deepinfra_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "meta-llama/Meta-Llama-3.1-70B-Instruct".into(),
             display_name: "Llama 3.1 70B Instruct".into(),
-            aliases: vec![],
             provider_id: "deepinfra".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -397,7 +380,6 @@ fn deepinfra_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "meta-llama/Meta-Llama-3.1-8B-Instruct".into(),
             display_name: "Llama 3.1 8B Instruct".into(),
-            aliases: vec![],
             provider_id: "deepinfra".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -413,7 +395,6 @@ fn deepinfra_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "mistralai/Mixtral-8x7B-Instruct-v0.1".into(),
             display_name: "Mixtral 8x7B Instruct".into(),
-            aliases: vec![],
             provider_id: "deepinfra".into(),
             max_output_tokens: 8_192,
             context_window: 32_768,
@@ -434,7 +415,6 @@ fn cerebras_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama3.1-70b".into(),
             display_name: "Llama 3.1 70B (Cerebras)".into(),
-            aliases: vec![],
             provider_id: "cerebras".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -450,7 +430,6 @@ fn cerebras_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama3.1-8b".into(),
             display_name: "Llama 3.1 8B (Cerebras)".into(),
-            aliases: vec![],
             provider_id: "cerebras".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -466,7 +445,6 @@ fn cerebras_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama-3.3-70b".into(),
             display_name: "Llama 3.3 70B (Cerebras)".into(),
-            aliases: vec![],
             provider_id: "cerebras".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -487,7 +465,6 @@ fn cohere_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "command-r-plus".into(),
             display_name: "Command R+".into(),
-            aliases: vec![],
             provider_id: "cohere".into(),
             max_output_tokens: 4_096,
             context_window: 128_000,
@@ -508,7 +485,6 @@ fn cohere_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "command-r".into(),
             display_name: "Command R".into(),
-            aliases: vec![],
             provider_id: "cohere".into(),
             max_output_tokens: 4_096,
             context_window: 128_000,
@@ -529,7 +505,6 @@ fn cohere_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "command-light".into(),
             display_name: "Command Light".into(),
-            aliases: vec![],
             provider_id: "cohere".into(),
             max_output_tokens: 4_096,
             context_window: 4_096,
@@ -550,7 +525,6 @@ fn togetherai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo".into(),
             display_name: "Llama 3.1 70B Turbo".into(),
-            aliases: vec![],
             provider_id: "togetherai".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -566,7 +540,6 @@ fn togetherai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo".into(),
             display_name: "Llama 3.1 8B Turbo".into(),
-            aliases: vec![],
             provider_id: "togetherai".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -582,7 +555,6 @@ fn togetherai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "mistralai/Mixtral-8x7B-Instruct-v0.1".into(),
             display_name: "Mixtral 8x7B Instruct".into(),
-            aliases: vec![],
             provider_id: "togetherai".into(),
             max_output_tokens: 8_192,
             context_window: 32_768,
@@ -603,7 +575,6 @@ fn perplexity_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama-3.1-sonar-large-128k-online".into(),
             display_name: "Sonar Large Online".into(),
-            aliases: vec![],
             provider_id: "perplexity".into(),
             max_output_tokens: 8_192,
             context_window: 128_000,
@@ -619,7 +590,6 @@ fn perplexity_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama-3.1-sonar-small-128k-online".into(),
             display_name: "Sonar Small Online".into(),
-            aliases: vec![],
             provider_id: "perplexity".into(),
             max_output_tokens: 8_192,
             context_window: 128_000,
@@ -635,7 +605,6 @@ fn perplexity_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama-3.1-sonar-huge-128k-online".into(),
             display_name: "Sonar Huge Online".into(),
-            aliases: vec![],
             provider_id: "perplexity".into(),
             max_output_tokens: 8_192,
             context_window: 128_000,
@@ -656,7 +625,6 @@ fn xai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "grok-2".into(),
             display_name: "Grok 2".into(),
-            aliases: vec![],
             provider_id: "xai".into(),
             max_output_tokens: 131_072,
             context_window: 131_072,
@@ -672,7 +640,6 @@ fn xai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "grok-2-mini".into(),
             display_name: "Grok 2 Mini".into(),
-            aliases: vec![],
             provider_id: "xai".into(),
             max_output_tokens: 131_072,
             context_window: 131_072,
@@ -688,7 +655,6 @@ fn xai_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "grok-beta".into(),
             display_name: "Grok Beta".into(),
-            aliases: vec![],
             provider_id: "xai".into(),
             max_output_tokens: 131_072,
             context_window: 131_072,
@@ -709,7 +675,6 @@ fn deepseek_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "deepseek-chat".into(),
             display_name: "DeepSeek Chat (V3)".into(),
-            aliases: vec![],
             provider_id: "deepseek".into(),
             max_output_tokens: 8_192,
             context_window: 128_000,
@@ -730,7 +695,6 @@ fn deepseek_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "deepseek-reasoner".into(),
             display_name: "DeepSeek Reasoner (R1)".into(),
-            aliases: vec![],
             provider_id: "deepseek".into(),
             max_output_tokens: 8_192,
             context_window: 64_000,
@@ -756,7 +720,6 @@ fn venice_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "llama-3.3-70b".into(),
             display_name: "Llama 3.3 70B (Venice)".into(),
-            aliases: vec![],
             provider_id: "venice".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -772,7 +735,6 @@ fn venice_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "dolphin-2.9.2-qwen2-72b".into(),
             display_name: "Dolphin 2.9.2 Qwen2 72B".into(),
-            aliases: vec![],
             provider_id: "venice".into(),
             max_output_tokens: 8_192,
             context_window: 32_768,
@@ -788,7 +750,6 @@ fn venice_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "mistral-nemo".into(),
             display_name: "Mistral Nemo (Venice)".into(),
-            aliases: vec![],
             provider_id: "venice".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -809,7 +770,6 @@ fn alibaba_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "qwen-max".into(),
             display_name: "Qwen Max".into(),
-            aliases: vec![],
             provider_id: "alibaba".into(),
             max_output_tokens: 8_192,
             context_window: 32_768,
@@ -825,7 +785,6 @@ fn alibaba_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "qwen-plus".into(),
             display_name: "Qwen Plus".into(),
-            aliases: vec![],
             provider_id: "alibaba".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -841,7 +800,6 @@ fn alibaba_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "qwen-turbo".into(),
             display_name: "Qwen Turbo".into(),
-            aliases: vec![],
             provider_id: "alibaba".into(),
             max_output_tokens: 8_192,
             context_window: 1_000_000,
@@ -857,7 +815,6 @@ fn alibaba_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "qwen-long".into(),
             display_name: "Qwen Long".into(),
-            aliases: vec![],
             provider_id: "alibaba".into(),
             max_output_tokens: 8_192,
             context_window: 10_000_000,
@@ -878,7 +835,6 @@ fn cloudflare_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "@cf/meta/llama-3.1-70b-instruct".into(),
             display_name: "Llama 3.1 70B (Cloudflare)".into(),
-            aliases: vec![],
             provider_id: "cloudflare".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -894,7 +850,6 @@ fn cloudflare_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "@cf/meta/llama-3.1-8b-instruct".into(),
             display_name: "Llama 3.1 8B (Cloudflare)".into(),
-            aliases: vec![],
             provider_id: "cloudflare".into(),
             max_output_tokens: 8_192,
             context_window: 131_072,
@@ -910,7 +865,6 @@ fn cloudflare_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "@cf/google/gemma-7b-it".into(),
             display_name: "Gemma 7B (Cloudflare)".into(),
-            aliases: vec![],
             provider_id: "cloudflare".into(),
             max_output_tokens: 8_192,
             context_window: 8_192,
@@ -931,7 +885,6 @@ fn sap_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4o".into(),
             display_name: "GPT-4o (SAP)".into(),
-            aliases: vec![],
             provider_id: "sap".into(),
             max_output_tokens: 16_384,
             context_window: 128_000,
@@ -947,7 +900,6 @@ fn sap_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4-turbo".into(),
             display_name: "GPT-4 Turbo (SAP)".into(),
-            aliases: vec![],
             provider_id: "sap".into(),
             max_output_tokens: 4_096,
             context_window: 128_000,
@@ -963,7 +915,6 @@ fn sap_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-3.5-sonnet".into(),
             display_name: "Claude 3.5 Sonnet (SAP)".into(),
-            aliases: vec![],
             provider_id: "sap".into(),
             max_output_tokens: 8_192,
             context_window: 200_000,
@@ -984,7 +935,6 @@ fn gemini_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gemini-2.0-flash".into(),
             display_name: "Gemini 2.0 Flash".into(),
-            aliases: vec![],
             provider_id: "google".into(),
             max_output_tokens: 8_192,
             context_window: 1_048_576,
@@ -1000,7 +950,6 @@ fn gemini_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gemini-2.0-pro".into(),
             display_name: "Gemini 2.0 Pro".into(),
-            aliases: vec![],
             provider_id: "google".into(),
             max_output_tokens: 8_192,
             context_window: 1_048_576,
@@ -1016,7 +965,6 @@ fn gemini_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gemini-1.5-pro".into(),
             display_name: "Gemini 1.5 Pro".into(),
-            aliases: vec![],
             provider_id: "google".into(),
             max_output_tokens: 8_192,
             context_window: 2_097_152,
@@ -1032,7 +980,6 @@ fn gemini_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gemini-1.5-flash".into(),
             display_name: "Gemini 1.5 Flash".into(),
-            aliases: vec![],
             provider_id: "google".into(),
             max_output_tokens: 8_192,
             context_window: 1_048_576,
@@ -1053,7 +1000,6 @@ fn bedrock_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "anthropic.claude-sonnet-4-6-20250514-v1:0".into(),
             display_name: "Claude Sonnet 4.6 (Bedrock)".into(),
-            aliases: vec![],
             provider_id: "amazon-bedrock".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -1069,7 +1015,6 @@ fn bedrock_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "anthropic.claude-haiku-4-5-20251213-v1:0".into(),
             display_name: "Claude Haiku 4.5 (Bedrock)".into(),
-            aliases: vec![],
             provider_id: "amazon-bedrock".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -1085,7 +1030,6 @@ fn bedrock_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "amazon.nova-pro-v1:0".into(),
             display_name: "Amazon Nova Pro".into(),
-            aliases: vec![],
             provider_id: "amazon-bedrock".into(),
             max_output_tokens: 5_120,
             context_window: 300_000,
@@ -1101,7 +1045,6 @@ fn bedrock_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "amazon.nova-lite-v1:0".into(),
             display_name: "Amazon Nova Lite".into(),
-            aliases: vec![],
             provider_id: "amazon-bedrock".into(),
             max_output_tokens: 5_120,
             context_window: 300_000,
@@ -1122,7 +1065,6 @@ fn azure_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4o".into(),
             display_name: "GPT-4o (Azure)".into(),
-            aliases: vec![],
             provider_id: "azure".into(),
             max_output_tokens: 16_384,
             context_window: 128_000,
@@ -1138,7 +1080,6 @@ fn azure_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4-turbo".into(),
             display_name: "GPT-4 Turbo (Azure)".into(),
-            aliases: vec![],
             provider_id: "azure".into(),
             max_output_tokens: 4_096,
             context_window: 128_000,
@@ -1154,7 +1095,6 @@ fn azure_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4o-mini".into(),
             display_name: "GPT-4o Mini (Azure)".into(),
-            aliases: vec![],
             provider_id: "azure".into(),
             max_output_tokens: 16_384,
             context_window: 128_000,
@@ -1175,7 +1115,6 @@ fn vertex_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gemini-2.0-flash".into(),
             display_name: "Gemini 2.0 Flash (Vertex)".into(),
-            aliases: vec![],
             provider_id: "vertex".into(),
             max_output_tokens: 8_192,
             context_window: 1_048_576,
@@ -1191,7 +1130,6 @@ fn vertex_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-sonnet-4-6@20250514".into(),
             display_name: "Claude Sonnet 4.6 (Vertex)".into(),
-            aliases: vec![],
             provider_id: "vertex".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -1207,7 +1145,6 @@ fn vertex_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gemini-1.5-flash-002".into(),
             display_name: "Gemini 1.5 Flash 002 (Vertex)".into(),
-            aliases: vec![],
             provider_id: "vertex".into(),
             max_output_tokens: 8_192,
             context_window: 1_048_576,
@@ -1228,7 +1165,6 @@ fn copilot_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "gpt-4o".into(),
             display_name: "GPT-4o (Copilot)".into(),
-            aliases: vec![],
             provider_id: "copilot".into(),
             max_output_tokens: 16_384,
             context_window: 128_000,
@@ -1244,7 +1180,6 @@ fn copilot_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-sonnet-4-6".into(),
             display_name: "Claude Sonnet 4.6 (Copilot)".into(),
-            aliases: vec![],
             provider_id: "copilot".into(),
             max_output_tokens: 64_000,
             context_window: 200_000,
@@ -1260,7 +1195,6 @@ fn copilot_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "o1-mini".into(),
             display_name: "o1 Mini (Copilot)".into(),
-            aliases: vec![],
             provider_id: "copilot".into(),
             max_output_tokens: 65_536,
             context_window: 128_000,
@@ -1360,7 +1294,6 @@ pub async fn fetch_models_dev(provider_id: &str) -> Result<Vec<ModelInfo>, ApiEr
         models.push(ModelInfo {
             id: id.clone(),
             display_name,
-            aliases: vec![],
             provider_id: provider_id.to_string(),
             max_output_tokens,
             context_window,
@@ -1449,7 +1382,7 @@ const MODELS_DEV_PROVIDER_MAP: &[(&str, &str)] = &[
 ];
 
 /// Fetch all models from models.dev for the full builtin provider set in a single HTTP request.
-/// Returns all models (no `tool_call` filtering — callers decide what to show).
+/// Returns all models (no `tool_call` filtering �?callers decide what to show).
 /// On any network or parse error, returns an empty Vec (caller falls back to builtin catalog).
 /// The `provider_id` field in returned `ModelInfo` uses the builtin ID, not the models.dev ID,
 /// so `ProviderRegistry::configured_providers()` checks work correctly.
@@ -1537,7 +1470,6 @@ pub async fn fetch_all_models_dev_for_picker() -> Vec<ModelInfo> {
             all_models.push(ModelInfo {
                 id: id.clone(),
                 display_name,
-                aliases: vec![],
                 provider_id: builtin_id.to_string(),
                 max_output_tokens,
                 context_window,
@@ -1577,19 +1509,6 @@ mod tests {
                 !model.provider_id.is_empty(),
                 "model {} has empty provider_id",
                 model.id
-            );
-        }
-    }
-
-    #[test]
-    fn no_models_have_aliases() {
-        let models = builtin_models();
-        for model in &models {
-            assert!(
-                model.aliases.is_empty(),
-                "model '{}' should have no aliases, found {:?}",
-                model.id,
-                model.aliases
             );
         }
     }
