@@ -525,4 +525,118 @@ mod tests {
         assert_eq!(restored.child_sessions[0].goal, "scrape titles");
         assert_eq!(restored.child_sessions[0].messages.len(), 1);
     }
+
+    #[test]
+    fn load_missing_file_returns_io_error() {
+        let result =
+            Session::load_from_path(std::path::Path::new("/nonexistent/path/session.json"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_corrupt_json_returns_error() {
+        let path = std::env::temp_dir().join(format!("acrawl-corrupt-{}.json", std::process::id()));
+        fs::write(&path, "not valid json {{{").unwrap();
+        let result = Session::load_from_path(&path);
+        let _ = fs::remove_file(&path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_valid_json_missing_messages_returns_error() {
+        let value = crate::json::JsonValue::parse(r#"{"version":2}"#).expect("valid json");
+        let result = Session::from_json(&value);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_unknown_block_type_returns_error() {
+        let json_str = r#"{"version":2,"messages":[{"role":"assistant","blocks":[{"type":"alien","data":"x"}]}],"child_sessions":[]}"#;
+        let value = crate::json::JsonValue::parse(json_str).expect("valid json");
+        let error = Session::from_json(&value).expect_err("should fail");
+        assert!(error.to_string().contains("unsupported block type"));
+    }
+
+    #[test]
+    fn load_unknown_top_level_fields_tolerated() {
+        let json_str =
+            r#"{"version":2,"messages":[],"child_sessions":[],"future_field":"ignored"}"#;
+        let value = crate::json::JsonValue::parse(json_str).expect("valid json");
+        let session = Session::from_json(&value).expect("should tolerate unknown fields");
+        assert!(session.messages.is_empty());
+    }
+
+    #[test]
+    fn roundtrip_large_history_preserves_order() {
+        let mut session = Session::new();
+        for i in 0..100 {
+            session
+                .messages
+                .push(ConversationMessage::user_text(format!("msg {i}")));
+            session
+                .messages
+                .push(ConversationMessage::assistant(vec![ContentBlock::Text {
+                    text: format!("resp {i}"),
+                }]));
+        }
+        let json = session.to_json();
+        let restored = Session::from_json(&json).expect("large session roundtrip");
+        assert_eq!(restored.messages.len(), 200);
+        assert_eq!(restored, session);
+    }
+
+    #[test]
+    fn roundtrip_all_content_block_types_together() {
+        let mut session = Session::new();
+        session.messages.push(ConversationMessage::assistant(vec![
+            ContentBlock::Reasoning {
+                data: r#"{"reasoning_content":"think"}"#.to_string(),
+            },
+            ContentBlock::Text {
+                text: "hello".to_string(),
+            },
+            ContentBlock::ToolUse {
+                id: "t1".to_string(),
+                name: "nav".to_string(),
+                input: "{}".to_string(),
+            },
+        ]));
+        session
+            .messages
+            .push(ConversationMessage::tool_result("t1", "nav", "ok", false));
+        session
+            .messages
+            .push(ConversationMessage::tool_result("t2", "fail", "err", true));
+
+        let json = session.to_json();
+        let restored = Session::from_json(&json).expect("all types roundtrip");
+        assert_eq!(restored, session);
+    }
+
+    #[test]
+    fn tool_result_is_error_flag_roundtrips() {
+        let mut session = Session::new();
+        session.messages.push(ConversationMessage::tool_result(
+            "id1",
+            "test",
+            "error msg",
+            true,
+        ));
+        let json = session.to_json();
+        let restored = Session::from_json(&json).unwrap();
+        match &restored.messages[0].blocks[0] {
+            ContentBlock::ToolResult { is_error, .. } => assert!(*is_error),
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn save_creates_parent_directory() {
+        let base = std::env::temp_dir().join(format!("acrawl-mkdir-{}", std::process::id()));
+        let path = base.join("sub").join("session.json");
+        let session = Session::new();
+        let result = session.save_to_path(&path);
+        let _ = fs::remove_dir_all(&base);
+        assert!(result.is_ok());
+    }
 }

@@ -1108,4 +1108,59 @@ mod tests {
         assert_eq!(req.jsonrpc, "2.0");
         assert_eq!(req.method, "tools/list");
     }
+
+    #[test]
+    fn parse_run_goal_rejects_empty_goal() {
+        let args = serde_json::json!({"goal": ""});
+        let result = parse_run_goal_request(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_run_goal_rejects_whitespace_only_goal() {
+        let args = serde_json::json!({"goal": "   "});
+        let result = parse_run_goal_request(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_run_goal_rejects_oversized_goal() {
+        let huge = "x".repeat(100_001);
+        let args = serde_json::json!({"goal": huge});
+        let result = parse_run_goal_request(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_run_goal_accepts_max_length_goal() {
+        let max_goal = "x".repeat(100_000);
+        let args = serde_json::json!({
+            "goal": max_goal,
+            "model": "anthropic/claude-sonnet-4-6"
+        });
+        let result = parse_run_goal_request(&args);
+        if let Err(RunGoalOutcome::JsonRpcError { message, .. }) = result {
+            assert!(
+                !message.contains("length"),
+                "should not reject on length: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_run_goal_missing_goal_field() {
+        let args = serde_json::json!({});
+        let result = parse_run_goal_request(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_run_goal_non_string_allowed_tools_uses_default() {
+        let args = serde_json::json!({
+            "goal": "test",
+            "model": "anthropic/claude-sonnet-4-6",
+            "allowed_tools": 123
+        });
+        let _ = parse_run_goal_request(&args);
+    }
 }
