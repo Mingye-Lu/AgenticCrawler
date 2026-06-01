@@ -270,7 +270,7 @@ When `--no-headless` / `--headed` is set, all fetches go directly through the br
 <tr><td>Custom (OpenAI-compatible)</td><td>API key (optional)</td><td>—</td></tr>
 </table>
 
-Model aliases for quick switching: `sonnet`, `opus`, `haiku`, `4o`, `o3`, etc. Provider-prefixed names also work: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`.
+Models use the `provider/model-id` format: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, `amazon-bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0`, etc.
 
 ### Interactive TUI
 
@@ -433,7 +433,7 @@ Commands:
   system-prompt      Print the system prompt (for debugging)
 
 Options:
-  --model MODEL            Model name or alias (sonnet, opus, 4o, o3, ...)
+  --model MODEL            Model in provider/id format (e.g. anthropic/claude-sonnet-4-6)
   --output-format FORMAT   text | json
   --resume FILE            Resume a saved session (with optional /commands)
   --compact                Compact history on resume

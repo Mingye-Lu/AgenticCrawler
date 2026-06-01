@@ -68,8 +68,7 @@ Key design decisions:
 `ProviderRegistry` (in `crates/api/src/provider/mod.rs`) owns the model catalog and routes to the correct client:
 
 - If `credentials.json` has an `active_provider`, that provider is used regardless of model name.
-- Otherwise the registry infers the provider from the model id: models in the built-in catalog map to their declared `provider_id`; unknown models fall back to `"other"`.
-- `resolve_alias` expands short names (`sonnet` → `claude-sonnet-4-6`, `4o` → `gpt-4o`, etc.) before routing.
+- The model string must use `provider/model-id` format (e.g. `anthropic/claude-sonnet-4-6`). `provider_for_model` extracts the provider prefix; `model_api_id` strips it to get the raw API ID.
 - `build_client` constructs an `Anthropic`, `OpenAi`, or `Custom` (OpenAI-compatible chat/completions) client from the stored `StoredProviderConfig` for that provider.
 
 Default model comes from the `default_model` field in the active provider's `StoredProviderConfig` inside `credentials.json`. `--model` on the CLI overrides it.

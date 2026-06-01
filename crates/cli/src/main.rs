@@ -682,7 +682,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  --allowedTools TOOLS       Restrict enabled tools (repeatable; comma-separated aliases supported)"
+        "  --allowedTools TOOLS       Restrict enabled tools (repeatable; comma-separated)"
     )?;
     writeln!(
         out,
@@ -814,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn passes_model_through_without_alias_resolution() {
+    fn passes_model_through_verbatim() {
         with_clean_config_env(|| {
             let args = vec![
                 "--model".to_string(),
