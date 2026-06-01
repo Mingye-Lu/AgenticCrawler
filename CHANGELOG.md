@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6] - 2026-06-01
+
+### Added
+
+- **`acrawl-ui` crate** — shared CLI/TUI modules (display_width, error, output_sink, session_mgr, auth, app, events) extracted into `crates/ui`. Both `cli` and `tui` depend on it instead of sharing code via `#[path]` includes. Removes the `tui-crate-context` feature flag.
+- **30 new tests** — session persistence (corrupt JSON, missing files, large history roundtrip), slash commands (all 17 commands, args, case insensitivity, resume-safe set), extension bridge (disconnected fast-fail, timeout, navigation), MCP server (empty/oversized goal rejection, missing fields).
+
+### Fixed
+
+- **TUI phantom "interrupted" on first tool call** — during streaming, the assistant message (containing a ToolUse block) was pushed to the transcript before tool results arrived, causing the historical renderer to show "◼ interrupted" while the live spinner also showed the same tool as running. Now skips rendering unresolved ToolUse blocks from historical messages when a turn is in progress.
+- **Streaming reasoning content ordering** — reasoning blocks now close before text begins (previously stayed open until stream finish), and the TUI renders actual thinking text instead of the raw JSON wrapper.
+- **Security hardening** — Windows ACL on `credentials.json`, 0600 permissions on `bridge.json`, block Windows Alternate Data Streams in `save_file`, replace manual URL parsing with `url::Url::parse()`, add `Zeroize` on `OAuthTokenSet`, add 100K character limit on MCP `run_goal` input.
+- **CLI requires explicit subcommand** — `acrawl <words>` no longer silently treats bare words as a prompt. Produces a clear error with usage hint; use `acrawl prompt "..."` or `-p "..."`.
+- **Duplicate help hint** — removed duplicate "try --help" message on CLI error output.
+- **Build date** — replaced hardcoded `DEFAULT_DATE` with CI-injected `BUILD_DATE` env var. Dev builds show "unknown".
+
+### Removed
+
+- **`ModelInfo.aliases`** — dead field removed from provider catalog (68 occurrences). Model format is strictly `provider/model-id` everywhere.
+
+### Documentation
+
+- Removed stale model alias references from README and AGENTS.md.
+- Rewrote post-install welcome messaging (install.sh, install.ps1).
+- Added browser modes section explaining CloakBrowser vs extension backends.
+
 ## [0.7.5] - 2026-06-01
 
 ### Added
@@ -511,6 +537,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.7.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.6
 [0.7.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.5
 [0.7.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.4
 [0.7.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.3

@@ -20,7 +20,7 @@ mcp-server = { path = "crates/mcp-server" }
 render = { path = "crates/render" }
 
 [workspace.package]
-version = "0.7.5"
+version = "0.7.6"
 edition = "2021"
 license = "MIT"
 publish = false
