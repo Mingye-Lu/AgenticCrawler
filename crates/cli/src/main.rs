@@ -316,15 +316,9 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 allowed_tools,
             })
         }
-        other if !other.starts_with('/') => Ok(CliAction::Prompt {
-            prompt: rest.join(" "),
-            model: model.ok_or_else(|| {
-                "missing model: set --model, set env model vars, or run `acrawl auth` to configure a default model".to_string()
-            })?,
-            output_format,
-            allowed_tools,
-        }),
-        other => Err(format!("unknown subcommand: {other}")),
+        other => Err(format!(
+            "unknown subcommand: {other}\n\nUsage: acrawl prompt \"your goal here\"\n       acrawl -p your goal here\n\nRun `acrawl --help` for all options."
+        )),
     }
 }
 
@@ -803,6 +797,7 @@ mod tests {
                 "--output-format=json".to_string(),
                 "--model".to_string(),
                 "claude-opus".to_string(),
+                "prompt".to_string(),
                 "explain".to_string(),
                 "this".to_string(),
             ];
@@ -824,6 +819,7 @@ mod tests {
             let args = vec![
                 "--model".to_string(),
                 "claude-opus-4-6".to_string(),
+                "prompt".to_string(),
                 "explain".to_string(),
                 "this".to_string(),
             ];
