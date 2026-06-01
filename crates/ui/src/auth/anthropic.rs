@@ -65,7 +65,7 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     let config = ConfigLoader::default_for().load()?;
     let default_oauth = default_oauth_config();
     let oauth = config.oauth().unwrap_or(&default_oauth);
@@ -118,7 +118,8 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub(crate) fn default_oauth_config() -> OAuthConfig {
+#[must_use]
+pub fn default_oauth_config() -> OAuthConfig {
     OAuthConfig {
         client_id: String::from("9d1c250a-e61b-44d9-88ed-5944d1962f5e"),
         authorize_url: String::from("https://platform.claude.com/oauth/authorize"),

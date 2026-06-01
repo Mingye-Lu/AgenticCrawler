@@ -8,7 +8,7 @@ use render::markdown::{Spinner, TerminalRenderer};
 use serde_json::json;
 
 impl LiveCli {
-    pub(crate) fn run_turn_tui(&mut self, input: &str) -> Result<(), CliError> {
+    pub fn run_turn_tui(&mut self, input: &str) -> Result<(), CliError> {
         self.maybe_dispatch_title_generation(input);
         if let Some(tx) = self.event_sender() {
             let _ = tx.send(ReplTuiEvent::TurnStarting);
@@ -33,12 +33,12 @@ impl LiveCli {
         }
     }
 
-    pub(crate) fn run_turn(&mut self, input: &str) -> Result<(), CliError> {
+    pub fn run_turn(&mut self, input: &str) -> Result<(), CliError> {
         self.maybe_dispatch_title_generation(input);
         let mut spinner = Spinner::new();
         let mut stdout = io::stdout();
         spinner.tick(
-            "🕷️Thinking...",
+            "馃暦锔廡hinking...",
             TerminalRenderer::new().color_theme(),
             &mut stdout,
         )?;
@@ -46,7 +46,11 @@ impl LiveCli {
         match result {
             Ok(summary) => {
                 self.capture_child_sessions();
-                spinner.finish("✅Done", TerminalRenderer::new().color_theme(), &mut stdout)?;
+                spinner.finish(
+                    "鉁匘one",
+                    TerminalRenderer::new().color_theme(),
+                    &mut stdout,
+                )?;
                 println!();
                 if let Some(event) = summary.auto_compaction {
                     println!(
@@ -59,7 +63,7 @@ impl LiveCli {
             }
             Err(error) => {
                 spinner.fail(
-                    "❌Request failed",
+                    "鉂孯equest failed",
                     TerminalRenderer::new().color_theme(),
                     &mut stdout,
                 )?;
@@ -68,7 +72,7 @@ impl LiveCli {
         }
     }
 
-    pub(crate) fn run_turn_with_output(
+    pub fn run_turn_with_output(
         &mut self,
         input: &str,
         output_format: CliOutputFormat,

@@ -14,7 +14,6 @@ mod tool_executor;
 mod turn;
 
 use std::collections::BTreeSet;
-use std::io::{self, IsTerminal};
 use std::str::FromStr;
 use std::sync::{mpsc, Arc, Mutex};
 
@@ -26,10 +25,7 @@ use agent::{mvp_tool_specs, ChildControlRegistry, ChildEvent, ExtensionBridge};
 use browser::{BrowserBackend, BrowserState, SharedBridge, WsBridgeServer};
 use render::sink::{OutputSink, StdoutSink};
 
-#[cfg(feature = "tui-crate-context")]
 use crate::events::ReplTuiEvent;
-#[cfg(not(feature = "tui-crate-context"))]
-use acrawl_tui::events::ReplTuiEvent;
 use commands::slash_command_specs;
 use runtime::{ControlState, ConversationRuntime, RuntimeError, Session, TokenUsage};
 
@@ -40,11 +36,11 @@ use self::model_support::{model_reasoning_efforts, model_supports_reasoning};
 use self::runtime_builder::{build_runtime, build_runtime_with_options, build_system_prompt};
 use self::tool_executor::CliToolExecutor;
 
-pub(crate) use crate::auth::{
+pub use crate::auth::{
     bind_oauth_listener, default_oauth_config, open_browser, parse_provider_arg, run_auth_cli,
     wait_for_oauth_callback_cancellable,
 };
-pub(crate) use resume::run_resume_command;
+pub use resume::run_resume_command;
 
 fn block_on_runtime_future<F, T>(future: F) -> Result<T, RuntimeError>
 where
@@ -56,56 +52,38 @@ where
         .block_on(future)
 }
 
-pub(crate) type AllowedToolSet = BTreeSet<String>;
+pub type AllowedToolSet = BTreeSet<String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Provider {
+pub enum Provider {
     Anthropic,
     OpenAi,
     Other,
 }
 
-pub(crate) fn initial_model_from_credentials() -> Option<String> {
+#[must_use]
+pub fn initial_model_from_credentials() -> Option<String> {
     let settings = runtime::load_settings();
     settings.model.filter(|m| !m.is_empty() && m.contains('/'))
 }
 
-pub(crate) fn filter_tool_specs(allowed_tools: Option<&AllowedToolSet>) -> Vec<ToolSpec> {
+#[must_use]
+pub fn filter_tool_specs(allowed_tools: Option<&AllowedToolSet>) -> Vec<ToolSpec> {
     mvp_tool_specs()
         .into_iter()
         .filter(|spec| allowed_tools.is_none_or(|allowed| allowed.contains(spec.name)))
         .collect()
 }
 
-pub(crate) fn slash_command_completion_candidates() -> Vec<String> {
+#[must_use]
+pub fn slash_command_completion_candidates() -> Vec<String> {
     slash_command_specs()
         .iter()
         .map(|spec| format!("/{}", spec.name))
         .collect()
 }
 
-pub(crate) fn run_repl(
-    model: String,
-    allowed_tools: Option<AllowedToolSet>,
-) -> Result<(), CliError> {
-    if !io::stdout().is_terminal() {
-        return Err(CliError::from(
-            "acrawl REPL requires an interactive terminal. \
-             For headless use, run `acrawl prompt \"<goal>\"` (one-shot) \
-             or `acrawl --resume <session.json> <slash-commands>` (session maintenance).",
-        ));
-    }
-    #[cfg(not(feature = "tui-crate-context"))]
-    {
-        Ok(acrawl_tui::run_tui(model, allowed_tools)?)
-    }
-    #[cfg(feature = "tui-crate-context")]
-    {
-        Ok(crate::run_tui(model, allowed_tools)?)
-    }
-}
-
-pub(crate) struct LiveCli {
+pub struct LiveCli {
     model: String,
     allowed_tools: Option<AllowedToolSet>,
     system_prompt: Vec<String>,
@@ -147,13 +125,13 @@ impl OutputMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CommandUiResult {
-    pub(crate) message: String,
-    pub(crate) persist_after: bool,
+pub struct CommandUiResult {
+    pub message: String,
+    pub persist_after: bool,
 }
 
 impl LiveCli {
-    pub(crate) fn new_non_interactive(
+    pub fn new_non_interactive(
         model: String,
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
@@ -218,7 +196,7 @@ impl LiveCli {
         Ok(cli)
     }
 
-    pub(crate) fn new_with_ui_tx(
+    pub fn new_with_ui_tx(
         model: String,
         enable_tools: bool,
         allowed_tools: Option<AllowedToolSet>,
@@ -277,39 +255,39 @@ impl LiveCli {
         Ok(cli)
     }
 
-    pub(crate) fn session_id(&self) -> &str {
+    pub fn session_id(&self) -> &str {
         self.session.id.as_str()
     }
 
-    pub(crate) fn session_messages(&self) -> Vec<runtime::ConversationMessage> {
+    pub fn session_messages(&self) -> Vec<runtime::ConversationMessage> {
         self.runtime.session().messages.clone()
     }
 
-    pub(crate) fn session_child_sessions(&self) -> Vec<runtime::ChildSession> {
+    pub fn session_child_sessions(&self) -> Vec<runtime::ChildSession> {
         self.runtime.session().child_sessions.clone()
     }
 
-    pub(crate) fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<ChildEvent>> {
+    pub fn take_child_event_rx(&mut self) -> Option<std::sync::mpsc::Receiver<ChildEvent>> {
         self.child_event_rx.take()
     }
 
-    pub(crate) fn take_child_control_registry(&mut self) -> Option<ChildControlRegistry> {
+    pub fn take_child_control_registry(&mut self) -> Option<ChildControlRegistry> {
         self.child_control_registry.take()
     }
 
-    pub(crate) fn model_name(&self) -> &str {
+    pub fn model_name(&self) -> &str {
         &self.model
     }
 
-    pub(crate) fn reasoning_effort(&self) -> Option<api::ReasoningEffort> {
+    pub fn reasoning_effort(&self) -> Option<api::ReasoningEffort> {
         self.reasoning_effort
     }
 
-    pub(crate) fn supports_reasoning(&self) -> bool {
+    pub fn supports_reasoning(&self) -> bool {
         model_supports_reasoning(&self.model)
     }
 
-    pub(crate) fn cycle_reasoning_effort(&mut self) -> Option<api::ReasoningEffort> {
+    pub fn cycle_reasoning_effort(&mut self) -> Option<api::ReasoningEffort> {
         if !self.supports_reasoning() {
             return None;
         }
@@ -329,7 +307,7 @@ impl LiveCli {
         Some(next)
     }
 
-    pub(crate) fn cumulative_usage(&self) -> TokenUsage {
+    pub fn cumulative_usage(&self) -> TokenUsage {
         self.runtime.usage().cumulative_usage()
     }
 
@@ -337,15 +315,15 @@ impl LiveCli {
         self.output_mode.sender()
     }
 
-    pub(crate) fn cancel_flag(&self) -> std::sync::Arc<ControlState> {
+    pub fn cancel_flag(&self) -> std::sync::Arc<ControlState> {
         self.runtime.cancel_flag()
     }
 
-    pub(crate) fn is_extension_mode_active(&self) -> bool {
+    pub fn is_extension_mode_active(&self) -> bool {
         self.extension_bridge_initialized || self.ws_bridge_server.is_some()
     }
 
-    pub(crate) fn prepare_extension_bridge_activation(
+    pub fn prepare_extension_bridge_activation(
         &mut self,
     ) -> Result<(SharedBridge, Option<BrowserState>), String> {
         if self.extension_bridge_initialized {
@@ -366,7 +344,7 @@ impl LiveCli {
         Ok((shared, self.pending_extension_state.take()))
     }
 
-    pub(crate) fn activate_extension_bridge(&mut self, shared: SharedBridge) {
+    pub fn activate_extension_bridge(&mut self, shared: SharedBridge) {
         self.runtime
             .tool_executor_mut()
             .set_extension_bridge(shared);
@@ -377,13 +355,13 @@ impl LiveCli {
         });
     }
 
-    pub(crate) fn restore_pending_extension_state(&mut self, state: Option<BrowserState>) {
+    pub fn restore_pending_extension_state(&mut self, state: Option<BrowserState>) {
         if self.pending_extension_state.is_none() {
             self.pending_extension_state = state;
         }
     }
 
-    pub(crate) fn extension_connection_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+    pub fn extension_connection_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
         self.ws_bridge_server
             .as_ref()
             .map(WsBridgeServer::connection_watcher)

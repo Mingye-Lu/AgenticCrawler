@@ -1,7 +1,7 @@
 use super::*;
 
 impl LiveCli {
-    pub(crate) fn persist_session(&mut self) -> Result<(), CliError> {
+    pub fn persist_session(&mut self) -> Result<(), CliError> {
         if self.runtime.session().messages.is_empty() {
             return Ok(());
         }
@@ -18,10 +18,7 @@ impl LiveCli {
         Ok(())
     }
 
-    pub(crate) fn switch_to_session_handle(
-        &mut self,
-        handle: SessionHandle,
-    ) -> Result<usize, CliError> {
+    pub fn switch_to_session_handle(&mut self, handle: SessionHandle) -> Result<usize, CliError> {
         let session = Session::load_from_path(&handle.path)?;
         let message_count = session.messages.len();
         let model = session.model.clone().unwrap_or_else(|| self.model.clone());

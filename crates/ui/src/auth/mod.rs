@@ -1,6 +1,6 @@
-pub(crate) mod anthropic;
-pub(crate) mod custom;
-pub(crate) mod openai;
+pub mod anthropic;
+pub mod custom;
+pub mod openai;
 
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
@@ -9,14 +9,15 @@ use std::sync::mpsc;
 
 use api::oauth::{parse_oauth_callback_request_target, OAuthCallbackParams};
 
-use super::Provider;
+use crate::app::Provider;
 
-pub(crate) use anthropic::default_oauth_config;
+pub use anthropic::default_oauth_config;
 
 /// Load the credentials store, warning to stderr if the file existed but
 /// failed to parse so users notice a corrupted credentials file instead of
 /// silently getting an empty store and a fresh re-auth prompt.
-pub(crate) fn load_credentials_or_warn() -> api::CredentialStore {
+#[must_use]
+pub fn load_credentials_or_warn() -> api::CredentialStore {
     match api::load_credentials() {
         Ok(store) => store,
         Err(err) => {
@@ -29,7 +30,7 @@ pub(crate) fn load_credentials_or_warn() -> api::CredentialStore {
 /// Bind a TCP listener for the OAuth callback on `preferred_port`.
 /// Retries briefly in case the port is stuck in `TIME_WAIT` from a prior
 /// session, then returns a clear error if still occupied.
-pub(crate) fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
+pub fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)> {
     for attempt in 0..4u8 {
         match TcpListener::bind(("127.0.0.1", preferred_port)) {
             Ok(listener) => return Ok((listener, preferred_port)),
@@ -41,7 +42,7 @@ pub(crate) fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListene
                     io::ErrorKind::AddrInUse,
                     format!(
                         "Port {preferred_port} is already in use. \
-                         A previous auth session may still be running — \
+                         A previous auth session may still be running 鈥?\
                          close it or kill the process using the port, then retry."
                     ),
                 ));
@@ -52,14 +53,14 @@ pub(crate) fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListene
     unreachable!()
 }
 
-/// Result of provider selection — either a legacy enum variant or a preset provider.
+/// Result of provider selection 鈥?either a legacy enum variant or a preset provider.
 #[derive(Debug, Clone)]
-pub(crate) enum ProviderChoice {
+pub enum ProviderChoice {
     Legacy(Provider),
     Preset(api::ProviderPreset),
 }
 
-pub(crate) fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn std::error::Error>> {
     match provider {
         Provider::Anthropic => anthropic::run_auth(),
         Provider::OpenAi => openai::run_auth(),
@@ -67,7 +68,7 @@ pub(crate) fn run_auth_for_provider(provider: Provider) -> Result<(), Box<dyn st
     }
 }
 
-pub(crate) fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let choice = match provider {
         Some(p) => resolve_provider_arg(p)?,
         None => prompt_provider_choice()?,
@@ -77,11 +78,11 @@ pub(crate) fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::er
         ProviderChoice::Legacy(target) => run_auth_for_provider(target)?,
         ProviderChoice::Preset(ref preset) => run_preset_auth(preset)?,
     }
-    eprintln!("✅ {label} credentials configured successfully.");
+    eprintln!("鉁?{label} credentials configured successfully.");
     Ok(())
 }
 
-pub(crate) fn persist_provider_credentials(
+pub fn persist_provider_credentials(
     provider: Provider,
     mut config: api::StoredProviderConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -99,7 +100,7 @@ pub(crate) fn persist_provider_credentials(
 }
 
 /// Persist credentials for a preset provider (uses preset ID as key).
-pub(crate) fn persist_preset_credentials(
+pub fn persist_preset_credentials(
     preset_id: &str,
     mut config: api::StoredProviderConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -201,9 +202,7 @@ fn run_azure_auth() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Generic API key auth flow for preset providers.
-pub(crate) fn run_preset_auth(
-    preset: &api::ProviderPreset,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_preset_auth(preset: &api::ProviderPreset) -> Result<(), Box<dyn std::error::Error>> {
     if preset.id == "copilot" {
         return run_copilot_device_code_auth();
     }
@@ -286,9 +285,7 @@ fn run_copilot_device_code_auth() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Tries the legacy enum first (anthropic/claude, openai/gpt, other),
 /// then falls back to preset lookup by ID.
-pub(crate) fn resolve_provider_arg(
-    value: &str,
-) -> Result<ProviderChoice, Box<dyn std::error::Error>> {
+pub fn resolve_provider_arg(value: &str) -> Result<ProviderChoice, Box<dyn std::error::Error>> {
     let lower = value.to_ascii_lowercase();
     match lower.as_str() {
         "anthropic" | "claude" => Ok(ProviderChoice::Legacy(Provider::Anthropic)),
@@ -311,14 +308,15 @@ pub(crate) fn resolve_provider_arg(
 ///
 /// Accepts all preset provider IDs in addition to the legacy aliases.
 /// Preset providers are mapped to `Provider::Other`.
-pub(crate) fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
+pub fn parse_provider_arg(value: &str) -> Result<Provider, Box<dyn std::error::Error>> {
     match resolve_provider_arg(value)? {
         ProviderChoice::Legacy(p) => Ok(p),
         ProviderChoice::Preset(_) => Ok(Provider::Other),
     }
 }
 
-pub(crate) fn provider_label(provider: Provider) -> &'static str {
+#[must_use]
+pub fn provider_label(provider: Provider) -> &'static str {
     match provider {
         Provider::Anthropic => "anthropic",
         Provider::OpenAi => "openai",
@@ -326,16 +324,15 @@ pub(crate) fn provider_label(provider: Provider) -> &'static str {
     }
 }
 
-pub(crate) fn provider_choice_label(choice: &ProviderChoice) -> &str {
+#[must_use]
+pub fn provider_choice_label(choice: &ProviderChoice) -> &str {
     match choice {
         ProviderChoice::Legacy(p) => provider_label(*p),
         ProviderChoice::Preset(preset) => preset.display_name,
     }
 }
 
-pub(crate) fn interactive_login_prompt(
-    choice: &ProviderChoice,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn interactive_login_prompt(choice: &ProviderChoice) -> Result<(), Box<dyn std::error::Error>> {
     match choice {
         ProviderChoice::Legacy(Provider::Anthropic) => {
             eprint!("No Anthropic credentials found. Log in via OAuth? [Y/n] ");
@@ -344,7 +341,7 @@ pub(crate) fn interactive_login_prompt(
             io::stdin().read_line(&mut answer)?;
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err("authentication required — run `acrawl auth anthropic`".into());
+                return Err("authentication required 鈥?run `acrawl auth anthropic`".into());
             }
             run_auth_for_provider(Provider::Anthropic)
         }
@@ -359,7 +356,7 @@ pub(crate) fn interactive_login_prompt(
             io::stdin().read_line(&mut answer)?;
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err("authentication required — run `acrawl auth other`".into());
+                return Err("authentication required 鈥?run `acrawl auth other`".into());
             }
             run_auth_for_provider(Provider::Other)
         }
@@ -374,7 +371,7 @@ pub(crate) fn interactive_login_prompt(
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
                 return Err(
-                    format!("authentication required — run `acrawl auth {}`", preset.id).into(),
+                    format!("authentication required 鈥?run `acrawl auth {}`", preset.id).into(),
                 );
             }
             run_preset_auth(preset)
@@ -382,7 +379,7 @@ pub(crate) fn interactive_login_prompt(
     }
 }
 
-pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::error::Error>> {
+pub fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::error::Error>> {
     use api::ProviderCategory;
     use dialoguer::{theme::ColorfulTheme, FuzzySelect};
 
@@ -452,7 +449,7 @@ pub(crate) fn prompt_provider_choice() -> Result<ProviderChoice, Box<dyn std::er
     }
 }
 
-pub(crate) fn open_browser(url: &str) -> io::Result<()> {
+pub fn open_browser(url: &str) -> io::Result<()> {
     let escaped;
     let commands = if cfg!(target_os = "macos") {
         vec![("open", vec![url])]
@@ -509,7 +506,7 @@ pub(super) fn wait_for_oauth_callback(
 }
 
 #[allow(clippy::needless_pass_by_value)]
-pub(crate) fn wait_for_oauth_callback_cancellable(
+pub fn wait_for_oauth_callback_cancellable(
     listener: TcpListener,
     cancel_rx: mpsc::Receiver<()>,
 ) -> Result<OAuthCallbackParams, Box<dyn std::error::Error + Send>> {
@@ -669,7 +666,7 @@ mod tests {
         let presets = api::builtin_presets();
         assert!(!presets.is_empty(), "should have presets");
         for p in &presets {
-            // Every preset has some category — verify it compiles and returns a value
+            // Every preset has some category 鈥?verify it compiles and returns a value
             let _ = format!("{:?}", p.category);
         }
     }

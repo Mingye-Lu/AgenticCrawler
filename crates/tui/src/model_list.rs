@@ -1,13 +1,9 @@
-﻿#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelInfo {
-    pub id: String,
-    pub display_name: Option<String>,
-}
+use acrawl_ui::events::PickerModelInfo;
 
-impl ModelInfo {
-    pub fn display_label(&self) -> &str {
-        self.display_name.as_deref().unwrap_or(&self.id)
-    }
+pub type ModelInfo = PickerModelInfo;
+
+pub fn display_label(model: &ModelInfo) -> &str {
+    model.display_name.as_deref().unwrap_or(&model.id)
 }
 
 #[derive(Debug, Default)]

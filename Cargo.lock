@@ -8,6 +8,7 @@ version = "0.7.5"
 dependencies = [
  "acrawl-core",
  "acrawl-tui",
+ "acrawl-ui",
  "agent",
  "api",
  "browser",
@@ -39,6 +40,7 @@ name = "acrawl-tui"
 version = "0.7.5"
 dependencies = [
  "acrawl-core",
+ "acrawl-ui",
  "agent",
  "api",
  "arboard",
@@ -52,6 +54,25 @@ dependencies = [
  "serde",
  "serde_json",
  "textwrap",
+ "tokio",
+ "unicode-width",
+ "zeroize",
+]
+
+[[package]]
+name = "acrawl-ui"
+version = "0.7.5"
+dependencies = [
+ "acrawl-core",
+ "agent",
+ "api",
+ "browser",
+ "commands",
+ "dialoguer",
+ "render",
+ "runtime",
+ "serde",
+ "serde_json",
  "tokio",
  "unicode-width",
  "zeroize",

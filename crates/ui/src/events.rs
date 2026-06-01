@@ -1,4 +1,9 @@
-use crate::tui::model_list::ModelInfo as PickerModelInfo;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerModelInfo {
+    pub id: String,
+    pub display_name: Option<String>,
+}
+
 use acrawl_core::message::ConversationMessage;
 use agent::ChildEvent;
 use api::provider::ModelInfo;
@@ -14,12 +19,12 @@ pub enum ReplTuiEvent {
     /// `Ok` when the model turn finished; `Err` is a user-visible error string.
     TurnFinished(Result<(), String>),
     SystemMessage(String),
-    /// Notification that a tool call has started 鈥?creates a transcript entry in TUI mode.
+    /// Notification that a tool call has started 閳?creates a transcript entry in TUI mode.
     ToolCallStart {
         name: String,
         input: String,
     },
-    /// Notification that a tool call completed 鈥?updates the transcript entry in TUI mode.
+    /// Notification that a tool call completed 閳?updates the transcript entry in TUI mode.
     ToolCallComplete {
         name: String,
         output: String,
@@ -37,7 +42,7 @@ pub enum ReplTuiEvent {
     /// Auth modal finished fetching provider-specific models in a background thread.
     AuthModelsLoaded(Result<Vec<PickerModelInfo>, String>),
     /// Live model catalog fetched from models.dev on REPL startup.
-    /// Empty Vec means fetch failed 鈥?caller falls back to builtin catalog.
+    /// Empty Vec means fetch failed 閳?caller falls back to builtin catalog.
     ModelCatalogReady(Vec<ModelInfo>),
     /// Extension bridge connection attempt finished.
     ExtensionBridgeResult {

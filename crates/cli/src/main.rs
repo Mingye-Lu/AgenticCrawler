@@ -1,35 +1,22 @@
-#[allow(dead_code, unused_imports)]
-mod app;
-#[allow(dead_code, unused_imports)]
-mod auth;
-#[allow(dead_code)]
-mod display_width;
-mod error;
-mod output_sink;
 mod self_update;
-#[allow(dead_code)]
-mod session_mgr;
 mod uninstall;
 
 use std::collections::BTreeMap;
 use std::env;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
-pub(crate) static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
+use acrawl_ui::{
+    app::{
+        initial_model_from_credentials, run_auth_cli, run_resume_command, AllowedToolSet, LiveCli,
+    },
+    error::CliError,
+    CliOutputFormat, TOKIO_RUNTIME,
+};
 use agent::mvp_tool_specs;
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
-use runtime::Session;
-
-use app::{
-    initial_model_from_credentials, run_auth_cli, run_repl, run_resume_command, AllowedToolSet,
-    LiveCli,
-};
 use render::format::{render_version_report, VERSION};
-
-pub(crate) use app::Provider;
+use runtime::Session;
 
 fn main() {
     // Load settings.json and set env vars consumed by child processes / the crawler.
@@ -112,6 +99,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn run_repl(model: String, allowed_tools: Option<AllowedToolSet>) -> Result<(), CliError> {
+    if !std::io::stdout().is_terminal() {
+        return Err(CliError::from(
+            "acrawl REPL requires an interactive terminal. \
+             For headless use, run `acrawl prompt \"<goal>\"` (one-shot) \
+             or `acrawl --resume <session.json> <slash-commands>` (session maintenance).",
+        ));
+    }
+    Ok(acrawl_tui::run_tui(model, allowed_tools)?)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliAction {
     PrintSystemPrompt,
@@ -142,24 +140,6 @@ enum CliAction {
         allowed_tools: Option<AllowedToolSet>,
     },
     Help,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CliOutputFormat {
-    Text,
-    Json,
-}
-
-impl CliOutputFormat {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "text" => Ok(Self::Text),
-            "json" => Ok(Self::Json),
-            other => Err(format!(
-                "unsupported value for --output-format: {other} (expected text or json)"
-            )),
-        }
-    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -702,7 +682,10 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         .join(", ");
     writeln!(out, "Resume-safe commands: {resume_commands}")?;
     writeln!(out, "Examples:")?;
-    writeln!(out, "  acrawl --model anthropic/claude-opus-4-6 prompt \"summarize this repo\"")?;
+    writeln!(
+        out,
+        "  acrawl --model anthropic/claude-opus-4-6 prompt \"summarize this repo\""
+    )?;
     writeln!(
         out,
         "  acrawl --output-format json prompt \"explain src/main.rs\""

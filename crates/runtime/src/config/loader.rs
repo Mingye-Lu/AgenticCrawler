@@ -229,7 +229,9 @@ mod tests {
         assert_eq!(loaded.loaded_entries()[0].source, ConfigSource::User);
         assert_eq!(
             loaded.get("model"),
-            Some(&JsonValue::String("anthropic/claude-sonnet-4-6".to_string()))
+            Some(&JsonValue::String(
+                "anthropic/claude-sonnet-4-6".to_string()
+            ))
         );
         assert_eq!(loaded.model(), Some("anthropic/claude-sonnet-4-6"));
         assert_eq!(
