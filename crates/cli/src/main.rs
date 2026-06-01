@@ -65,7 +65,7 @@ fn main() {
     });
 
     if let Err(error) = run() {
-        eprintln!("error: {error}\n\nRun `acrawl --help` for usage.");
+        eprintln!("error: {error}");
         std::process::exit(1);
     }
 }
