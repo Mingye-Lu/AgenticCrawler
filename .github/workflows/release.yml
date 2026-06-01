@@ -43,6 +43,10 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Set build date
+        shell: bash
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
