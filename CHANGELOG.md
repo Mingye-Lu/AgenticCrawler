@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-03
+
+### Added
+
+- **MCP installer: 17 supported clients** — expanded `acrawl mcp install` to support 12 additional IDE/agent clients: OpenCode, Zed, TRAE, JetBrains IDEs, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, and Aider. Interactive installer auto-detects installed IDEs and writes per-client config.
+
+### Removed
+
+- **`wait_for_human` tool** — the human-in-the-loop pause tool and all supporting infrastructure (pause/resume state machine, `ChildLifecycle::Paused` variant, `RuntimeObserver` pause hooks, `ToolEffect::Pause`, TUI escalation UI) have been removed. Tool count is now 20. The agent no longer has a mechanism to pause and request user intervention.
+
+### Fixed
+
+- **Stale `paused` state in `subagent_status`** — the LLM-facing tool instructions incorrectly listed "paused" as a valid child state after its removal.
+- **Dead code on Linux** — removed an unused `appdata_dir()` stub that was gated behind `#[cfg(not(windows))]` but never called (only used inside `#[cfg(windows)]` blocks).
+
 ## [0.7.6] - 2026-06-01
 
 ### Added
@@ -538,6 +553,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.0
 [0.7.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.6
 [0.7.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.5
 [0.7.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.4
