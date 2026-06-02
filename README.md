@@ -318,7 +318,7 @@ Omit `--allowedTools` to allow all 20 tools. Useful for locking down a crawl to 
 
 ### MCP Extensibility
 
-acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 21.
+acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 20.
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 

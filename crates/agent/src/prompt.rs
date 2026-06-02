@@ -168,7 +168,7 @@ fn section_parallel_exploration() -> String {
        - Each subagent gets a copy of your history and works independently.\n\
        - You can fork multiple subagents at once (up to the configured limit).\n\
        - After forking, continue your own work — subagents run in parallel.\n\
-       - Use `wait_for_subagents` to pause and collect results when you need them.\n\
+        - Use `wait_for_subagents` to block and collect results when you need them.\n\
        - Prefer forking over sequential navigation when visiting multiple independent pages.\n\
        - Example: Scraping 5 product pages? Fork 5 subagents, each visiting one page, then wait for their results."
          .to_string()

@@ -188,7 +188,7 @@ impl ChildSnapshotRegistry {
 // ── ChildControlRegistry ─────────────────────────────────────────────────────
 
 /// Thread-safe map of per-child `ControlState` instances.
-/// Enables independent pause/resume/cancel per child without affecting the parent.
+/// Enables independent cancel per child without affecting the parent.
 #[derive(Clone, Default)]
 pub struct ChildControlRegistry {
     states: Arc<Mutex<HashMap<String, Arc<ControlState>>>>,

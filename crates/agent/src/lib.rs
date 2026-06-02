@@ -353,7 +353,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Returns {\"children\": [{child_id, sub_goal, state, step, max_steps, last_tool, last_text, items_extracted, last_event_secs_ago, error}, ...]}. State is one of: created, running, paused, completed, failed, cancelled. Use this to decide whether to wait, cancel, or fork more \u{2014} without consuming the child."),
+            instructions: Some("Returns {\"children\": [{child_id, sub_goal, state, step, max_steps, last_tool, last_text, items_extracted, last_event_secs_ago, error}, ...]}. State is one of: created, running, completed, failed, cancelled. Use this to decide whether to wait, cancel, or fork more \u{2014} without consuming the child."),
         },
         ToolSpec {
             name: "cancel_subagent",
