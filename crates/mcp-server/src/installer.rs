@@ -306,11 +306,6 @@ fn appdata_dir() -> Option<PathBuf> {
     env::var_os("APPDATA").map(PathBuf::from)
 }
 
-#[cfg(not(windows))]
-fn appdata_dir() -> Option<PathBuf> {
-    None
-}
-
 fn claude_desktop_config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
