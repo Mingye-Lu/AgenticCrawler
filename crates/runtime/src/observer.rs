@@ -81,7 +81,6 @@ mod tests {
                 .usages
                 .push(*usage);
         }
-
     }
 
     struct NoOpObserver;
@@ -240,11 +239,7 @@ mod tests {
         assert!(state.tool_effects[0].contains("Status"));
         assert_eq!(
             state.tool_results,
-            vec![(
-                "effect_tool".to_string(),
-                "status reply".to_string(),
-                false,
-            )]
+            vec![("effect_tool".to_string(), "status reply".to_string(), false,)]
         );
     }
 
@@ -404,11 +399,7 @@ mod tests {
         let state = state.lock().expect("observer state lock");
         assert_eq!(
             state.tool_results,
-            vec![(
-                "effect_tool".to_string(),
-                "status reply".to_string(),
-                false,
-            )]
+            vec![("effect_tool".to_string(), "status reply".to_string(), false,)]
         );
         assert_eq!(state.tool_effects.len(), 1);
     }

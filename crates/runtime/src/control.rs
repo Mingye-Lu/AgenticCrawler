@@ -87,12 +87,9 @@ mod tests {
         let state = Arc::new(ControlState::default());
         state.request_cancel();
         // Should not hang
-        tokio::time::timeout(
-            tokio::time::Duration::from_millis(100),
-            state.cancelled(),
-        )
-        .await
-        .expect("cancelled() should return immediately");
+        tokio::time::timeout(tokio::time::Duration::from_millis(100), state.cancelled())
+            .await
+            .expect("cancelled() should return immediately");
     }
 
     #[tokio::test]

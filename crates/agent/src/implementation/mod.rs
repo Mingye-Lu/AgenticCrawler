@@ -467,7 +467,6 @@ impl CrawlerAgent {
             ToolEffect::Status(spec) => self.handle_status_effect(spec).await,
         }
     }
-
 }
 
 fn default_agent_manager() -> SharedAgentManager {

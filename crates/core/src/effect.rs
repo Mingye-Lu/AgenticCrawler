@@ -16,7 +16,6 @@ pub enum ToolEffect {
     /// Tool requests a read-only snapshot of running sub-agents. Never joins
     /// or cancels — safe to call between steps.
     Status(StatusSpec),
-
 }
 
 impl ToolEffect {
@@ -101,6 +100,4 @@ mod tests {
             _ => panic!("expected Reply variant"),
         }
     }
-
-
 }

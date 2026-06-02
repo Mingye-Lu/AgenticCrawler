@@ -57,7 +57,8 @@ fn section_identity(tool_specs: &[ToolSpec]) -> String {
 }
 
 fn section_operating_procedure() -> String {
-    let blocker_instruction = "\x20\x20 b. Check for blockers: if the page content mentions CAPTCHAs, \
+    let blocker_instruction =
+        "\x20\x20 b. Check for blockers: if the page content mentions CAPTCHAs, \
      \"verify you are human\", \"unusual traffic\", login forms you cannot fill, \
      paywalls, or access denied messages — stop and report the blocker. \
      Do not retry or work around it.\n";
@@ -147,7 +148,8 @@ fn section_error_recovery() -> String {
 }
 
 fn section_completion() -> String {
-    let impossible_instruction = "- If the task is impossible to continue (requires login, payment, or \
+    let impossible_instruction =
+        "- If the task is impossible to continue (requires login, payment, or \
       access you do not have), stop and explain the blocker.\n";
     format!(
         "Completion:\n\

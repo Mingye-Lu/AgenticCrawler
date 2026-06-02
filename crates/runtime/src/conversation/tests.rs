@@ -1,4 +1,4 @@
-﻿use super::{
+use super::{
     parse_auto_compaction_threshold, ApiClient, ApiRequest, AssistantEvent, AutoCompactionEvent,
     ConversationRuntime, RuntimeError, StaticToolExecutor, ToolOutcome,
     DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
@@ -429,4 +429,3 @@ fn reasoning_event_stored_in_message() {
     ));
     assert!(matches!(&message.blocks[1], ContentBlock::Text { text } if text == "answer"));
 }
-
