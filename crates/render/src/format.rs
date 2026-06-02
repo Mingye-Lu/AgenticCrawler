@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use commands::render_slash_command_help;
 use runtime::{ConfigLoader, ContentBlock, MessageRole, Session, TokenUsage};
 
-pub const DEFAULT_DATE: &str = "2026-03-31";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const BUILD_TARGET: Option<&str> = option_env!("TARGET");
 pub const GIT_SHA: Option<&str> = option_env!("GIT_SHA");
+pub const BUILD_DATE: Option<&str> = option_env!("BUILD_DATE");
 
 #[derive(Debug, Clone)]
 pub struct StatusContext {
@@ -164,8 +164,9 @@ pub fn render_config_report(section: Option<&str>) -> Result<String, Box<dyn std
 pub fn render_version_report() -> String {
     let git_sha = GIT_SHA.unwrap_or("unknown");
     let target = BUILD_TARGET.unwrap_or("unknown");
+    let build_date = BUILD_DATE.unwrap_or("unknown");
     format!(
-        "AgenticCrawler\n  Version          {VERSION}\n  Git SHA          {git_sha}\n  Target           {target}\n  Build date       {DEFAULT_DATE}"
+        "AgenticCrawler\n  Version          {VERSION}\n  Git SHA          {git_sha}\n  Target           {target}\n  Build date       {build_date}"
     )
 }
 
@@ -417,7 +418,8 @@ mod tests {
         assert!(report.contains("Git SHA"));
         assert!(report.contains("Target"));
         assert!(report.contains("Build date"));
-        assert!(report.contains(DEFAULT_DATE));
+        // BUILD_DATE is set via env var in CI; in tests it falls back to "unknown"
+        assert!(report.contains(BUILD_DATE.unwrap_or("unknown")));
     }
 
     #[test]

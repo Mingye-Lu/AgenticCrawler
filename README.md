@@ -37,7 +37,7 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 - **27 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
 - **MCP client.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
-- **MCP server.** `acrawl mcp` exposes all 16 browser tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code Copilot, OpenCode. Install with `acrawl mcp install`.
+- **MCP server.** `acrawl mcp` exposes all 16 browser tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code, Zed, JetBrains, TRAE, Gemini CLI, and more. Install with `acrawl mcp install`.
 
 ### How does it compare?
 
@@ -281,7 +281,7 @@ When `--no-headless` / `--headed` is set, all fetches go directly through the br
 <tr><td>Custom (OpenAI-compatible)</td><td>API key (optional)</td><td>—</td></tr>
 </table>
 
-Model aliases for quick switching: `sonnet`, `opus`, `haiku`, `4o`, `o3`, etc. Provider-prefixed names also work: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`.
+Models use the `provider/model-id` format: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, `amazon-bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0`, etc.
 
 ### Interactive TUI
 
@@ -335,7 +335,7 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 ### MCP Server (expose acrawl as a tool)
 
-`acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, Windsurf, or any MCP-compatible client.
+`acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, VS Code, Zed, JetBrains, TRAE, Gemini CLI, or any MCP-compatible client.
 
 The server provides **17 tools** in two modes:
 
@@ -355,7 +355,7 @@ acrawl mcp install
 
 Interactive installer that auto-detects your IDEs, lets you toggle which to configure (Space to select, Enter to confirm), and writes the correct config for each. Supports global (user-level) and project-level scopes.
 
-Supported IDEs: **Claude Code**, **Cursor**, **Windsurf**, **VS Code (Copilot)**, **OpenCode**.
+Supported clients: **Claude Code**, **Claude Desktop**, **Cursor**, **Windsurf**, **VS Code (Copilot)**, **OpenCode**, **Zed**, **TRAE**, **JetBrains IDEs**, **Gemini CLI**, **Qwen Code**, **Codex CLI**, **Hermes**, **OpenClaw**, **Goose**, **Crush**, **Aider**.
 
 #### Manual configuration
 
@@ -366,7 +366,7 @@ If you prefer to configure manually, add this to your IDE's MCP config file:
 <tr>
 <td>Claude Code</td>
 <td><code>.mcp.json</code> (project)<br><code>~/.claude.json</code> (user)</td>
-<td rowspan="3">
+<td rowspan="7">
 
 ```json
 {
@@ -383,6 +383,10 @@ If you prefer to configure manually, add this to your IDE's MCP config file:
 </tr>
 <tr><td>Cursor</td><td><code>.cursor/mcp.json</code></td></tr>
 <tr><td>Windsurf</td><td><code>~/.codeium/windsurf/mcp_config.json</code></td></tr>
+<tr><td>Claude Desktop</td><td><code>%APPDATA%\Claude\claude_desktop_config.json</code> (Win)<br><code>~/Library/Application Support/Claude/claude_desktop_config.json</code> (Mac)</td></tr>
+<tr><td>TRAE</td><td><code>.trae/mcp.json</code></td></tr>
+<tr><td>Gemini CLI</td><td><code>~/.gemini/settings.json</code></td></tr>
+<tr><td>Qwen Code</td><td><code>~/.qwen/settings.json</code></td></tr>
 <tr>
 <td>VS Code (Copilot)</td>
 <td><code>.vscode/mcp.json</code></td>
@@ -419,6 +423,28 @@ If you prefer to configure manually, add this to your IDE's MCP config file:
 
 </td>
 </tr>
+<tr>
+<td>Zed</td>
+<td><code>~/.config/zed/settings.json</code></td>
+<td>
+
+```json
+{
+  "context_servers": {
+    "acrawl": {
+      "command": {
+        "path": "acrawl",
+        "args": ["mcp"],
+        "env": {}
+      },
+      "settings": {}
+    }
+  }
+}
+```
+
+</td>
+</tr>
 </table>
 
 Or via the Claude Code CLI directly:
@@ -444,7 +470,7 @@ Commands:
   system-prompt      Print the system prompt (for debugging)
 
 Options:
-  --model MODEL            Model name or alias (sonnet, opus, 4o, o3, ...)
+  --model MODEL            Model in provider/id format (e.g. anthropic/claude-sonnet-4-6)
   --output-format FORMAT   text | json
   --resume FILE            Resume a saved session (with optional /commands)
   --compact                Compact history on resume

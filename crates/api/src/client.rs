@@ -480,11 +480,11 @@ where
 
 fn load_saved_oauth_token() -> Result<Option<OAuthTokenSet>, ApiError> {
     let token_set = load_oauth_credentials().map_err(ApiError::from)?;
-    Ok(token_set.map(|token_set| OAuthTokenSet {
-        access_token: token_set.access_token,
-        refresh_token: token_set.refresh_token,
+    Ok(token_set.map(|mut token_set| OAuthTokenSet {
+        access_token: std::mem::take(&mut token_set.access_token),
+        refresh_token: token_set.refresh_token.take(),
         expires_at: token_set.expires_at,
-        scopes: token_set.scopes,
+        scopes: std::mem::take(&mut token_set.scopes),
     }))
 }
 

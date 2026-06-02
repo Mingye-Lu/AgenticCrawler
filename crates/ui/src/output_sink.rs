@@ -1,23 +1,20 @@
-//! `ChannelSink` — bridges runtime events to the TUI via channel.
+//! `ChannelSink` 鈥?bridges runtime events to the TUI via channel.
 
 use std::sync::mpsc;
 
 use render::sink::OutputSink;
 use runtime::ConversationMessage;
 
-#[cfg(feature = "tui-crate-context")]
 use crate::events::ReplTuiEvent;
-#[cfg(not(feature = "tui-crate-context"))]
-use acrawl_tui::events::ReplTuiEvent;
 
 #[derive(Debug)]
-pub(crate) struct ChannelSink {
+pub struct ChannelSink {
     tx: mpsc::Sender<ReplTuiEvent>,
 }
 
 impl ChannelSink {
     #[must_use]
-    pub(crate) fn new(tx: mpsc::Sender<ReplTuiEvent>) -> Self {
+    pub fn new(tx: mpsc::Sender<ReplTuiEvent>) -> Self {
         Self { tx }
     }
 }
@@ -66,10 +63,7 @@ impl OutputSink for ChannelSink {
 #[cfg(test)]
 mod tests {
     use super::{ChannelSink, OutputSink};
-    #[cfg(feature = "tui-crate-context")]
     use crate::events::ReplTuiEvent;
-    #[cfg(not(feature = "tui-crate-context"))]
-    use acrawl_tui::events::ReplTuiEvent;
     use render::sink::StdoutSink;
     use runtime::RuntimeObserver;
     use std::sync::mpsc::channel;

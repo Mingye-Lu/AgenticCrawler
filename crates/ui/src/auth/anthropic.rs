@@ -26,17 +26,17 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
     match choice.trim() {
         "2" | "oauth" => {
             run_login()?;
-            let oauth = load_oauth_credentials()?
+            let mut oauth = load_oauth_credentials()?
                 .ok_or("Anthropic OAuth completed, but no saved token was found")?;
             persist_provider_credentials(
                 Provider::Anthropic,
                 api::StoredProviderConfig {
                     auth_method: "oauth".to_string(),
                     oauth: Some(api::StoredOAuthTokens {
-                        access_token: oauth.access_token,
-                        refresh_token: oauth.refresh_token,
+                        access_token: std::mem::take(&mut oauth.access_token),
+                        refresh_token: oauth.refresh_token.take(),
                         expires_at: oauth.expires_at.and_then(|v| i64::try_from(v).ok()),
-                        scopes: oauth.scopes,
+                        scopes: std::mem::take(&mut oauth.scopes),
                         account_id: None,
                     }),
                     ..Default::default()
@@ -65,7 +65,7 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     let config = ConfigLoader::default_for().load()?;
     let default_oauth = default_oauth_config();
     let oauth = config.oauth().unwrap_or(&default_oauth);
@@ -118,7 +118,8 @@ pub(crate) fn run_login() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub(crate) fn default_oauth_config() -> OAuthConfig {
+#[must_use]
+pub fn default_oauth_config() -> OAuthConfig {
     OAuthConfig {
         client_id: String::from("9d1c250a-e61b-44d9-88ed-5944d1962f5e"),
         authorize_url: String::from("https://platform.claude.com/oauth/authorize"),

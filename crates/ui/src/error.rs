@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use runtime::RuntimeError;
 
 #[derive(Debug)]
-pub(crate) enum CliError {
+pub enum CliError {
     Runtime(RuntimeError),
     Io(std::io::Error),
     Json(serde_json::Error),

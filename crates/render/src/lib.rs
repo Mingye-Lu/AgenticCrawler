@@ -9,7 +9,7 @@ pub use format::{
     format_cost_report, format_model_report, format_model_switch_report, format_status_report,
     render_config_report, render_export_text, render_repl_help, render_version_report,
     resolve_export_path, status_context, truncate_for_summary, StatusContext, StatusUsage,
-    BUILD_TARGET, DEFAULT_DATE, GIT_SHA, VERSION,
+    BUILD_DATE, BUILD_TARGET, GIT_SHA, VERSION,
 };
 pub use markdown::{
     drain_safe_boundary, render_lines, strip_ansi, text_to_ansi, ColorTheme, MarkdownStreamState,

@@ -3,11 +3,8 @@
 //! This crate provides the full terminal UI for the acrawl interactive REPL,
 //! including modals, rendering, and event handling.
 
-use std::sync::OnceLock;
-
-/// Tokio runtime handle — mirrors the static in the CLI binary.  Populated by
-/// the binary's `main()` before calling into TUI code.
-pub static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+pub use acrawl_ui::{app, auth, display_width, error, events, output_sink, session_mgr};
+pub use acrawl_ui::{CliOutputFormat, TOKIO_RUNTIME};
 
 // ── Thin re-export shims (provide crate::format, crate::markdown, crate::tool_format) ──
 
@@ -19,7 +16,7 @@ pub(crate) mod format {
         format_cost_report, format_model_report, format_model_switch_report, format_status_report,
         render_config_report, render_export_text, render_repl_help, render_version_report,
         resolve_export_path, status_context, truncate_for_summary, StatusContext, StatusUsage,
-        DEFAULT_DATE, VERSION,
+        VERSION,
     };
 }
 
@@ -41,61 +38,10 @@ pub(crate) mod tool_format {
     };
 }
 
-// ── Utility modules included from CLI (will eventually move here properly) ──
-
-#[path = "../../cli/src/display_width.rs"]
-pub(crate) mod display_width;
-
-#[allow(dead_code)]
-#[path = "../../cli/src/error.rs"]
-pub(crate) mod error;
-
-#[allow(dead_code)]
-#[path = "../../cli/src/output_sink.rs"]
-pub(crate) mod output_sink;
-
-#[allow(dead_code)]
-#[path = "../../cli/src/session_mgr.rs"]
-pub(crate) mod session_mgr;
-
-// ── Auth and App modules (included from CLI via #[path]) ──
-
-#[allow(dead_code, unused_imports, deprecated)]
-#[path = "../../cli/src/auth/mod.rs"]
-pub(crate) mod auth;
-
-#[allow(dead_code, unused_imports, deprecated)]
-#[path = "../../cli/src/app/mod.rs"]
-pub(crate) mod app;
-
-// Re-export Provider at crate root (auth/mod.rs uses `super::Provider`)
-pub(crate) use app::Provider;
-
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CliOutputFormat {
-    Text,
-    Json,
-}
-
-impl CliOutputFormat {
-    #[allow(dead_code)]
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "text" => Ok(Self::Text),
-            "json" => Ok(Self::Json),
-            other => Err(format!(
-                "unsupported value for --output-format: {other} (expected text or json)"
-            )),
-        }
-    }
-}
-
 // ── TUI utility modules (moved from CLI in T30) ──
 
 pub(crate) mod active_modal;
 pub mod child_tabs;
-pub mod events;
 pub(crate) mod modal;
 pub(crate) mod model_list;
 pub mod tool_pairing;
@@ -120,8 +66,6 @@ pub(crate) mod tui {
     pub(crate) use crate::active_modal;
     pub(crate) use crate::auth_modal;
     pub(crate) use crate::child_tabs;
-    pub(crate) use crate::events;
-    pub(crate) use crate::events::ReplTuiEvent;
     pub(crate) use crate::grouped_model_list;
     pub(crate) use crate::modal;
     pub(crate) use crate::model_list;
@@ -130,6 +74,8 @@ pub(crate) mod tui {
     pub(crate) use crate::repl_app::run_repl_ratatui;
     pub(crate) use crate::repl_render;
     pub(crate) use crate::session_modal;
+    pub(crate) use acrawl_ui::events;
+    pub(crate) use acrawl_ui::events::ReplTuiEvent;
 }
 
 // ── Public entry point ──

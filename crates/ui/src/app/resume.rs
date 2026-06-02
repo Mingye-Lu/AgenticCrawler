@@ -11,12 +11,12 @@ use render::format::{
 use runtime::{CompactionConfig, Session};
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResumeCommandOutcome {
-    pub(crate) session: Session,
-    pub(crate) message: Option<String>,
+pub struct ResumeCommandOutcome {
+    pub session: Session,
+    pub message: Option<String>,
 }
 
-pub(crate) fn run_resume_command(
+pub fn run_resume_command(
     session_path: &Path,
     session: &Session,
     command: &SlashCommand,

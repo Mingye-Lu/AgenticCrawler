@@ -7,11 +7,13 @@ use acrawl_core::OAuthConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct OAuthTokenSet {
     pub access_token: String,
     pub refresh_token: Option<String>,
+    #[zeroize(skip)]
     pub expires_at: Option<u64>,
     pub scopes: Vec<String>,
 }
@@ -88,12 +90,12 @@ struct StoredOAuthCredentials {
 }
 
 impl From<OAuthTokenSet> for StoredOAuthCredentials {
-    fn from(value: OAuthTokenSet) -> Self {
+    fn from(mut value: OAuthTokenSet) -> Self {
         Self {
-            access_token: value.access_token,
-            refresh_token: value.refresh_token,
+            access_token: std::mem::take(&mut value.access_token),
+            refresh_token: value.refresh_token.take(),
             expires_at: value.expires_at,
-            scopes: value.scopes,
+            scopes: std::mem::take(&mut value.scopes),
         }
     }
 }

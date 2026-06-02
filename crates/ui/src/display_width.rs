@@ -1,18 +1,21 @@
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub(crate) fn char_display_width(ch: char) -> usize {
+#[must_use]
+pub fn char_display_width(ch: char) -> usize {
     UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
-pub(crate) fn text_display_width(text: &str) -> usize {
+#[must_use]
+pub fn text_display_width(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
-pub(crate) fn prefix_display_width(text: &str, char_count: usize) -> usize {
+pub fn prefix_display_width(text: &str, char_count: usize) -> usize {
     text.chars().take(char_count).map(char_display_width).sum()
 }
 
-pub(crate) fn char_count_for_display_col(text: &str, target_col: usize) -> usize {
+#[must_use]
+pub fn char_count_for_display_col(text: &str, target_col: usize) -> usize {
     let mut char_count = 0usize;
     let mut width = 0usize;
 
@@ -28,7 +31,8 @@ pub(crate) fn char_count_for_display_col(text: &str, target_col: usize) -> usize
     char_count
 }
 
-pub(crate) fn split_at_display_width(text: &str, max_width: usize) -> (usize, usize) {
+#[must_use]
+pub fn split_at_display_width(text: &str, max_width: usize) -> (usize, usize) {
     let mut end = 0usize;
     let mut width = 0usize;
     let mut saw_char = false;

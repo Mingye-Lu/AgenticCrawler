@@ -7,13 +7,13 @@ use runtime::{ControlState, ToolError, ToolExecutor};
 
 use super::AllowedToolSet;
 
-pub(crate) struct CliToolExecutor {
+pub struct CliToolExecutor {
     allowed_tools: Option<AllowedToolSet>,
     agent: CrawlerAgent,
 }
 
 impl CliToolExecutor {
-    pub(crate) fn new(
+    pub fn new(
         allowed_tools: Option<AllowedToolSet>,
         fork_client: SharedApiClient,
         is_interactive: bool,
@@ -38,33 +38,28 @@ impl CliToolExecutor {
         }
     }
 
-    pub(crate) fn reset_browser(&mut self) {
+    pub fn reset_browser(&mut self) {
         self.agent.reset_browser();
     }
 
-    pub(crate) fn clear_extension_bridge(&mut self) {
+    pub fn clear_extension_bridge(&mut self) {
         self.agent.clear_shared_bridge();
     }
 
-    pub(crate) fn set_extension_bridge(&mut self, bridge: SharedBridge) {
+    pub fn set_extension_bridge(&mut self, bridge: SharedBridge) {
         self.agent.set_shared_bridge(bridge);
     }
 
-    pub(crate) fn set_extension_mode(&mut self, active: bool) {
+    pub fn set_extension_mode(&mut self, active: bool) {
         self.agent.set_extension_mode(active);
     }
 
-    pub(crate) async fn export_current_state(&mut self) -> Option<BrowserState> {
+    pub async fn export_current_state(&mut self) -> Option<BrowserState> {
         self.agent.export_browser_state().await
     }
 
-    pub(crate) fn take_captured_child_sessions(&mut self) -> Vec<runtime::ChildSession> {
+    pub fn take_captured_child_sessions(&mut self) -> Vec<runtime::ChildSession> {
         self.agent.take_captured_child_sessions()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn push_captured_child_session_for_test(&mut self, session: runtime::ChildSession) {
-        self.agent.push_captured_child_session_for_test(session);
     }
 }
 

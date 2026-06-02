@@ -5,24 +5,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use runtime::{Session, SessionError};
 
 #[derive(Debug, Clone)]
-pub(crate) struct SessionHandle {
-    pub(crate) id: String,
-    pub(crate) path: PathBuf,
+pub struct SessionHandle {
+    pub id: String,
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ManagedSessionSummary {
-    pub(crate) id: String,
-    pub(crate) modified_epoch_secs: u64,
-    pub(crate) message_count: usize,
-    pub(crate) title: Option<String>,
+pub struct ManagedSessionSummary {
+    pub id: String,
+    pub modified_epoch_secs: u64,
+    pub message_count: usize,
+    pub title: Option<String>,
 }
 
-pub(crate) fn sessions_dir() -> PathBuf {
+#[must_use]
+pub fn sessions_dir() -> PathBuf {
     runtime::config_home_dir().join("sessions")
 }
 
-pub(crate) fn create_managed_session_handle() -> SessionHandle {
+#[must_use]
+pub fn create_managed_session_handle() -> SessionHandle {
     let id = generate_session_id();
     let path = sessions_dir().join(format!("{id}.json"));
     SessionHandle { id, path }
@@ -36,8 +38,7 @@ fn generate_session_id() -> String {
     format!("session-{millis}")
 }
 
-pub(crate) fn list_managed_sessions(
-) -> Result<Vec<ManagedSessionSummary>, Box<dyn std::error::Error>> {
+pub fn list_managed_sessions() -> Result<Vec<ManagedSessionSummary>, Box<dyn std::error::Error>> {
     let mut sessions = Vec::new();
     let dir = sessions_dir();
     let read_dir = match fs::read_dir(&dir) {
@@ -80,12 +81,12 @@ pub(crate) fn list_managed_sessions(
     Ok(sessions)
 }
 
-pub(crate) fn delete_session(path: &Path) -> std::io::Result<()> {
+pub fn delete_session(path: &Path) -> std::io::Result<()> {
     let _ = fs::remove_file(path.with_extension("tmp"));
     fs::remove_file(path)
 }
 
-pub(crate) fn rename_session(path: &Path, new_title: &str) -> Result<(), SessionError> {
+pub fn rename_session(path: &Path, new_title: &str) -> Result<(), SessionError> {
     let mut session = Session::load_from_path(path)?;
     let trimmed = new_title.trim();
     session.title = if trimmed.is_empty() {

@@ -9,7 +9,7 @@ const TITLE_SYSTEM_PROMPT: &str =
 
 const MAX_TITLE_LEN: usize = 60;
 
-pub(crate) fn spawn_title_generation(
+pub fn spawn_title_generation(
     model: String,
     user_message: String,
     slot: Arc<Mutex<Option<String>>>,

@@ -464,4 +464,85 @@ mod tests {
             BridgeError::ExtensionTimeout { timeout } if timeout == EXTENSION_COMMAND_TIMEOUT
         ));
     }
+
+    #[tokio::test]
+    async fn fails_fast_when_disconnected() {
+        let (tx, _rx) = mpsc::channel(10);
+        let (_wtx, connected) = watch::channel(false);
+        let mut bridge = ExtensionBridge::new(tx, connected);
+
+        let result = bridge.navigate("https://example.com").await;
+        assert!(matches!(result, Err(BridgeError::ExtensionDisconnected)));
+    }
+
+    #[tokio::test]
+    async fn timeout_when_no_response() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let (_wtx, connected) = watch::channel(true);
+        let mut bridge = ExtensionBridge::new(tx, connected);
+
+        tokio::spawn(async move {
+            let _ = rx.recv().await;
+        });
+
+        let result = bridge.navigate("https://example.com").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn successful_navigate() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let (_wtx, connected) = watch::channel(true);
+        let mut bridge = ExtensionBridge::new(tx, connected);
+
+        tokio::spawn(async move {
+            if let Some((cmd, reply)) = rx.recv().await {
+                let _ = reply.send(BridgeResponse {
+                    id: cmd.id,
+                    ok: true,
+                    result: Some(serde_json::json!({
+                        "title": "Example",
+                        "html": "<html></html>"
+                    })),
+                    error: None,
+                });
+            }
+        });
+
+        let result = bridge.navigate("https://example.com").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().title, "Example");
+    }
+
+    #[tokio::test]
+    async fn error_response_maps_to_bridge_error() {
+        let (tx, mut rx) = mpsc::channel(10);
+        let (_wtx, connected) = watch::channel(true);
+        let mut bridge = ExtensionBridge::new(tx, connected);
+
+        tokio::spawn(async move {
+            if let Some((cmd, reply)) = rx.recv().await {
+                let _ = reply.send(BridgeResponse {
+                    id: cmd.id,
+                    ok: false,
+                    result: None,
+                    error: Some("element not found".to_string()),
+                });
+            }
+        });
+
+        let result = bridge.click("#missing").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn channel_closed_returns_error() {
+        let (tx, rx) = mpsc::channel(10);
+        let (_wtx, connected) = watch::channel(true);
+        let mut bridge = ExtensionBridge::new(tx, connected);
+        drop(rx);
+
+        let result = bridge.navigate("https://example.com").await;
+        assert!(result.is_err());
+    }
 }

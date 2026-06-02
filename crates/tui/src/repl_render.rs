@@ -13,6 +13,7 @@ use ratatui::widgets::{
 };
 use ratatui::DefaultTerminal;
 use runtime::{format_usd, pricing_for_model};
+use serde_json;
 
 use crate::app::LiveCli;
 use crate::display_width::{split_at_display_width, text_display_width};
@@ -462,6 +463,10 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
                                 Some(result) => ToolCallStatus::Success {
                                     output: result.output.clone(),
                                 },
+                                None if !live_tool_calls.is_empty() => {
+                                    // Rendered via live_tool_calls below; skip duplicate.
+                                    continue;
+                                }
                                 None => ToolCallStatus::Interrupted,
                             };
                             let (call_items, call_text) = render_tool_call_lines(
@@ -476,7 +481,13 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
                             text_out.extend(call_text);
                         }
                         ContentBlock::Reasoning { data } => {
-                            for row in wrap_plain_text(data, width) {
+                            let thinking_text = serde_json::from_str::<serde_json::Value>(data)
+                                .ok()
+                                .and_then(|v| {
+                                    v.get("reasoning_content")?.as_str().map(String::from)
+                                })
+                                .unwrap_or_else(|| data.clone());
+                            for row in wrap_plain_text(&thinking_text, width) {
                                 text_out.push(row.clone());
                                 out.push(ListItem::new(Line::from(Span::styled(
                                     row,
@@ -1587,6 +1598,29 @@ mod tests {
         let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &[], 80, None, '⠋', false);
 
         assert!(text.iter().any(|line| line.contains("interrupted")));
+    }
+
+    #[test]
+    fn build_wrapped_list_skips_unresolved_tool_use_when_live_tools_active() {
+        let messages = vec![ConversationMessage::assistant(vec![
+            ContentBlock::ToolUse {
+                id: "tool_1".to_string(),
+                name: "navigate".to_string(),
+                input: r#"{"url":"https://example.com"}"#.to_string(),
+            },
+        ])];
+        let live = vec![(
+            "navigate".to_string(),
+            "https://example.com".to_string(),
+            ToolCallStatus::Running,
+        )];
+
+        let (_, text) = build_wrapped_list(&messages, &HashMap::new(), &live, 80, None, '⠋', false);
+
+        assert!(
+            !text.iter().any(|line| line.contains("interrupted")),
+            "should not show interrupted when live_tool_calls is active"
+        );
     }
 
     #[test]

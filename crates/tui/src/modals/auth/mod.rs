@@ -260,7 +260,7 @@ impl AuthModal {
     #[allow(clippy::too_many_lines)]
     pub(super) fn fetch_models_for_provider(
         provider: ProviderKind,
-    ) -> Result<Vec<crate::tui::model_list::ModelInfo>, String> {
+    ) -> Result<Vec<acrawl_ui::events::PickerModelInfo>, String> {
         let store = api::credentials::load_credentials().unwrap_or_default();
         let provider_str = match provider {
             ProviderKind::Anthropic => "anthropic",
@@ -285,7 +285,7 @@ impl AuthModal {
                     .map(|models| {
                         models
                             .into_iter()
-                            .map(|m| crate::tui::model_list::ModelInfo {
+                            .map(|m| acrawl_ui::events::PickerModelInfo {
                                 id: m.id,
                                 display_name: m.display_name,
                             })
@@ -303,7 +303,7 @@ impl AuthModal {
                         .map(|models| {
                             models
                                 .into_iter()
-                                .map(|m| crate::tui::model_list::ModelInfo {
+                                .map(|m| acrawl_ui::events::PickerModelInfo {
                                     id: m.id,
                                     display_name: None,
                                 })
@@ -324,7 +324,7 @@ impl AuthModal {
                             .map(|models| {
                                 models
                                     .into_iter()
-                                    .map(|m| crate::tui::model_list::ModelInfo {
+                                    .map(|m| acrawl_ui::events::PickerModelInfo {
                                         id: m.id,
                                         display_name: None,
                                     })
@@ -347,7 +347,7 @@ impl AuthModal {
                 if !models.is_empty() {
                     return Ok(models
                         .into_iter()
-                        .map(|m| crate::tui::model_list::ModelInfo {
+                        .map(|m| acrawl_ui::events::PickerModelInfo {
                             id: m.id,
                             display_name: None,
                         })
@@ -356,7 +356,7 @@ impl AuthModal {
                 Ok(api::provider::catalog::builtin_models()
                     .into_iter()
                     .filter(|m| m.provider_id == p.id)
-                    .map(|m| crate::tui::model_list::ModelInfo {
+                    .map(|m| acrawl_ui::events::PickerModelInfo {
                         id: m.id,
                         display_name: Some(m.display_name),
                     })
@@ -460,7 +460,7 @@ impl AuthModal {
 
     pub(crate) fn finish_model_loading(
         &mut self,
-        result: Result<Vec<crate::tui::model_list::ModelInfo>, String>,
+        result: Result<Vec<acrawl_ui::events::PickerModelInfo>, String>,
     ) {
         self.model_fetch_in_flight = false;
         let AuthModalStep::ModelFetchLoading { provider } = self.step else {

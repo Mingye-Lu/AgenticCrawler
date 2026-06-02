@@ -19,7 +19,6 @@ use crate::types::{MessageRequest, MessageResponse, ReasoningEffort, StreamEvent
 pub struct ModelInfo {
     pub id: String,
     pub display_name: String,
-    pub aliases: Vec<String>,
     pub provider_id: String,
     pub max_output_tokens: u32,
     pub context_window: u32,

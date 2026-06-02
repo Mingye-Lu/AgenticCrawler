@@ -1,3 +1,5 @@
+#![allow(clippy::redundant_closure_for_method_calls)]
+
 use super::*;
 
 pub(super) fn extract_openai_account_id(jwt: &str) -> Option<String> {
@@ -25,7 +27,9 @@ pub(super) fn spawn_extension_connection_watch(
     ui_tx: &mpsc::Sender<ReplTuiEvent>,
 ) {
     let connection_watch = {
-        let g = cli.lock().expect("cli lock");
+        let g = cli
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         g.extension_connection_watch()
     };
     let Some(watch) = connection_watch else {
@@ -52,7 +56,9 @@ pub(super) fn spawn_extension_connection_watch_from_receiver(
         });
         if connected {
             let setup = {
-                let mut g = cli_clone.lock().expect("cli lock");
+                let mut g = cli_clone
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 g.prepare_extension_bridge_activation()
             };
             let result = match setup {
@@ -62,12 +68,16 @@ pub(super) fn spawn_extension_connection_watch_from_receiver(
                     });
                     match init_result {
                         Ok(()) => {
-                            let mut g = cli_clone.lock().expect("cli lock");
+                            let mut g = cli_clone
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             g.activate_extension_bridge(shared);
                             Ok(())
                         }
                         Err(error) => {
-                            let mut g = cli_clone.lock().expect("cli lock");
+                            let mut g = cli_clone
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                             g.restore_pending_extension_state(saved_state);
                             Err(error)
                         }

@@ -174,8 +174,9 @@ impl CrawlerAgent {
 
         let mut child_agent = CrawlerAgent::new(
             BrowserContext::new_shared(shared_bridge.clone(), page_index),
-            ToolRegistry::new_with_core_tools(),
+            ToolRegistry::new_for_child(),
         )
+        .as_child()
         .with_max_steps(child_max_steps)
         .with_agent_id(child_id.clone())
         .with_agent_manager(self.agent_manager.clone())

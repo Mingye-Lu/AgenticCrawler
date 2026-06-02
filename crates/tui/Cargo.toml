@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 acrawl-core = { path = "../core" }
+acrawl-ui = { path = "../ui" }
 agent = { path = "../agent" }
 api = { path = "../api" }
 arboard = "3"
@@ -26,7 +27,3 @@ zeroize = "1"
 
 [lints]
 workspace = true
-
-[features]
-default = ["tui-crate-context"]
-tui-crate-context = []

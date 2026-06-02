@@ -112,6 +112,7 @@ pub struct CrawlerAgent {
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
     child_control_registry: Option<crate::child_events::ChildControlRegistry>,
     extension_mode: bool,
+    is_child: bool,
     pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
@@ -148,6 +149,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            is_child: false,
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
@@ -175,6 +177,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            is_child: false,
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
@@ -202,6 +205,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            is_child: false,
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             #[cfg(test)]
             fork_page_index_override: None,
@@ -272,6 +276,12 @@ impl CrawlerAgent {
         self
     }
 
+    #[must_use]
+    pub fn as_child(mut self) -> Self {
+        self.is_child = true;
+        self
+    }
+
     pub fn set_control_state(&mut self, state: Arc<ControlState>) {
         self.control_state = Some(state);
     }
@@ -286,12 +296,21 @@ impl CrawlerAgent {
         goal: &str,
         api_client: impl ApiClient + Send + Sync + 'static,
     ) -> Result<CrawlResult, CrawlError> {
+        let is_child = self.is_child;
         let specs = match &self.allowed_tools {
             Some(allowed) => mvp_tool_specs()
                 .into_iter()
                 .filter(|s| allowed.contains(s.name))
                 .collect(),
             None => mvp_tool_specs(),
+        };
+        let specs = if is_child {
+            specs
+                .into_iter()
+                .filter(|s| s.name != "wait_for_human")
+                .collect()
+        } else {
+            specs
         };
         let system_prompt = build_system_prompt(&specs);
         self.run_with_system_prompt(goal, api_client, system_prompt)

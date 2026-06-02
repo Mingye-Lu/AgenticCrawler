@@ -34,15 +34,24 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         return Err(CrawlError::new("url must not be empty"));
     }
 
-    // Allowlist http/https only. Without this, the agent could be steered into
-    // file://, javascript:, data:, or other schemes that bypass network
-    // boundaries (local-file disclosure, SSRF helpers, etc.).
-    let scheme_end = url
-        .find(':')
-        .ok_or_else(|| CrawlError::new("url must include a scheme (http:// or https://)"))?;
-    let scheme = &url[..scheme_end];
-    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-        return Err(CrawlError::new("url scheme must be http or https"));
+    let parsed_url = match url::Url::parse(url) {
+        Ok(parsed_url) => parsed_url,
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            return Err(CrawlError::new(
+                "url must include a scheme (http:// or https://)",
+            ));
+        }
+        Err(error) => {
+            return Err(CrawlError::new(format!("invalid url: {error}")));
+        }
+    };
+    match parsed_url.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(CrawlError::new(format!(
+                "url scheme must be http or https, got: {other}"
+            )));
+        }
     }
 
     let format = input
@@ -203,10 +212,20 @@ fn resolve_content(
             match format {
                 "markdown" => {
                     let md = html_to_markdown(&main_html);
-                    cap_content(&md, max_chars)
+                    if md.trim().is_empty() && !text.trim().is_empty() {
+                        cap_content(text, max_chars)
+                    } else {
+                        cap_content(&md, max_chars)
+                    }
                 }
                 "text" => cap_content(text, max_chars),
-                "html" => cap_content(&main_html, max_chars),
+                "html" => {
+                    if main_html.trim().is_empty() && !html.trim().is_empty() {
+                        cap_content(html, max_chars)
+                    } else {
+                        cap_content(&main_html, max_chars)
+                    }
+                }
                 _ => unreachable!(),
             }
         }

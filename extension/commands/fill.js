@@ -15,7 +15,39 @@ async function handleFill(tabId, payload) {
 
   const res = await cdp(tabId, 'Runtime.evaluate', {
     expression: `(() => {
-      const el = document.querySelector(${JSON.stringify(selector)});
+      function resolveElement(raw) {
+        if (/^[#.\\[]/.test(raw) || /[\\[\\]:>~+]/.test(raw)) return document.querySelector(raw);
+        const lower = raw.toLowerCase();
+        const candidates = [
+          '#' + raw,
+          '#' + lower,
+          '[name="' + raw + '"]',
+          '[name="' + lower + '"]',
+          'input[name="' + raw + '"]',
+          'input[name="' + lower + '"]',
+          'textarea[name="' + raw + '"]',
+          'textarea[name="' + lower + '"]',
+          'select[name="' + raw + '"]',
+          'select[name="' + lower + '"]',
+          '[placeholder="' + raw + '"]',
+          'input[aria-label="' + raw + '"]',
+          'textarea[aria-label="' + raw + '"]',
+        ];
+        for (const sel of candidates) {
+          try { const el = document.querySelector(sel); if (el) return el; } catch (_) {}
+        }
+        const labels = document.querySelectorAll('label');
+        for (const lbl of labels) {
+          if (lbl.textContent.trim().toLowerCase() === lower) {
+            const forAttr = lbl.getAttribute('for');
+            if (forAttr) { const t = document.getElementById(forAttr); if (t) return t; }
+            const input = lbl.querySelector('input, textarea, select');
+            if (input) return input;
+          }
+        }
+        return document.querySelector(raw);
+      }
+      const el = resolveElement(${JSON.stringify(selector)});
       if (!el) {
         return { ok: false, error: 'Element not found' };
       }

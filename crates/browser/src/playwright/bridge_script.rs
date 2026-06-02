@@ -10,13 +10,22 @@ function parseHeadless() {
 }
 
 async function resolveFillSelector(pg, raw) {
-  if (/[#.\[\]:>~+\s]/.test(raw)) return raw;
+  if (/^[#.\[]/.test(raw) || /[\[\]:>~+]/.test(raw)) return raw;
+  const lower = raw.toLowerCase();
   const candidates = [
     `#${raw}`,
+    `#${lower}`,
     `[name="${raw}"]`,
+    `[name="${lower}"]`,
     `input[name="${raw}"]`,
+    `input[name="${lower}"]`,
     `textarea[name="${raw}"]`,
+    `textarea[name="${lower}"]`,
     `select[name="${raw}"]`,
+    `select[name="${lower}"]`,
+    `[placeholder="${raw}"]`,
+    `input[aria-label="${raw}"]`,
+    `textarea[aria-label="${raw}"]`,
   ];
   for (const sel of candidates) {
     try {
@@ -24,6 +33,35 @@ async function resolveFillSelector(pg, raw) {
       if (el) return sel;
     } catch (_) {}
   }
+  try {
+    const resolved = await pg.evaluate((labelText) => {
+      const labels = document.querySelectorAll('label');
+      for (const lbl of labels) {
+        const text = lbl.textContent.trim();
+        if (text.toLowerCase() === labelText.toLowerCase()) {
+          const forAttr = lbl.getAttribute('for');
+          if (forAttr) {
+            const target = document.getElementById(forAttr);
+            if (target) return `#${forAttr}`;
+          }
+          const input = lbl.querySelector('input, textarea, select');
+          if (input) {
+            if (input.id) return `#${input.id}`;
+            if (input.name) return `[name="${input.name}"]`;
+            const type = input.getAttribute('type') || 'text';
+            return `label:has-text("${text}") ${input.tagName.toLowerCase()}[type="${type}"]`;
+          }
+        }
+      }
+      return null;
+    }, raw);
+    if (resolved) {
+      try {
+        const el = await pg.$(resolved);
+        if (el) return resolved;
+      } catch (_) {}
+    }
+  } catch (_) {}
   return raw;
 }
 
@@ -108,6 +146,11 @@ async function bootstrap() {
     if (command.action === 'navigate') {
       try {
         await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        // Wait for SPA API calls to complete. Cap at 3s so pages with
+        // persistent connections (WebSocket, SSE, polling) don't hang.
+        try {
+          await page.waitForLoadState('networkidle', { timeout: 3000 });
+        } catch (_) { /* networkidle timed out — proceed with current state */ }
         // `bypassTurnstileIfPresent` already calls `page.content()` after
         // any nudge it performs, so reuse that html instead of fetching
         // again — the earlier `html = await page.content()` overwrite was
@@ -204,7 +247,16 @@ async function bootstrap() {
 
     if (command.action === 'click') {
       try {
+        const urlBefore = page.url();
         await page.click(command.selector, { timeout: 5000 });
+        const deadline = Date.now() + 2000;
+        while (Date.now() < deadline) {
+          if (page.url() !== urlBefore) {
+            await page.waitForLoadState('domcontentloaded').catch(() => {});
+            break;
+          }
+          await new Promise(r => setTimeout(r, 50));
+        }
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { clicked: true } }) + '\n');
       } catch (mainError) {
         let clickedInFrame = false;
@@ -343,6 +395,7 @@ async function bootstrap() {
                 : el.placeholder || '';
               return {
                 name: el.name || '',
+                id: el.id || '',
                 type: el.type || el.tagName.toLowerCase(),
                 label,
                 required: Boolean(el.required),

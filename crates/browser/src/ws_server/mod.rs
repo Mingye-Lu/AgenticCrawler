@@ -101,6 +101,29 @@ impl WsBridgeServer {
         }
         std::fs::write(&bridge_file_path, bridge_info.to_string())
             .map_err(WsBridgeError::BridgeFileWrite)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ =
+                std::fs::set_permissions(&bridge_file_path, std::fs::Permissions::from_mode(0o600));
+        }
+        #[cfg(windows)]
+        {
+            if let (Some(path_str), Ok(username)) =
+                (bridge_file_path.to_str(), std::env::var("USERNAME"))
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("icacls")
+                    .args([
+                        path_str,
+                        "/inheritance:r",
+                        "/grant:r",
+                        &format!("{username}:(R,W)"),
+                    ])
+                    .creation_flags(0x0800_0000)
+                    .output();
+            }
+        }
 
         let (command_tx, command_rx) =
             mpsc::channel::<(BridgeCommand, oneshot::Sender<BridgeResponse>)>(32);

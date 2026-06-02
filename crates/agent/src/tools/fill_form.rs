@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -68,8 +69,25 @@ pub async fn execute(
     }
 
     if params.submit {
+        let pre_url = match browser.acquire_bridge().await {
+            Ok(mut b) => b
+                .evaluate("window.location.href")
+                .await
+                .ok()
+                .and_then(|v| v.as_str().map(String::from)),
+            Err(_) => None,
+        };
+
         let js = format!(
-            "document.querySelector('{}').submit()",
+            r#"(() => {{
+                const form = document.querySelector('{}');
+                if (!form) return 'form_not_found';
+                const btn = form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
+                if (btn) {{ btn.click(); return 'clicked'; }}
+                const evt = new Event('submit', {{ bubbles: true, cancelable: true }});
+                if (form.dispatchEvent(evt)) form.submit();
+                return 'dispatched';
+            }})()"#,
             params.form_selector.replace('\'', "\\'")
         );
         browser
@@ -79,6 +97,25 @@ pub async fn execute(
             .evaluate(&js)
             .await
             .map_err(|e| ToolExecutionError::new(format!("failed to submit form: {e}")))?;
+
+        if let Some(ref old_url) = pre_url {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            while tokio::time::Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                let current = match browser.acquire_bridge().await {
+                    Ok(mut b) => b
+                        .evaluate("window.location.href")
+                        .await
+                        .ok()
+                        .and_then(|v| v.as_str().map(String::from)),
+                    Err(_) => None,
+                };
+                if current.as_deref() != Some(old_url.as_str()) {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    break;
+                }
+            }
+        }
     }
 
     let page_state = super::feedback::post_action_page_state(browser).await;

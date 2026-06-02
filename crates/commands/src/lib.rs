@@ -349,9 +349,9 @@ mod tests {
         assert_eq!(SlashCommand::parse(" /status "), Some(SlashCommand::Status));
         assert_eq!(SlashCommand::parse("/debug"), Some(SlashCommand::Debug));
         assert_eq!(
-            SlashCommand::parse("/model claude-opus"),
+            SlashCommand::parse("/model anthropic/claude-opus-4-6"),
             Some(SlashCommand::Model {
-                model: Some("claude-opus".to_string()),
+                model: Some("anthropic/claude-opus-4-6".to_string()),
             })
         );
         assert_eq!(
@@ -421,9 +421,9 @@ mod tests {
         assert_eq!(SlashCommand::parse("/STATUS"), Some(SlashCommand::Status));
         assert_eq!(SlashCommand::parse("/COMPACT"), Some(SlashCommand::Compact));
         assert_eq!(
-            SlashCommand::parse("/Model claude-opus"),
+            SlashCommand::parse("/Model anthropic/claude-opus-4-6"),
             Some(SlashCommand::Model {
-                model: Some("claude-opus".to_string()),
+                model: Some("anthropic/claude-opus-4-6".to_string()),
             })
         );
         assert_eq!(
@@ -542,6 +542,158 @@ mod tests {
         );
         assert!(
             handle_slash_command("/cloakbrowser", &session, CompactionConfig::default()).is_none()
+        );
+    }
+
+    #[test]
+    fn parse_all_known_commands_individually() {
+        assert_eq!(SlashCommand::parse("/help"), Some(SlashCommand::Help));
+        assert_eq!(SlashCommand::parse("/status"), Some(SlashCommand::Status));
+        assert_eq!(SlashCommand::parse("/compact"), Some(SlashCommand::Compact));
+        assert_eq!(SlashCommand::parse("/debug"), Some(SlashCommand::Debug));
+        assert_eq!(SlashCommand::parse("/cost"), Some(SlashCommand::Cost));
+        assert_eq!(SlashCommand::parse("/version"), Some(SlashCommand::Version));
+        assert_eq!(
+            SlashCommand::parse("/sessions"),
+            Some(SlashCommand::Sessions)
+        );
+        assert_eq!(SlashCommand::parse("/headed"), Some(SlashCommand::Headed));
+        assert_eq!(
+            SlashCommand::parse("/headless"),
+            Some(SlashCommand::Headless)
+        );
+        assert_eq!(
+            SlashCommand::parse("/cloakbrowser"),
+            Some(SlashCommand::CloakBrowser)
+        );
+        assert_eq!(SlashCommand::parse("/clear"), Some(SlashCommand::Clear));
+    }
+
+    #[test]
+    fn parse_commands_with_arguments() {
+        assert_eq!(
+            SlashCommand::parse("/model anthropic/claude-sonnet-4-6"),
+            Some(SlashCommand::Model {
+                model: Some("anthropic/claude-sonnet-4-6".to_string())
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/model"),
+            Some(SlashCommand::Model { model: None })
+        );
+        assert_eq!(
+            SlashCommand::parse("/export output.md"),
+            Some(SlashCommand::Export {
+                path: Some("output.md".to_string())
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/auth openai"),
+            Some(SlashCommand::Auth {
+                provider: Some("openai".to_string())
+            })
+        );
+        assert_eq!(
+            SlashCommand::parse("/config model"),
+            Some(SlashCommand::Config {
+                section: Some("model".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn parse_extension_subcommands() {
+        assert_eq!(
+            SlashCommand::parse("/extension"),
+            Some(SlashCommand::Extension { stop: false })
+        );
+        assert_eq!(
+            SlashCommand::parse("/extension stop"),
+            Some(SlashCommand::Extension { stop: true })
+        );
+        assert_eq!(
+            SlashCommand::parse("/extension foo"),
+            Some(SlashCommand::Unknown("extension".to_string()))
+        );
+        assert_eq!(
+            SlashCommand::parse("/extension stop extra"),
+            Some(SlashCommand::Unknown("extension".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_unknown_command() {
+        assert_eq!(
+            SlashCommand::parse("/foobar"),
+            Some(SlashCommand::Unknown("foobar".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_non_slash_returns_none() {
+        assert_eq!(SlashCommand::parse("hello"), None);
+        assert_eq!(SlashCommand::parse(""), None);
+    }
+
+    #[test]
+    fn parse_case_insensitive() {
+        assert_eq!(SlashCommand::parse("/HELP"), Some(SlashCommand::Help));
+        assert_eq!(SlashCommand::parse("/Status"), Some(SlashCommand::Status));
+        assert_eq!(
+            SlashCommand::parse("/MODEL gpt"),
+            Some(SlashCommand::Model {
+                model: Some("gpt".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn parse_with_surrounding_whitespace() {
+        assert_eq!(SlashCommand::parse("  /help  "), Some(SlashCommand::Help));
+        assert_eq!(
+            SlashCommand::parse("  /model   claude  "),
+            Some(SlashCommand::Model {
+                model: Some("claude".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn clear_rejects_arguments() {
+        assert_eq!(
+            SlashCommand::parse("/clear force"),
+            Some(SlashCommand::Unknown("clear".to_string()))
+        );
+    }
+
+    #[test]
+    fn resume_supported_set_exact() {
+        let resume_names: Vec<&str> = resume_supported_slash_commands()
+            .iter()
+            .map(|s| s.name)
+            .collect();
+        let expected = vec![
+            "help", "status", "compact", "clear", "cost", "config", "version", "export",
+        ];
+        assert_eq!(resume_names.len(), expected.len());
+        for name in &expected {
+            assert!(
+                resume_names.contains(name),
+                "missing resume-safe command: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_duplicate_command_names() {
+        let names: Vec<&str> = slash_command_specs().iter().map(|s| s.name).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            names.len(),
+            sorted.len(),
+            "duplicate command names detected"
         );
     }
 }

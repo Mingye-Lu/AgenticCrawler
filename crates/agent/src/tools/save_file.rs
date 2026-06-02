@@ -51,6 +51,12 @@ fn validate_filename(filename: &str) -> Result<(), CrawlError> {
         return Err(CrawlError::new("save_file filename must not be empty"));
     }
 
+    if filename.contains(':') {
+        return Err(CrawlError::new(
+            "save_file filename must not contain ':' (Windows ADS not allowed)",
+        ));
+    }
+
     let path = Path::new(filename);
     if path.components().count() != 1 {
         return Err(CrawlError::new(
@@ -91,11 +97,24 @@ pub async fn execute(
 
     let settings = runtime::load_settings();
     let override_dir = input.get("output_dir").and_then(|v| v.as_str());
-    let mut target = runtime::resolve_output_dir(&settings, override_dir);
+    let output_base = runtime::resolve_output_dir(&settings, override_dir);
+    let mut target = output_base.clone();
     if let Some(ref sub) = parsed.subdir {
         target.push(sub);
     }
     target.push(&parsed.filename);
+
+    if let Some(parent) = target.parent() {
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            if let Ok(canonical_base) = output_base.canonicalize() {
+                if !canonical_parent.starts_with(&canonical_base) {
+                    return Err(ToolExecutionError::new(
+                        "resolved path escapes output directory (possible symlink attack)",
+                    ));
+                }
+            }
+        }
+    }
 
     let path_str = target.to_string_lossy().to_string();
 

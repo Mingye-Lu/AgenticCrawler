@@ -448,6 +448,14 @@ impl OpenAiStreamState {
         if content.is_empty() {
             return;
         }
+        // Close reasoning block before text begins so reasoning precedes text
+        // in the final message block ordering.
+        if self.reasoning_block_active {
+            self.reasoning_block_active = false;
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index: self.next_block_index - 1,
+            }));
+        }
         if !self.text_block_active {
             self.text_block_active = true;
             let idx = self.next_block_index;

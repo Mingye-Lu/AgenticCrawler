@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::{filter_tool_specs, AllowedToolSet};
 
-pub(crate) struct LlmRuntimeClient {
+pub struct LlmRuntimeClient {
     registry: ProviderRegistry,
     provider: ProviderClient,
     model: String,
@@ -23,11 +23,7 @@ pub(crate) struct LlmRuntimeClient {
 }
 
 impl LlmRuntimeClient {
-    pub(crate) fn new(
-        model: String,
-        enable_tools: bool,
-        allowed_tools: Option<AllowedToolSet>,
-    ) -> Self {
+    pub fn new(model: String, enable_tools: bool, allowed_tools: Option<AllowedToolSet>) -> Self {
         let store = api::load_credentials().unwrap_or_default();
         let registry = ProviderRegistry::from_credentials(&store);
         let provider = if model.is_empty() {
@@ -52,11 +48,11 @@ impl LlmRuntimeClient {
         }
     }
 
-    pub(crate) fn set_control_state(&mut self, state: Arc<ControlState>) {
+    pub fn set_control_state(&mut self, state: Arc<ControlState>) {
         self.control_state = Some(state);
     }
 
-    pub(crate) fn set_reasoning_effort(&mut self, effort: Option<api::ReasoningEffort>) {
+    pub fn set_reasoning_effort(&mut self, effort: Option<api::ReasoningEffort>) {
         self.reasoning_effort = effort;
     }
 }

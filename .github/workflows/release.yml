@@ -55,6 +55,10 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install cmake -y
 
+      - name: Set build date
+        shell: bash
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+
       - name: Build
         env:
           TARGET: ${{ matrix.target }}

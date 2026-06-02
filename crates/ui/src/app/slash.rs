@@ -16,7 +16,7 @@ use runtime::CompactionConfig;
 
 #[allow(clippy::too_many_lines)]
 impl LiveCli {
-    pub(crate) fn handle_repl_command(&mut self, command: SlashCommand) -> Result<bool, CliError> {
+    pub fn handle_repl_command(&mut self, command: SlashCommand) -> Result<bool, CliError> {
         Ok(match command {
             SlashCommand::Help => {
                 println!("{}", render_repl_help());
@@ -130,11 +130,11 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn reset_browser(&mut self) {
+    pub fn reset_browser(&mut self) {
         self.runtime.tool_executor_mut().reset_browser();
     }
 
-    pub(crate) fn switch_to_cloakbrowser(&mut self) -> String {
+    pub fn switch_to_cloakbrowser(&mut self) -> String {
         let saved_state = block_on_runtime_future(async {
             Ok::<Option<BrowserState>, RuntimeError>(
                 self.runtime
@@ -162,7 +162,7 @@ impl LiveCli {
         "Browser mode\n  Result           switched back to CloakBrowser (headless)".to_string()
     }
 
-    pub(crate) fn stop_extension_server(&mut self) -> String {
+    pub fn stop_extension_server(&mut self) -> String {
         if self.ws_bridge_server.is_none() {
             return "Extension mode\n  Result           bridge server already stopped".to_string();
         }
@@ -182,7 +182,7 @@ impl LiveCli {
         "Extension mode\n  Result           bridge server stopped".to_string()
     }
 
-    pub(crate) fn extension_bridge_status(&self) -> Option<String> {
+    pub fn extension_bridge_status(&self) -> Option<String> {
         let server = self.ws_bridge_server.as_ref()?;
         let settings = runtime::load_settings();
         let token = settings.extension_bridge_token.unwrap_or_default();
@@ -201,7 +201,7 @@ impl LiveCli {
         ))
     }
 
-    pub(crate) fn start_extension_server(&mut self) -> Result<(String, u16), String> {
+    pub fn start_extension_server(&mut self) -> Result<(String, u16), String> {
         if self.ws_bridge_server.is_some() {
             self.ws_bridge_server = None;
             self.runtime.tool_executor_mut().clear_extension_bridge();
@@ -256,7 +256,7 @@ impl LiveCli {
         }
     }
 
-    pub(crate) fn status_report(&self) -> String {
+    pub fn status_report(&self) -> String {
         let cumulative = self.runtime.usage().cumulative_usage();
         let latest = self.runtime.usage().current_turn_usage();
         format_status_report(
@@ -272,10 +272,7 @@ impl LiveCli {
         )
     }
 
-    pub(crate) fn model_command(
-        &mut self,
-        model: Option<String>,
-    ) -> Result<CommandUiResult, CliError> {
+    pub fn model_command(&mut self, model: Option<String>) -> Result<CommandUiResult, CliError> {
         let Some(model) = model else {
             return Ok(CommandUiResult {
                 message: format_model_report(
@@ -327,7 +324,7 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn clear_session_command(&mut self) -> Result<CommandUiResult, CliError> {
+    pub fn clear_session_command(&mut self) -> Result<CommandUiResult, CliError> {
         self.session = create_managed_session_handle();
         self.title_dispatched = false;
         if let Ok(mut guard) = self.pending_title.lock() {
@@ -350,22 +347,20 @@ impl LiveCli {
         })
     }
 
-    pub(crate) fn cost_report(&self) -> String {
+    pub fn cost_report(&self) -> String {
         format_cost_report(self.runtime.usage().cumulative_usage())
     }
 
-    pub(crate) fn config_report(section: Option<&str>) -> Result<String, CliError> {
+    pub fn config_report(section: Option<&str>) -> Result<String, CliError> {
         Ok(render_config_report(section)?)
     }
 
-    pub(crate) fn version_report() -> String {
+    #[must_use]
+    pub fn version_report() -> String {
         render_version_report()
     }
 
-    pub(crate) fn export_session_report(
-        &self,
-        requested_path: Option<&str>,
-    ) -> Result<String, CliError> {
+    pub fn export_session_report(&self, requested_path: Option<&str>) -> Result<String, CliError> {
         let export_path = resolve_export_path(requested_path, self.runtime.session())?;
         fs::write(&export_path, render_export_text(self.runtime.session()))?;
         Ok(format!(
@@ -395,7 +390,7 @@ impl LiveCli {
         Ok(())
     }
 
-    pub(crate) fn refresh_runtime_auth(&mut self) -> Result<(), CliError> {
+    pub fn refresh_runtime_auth(&mut self) -> Result<(), CliError> {
         let session = self.runtime.session().clone();
         self.runtime = build_runtime(
             session,
@@ -408,7 +403,7 @@ impl LiveCli {
         Ok(())
     }
 
-    pub(crate) fn compact_command(&mut self) -> Result<CommandUiResult, CliError> {
+    pub fn compact_command(&mut self) -> Result<CommandUiResult, CliError> {
         let result = self.runtime.compact(CompactionConfig::default());
         let removed = result.removed_message_count;
         let kept = result.compacted_session.messages.len();

@@ -36,7 +36,7 @@ Eleven crates under `crates/`, compiled with `resolver = "2"`:
 - **agent** — agent orchestration and the 27-tool toolbox (18 browser + 6 resource-processing + 2 agent-control + 1 human intervention). `agent.rs` drives the agent loop; `tools/` contains individual tool handlers; `manager.rs` manages sub-agent fork/join lifecycle; `prompt.rs` builds the system prompt; `state.rs` holds `CrawlState`; `url_claim.rs` coordinates URL claims across agents.
 - **runtime** — `ConversationRuntime` (the core turn loop), `Session` persistence, system-prompt builder, compaction, usage/pricing, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **render** — markdown/terminal rendering (`markdown.rs`), tool call output formatting (`tool_format.rs`), output format selection (`format.rs`), and the `OutputSink` trait + implementations (`sink.rs`) that bridge runtime events to the UI.
-- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 16 direct browser tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`).
+- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 16 direct browser tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
 - **tui** (`acrawl-tui`) — Ratatui terminal UI. `repl_app.rs` owns the application state; `repl_render.rs` handles rendering; `events.rs` processes input; `modals/` contains auth, model-picker, and slash-command overlay widgets.
 - **cli** — thin binary entry point (`main.rs`) + orchestration. `app/` directory owns `LiveCli` and provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`). `session_mgr.rs` manages sessions; `output_sink.rs` bridges events to output; `self_update.rs` handles `acrawl update`.
 - **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/session`, `/export`, `/resume`, `/config`, `/auth`, `/headed`, `/headless`, `/extension`, `/cloakbrowser`, `/debug`, `/version`, `/exit`). Knows which commands are safe to replay in `--resume`.
@@ -73,8 +73,7 @@ Key design decisions:
 `ProviderRegistry` (in `crates/api/src/provider/mod.rs`) owns the model catalog and routes to the correct client:
 
 - If `credentials.json` has an `active_provider`, that provider is used regardless of model name.
-- Otherwise the registry infers the provider from the model id: models in the built-in catalog map to their declared `provider_id`; unknown models fall back to `"other"`.
-- `resolve_alias` expands short names (`sonnet` → `claude-sonnet-4-6`, `4o` → `gpt-4o`, etc.) before routing.
+- The model string must use `provider/model-id` format (e.g. `anthropic/claude-sonnet-4-6`). `provider_for_model` extracts the provider prefix; `model_api_id` strips it to get the raw API ID.
 - `build_client` constructs an `Anthropic`, `OpenAi`, or `Custom` (OpenAI-compatible chat/completions) client from the stored `StoredProviderConfig` for that provider.
 
 Default model comes from the `default_model` field in the active provider's `StoredProviderConfig` inside `credentials.json`. `--model` on the CLI overrides it.

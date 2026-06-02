@@ -270,7 +270,7 @@ impl AuthModal {
                             Style::default()
                         };
                         lines.push(Line::from(Span::styled(
-                            format!("  {cursor} {}", model.display_label()),
+                            format!("  {cursor} {}", crate::model_list::display_label(model)),
                             style,
                         )));
                     }
