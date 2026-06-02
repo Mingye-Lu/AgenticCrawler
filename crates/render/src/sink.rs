@@ -26,8 +26,6 @@ pub trait OutputSink: Send {
     fn on_tool_result(&mut self, name: &str, output: &str, is_error: bool);
     fn on_system(&mut self, msg: &str);
     fn on_turn_finished(&mut self, result: &Result<(), String>);
-    fn on_pause_started(&mut self, _reason: &str) {}
-    fn on_pause_ended(&mut self) {}
     fn on_message_completed(&mut self, _msg: &ConversationMessage) {}
 }
 
@@ -449,14 +447,6 @@ impl RuntimeObserver for Box<dyn OutputSink + Send + '_> {
     }
 
     fn on_usage(&mut self, _usage: &TokenUsage) {}
-
-    fn on_pause_started(&mut self, reason: &str) {
-        (**self).on_pause_started(reason);
-    }
-
-    fn on_pause_ended(&mut self) {
-        (**self).on_pause_ended();
-    }
 
     fn on_message_completed(&mut self, msg: &runtime::ConversationMessage) {
         (**self).on_message_completed(msg);

@@ -16,12 +16,12 @@ impl CliToolExecutor {
     pub fn new(
         allowed_tools: Option<AllowedToolSet>,
         fork_client: SharedApiClient,
-        is_interactive: bool,
+        _is_interactive: bool,
         control_state: Option<Arc<ControlState>>,
         child_event_tx: Option<std::sync::mpsc::Sender<ChildEvent>>,
         child_control_registry: Option<ChildControlRegistry>,
     ) -> Self {
-        let registry = ToolRegistry::new_with_options(is_interactive);
+        let registry = ToolRegistry::new_with_core_tools();
         let mut agent = CrawlerAgent::new_lazy(registry).with_api_client(fork_client);
         if let Some(state) = control_state {
             agent = agent.with_control_state(state);

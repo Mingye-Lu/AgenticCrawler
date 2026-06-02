@@ -170,19 +170,6 @@ impl ReplTuiState {
                         ModelCatalogState::Ready(models)
                     };
                 }
-                ReplTuiEvent::PauseStarted(reason) => {
-                    self.paused = true;
-                    self.pause_reason = reason;
-                    self.status_line = format!(
-                        "PAUSED: {} -- Solve in browser, press Enter to resume",
-                        self.pause_reason
-                    );
-                }
-                ReplTuiEvent::PauseEnded => {
-                    self.paused = false;
-                    self.pause_reason = String::new();
-                    self.status_line = "Thinking...".to_string();
-                }
                 ReplTuiEvent::ChildEvent(_) => {}
                 ReplTuiEvent::ExtensionBridgeResult { success, message } => {
                     let title = if success {
@@ -203,11 +190,6 @@ impl ReplTuiState {
                     &child_ev.sub_goal,
                     &child_ev.event,
                 );
-                if matches!(child_ev.event, ChildEventKind::PauseRequested { .. })
-                    && matches!(self.view_mode, ViewMode::Parent)
-                {
-                    self.view_mode = ViewMode::Child(child_ev.child_id.clone());
-                }
             }
         }
     }
@@ -694,22 +676,7 @@ impl ReplTuiState {
                     *tab.list_state.offset_mut() = 0;
                 }
             }
-            KeyCode::Enter => {
-                let should_resume =
-                    self.child_tab_panel
-                        .find_tab_mut(&child_id)
-                        .is_some_and(|tab| {
-                            matches!(tab.status, child_tabs::ChildTabStatus::Paused { .. })
-                        });
-                if should_resume {
-                    if let Some(registry) = &self.child_control_registry {
-                        if let Some(child_state) = registry.get(&child_id) {
-                            child_state.resume();
-                            self.push_system(&format!("Resuming child {child_id}..."));
-                        }
-                    }
-                }
-            }
+            KeyCode::Enter => {}
             _ => return true,
         }
 
@@ -910,16 +877,6 @@ impl ReplTuiState {
             return Ok(true);
         }
 
-        if key.code == KeyCode::Char('p')
-            && !key.modifiers.contains(KeyModifiers::CONTROL)
-            && self.busy
-            && !self.paused
-        {
-            cancel_flag.request_pause();
-            self.push_system("Pausing after current operation...");
-            return Ok(true);
-        }
-
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.busy {
                 return Ok(true);
@@ -1082,24 +1039,6 @@ impl ReplTuiState {
         self.flush_paste_burst();
         self.last_key_time = Some(now);
 
-        if self.child_tab_panel.active_tab_is_paused() {
-            if let Some(child_id) = self.child_tab_panel.active_child_id() {
-                if let Some(registry) = &self.child_control_registry {
-                    if let Some(child_state) = registry.get(child_id) {
-                        child_state.resume();
-                        self.push_system(&format!("Resuming child {child_id}..."));
-                    }
-                }
-            }
-            return Ok(());
-        }
-        if self.paused {
-            cancel_flag.resume();
-            self.paused = false;
-            self.pause_reason = String::new();
-            self.push_system("Resuming...");
-            return Ok(());
-        }
         let trimmed_peek = self.input.text.trim().to_ascii_lowercase();
         if trimmed_peek == "/exit" || trimmed_peek == "/quit" {
             if self.busy {
@@ -1315,18 +1254,6 @@ fn run_loop(
                 state.update_info = info;
                 state.update_rx = None;
             }
-        }
-
-        if !state.paused && state.busy && cancel_flag.is_paused() {
-            state.paused = true;
-            state.pause_reason = state
-                .last_wait_for_human_reason
-                .clone()
-                .unwrap_or_else(|| "Human intervention requested".to_string());
-            state.status_line = format!(
-                "PAUSED: {} -- Solve in browser, press Enter to resume",
-                state.pause_reason
-            );
         }
 
         if state.exit {

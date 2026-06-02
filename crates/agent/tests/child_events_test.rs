@@ -44,22 +44,6 @@ fn sender_delivers_tool_result() {
 }
 
 #[test]
-fn sender_delivers_pause_and_resume() {
-    let (tx, rx) = mpsc::channel::<ChildEvent>();
-    let mut sender = ChildEventSender::new("c1".into(), "goal".into(), tx, 10);
-    sender.on_pause_started("captcha detected");
-    let pause_event = rx.try_recv().expect("pause event should arrive");
-    match pause_event.event {
-        ChildEventKind::PauseRequested { reason } => assert_eq!(reason, "captcha detected"),
-        other => panic!("expected PauseRequested, got {other:?}"),
-    }
-
-    sender.on_pause_ended();
-    let resume_event = rx.try_recv().expect("resume event should arrive");
-    assert!(matches!(resume_event.event, ChildEventKind::Resumed));
-}
-
-#[test]
 fn sender_emits_step_started_and_finished_error_on_failed_turn() {
     let (tx, rx) = mpsc::channel::<ChildEvent>();
     let mut sender = ChildEventSender::new("c1".into(), "goal".into(), tx, 10);
@@ -110,7 +94,7 @@ fn sender_tags_all_events_with_child_id() {
 fn registry_register_get_remove() {
     let registry = ChildControlRegistry::default();
     let state = registry.register("c1");
-    assert!(!state.is_paused());
+    assert!(!state.is_cancelled());
     assert!(registry.get("c1").is_some());
     assert!(registry.get("nonexistent").is_none());
     registry.remove("c1");
@@ -127,16 +111,4 @@ fn registry_cancel_all_cancels_all_children() {
     assert!(s1.is_cancelled());
     assert!(s2.is_cancelled());
     assert!(s3.is_cancelled());
-}
-
-#[test]
-fn registry_get_paused_returns_only_paused() {
-    let registry = ChildControlRegistry::default();
-    let s1 = registry.register("c1");
-    let _s2 = registry.register("c2");
-    s1.request_pause_with_reason("needs captcha");
-    let paused = registry.get_paused();
-    assert_eq!(paused.len(), 1);
-    assert_eq!(paused[0].0, "c1");
-    assert_eq!(paused[0].1, "needs captcha");
 }

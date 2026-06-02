@@ -377,22 +377,6 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
             }),
             instructions: Some("Cancellation is abortive: the child JoinHandle is aborted and any partial extracted data is discarded. If you want results, call wait_for_subagents instead and let the child finish."),
         },
-        ToolSpec {
-            name: "wait_for_human",
-            description: "Pause execution and request human intervention. Use when encountering captchas, login walls, paywalls, or other obstacles that require human action in the browser.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "reason": {
-                        "type": "string",
-                        "description": "Why human intervention is needed (e.g., 'Login wall detected', 'CAPTCHA challenge appeared')"
-                    }
-                },
-                "required": ["reason"],
-                "additionalProperties": false
-            }),
-            instructions: Some("Use only when you encounter an obstacle that genuinely requires a human to solve (captcha, login, paywall). Be specific in the reason about what the human needs to do. The browser becomes visible for the human. After they finish and press resume, you receive the updated page content (URL, title, text) \u{2014} continue your task from there."),
-        },
     ]
 }
 
@@ -403,12 +387,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_21_tools() {
+    fn mvp_tool_specs_contains_expected_20_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 21);
+        assert_eq!(specs.len(), 20);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 21, "tool names should be unique");
+        assert_eq!(names.len(), 20, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("save_file"));
         assert!(names.contains("fork"));

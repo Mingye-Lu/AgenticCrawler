@@ -90,51 +90,6 @@ impl CrawlerAgent {
         Ok(())
     }
 
-    pub async fn pause_browser_switch(&mut self) -> Result<(), ToolError> {
-        if self.extension_mode {
-            return Ok(());
-        }
-
-        let active_children = {
-            let manager = self.agent_manager.lock().await;
-            if manager.contains(&self.agent_id) {
-                manager.get_active_children(&self.agent_id).len()
-            } else {
-                0
-            }
-        };
-
-        if active_children > 0 {
-            return Err(ToolError::new(
-                "Cannot pause while sub-agents are running because they share the browser bridge.",
-            ));
-        }
-
-        let is_headless = std::env::var("HEADLESS").map_or(true, |value| value != "false");
-        if !is_headless {
-            return Ok(());
-        }
-
-        let page_index = self.browser.as_ref().map_or(0, BrowserContext::page_index);
-        let browser_state = self.export_browser_state().await;
-        eprintln!(
-            "Switching to headed mode. Note: JS runtime state (timers, WebSocket connections) will be lost."
-        );
-
-        std::env::set_var("HEADLESS", "false");
-        self.reset_browser();
-        self.ensure_browser().await?;
-        if let Some(browser) = self.browser.as_mut() {
-            browser.set_page_index(page_index);
-        }
-
-        if let Some(state) = browser_state {
-            self.restore_browser_state(&state).await;
-        }
-
-        Ok(())
-    }
-
     pub async fn export_browser_state(&self) -> Option<BrowserState> {
         let state_result = if let Some(browser) = self.browser.as_ref() {
             let mut browser = browser.clone();

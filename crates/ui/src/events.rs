@@ -49,10 +49,6 @@ pub enum ReplTuiEvent {
         success: bool,
         message: String,
     },
-    /// The runtime has entered the paused state.
-    PauseStarted(String),
-    /// The runtime has exited the paused state.
-    PauseEnded,
     /// Event streamed from a forked child agent.
     #[allow(dead_code)]
     ChildEvent(ChildEvent),

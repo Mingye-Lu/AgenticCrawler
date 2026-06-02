@@ -47,14 +47,6 @@ impl OutputSink for ChannelSink {
         let _ = self.tx.send(ReplTuiEvent::TurnFinished(result.clone()));
     }
 
-    fn on_pause_started(&mut self, reason: &str) {
-        let _ = self.tx.send(ReplTuiEvent::PauseStarted(reason.to_string()));
-    }
-
-    fn on_pause_ended(&mut self) {
-        let _ = self.tx.send(ReplTuiEvent::PauseEnded);
-    }
-
     fn on_message_completed(&mut self, msg: &ConversationMessage) {
         let _ = self.tx.send(ReplTuiEvent::MessageCompleted(msg.clone()));
     }

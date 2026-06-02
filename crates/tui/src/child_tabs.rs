@@ -32,7 +32,6 @@ pub(super) enum TranscriptEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChildTabStatus {
     Running,
-    Paused { reason: String },
     Done,
     Error(String),
 }
@@ -196,21 +195,6 @@ impl ChildTabPanel {
                 tab.step = *step;
                 tab.max_steps = *max_steps;
             }
-            ChildEventKind::PauseRequested { reason } => {
-                self.tabs[idx].status = ChildTabStatus::Paused {
-                    reason: reason.clone(),
-                };
-                self.tabs[idx]
-                    .entries
-                    .push(TranscriptEntry::System(format!("PAUSED: {reason}")));
-                self.active_tab = idx;
-            }
-            ChildEventKind::Resumed => {
-                let tab = &mut self.tabs[idx];
-                tab.status = ChildTabStatus::Running;
-                tab.entries
-                    .push(TranscriptEntry::System("Resumed".to_string()));
-            }
             ChildEventKind::Finished {
                 success,
                 items_extracted,
@@ -252,13 +236,6 @@ impl ChildTabPanel {
             let excess = self.tabs[idx].entries.len() - MAX_ENTRIES;
             self.tabs[idx].entries.drain(0..excess);
         }
-    }
-
-    #[must_use]
-    pub fn active_tab_is_paused(&self) -> bool {
-        self.tabs
-            .get(self.active_tab)
-            .is_some_and(|t| matches!(t.status, ChildTabStatus::Paused { .. }))
     }
 
     #[must_use]
@@ -378,25 +355,6 @@ mod tests {
         );
         assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
 
-        // Pause it
-        panel.apply_event(
-            "agent-a",
-            "fetch data",
-            &ChildEventKind::PauseRequested {
-                reason: "rate limit".into(),
-            },
-        );
-        assert!(matches!(
-            panel.tabs[0].status,
-            ChildTabStatus::Paused { .. }
-        ));
-        assert!(panel.active_tab_is_paused());
-
-        // Resume it
-        panel.apply_event("agent-a", "fetch data", &ChildEventKind::Resumed);
-        assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
-        assert!(!panel.active_tab_is_paused());
-
         // Finish it
         panel.apply_event(
             "agent-a",
@@ -421,50 +379,6 @@ mod tests {
         let i2 = panel.get_or_create_tab("c1", "g1");
         assert_eq!(i1, i2);
         assert_eq!(panel.tabs.len(), 1);
-    }
-
-    #[test]
-    fn pause_switches_active_tab() {
-        let mut panel = ChildTabPanel::default();
-        panel.get_or_create_tab("c1", "g1");
-        panel.get_or_create_tab("c2", "g2");
-        panel.active_tab = 0;
-        panel.apply_event(
-            "c2",
-            "g2",
-            &ChildEventKind::PauseRequested {
-                reason: "captcha".into(),
-            },
-        );
-        assert_eq!(panel.active_tab, 1);
-        assert!(panel.active_tab_is_paused());
-    }
-
-    #[test]
-    fn two_children_pause_independently() {
-        let mut panel = ChildTabPanel::default();
-        panel.get_or_create_tab("c1", "g1");
-        panel.get_or_create_tab("c2", "g2");
-        panel.apply_event(
-            "c1",
-            "g1",
-            &ChildEventKind::PauseRequested {
-                reason: "r1".into(),
-            },
-        );
-        panel.apply_event(
-            "c2",
-            "g2",
-            &ChildEventKind::PauseRequested {
-                reason: "r2".into(),
-            },
-        );
-        panel.apply_event("c1", "g1", &ChildEventKind::Resumed);
-        assert_eq!(panel.tabs[0].status, ChildTabStatus::Running);
-        assert!(matches!(
-            panel.tabs[1].status,
-            ChildTabStatus::Paused { .. }
-        ));
     }
 
     #[test]

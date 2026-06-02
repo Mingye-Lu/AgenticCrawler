@@ -32,7 +32,6 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "wait_for_subagents",
     "cancel_subagent",
     "subagent_status",
-    "wait_for_human",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -752,7 +751,7 @@ impl GoalExecutor for RealGoalExecutor {
             CrawlApiClient::new(provider, &request.model, request.allowed_tools.clone());
         let system_prompt = build_run_goal_system_prompt(&request.allowed_tools);
 
-        let registry = ToolRegistry::new_with_options(false);
+        let registry = ToolRegistry::new_with_core_tools();
         let mut agent = CrawlerAgent::new_lazy(registry);
         if !request.allowed_tools.is_empty() {
             agent = agent.with_allowed_tools(request.allowed_tools.iter().cloned().collect());
@@ -896,7 +895,7 @@ pub fn run_mcp_server() {
         .expect("failed to create tokio runtime");
 
     let mut browser: Option<BrowserContext> = None;
-    let registry = ToolRegistry::new_with_options(false);
+    let registry = ToolRegistry::new_with_core_tools();
 
     let stdin = io::stdin().lock();
     let mut reader = BufReader::new(stdin);
@@ -1002,7 +1001,6 @@ mod tests {
         assert!(names.contains("screenshot"));
         assert!(!names.contains("fork"));
         assert!(!names.contains("wait_for_subagents"));
-        assert!(!names.contains("wait_for_human"));
     }
 
     #[test]

@@ -82,13 +82,6 @@ mod tests {
                 .push(*usage);
         }
 
-        fn on_pause_started(&mut self, _reason: &str) {
-            // No-op for test observer
-        }
-
-        fn on_pause_ended(&mut self) {
-            // No-op for test observer
-        }
     }
 
     struct NoOpObserver;
@@ -99,13 +92,9 @@ mod tests {
     fn test_no_op_observer_compiles() {
         let mut observer = NoOpObserver;
         observer.on_text_delta("hello");
-        observer.on_pause_started("Paused by user");
-        observer.on_pause_ended();
         observer.on_tool_call_start("tool-1", "add", "2,2");
         observer.on_tool_result("add", "4", false);
-        observer.on_tool_effect(&ToolEffect::Pause {
-            reason: "user input required".to_string(),
-        });
+        observer.on_tool_effect(&ToolEffect::Reply("done".to_string()));
         observer.on_system_message("system");
         observer.on_turn_finished(&Ok(()));
         observer.on_usage(&TokenUsage::default());
@@ -213,7 +202,7 @@ mod tests {
                 1 => Ok(vec![
                     AssistantEvent::ToolUse {
                         id: "tool-1".to_string(),
-                        name: "wait_for_human".to_string(),
+                        name: "effect_tool".to_string(),
                         input: "payload".to_string(),
                     },
                     AssistantEvent::MessageStop,
@@ -234,12 +223,10 @@ mod tests {
         let mut runtime = ConversationRuntime::new(
             Session::new(),
             ToolEffectApiClient { calls: 0 },
-            StaticToolExecutor::new().register("wait_for_human", |_input| {
+            StaticToolExecutor::new().register("effect_tool", |_input| {
                 Ok(ToolOutcome::with_effect(
-                    "Human intervention requested: captcha".to_string(),
-                    ToolEffect::Pause {
-                        reason: "captcha".to_string(),
-                    },
+                    "status reply".to_string(),
+                    ToolEffect::Status(acrawl_core::StatusSpec { child_ids: None }),
                 ))
             }),
             vec!["system".to_string()],
@@ -249,15 +236,13 @@ mod tests {
         runtime.run_turn("use tool").await.expect("turn succeeds");
 
         let state = state.lock().expect("observer state lock");
-        assert_eq!(
-            state.tool_effects,
-            vec!["Pause { reason: \"captcha\" }".to_string()]
-        );
+        assert_eq!(state.tool_effects.len(), 1);
+        assert!(state.tool_effects[0].contains("Status"));
         assert_eq!(
             state.tool_results,
             vec![(
-                "wait_for_human".to_string(),
-                "Human intervention requested: captcha".to_string(),
+                "effect_tool".to_string(),
+                "status reply".to_string(),
                 false,
             )]
         );
@@ -350,7 +335,7 @@ mod tests {
                     },
                     AssistantEvent::ToolUse {
                         id: "tool-2".to_string(),
-                        name: "pause_tool".to_string(),
+                        name: "status_tool".to_string(),
                         input: "reason".to_string(),
                     },
                     AssistantEvent::MessageStop,
@@ -375,12 +360,10 @@ mod tests {
                 .register("echo", |input| {
                     Ok(ToolOutcome::reply(format!("echo:{input}")))
                 })
-                .register("pause_tool", |_input| {
+                .register("status_tool", |_input| {
                     Ok(ToolOutcome::with_effect(
-                        "paused".to_string(),
-                        ToolEffect::Pause {
-                            reason: "needs input".to_string(),
-                        },
+                        "status reply".to_string(),
+                        ToolEffect::Status(acrawl_core::StatusSpec { child_ids: None }),
                     ))
                 }),
             vec!["system".to_string()],
@@ -391,15 +374,12 @@ mod tests {
 
         let state = state.lock().expect("observer state lock");
         assert_eq!(state.tool_effects.len(), 1);
-        assert_eq!(
-            state.tool_effects[0],
-            "Pause { reason: \"needs input\" }".to_string()
-        );
+        assert!(state.tool_effects[0].contains("Status"));
         assert_eq!(state.tool_results.len(), 2);
         assert_eq!(state.tool_results[0].0, "echo");
         assert_eq!(state.tool_results[0].1, "echo:hello");
-        assert_eq!(state.tool_results[1].0, "pause_tool");
-        assert_eq!(state.tool_results[1].1, "paused");
+        assert_eq!(state.tool_results[1].0, "status_tool");
+        assert_eq!(state.tool_results[1].1, "status reply");
     }
 
     #[tokio::test]
@@ -409,12 +389,10 @@ mod tests {
         let mut runtime = ConversationRuntime::new(
             Session::new(),
             ToolEffectApiClient { calls: 0 },
-            StaticToolExecutor::new().register("wait_for_human", |_input| {
+            StaticToolExecutor::new().register("effect_tool", |_input| {
                 Ok(ToolOutcome::with_effect(
-                    "Human intervention requested: captcha".to_string(),
-                    ToolEffect::Pause {
-                        reason: "captcha".to_string(),
-                    },
+                    "status reply".to_string(),
+                    ToolEffect::Status(acrawl_core::StatusSpec { child_ids: None }),
                 ))
             }),
             vec!["system".to_string()],
@@ -427,8 +405,8 @@ mod tests {
         assert_eq!(
             state.tool_results,
             vec![(
-                "wait_for_human".to_string(),
-                "Human intervention requested: captcha".to_string(),
+                "effect_tool".to_string(),
+                "status reply".to_string(),
                 false,
             )]
         );

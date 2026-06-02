@@ -9,7 +9,6 @@ use crate::control::ControlState;
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
 use crate::usage::{TokenUsage, UsageTracker};
-use tokio::time::{sleep, Duration};
 
 pub use acrawl_core::error::{RuntimeError, ToolError};
 pub use acrawl_core::event::AssistantEvent;
@@ -134,38 +133,11 @@ where
         self.control_state.request_cancel();
     }
 
-    async fn check_pause(&mut self) -> Result<(), RuntimeError> {
-        if !self.control_state.is_paused() {
-            return Ok(());
-        }
-
-        if let Some(ref mut observer) = self.observer {
-            observer.on_pause_started("Paused by user");
-        }
-
-        loop {
-            tokio::select! {
-                () = self.control_state.wait_for_resume() => {
-                    break;
-                }
-                () = sleep(Duration::from_millis(100)) => {
-                    if !self.control_state.is_paused() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if let Some(ref mut observer) = self.observer {
-            observer.on_pause_ended();
-        }
-
+    fn check_cancel(&self) -> Result<(), RuntimeError> {
         if self.control_state.is_cancelled() {
             self.control_state.reset();
             return Err(RuntimeError::new("interrupted by user"));
         }
-
-        self.control_state.reset();
         Ok(())
     }
 
@@ -181,7 +153,7 @@ where
             let mut iterations = 0;
 
             loop {
-                iterations = self.prepare_iteration(iterations).await?;
+                iterations = self.prepare_iteration(iterations)?;
 
                 let assistant_message = self.stream_assistant_message()?;
                 let pending_tool_uses = collect_pending_tool_uses(&assistant_message);
@@ -195,7 +167,7 @@ where
                 self.execute_pending_tool_uses(&pending_tool_uses, &mut tool_results)
                     .await?;
 
-                self.check_pause().await?;
+                self.check_cancel()?;
             }
 
             let auto_compaction = self.maybe_auto_compact();
@@ -253,9 +225,9 @@ where
             .push(ConversationMessage::user_text(user_input));
     }
 
-    async fn prepare_iteration(&mut self, iterations: usize) -> Result<usize, RuntimeError> {
+    fn prepare_iteration(&mut self, iterations: usize) -> Result<usize, RuntimeError> {
         self.fail_if_cancelled()?;
-        self.check_pause().await?;
+        self.check_cancel()?;
 
         let next_iterations = iterations + 1;
         if next_iterations > self.max_iterations {

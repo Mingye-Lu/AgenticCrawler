@@ -34,14 +34,13 @@ fn list_tools(specs: &[ToolSpec]) -> String {
 /// Returns `Vec<String>` for [`runtime::ConversationRuntime`]'s `system_prompt` parameter.
 #[must_use]
 pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
-    let has_wait_for_human = tool_specs.iter().any(|s| s.name == "wait_for_human");
     vec![
         section_identity(tool_specs),
-        section_operating_procedure(has_wait_for_human),
+        section_operating_procedure(),
         section_data_integrity(),
         section_constraints(),
-        section_error_recovery(has_wait_for_human),
-        section_completion(has_wait_for_human),
+        section_error_recovery(),
+        section_completion(),
         section_parallel_exploration(),
     ]
 }
@@ -57,18 +56,11 @@ fn section_identity(tool_specs: &[ToolSpec]) -> String {
     )
 }
 
-fn section_operating_procedure(has_wait_for_human: bool) -> String {
-    let blocker_instruction = if has_wait_for_human {
-        "\x20\x20 b. Check for blockers: if the page content mentions CAPTCHAs, \
-     \"verify you are human\", \"unusual traffic\", login forms you cannot fill, \
-     paywalls, or access denied messages — immediately call `wait_for_human` \
-     with a description of what you see. Do not retry or work around it.\n"
-    } else {
-        "\x20\x20 b. Check for blockers: if the page content mentions CAPTCHAs, \
+fn section_operating_procedure() -> String {
+    let blocker_instruction = "\x20\x20 b. Check for blockers: if the page content mentions CAPTCHAs, \
      \"verify you are human\", \"unusual traffic\", login forms you cannot fill, \
      paywalls, or access denied messages — stop and report the blocker. \
-     Do not retry or work around it.\n"
-    };
+     Do not retry or work around it.\n";
     format!(
         "Operating procedure:\n\
      1. Read the current task carefully. Identify every concrete requirement.\n\
@@ -129,73 +121,34 @@ fn section_constraints() -> String {
         .to_string()
 }
 
-fn section_error_recovery(has_wait_for_human: bool) -> String {
-    if has_wait_for_human {
-        "Error recovery by situation:\n\
-         - Selector not found: Try a more general selector, scroll to reveal \
-         content, or check for overlays or popups blocking the element.\n\
-         - Page not loading or navigation error: Verify the URL is correct and \
-         complete. Try an alternative URL or search for the page.\n\
-         - CAPTCHA or human verification (e.g. \"verify you are human\", \
-         \"unusual traffic\", reCAPTCHA, hCaptcha, checkbox challenges): \
-         Call `wait_for_human` IMMEDIATELY. Do NOT retry, do NOT try to solve it, \
-         do NOT navigate away. The human will solve it in the visible browser.\n\
-         - Login wall or paywall: Call `wait_for_human` with a clear \
-         description (e.g. \"Login form requires credentials\" or \
-         \"Paywall blocking article content\"). The browser will become visible so \
-         the human can interact with it directly. After the human finishes and \
-         resumes, you will receive the updated page content (URL, title, text) as \
-         the tool result — continue your task using that new page state. \
-         If `wait_for_human` is not available (non-interactive mode), stop and \
-         report the blocker in your final response.\n\
-         - Anti-bot detection (403/429 errors, empty page, \"access denied\"): \
-         Wait briefly (use the `wait` tool) and retry once. \
-         If the obstacle persists after retrying, call `wait_for_human`.\n\
-         - Empty results on a page expected to have data: Scroll down for \
-          lazy-loaded content, wait for dynamic rendering, or check whether the \
-          page uses iframes.\n\
-          - Empty results on page_map (sections list is empty): the page does not use \
-          semantic headings — fall back to read_content with a CSS selector.\n\
-          - JavaScript interaction failing: Use execute_js as a fallback when \
-          click or fill_form fail, but not as a first choice.\n\
-         - Popup or overlay blocking interaction: Try pressing Escape or clicking \
-         a dismiss button before retrying the intended action."
-            .to_string()
-    } else {
-        "Error recovery by situation:\n\
-         - Selector not found: Try a more general selector, scroll to reveal \
-         content, or check for overlays or popups blocking the element.\n\
-         - Page not loading or navigation error: Verify the URL is correct and \
-         complete. Try an alternative URL or search for the page.\n\
-         - CAPTCHA or human verification (e.g. \"verify you are human\", \
-         \"unusual traffic\", reCAPTCHA, hCaptcha, checkbox challenges): \
-         Stop and report the blocker in your results. Do NOT retry or try to solve it.\n\
-         - Login wall or paywall: Stop and report the blocker in your results.\n\
-         - Anti-bot detection (403/429 errors, empty page, \"access denied\"): \
-         Wait briefly (use the `wait` tool) and retry once. \
-         If the obstacle persists after retrying, stop and report the blocker.\n\
-         - Empty results on a page expected to have data: Scroll down for \
-          lazy-loaded content, wait for dynamic rendering, or check whether the \
-          page uses iframes.\n\
-          - Empty results on page_map (sections list is empty): the page does not use \
-          semantic headings — fall back to read_content with a CSS selector.\n\
-          - JavaScript interaction failing: Use execute_js as a fallback when \
-          click or fill_form fail, but not as a first choice.\n\
-         - Popup or overlay blocking interaction: Try pressing Escape or clicking \
-         a dismiss button before retrying the intended action."
-            .to_string()
-    }
+fn section_error_recovery() -> String {
+    "Error recovery by situation:\n\
+     - Selector not found: Try a more general selector, scroll to reveal \
+     content, or check for overlays or popups blocking the element.\n\
+     - Page not loading or navigation error: Verify the URL is correct and \
+     complete. Try an alternative URL or search for the page.\n\
+     - CAPTCHA or human verification (e.g. \"verify you are human\", \
+     \"unusual traffic\", reCAPTCHA, hCaptcha, checkbox challenges): \
+     Stop and report the blocker in your results. Do NOT retry or try to solve it.\n\
+     - Login wall or paywall: Stop and report the blocker in your results.\n\
+     - Anti-bot detection (403/429 errors, empty page, \"access denied\"): \
+     Wait briefly (use the `wait` tool) and retry once. \
+     If the obstacle persists after retrying, stop and report the blocker.\n\
+     - Empty results on a page expected to have data: Scroll down for \
+      lazy-loaded content, wait for dynamic rendering, or check whether the \
+      page uses iframes.\n\
+      - Empty results on page_map (sections list is empty): the page does not use \
+      semantic headings — fall back to read_content with a CSS selector.\n\
+      - JavaScript interaction failing: Use execute_js as a fallback when \
+      click or fill_form fail, but not as a first choice.\n\
+     - Popup or overlay blocking interaction: Try pressing Escape or clicking \
+     a dismiss button before retrying the intended action."
+        .to_string()
 }
 
-fn section_completion(has_wait_for_human: bool) -> String {
-    let impossible_instruction = if has_wait_for_human {
-        "- If the task is impossible to continue (requires login, payment, or \
-      access you do not have), call `wait_for_human` if available. Only stop \
-      and explain why if running in non-interactive mode.\n"
-    } else {
-        "- If the task is impossible to continue (requires login, payment, or \
-      access you do not have), stop and explain the blocker.\n"
-    };
+fn section_completion() -> String {
+    let impossible_instruction = "- If the task is impossible to continue (requires login, payment, or \
+      access you do not have), stop and explain the blocker.\n";
     format!(
         "Completion:\n\
       - Before reporting success, re-read the original task and confirm each \

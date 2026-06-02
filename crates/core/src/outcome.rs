@@ -38,16 +38,18 @@ mod tests {
     #[test]
     fn with_effect_sets_effect() {
         let outcome = ToolOutcome::with_effect(
-            "waiting".to_string(),
-            ToolEffect::Pause {
-                reason: "need confirmation".to_string(),
-            },
+            "spawning".to_string(),
+            ToolEffect::Spawn(crate::CrawlTask {
+                objective: "test".to_string(),
+                scope: crate::CrawlScope::SinglePage {
+                    url: "http://example.com".to_string(),
+                },
+                max_steps: None,
+                page_index: None,
+            }),
         );
 
-        match outcome.effect {
-            Some(ToolEffect::Pause { reason }) => assert_eq!(reason, "need confirmation"),
-            _ => panic!("expected Pause effect"),
-        }
+        assert!(outcome.effect.is_some());
     }
 
     #[test]

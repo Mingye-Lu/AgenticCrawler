@@ -39,13 +39,6 @@ impl ToolRegistry {
 
     #[must_use]
     pub fn new_with_core_tools() -> Self {
-        Self::new_with_options(true)
-    }
-
-    /// Create a registry with all 21 core tools.
-    /// `is_interactive` controls whether `wait_for_human` is allowed to pause.
-    #[must_use]
-    pub fn new_with_options(is_interactive: bool) -> Self {
         let mut registry = Self::new();
         for &name in ASYNC_TOOLS {
             let tool_name = name.to_string();
@@ -67,39 +60,13 @@ impl ToolRegistry {
             "subagent_status",
             Box::new(crate::tools::subagent_status::execute),
         );
-        registry.register(
-            "wait_for_human",
-            Box::new(move |input| crate::tools::wait_for_human::execute(input, is_interactive)),
-        );
         registry
     }
 
-    /// Create a registry for child/sub-agents — excludes `wait_for_human`
-    /// since children cannot request human intervention.
+    /// Create a registry for child/sub-agents (same tool set as parent).
     #[must_use]
     pub fn new_for_child() -> Self {
-        let mut registry = Self::new();
-        for &name in ASYNC_TOOLS {
-            let tool_name = name.to_string();
-            registry.register(
-                name,
-                Box::new(move |_| Err(ToolExecutionError::requires_async(tool_name.clone()))),
-            );
-        }
-        registry.register("fork", Box::new(crate::tools::fork::execute));
-        registry.register(
-            "wait_for_subagents",
-            Box::new(crate::tools::wait_for_subagents::execute),
-        );
-        registry.register(
-            "cancel_subagent",
-            Box::new(crate::tools::cancel_subagent::execute),
-        );
-        registry.register(
-            "subagent_status",
-            Box::new(crate::tools::subagent_status::execute),
-        );
-        registry
+        Self::new_with_core_tools()
     }
 
     pub fn register(&mut self, name: impl Into<String>, handler: ToolHandler) {
@@ -170,26 +137,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_twenty_one() {
+    fn new_with_core_tools_registers_all_twenty() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
             "wait_for_subagents",
             "cancel_subagent",
             "subagent_status",
-            "wait_for_human",
         ];
-        assert_eq!(registry.len(), 21);
+        assert_eq!(registry.len(), 20);
         for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
             assert!(registry.contains(name), "missing core tool: {name}");
         }
     }
 
     #[test]
-    fn new_for_child_excludes_wait_for_human() {
+    fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
         assert_eq!(registry.len(), 20);
-        assert!(!registry.contains("wait_for_human"));
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
     }

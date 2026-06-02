@@ -296,21 +296,12 @@ impl CrawlerAgent {
         goal: &str,
         api_client: impl ApiClient + Send + Sync + 'static,
     ) -> Result<CrawlResult, CrawlError> {
-        let is_child = self.is_child;
         let specs = match &self.allowed_tools {
             Some(allowed) => mvp_tool_specs()
                 .into_iter()
                 .filter(|s| allowed.contains(s.name))
                 .collect(),
             None => mvp_tool_specs(),
-        };
-        let specs = if is_child {
-            specs
-                .into_iter()
-                .filter(|s| s.name != "wait_for_human")
-                .collect()
-        } else {
-            specs
         };
         let system_prompt = build_system_prompt(&specs);
         self.run_with_system_prompt(goal, api_client, system_prompt)
@@ -474,117 +465,9 @@ impl CrawlerAgent {
             ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
             ToolEffect::Cancel(spec) => self.handle_cancel_effect(spec).await,
             ToolEffect::Status(spec) => self.handle_status_effect(spec).await,
-            ToolEffect::Pause { reason } => self.handle_pause(reason).await,
         }
     }
 
-    async fn handle_pause(&mut self, reason: String) -> Result<String, ToolError> {
-        self.pause_browser_switch().await?;
-
-        let control = self
-            .control_state
-            .as_ref()
-            .ok_or_else(|| ToolError::new("no control state available for pause"))?
-            .clone();
-        control.request_pause_with_reason(&reason);
-
-        if let Some(ref tx) = self.child_event_tx {
-            let _ = tx.send(crate::child_events::ChildEvent {
-                child_id: self.agent_id.clone(),
-                sub_goal: String::new(),
-                event: crate::child_events::ChildEventKind::PauseRequested {
-                    reason: reason.clone(),
-                },
-            });
-        }
-
-        loop {
-            tokio::select! {
-                () = control.wait_for_resume() => { break; }
-                () = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                    if !control.is_paused() { break; }
-                }
-            }
-        }
-
-        if let Some(ref tx) = self.child_event_tx {
-            let _ = tx.send(crate::child_events::ChildEvent {
-                child_id: self.agent_id.clone(),
-                sub_goal: String::new(),
-                event: crate::child_events::ChildEventKind::Resumed,
-            });
-        }
-
-        let was_cancelled = control.is_cancelled();
-        control.reset();
-
-        if was_cancelled {
-            return Err(ToolError::new("interrupted by user"));
-        }
-
-        Ok(self.auto_read_page_after_resume().await)
-    }
-
-    async fn auto_read_page_after_resume(&mut self) -> String {
-        let Some(browser) = self.browser.as_mut() else {
-            return serde_json::json!({
-                "resumed": true,
-                "page_url": "",
-                "page_title": "",
-                "page_content": "Browser not available after resume"
-            })
-            .to_string();
-        };
-
-        let bridge_result = browser.acquire_bridge().await;
-        match bridge_result {
-            Ok(mut bridge) => {
-                let url = bridge
-                    .evaluate("window.location.href")
-                    .await
-                    .ok()
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_default();
-                let title = bridge
-                    .evaluate("document.title")
-                    .await
-                    .ok()
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_default();
-                match bridge.read_content(None, None, 0, 4000).await {
-                    Ok(content) => {
-                        let text = content
-                            .get("text")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        serde_json::json!({
-                            "resumed": true,
-                            "page_url": url,
-                            "page_title": title,
-                            "page_content": text
-                        })
-                        .to_string()
-                    }
-                    Err(e) => serde_json::json!({
-                        "resumed": true,
-                        "page_url": url,
-                        "page_title": title,
-                        "page_content": "",
-                        "read_error": e.to_string()
-                    })
-                    .to_string(),
-                }
-            }
-            Err(_) => serde_json::json!({
-                "resumed": true,
-                "page_url": "",
-                "page_title": "",
-                "page_content": "Browser not available after resume"
-            })
-            .to_string(),
-        }
-    }
 }
 
 fn default_agent_manager() -> SharedAgentManager {
@@ -812,65 +695,6 @@ mod tests {
         assert_eq!(parsed["waited"], 1);
         assert_eq!(parsed["finished"][0]["items_extracted"], 1);
         assert_eq!(agent.crawl_state.child_blocks.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn pause_with_children_errors() {
-        let manager = default_agent_manager();
-        {
-            let mut locked = manager.lock().await;
-            locked.register_root("test-agent");
-            locked
-                .register_child("test-agent-child-1", "test-agent", None)
-                .expect("child registration should succeed");
-        }
-
-        let _env_guard = env_lock().lock().await;
-        std::env::set_var("HEADLESS", "true");
-
-        let control_state = Arc::new(ControlState::default());
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry())
-            .with_agent_manager(manager)
-            .with_control_state(control_state.clone());
-        let err = agent
-            .dispatch_tool_effect(ToolEffect::Pause {
-                reason: "need human".to_string(),
-            })
-            .await
-            .expect_err("pause should fail while child agents are active");
-
-        assert!(
-            err.to_string()
-                .contains("Cannot pause while sub-agents are running"),
-            "unexpected error: {err}"
-        );
-        assert!(!control_state.is_paused());
-    }
-
-    #[tokio::test]
-    async fn pause_when_already_headed_requests_runtime_pause() {
-        let _env_guard = env_lock().lock().await;
-        std::env::set_var("HEADLESS", "false");
-
-        let control_state = Arc::new(ControlState::default());
-        let control_clone = Arc::clone(&control_state);
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry())
-            .with_control_state(control_state.clone());
-
-        tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-            control_clone.resume();
-        });
-
-        let result = agent
-            .dispatch_tool_effect(ToolEffect::Pause {
-                reason: "manual review".to_string(),
-            })
-            .await
-            .expect("pause should succeed when already headed");
-
-        assert!(result.contains("\"resumed\":true") || result.contains("\"resumed\": true"));
-        std::env::set_var("HEADLESS", "true");
     }
 
     #[tokio::test]
@@ -1379,63 +1203,5 @@ mod tests {
             result.extracted_data,
             vec![serde_json::json!({"from_state": true})]
         );
-    }
-
-    #[tokio::test]
-    async fn wait_for_human_tool_triggers_agent_pause() {
-        let _env_guard = env_lock().lock().await;
-        std::env::set_var("HEADLESS", "false");
-
-        let control_state = Arc::new(ControlState::default());
-        let control_clone = Arc::clone(&control_state);
-
-        let mut registry = ToolRegistry::new();
-        registry.register(
-            "wait_for_human",
-            Box::new(|input| crate::tools::wait_for_human::execute(input, true)),
-        );
-
-        let mut agent =
-            CrawlerAgent::new_for_testing(registry).with_control_state(control_state.clone());
-
-        assert!(!control_state.is_paused());
-
-        tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-            control_clone.resume();
-        });
-
-        let result = agent
-            .execute("wait_for_human", r#"{"reason":"captcha detected"}"#)
-            .await
-            .expect("wait_for_human should succeed in interactive mode");
-
-        assert!(
-            result.text.contains("resumed"),
-            "result should contain resumed status: {result:?}"
-        );
-        assert!(matches!(result.effect, Some(ToolEffect::Pause { .. })));
-        std::env::set_var("HEADLESS", "true");
-    }
-
-    #[tokio::test]
-    async fn pause_no_control_state_returns_error() {
-        let _env_guard = env_lock().lock().await;
-        std::env::set_var("HEADLESS", "false");
-
-        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
-
-        let err = agent
-            .dispatch_tool_effect(ToolEffect::Pause {
-                reason: "test".to_string(),
-            })
-            .await
-            .expect_err("pause should fail without control state");
-
-        assert!(
-            err.to_string().contains("no control state"),
-            "unexpected error: {err}"
-        );
-        std::env::set_var("HEADLESS", "true");
     }
 }

@@ -23,10 +23,6 @@ pub enum ChildEventKind {
         output_summary: String,
         is_error: bool,
     },
-    PauseRequested {
-        reason: String,
-    },
-    Resumed,
     Finished {
         success: bool,
         items_extracted: usize,
@@ -52,17 +48,10 @@ const LAST_TOOL_INPUT_MAX_CHARS: usize = 100;
 /// path. Reported by the `subagent_status` tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChildLifecycle {
-    /// Registered but no events yet (or no LLM turn yet).
     Created,
-    /// At least one observer event seen and the child hasn't ended.
     Running,
-    /// The child requested a pause (waiting for human / cancel).
-    Paused,
-    /// Child returned successfully.
     Completed,
-    /// Child returned with an error (panic, hard runtime error).
     Failed,
-    /// Cancelled by parent via `cancel_subagent` or `Drop`.
     Cancelled,
 }
 
@@ -73,7 +62,6 @@ impl ChildLifecycle {
         match self {
             Self::Created => "created",
             Self::Running => "running",
-            Self::Paused => "paused",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -245,17 +233,6 @@ impl ChildControlRegistry {
             state.request_cancel();
         }
     }
-
-    /// Returns `(child_id, reason)` for all currently paused children.
-    pub fn get_paused(&self) -> Vec<(String, String)> {
-        self.states
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .filter(|(_, s)| s.is_paused())
-            .map(|(id, s)| (id.clone(), s.pause_reason()))
-            .collect()
-    }
 }
 
 // ── ChildEventSender ─────────────────────────────────────────────────────────
@@ -363,18 +340,6 @@ impl RuntimeObserver for ChildEventSender {
         self.update_snapshot(|_| {});
     }
 
-    fn on_pause_started(&mut self, reason: &str) {
-        self.send(ChildEventKind::PauseRequested {
-            reason: reason.to_string(),
-        });
-        self.update_snapshot(|snapshot| snapshot.state = ChildLifecycle::Paused);
-    }
-
-    fn on_pause_ended(&mut self) {
-        self.send(ChildEventKind::Resumed);
-        self.update_snapshot(|snapshot| snapshot.state = ChildLifecycle::Running);
-    }
-
     fn on_turn_finished(&mut self, result: &Result<(), String>) {
         self.step += 1;
         let step_now = self.step;
@@ -413,14 +378,11 @@ mod tests {
     fn child_control_registry_lifecycle() {
         let registry = ChildControlRegistry::default();
         let state1 = registry.register("child-1");
-        assert!(!state1.is_paused());
+        assert!(!state1.is_cancelled());
         let state2 = registry.register("child-2");
-        // Different Arc instances
         assert!(!std::ptr::eq(Arc::as_ptr(&state1), Arc::as_ptr(&state2)));
-        // get() finds them
         assert!(registry.get("child-1").is_some());
         assert!(registry.get("nonexistent").is_none());
-        // remove() cleans up
         registry.remove("child-1");
         assert!(registry.get("child-1").is_none());
     }
@@ -510,19 +472,5 @@ mod tests {
         let last_text = snapshots.get("c1").unwrap().last_text.unwrap();
         // 200 chars + 1 ellipsis = 201 chars in last_text.
         assert_eq!(last_text.chars().count(), 201);
-    }
-
-    #[test]
-    fn snapshot_pause_resume_flips_lifecycle() {
-        let (tx, _rx) = mpsc::channel::<ChildEvent>();
-        let snapshots = ChildSnapshotRegistry::default();
-        snapshots.register("c1", "goal", 5);
-        let mut sender = ChildEventSender::new("c1".into(), "goal".into(), tx, 5)
-            .with_snapshots(snapshots.clone());
-
-        sender.on_pause_started("captcha");
-        assert_eq!(snapshots.get("c1").unwrap().state, ChildLifecycle::Paused);
-        sender.on_pause_ended();
-        assert_eq!(snapshots.get("c1").unwrap().state, ChildLifecycle::Running);
     }
 }

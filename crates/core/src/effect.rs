@@ -16,8 +16,7 @@ pub enum ToolEffect {
     /// Tool requests a read-only snapshot of running sub-agents. Never joins
     /// or cancels — safe to call between steps.
     Status(StatusSpec),
-    /// Tool requests pausing execution for human intervention.
-    Pause { reason: String },
+
 }
 
 impl ToolEffect {
@@ -103,14 +102,5 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pause_variant_has_reason() {
-        let effect = ToolEffect::Pause {
-            reason: "test reason".to_string(),
-        };
-        match effect {
-            ToolEffect::Pause { reason } => assert_eq!(reason, "test reason"),
-            _ => panic!("expected Pause variant"),
-        }
-    }
+
 }
