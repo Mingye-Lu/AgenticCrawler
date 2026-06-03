@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-06-03
+
+### Added
+
+- **`click_at` tool** — new tool (#21) that dispatches real mouse clicks at specific viewport coordinates via Playwright's `page.mouse.click(x, y)`. Enables interaction with canvas elements, maps, SVGs, and UI components that lack stable CSS selectors. Schema is OpenAI strict-mode compatible (all properties required, no nullable optionals). Both CloakBrowser and Chrome extension backends supported.
+- **`screenshot` element & format options** — the screenshot tool now accepts:
+  - `selector` — screenshot a specific element (auto-scrolls into view, crops to element bounds)
+  - `format` — `png`, `jpeg`, or `webp` output (JPEG/WebP produce 5-10x smaller files)
+  - `quality` — compression level 0-100 for lossy formats
+  - `full_page` — capture the entire scrollable page, not just the viewport
+  - Saved filenames now use the correct extension (`.jpg`, `.webp`, `.png`) based on format
+  - MCP server returns the correct `media_type` (`image/jpeg`, `image/webp`) instead of hardcoded `image/png`
+
+### Changed
+
+- Tool count is now 21 (17 browser + 4 agent-control). MCP server exposes 18 tools (17 browser + `run_goal`).
+- `BrowserBackend::screenshot()` trait method now accepts a `ScreenshotOptions` struct instead of no arguments.
+
 ## [0.8.0] - 2026-06-03
 
 ### Added
@@ -553,6 +571,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.0
 [0.7.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.6
 [0.7.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.5
