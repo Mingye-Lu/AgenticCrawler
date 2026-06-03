@@ -58,7 +58,7 @@ fn fallback_value() -> Value {
 pub async fn post_action_page_state(browser: &mut BrowserContext) -> Value {
     let result = timeout(FEEDBACK_TIMEOUT, async {
         let mut bridge = browser.acquire_bridge().await?;
-        bridge.page_map().await
+        bridge.page_map(None).await
     })
     .await;
 

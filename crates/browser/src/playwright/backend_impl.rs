@@ -21,8 +21,8 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::scroll(self, direction, pixels).await
     }
 
-    async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError> {
-        PlaywrightBridge::page_map(self).await
+    async fn page_map(&mut self, scope: Option<&str>) -> Result<serde_json::Value, BridgeError> {
+        PlaywrightBridge::page_map(self, scope).await
     }
 
     async fn read_content(
@@ -39,8 +39,9 @@ impl BrowserBackend for PlaywrightBridge {
         &mut self,
         selector: &str,
         timeout_ms: u64,
+        state: Option<&str>,
     ) -> Result<bool, BridgeError> {
-        PlaywrightBridge::wait_for_selector(self, selector, timeout_ms).await
+        PlaywrightBridge::wait_for_selector(self, selector, timeout_ms, state).await
     }
 
     async fn select_option(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {

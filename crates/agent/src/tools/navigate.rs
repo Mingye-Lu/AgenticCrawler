@@ -265,7 +265,7 @@ pub async fn execute(
 
     let page_map = if page.fetched_via_browser {
         match browser.acquire_bridge().await {
-            Ok(mut bridge) => match bridge.page_map().await {
+            Ok(mut bridge) => match bridge.page_map(None).await {
                 Ok(mut value) => {
                     apply_page_map_caps(&mut value);
                     value

@@ -145,8 +145,12 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn page_map(&mut self) -> Result<Value, BridgeError> {
-        let response = self.send_command("page_map", json!({})).await?;
+    async fn page_map(&mut self, scope: Option<&str>) -> Result<Value, BridgeError> {
+        let mut payload = json!({});
+        if let Some(s) = scope {
+            payload["scope"] = json!(s);
+        }
+        let response = self.send_command("page_map", payload).await?;
         Self::require_result(response, "page_map")
     }
 
@@ -175,15 +179,17 @@ impl BrowserBackend for ExtensionBridge {
         &mut self,
         selector: &str,
         timeout_ms: u64,
+        state: Option<&str>,
     ) -> Result<bool, BridgeError> {
+        let mut payload = json!({
+            "selector": selector,
+            "timeout_ms": timeout_ms,
+        });
+        if let Some(s) = state {
+            payload["state"] = json!(s);
+        }
         let response = self
-            .send_command(
-                "wait_for_selector",
-                json!({
-                    "selector": selector,
-                    "timeout_ms": timeout_ms,
-                }),
-            )
+            .send_command("wait_for_selector", payload)
             .await?;
         let result = Self::require_result(response, "wait_for_selector")?;
         Ok(result

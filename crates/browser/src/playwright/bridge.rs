@@ -215,8 +215,14 @@ impl PlaywrightBridge {
         Ok(())
     }
 
-    pub async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError> {
-        let cmd = serde_json::json!({ "action": "page_map" });
+    pub async fn page_map(
+        &mut self,
+        scope: Option<&str>,
+    ) -> Result<serde_json::Value, BridgeError> {
+        let mut cmd = serde_json::json!({ "action": "page_map" });
+        if let Some(s) = scope {
+            cmd["scope"] = serde_json::Value::String(s.to_string());
+        }
         self.send_raw_command(&cmd).await
     }
 
@@ -241,12 +247,16 @@ impl PlaywrightBridge {
         &mut self,
         selector: &str,
         timeout_ms: u64,
+        state: Option<&str>,
     ) -> Result<bool, BridgeError> {
-        let cmd = serde_json::json!({
+        let mut cmd = serde_json::json!({
             "action": "wait_for_selector",
             "selector": selector,
             "timeout_ms": timeout_ms,
         });
+        if let Some(s) = state {
+            cmd["state"] = serde_json::Value::String(s.to_string());
+        }
         let result = self.send_raw_command(&cmd).await?;
         Ok(result
             .get("found")
