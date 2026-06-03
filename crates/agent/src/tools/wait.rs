@@ -12,6 +12,7 @@ const MAX_TIMEOUT_SECONDS: f64 = 300.0;
 pub struct WaitInput {
     pub selector: Option<String>,
     pub timeout_ms: u64,
+    pub state: Option<String>,
 }
 
 pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
@@ -22,6 +23,20 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
 
     let timeout_ms = parse_timeout_ms(input)?;
 
+    let state = input
+        .get("state")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    if let Some(ref s) = state {
+        let valid = ["visible", "hidden", "attached", "detached"];
+        if !valid.contains(&s.as_str()) {
+            return Err(CrawlError::new(format!(
+                "wait state must be one of: visible, hidden, attached, detached (got: {s})"
+            )));
+        }
+    }
+
     if selector.is_none() && timeout_ms == 0 {
         return Err(CrawlError::new(
             "wait requires either a selector or a positive timeout",
@@ -31,6 +46,7 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
     Ok(WaitInput {
         selector,
         timeout_ms,
+        state,
     })
 }
 
@@ -79,7 +95,7 @@ pub async fn execute(
             .acquire_bridge()
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?
-            .wait_for_selector(selector, parsed.timeout_ms)
+            .wait_for_selector(selector, parsed.timeout_ms, parsed.state.as_deref())
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
