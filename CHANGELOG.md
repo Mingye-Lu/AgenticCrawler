@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-06-03
+
+### Added
+
+- **`page_map` interactive elements** — the `interactive` section now returns up to 30 actual elements with `text`, `selector`, `tag`, `type`, and ARIA state (`aria-pressed`, `aria-expanded`, `aria-selected`, `disabled`, `checked`, `role`). Covers buttons, inputs, selects, textareas, and ARIA widgets (role=button/tab/menuitem/option/switch/checkbox). Flat count keys (`buttons`, `inputs`, `selects`, `textareas`) preserved at root level for backward compatibility.
+- **`page_map` scope parameter** — optional `scope` CSS selector restricts all queries to a container element (e.g. `scope: "[role='dialog']"` for modal-only content). Returns `scope_not_found: true` with empty sections if the selector doesn't match.
+- **`wait` state parameter** — optional `state` field accepts `visible`, `hidden`, `attached`, or `detached`. Enables waiting for elements to become visible (not just exist in DOM) or disappear (e.g. loading spinners). Errors if `state` is provided without a `selector`.
+
+### Changed
+
+- `BrowserBackend::page_map()` trait method now accepts `scope: Option<&str>`.
+- `BrowserBackend::wait_for_selector()` trait method now accepts `state: Option<&str>`.
+- Extension backend visibility checks use `getComputedStyle` + `getBoundingClientRect` to match Playwright's stricter semantics.
+
 ## [0.8.1] - 2026-06-03
 
 ### Added
@@ -571,6 +585,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.0
 [0.7.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.6
