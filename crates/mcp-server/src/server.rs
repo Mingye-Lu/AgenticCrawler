@@ -989,12 +989,12 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_16_browser_tools_plus_run_goal() {
+    fn tools_list_has_17_browser_tools_plus_run_goal() {
         let browser_specs: Vec<_> = mvp_tool_specs()
             .into_iter()
             .filter(|spec| !EXCLUDED_TOOLS.contains(&spec.name))
             .collect();
-        assert_eq!(browser_specs.len(), 16);
+        assert_eq!(browser_specs.len(), 17);
         let names: BTreeSet<&str> = browser_specs.iter().map(|s| s.name).collect();
         assert!(names.contains("navigate"));
         assert!(names.contains("click"));
