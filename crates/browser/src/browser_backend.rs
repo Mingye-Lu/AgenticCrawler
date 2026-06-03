@@ -23,7 +23,7 @@ pub trait BrowserBackend: Debug {
     async fn new_page(&mut self, url: Option<&str>) -> Result<usize, BridgeError>;
     async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError>;
     async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError>;
-    async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError>;
+    async fn page_map(&mut self, scope: Option<&str>) -> Result<serde_json::Value, BridgeError>;
     async fn read_content(
         &mut self,
         heading: Option<&str>,
@@ -35,6 +35,7 @@ pub trait BrowserBackend: Debug {
         &mut self,
         selector: &str,
         timeout_ms: u64,
+        state: Option<&str>,
     ) -> Result<bool, BridgeError>;
     async fn select_option(&mut self, selector: &str, value: &str) -> Result<(), BridgeError>;
     async fn evaluate(&mut self, script: &str) -> Result<serde_json::Value, BridgeError>;

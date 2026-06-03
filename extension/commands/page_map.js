@@ -1,6 +1,15 @@
 'use strict';
 
-function pageMapScript() {
+function pageMapScript(scope) {
+  let root = document;
+  if (scope) {
+    const scoped = document.querySelector(scope);
+    if (!scoped) {
+      return { scope_not_found: true, scope, headings: [], landmarks: [], forms: [], links: [], interactive: { counts: { buttons: 0, inputs: 0, selects: 0, textareas: 0, total: 0 }, elements: [] }, meta: { title: document.title, description: '', url: window.location.href }, total_landmarks: 0, total_forms: 0, total_links: 0 };
+    }
+    root = scoped;
+  }
+
   function cssPath(el) {
     if (el.id) return '#' + CSS.escape(el.id);
     const parts = [];
@@ -18,7 +27,7 @@ function pageMapScript() {
     return parts.join(' > ');
   }
 
-  const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((el) => {
+  const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((el) => {
     const level = parseInt(el.tagName[1]);
     const text = el.innerText.trim();
     const id = el.id || null;
@@ -36,7 +45,7 @@ function pageMapScript() {
     return { level, text, id, selector, char_count, preview };
   });
 
-  const landmarks = Array.from(document.querySelectorAll('nav, main, aside, article, footer, header, section[aria-label], [role="navigation"], [role="main"], [role="complementary"]')).map((el) => ({
+  const landmarks = Array.from(root.querySelectorAll('nav, main, aside, article, footer, header, section[aria-label], [role="navigation"], [role="main"], [role="complementary"]')).map((el) => ({
     tag: el.tagName.toLowerCase(),
     role: el.getAttribute('role'),
     id: el.id || null,
@@ -48,7 +57,7 @@ function pageMapScript() {
 
   const MAX_FORMS = 10;
   const MAX_FIELDS_PER_FORM = 30;
-  const allForms = Array.from(document.querySelectorAll('form'));
+  const allForms = Array.from(root.querySelectorAll('form'));
   const total_forms = allForms.length;
   const forms = allForms.slice(0, MAX_FORMS).map((f) => {
     const allFields = Array.from(f.querySelectorAll('input, select, textarea'));
@@ -78,7 +87,7 @@ function pageMapScript() {
   const MAX_LINKS = 50;
   let total_links = 0;
   const links = [];
-  for (const a of document.querySelectorAll('a[href]')) {
+  for (const a of root.querySelectorAll('a[href]')) {
     const text = (a.textContent || '').trim();
     const rawHref = a.getAttribute('href') || '';
     const href = a.href || rawHref;
@@ -90,12 +99,50 @@ function pageMapScript() {
     }
   }
 
-  const interactive = {
-    buttons: document.querySelectorAll('button').length,
-    inputs: document.querySelectorAll('input').length,
-    selects: document.querySelectorAll('select').length,
-    textareas: document.querySelectorAll('textarea').length,
-  };
+  const MAX_INTERACTIVE = 30;
+  const interactiveEls = [];
+  const selectors = [
+    ['button', 'button'],
+    ['input', 'input:not([type="hidden"])'],
+    ['select', 'select'],
+    ['textarea', 'textarea'],
+    ['a[role="button"]', 'a[role="button"]'],
+    ['[role="tab"]', '[role="tab"]'],
+    ['[role="menuitem"]', '[role="menuitem"]'],
+    ['[role="option"]', '[role="option"]'],
+    ['[role="switch"]', '[role="switch"]'],
+    ['[role="checkbox"]', '[role="checkbox"]'],
+  ];
+  const counts = { buttons: 0, inputs: 0, selects: 0, textareas: 0, total: 0 };
+  for (const [label, sel] of selectors) {
+    for (const el of root.querySelectorAll(sel)) {
+      counts.total++;
+      if (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') counts.buttons++;
+      else if (el.tagName === 'INPUT') counts.inputs++;
+      else if (el.tagName === 'SELECT') counts.selects++;
+      else if (el.tagName === 'TEXTAREA') counts.textareas++;
+      if (interactiveEls.length < MAX_INTERACTIVE) {
+        const entry = {
+          tag: el.tagName.toLowerCase(),
+          text: (el.textContent || el.value || '').trim().slice(0, 60),
+          selector: cssPath(el),
+        };
+        if (el.disabled) entry.disabled = true;
+        if (el.type) entry.type = el.type;
+        const ariaPressed = el.getAttribute('aria-pressed');
+        if (ariaPressed) entry.aria_pressed = ariaPressed;
+        const ariaExpanded = el.getAttribute('aria-expanded');
+        if (ariaExpanded) entry.aria_expanded = ariaExpanded;
+        const ariaSelected = el.getAttribute('aria-selected');
+        if (ariaSelected) entry.aria_selected = ariaSelected;
+        const role = el.getAttribute('role');
+        if (role) entry.role = role;
+        if (el.checked) entry.checked = true;
+        interactiveEls.push(entry);
+      }
+    }
+  }
+  const interactive = { counts, elements: interactiveEls };
 
   const meta = {
     title: document.title,
@@ -106,13 +153,16 @@ function pageMapScript() {
   return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, total_landmarks, total_forms, total_links };
 }
 
-const PAGE_MAP_SCRIPT = '(' + pageMapScript.toString() + ')()';
-
-async function handlePageMap(tabId) {
+async function handlePageMap(tabId, payload) {
   await ensureAttached(tabId);
 
+  const scope = (payload && payload.scope) || null;
+  const expression = scope
+    ? `(${pageMapScript.toString()})(${JSON.stringify(scope)})`
+    : `(${pageMapScript.toString()})(null)`;
+
   const res = await cdp(tabId, 'Runtime.evaluate', {
-    expression: PAGE_MAP_SCRIPT,
+    expression,
     returnByValue: true,
   });
 

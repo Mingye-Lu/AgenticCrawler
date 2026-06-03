@@ -177,7 +177,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `go_back` | Browser back button. Returns `page_state` with the resulting page structure. |
 | `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
-| `wait` | Wait for a CSS selector to appear or a timeout (up to 300s). |
+| `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). |
 
 #### Interaction
 
@@ -195,7 +195,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 | Tool | Description |
 |------|-------------|
-| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive element counts. |
+| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive elements (with selectors and state). Supports `scope` to query within a specific element (e.g. a modal). |
 | `read_content` | Extract text by heading name or CSS selector, with offset/limit pagination for large pages. |
 | `list_resources` | List all links, images, and forms on the current page. |
 | `screenshot` | Capture a full-page screenshot (base64 PNG). |

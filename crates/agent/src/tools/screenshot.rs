@@ -192,7 +192,10 @@ mod tests {
         async fn scroll(&mut self, _: &str, _: i64) -> Result<(), BridgeError> {
             Ok(())
         }
-        async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError> {
+        async fn page_map(
+            &mut self,
+            _scope: Option<&str>,
+        ) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!({}))
         }
         async fn read_content(
@@ -204,7 +207,12 @@ mod tests {
         ) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!({}))
         }
-        async fn wait_for_selector(&mut self, _: &str, _: u64) -> Result<bool, BridgeError> {
+        async fn wait_for_selector(
+            &mut self,
+            _: &str,
+            _: u64,
+            _: Option<&str>,
+        ) -> Result<bool, BridgeError> {
             Ok(true)
         }
         async fn select_option(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {

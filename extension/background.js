@@ -282,7 +282,7 @@ async function handleCommand(cmd) {
             result = await handleExecuteJs(tabId, cmd.payload || {});
             break;
           case 'page_map':
-            result = await handlePageMap(tabId);
+            result = await handlePageMap(tabId, cmd.payload || {});
             break;
           case 'read_content':
             result = await handleReadContent(tabId, cmd.payload || {});

@@ -39,13 +39,13 @@ pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
 ) -> Result<ToolEffect, ToolExecutionError> {
-    let _ = input;
+    let scope = input.get("scope").and_then(Value::as_str);
 
     let mut result = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .page_map()
+        .page_map(scope)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -106,10 +106,8 @@ mod tests {
                 }
             ],
             "interactive": {
-                "buttons": 1,
-                "inputs": 2,
-                "selects": 3,
-                "textareas": 4
+                "counts": { "buttons": 1, "inputs": 2, "selects": 3, "textareas": 4, "total": 10 },
+                "elements": []
             },
             "meta": {
                 "title": "Example",
@@ -263,5 +261,51 @@ mod tests {
 
         assert_eq!(value["links"].as_array().map(Vec::len), Some(5));
         assert_eq!(value["truncated_links"], json!(false));
+    }
+
+    #[test]
+    fn page_map_interactive_backward_compat_shape() {
+        let value = json!({
+            "interactive": {
+                "counts": { "buttons": 3, "inputs": 2, "selects": 1, "textareas": 0, "total": 6 },
+                "elements": [
+                    {"tag": "button", "text": "Submit", "selector": "#submit"}
+                ]
+            }
+        });
+
+        let interactive = &value["interactive"];
+
+        assert_eq!(interactive["counts"]["buttons"], json!(3));
+        assert_eq!(interactive["counts"]["inputs"], json!(2));
+        assert_eq!(interactive["counts"]["selects"], json!(1));
+        assert_eq!(interactive["counts"]["textareas"], json!(0));
+        assert_eq!(interactive["counts"]["total"], json!(6));
+        assert!(interactive["elements"].is_array());
+        assert_eq!(interactive["elements"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn page_map_scope_not_found_response() {
+        let value = json!({
+            "scope_not_found": true,
+            "scope": "[role='dialog']",
+            "headings": [],
+            "landmarks": [],
+            "forms": [],
+            "links": [],
+            "interactive": {
+                "counts": { "buttons": 0, "inputs": 0, "selects": 0, "textareas": 0, "total": 0 },
+                "elements": []
+            },
+            "meta": { "title": "Test", "description": "", "url": "https://example.com" },
+            "total_landmarks": 0,
+            "total_forms": 0,
+            "total_links": 0
+        });
+
+        assert_eq!(value["scope_not_found"], json!(true));
+        assert_eq!(value["scope"], json!("[role='dialog']"));
+        assert!(value["headings"].as_array().unwrap().is_empty());
     }
 }
