@@ -90,7 +90,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "required": ["x", "y"],
                 "additionalProperties": false
             }),
-            instructions: Some("Dispatches a real mouse click at the given viewport coordinates using Playwright's page.mouse.click(). Coordinates are relative to the top-left corner of the viewport. Use screenshot first to identify target positions. Prefer the selector-based 'click' tool for normal elements \u{2014} use click_at only when elements lack stable selectors (canvas drawings, interactive maps, SVG regions, coordinate-based UIs)."),
+            instructions: Some("Dispatches a real mouse click at the given viewport coordinates using Playwright's page.mouse.click(). Coordinates are relative to the top-left corner of the viewport. To find coordinates, use execute_js with getBoundingClientRect() on the target element \u{2014} this gives exact pixel positions. Do NOT rely on screenshot to estimate coordinates visually. Prefer the selector-based 'click' tool for normal elements \u{2014} use click_at only when elements lack stable selectors (canvas drawings, interactive maps, SVG regions, coordinate-based UIs)."),
         },
         ToolSpec {
             name: "fill_form",
@@ -148,7 +148,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use ONLY when direct text access (page_map, read_content) is insufficient \u{2014} e.g. verifying visual layout, checking images, or debugging rendering. Use selector to screenshot a specific element (auto-scrolls into view). Use full_page to capture below-the-fold content. Use format=jpeg with quality for smaller file sizes when transparency isn't needed."),
+            instructions: Some("LAST RESORT. Try page_map, read_content, list_resources, and execute_js FIRST. Use screenshot ONLY after all text-based and JS-based approaches have failed to get the information you need \u{2014} e.g. verifying purely visual layout, checking how images render, or debugging CSS issues that no other tool can diagnose. NEVER use screenshot to read text, find elements, or identify coordinates. When you do use it: selector targets a specific element, full_page captures below the fold, format=jpeg with quality for smaller files."),
         },
         ToolSpec {
             name: "go_back",
