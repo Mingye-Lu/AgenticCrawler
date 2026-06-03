@@ -277,6 +277,16 @@ async function bootstrap() {
       continue;
     }
 
+    if (command.action === 'click_at') {
+      try {
+        await page.mouse.click(command.x, command.y);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { clicked: true, x: command.x, y: command.y } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'click_at_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
     if (command.action === 'fill') {
       try {
         const sel = await resolveFillSelector(page, command.selector);

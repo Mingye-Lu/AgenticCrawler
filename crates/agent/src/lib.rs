@@ -78,6 +78,20 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
             instructions: Some("May trigger navigation or page changes. The response includes post-action page state (URL, title, page structure) so you can see what changed. Use navigate with a direct URL from page_map.links instead of click when possible \u{2014} it's more reliable."),
         },
         ToolSpec {
+            name: "click_at",
+            description: "Click at specific viewport coordinates (x, y). Use for canvas, maps, SVGs, or elements without stable CSS selectors",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "x": { "type": "number", "description": "X coordinate in viewport pixels" },
+                    "y": { "type": "number", "description": "Y coordinate in viewport pixels" }
+                },
+                "required": ["x", "y"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Dispatches a real mouse click at the given viewport coordinates using Playwright's page.mouse.click(). Coordinates are relative to the top-left corner of the viewport. Use screenshot first to identify target positions. Prefer the selector-based 'click' tool for normal elements \u{2014} use click_at only when elements lack stable selectors (canvas drawings, interactive maps, SVG regions, coordinate-based UIs)."),
+        },
+        ToolSpec {
             name: "fill_form",
             description: "Fill a form field with a value",
             input_schema: json!({
@@ -387,13 +401,14 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_20_tools() {
+    fn mvp_tool_specs_contains_expected_21_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 20);
+        assert_eq!(specs.len(), 21);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 20, "tool names should be unique");
+        assert_eq!(names.len(), 21, "tool names should be unique");
         assert!(names.contains("navigate"));
+        assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));

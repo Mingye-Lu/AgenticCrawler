@@ -304,6 +304,11 @@ impl BrowserBackend for ExtensionBridge {
             .await
     }
 
+    async fn click_at(&mut self, x: f64, y: f64) -> Result<(), BridgeError> {
+        self.expect_unit("click_at", json!({ "x": x, "y": y }))
+            .await
+    }
+
     async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         self.expect_unit(
             "fill",

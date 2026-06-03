@@ -121,6 +121,10 @@ impl BrowserBackend for MockBrowserBackend {
         Ok(())
     }
 
+    async fn click_at(&mut self, _x: f64, _y: f64) -> Result<(), BridgeError> {
+        Ok(())
+    }
+
     async fn fill(&mut self, _selector: &str, _value: &str) -> Result<(), BridgeError> {
         Ok(())
     }
