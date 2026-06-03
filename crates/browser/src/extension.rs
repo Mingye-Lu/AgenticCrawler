@@ -320,8 +320,15 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
-        let response = self.send_command("screenshot", json!({})).await?;
+    async fn screenshot(
+        &mut self,
+        selector: Option<&str>,
+    ) -> Result<(String, usize), BridgeError> {
+        let mut payload = json!({});
+        if let Some(sel) = selector {
+            payload["selector"] = json!(sel);
+        }
+        let response = self.send_command("screenshot", payload).await?;
         let result = Self::require_result(response, "screenshot")?;
         let screenshot_base64 = result
             .get("screenshot_base64")

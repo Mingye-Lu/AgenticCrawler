@@ -99,8 +99,11 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::fill(self, selector, value).await
     }
 
-    async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
-        PlaywrightBridge::screenshot(self).await
+    async fn screenshot(
+        &mut self,
+        selector: Option<&str>,
+    ) -> Result<(String, usize), BridgeError> {
+        PlaywrightBridge::screenshot(self, selector).await
     }
 
     async fn go_back(&mut self) -> Result<String, BridgeError> {

@@ -43,12 +43,13 @@ pub async fn execute(
     browser: &mut BrowserContext,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let save = input.get("save").and_then(Value::as_bool).unwrap_or(false);
+    let selector = input.get("selector").and_then(Value::as_str);
 
     let (screenshot_base64, size_bytes) = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .screenshot()
+        .screenshot(selector)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -221,7 +222,10 @@ mod tests {
         async fn fill(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {
             Ok(())
         }
-        async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
+        async fn screenshot(
+            &mut self,
+            _selector: Option<&str>,
+        ) -> Result<(String, usize), BridgeError> {
             match &self.screenshot_result {
                 Ok((b64, size)) => Ok((b64.clone(), *size)),
                 Err(_) => Err(BridgeError::Protocol("mock screenshot error".to_string())),

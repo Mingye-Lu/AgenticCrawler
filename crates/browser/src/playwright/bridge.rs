@@ -389,8 +389,14 @@ impl PlaywrightBridge {
         Ok(())
     }
 
-    pub async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
-        let cmd = serde_json::json!({ "action": "screenshot" });
+    pub async fn screenshot(
+        &mut self,
+        selector: Option<&str>,
+    ) -> Result<(String, usize), BridgeError> {
+        let mut cmd = serde_json::json!({ "action": "screenshot" });
+        if let Some(sel) = selector {
+            cmd["selector"] = serde_json::Value::String(sel.to_string());
+        }
         let result = self.send_raw_command(&cmd).await?;
         let base64_data = result
             .get("screenshot_base64")

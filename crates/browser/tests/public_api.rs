@@ -129,7 +129,10 @@ impl BrowserBackend for MockBrowserBackend {
         Ok(())
     }
 
-    async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
+    async fn screenshot(
+        &mut self,
+        _selector: Option<&str>,
+    ) -> Result<(String, usize), BridgeError> {
         Ok(("base64data".to_string(), 100))
     }
 
