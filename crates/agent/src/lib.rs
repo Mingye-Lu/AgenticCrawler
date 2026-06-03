@@ -180,11 +180,16 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "type": "object",
                 "properties": {
                     "selector": { "type": "string" },
-                    "seconds": { "type": "number" }
+                    "seconds": { "type": "number" },
+                    "state": {
+                        "type": "string",
+                        "enum": ["visible", "hidden", "attached", "detached"],
+                        "description": "Wait for element to reach this state. Default: attached (exists in DOM)."
+                    }
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay."),
+            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner)."),
         },
         ToolSpec {
             name: "select_option",
@@ -288,11 +293,15 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
             description: "Get comprehensive page structure: headings, landmarks, forms, interactive elements, and links",
             input_schema: json!({
                 "type": "object",
-                "properties": {},
-                "required": [],
+                "properties": {
+                    "scope": {
+                        "type": "string",
+                        "description": "CSS selector to scope all queries within (e.g. \"[role='dialog']\" for modal content only). If omitted, queries the full page."
+                    }
+                },
                 "additionalProperties": false
             }),
-            instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions (nav/main/aside/article/footer), forms (with field details), links (text + href, capped at 50), interactive element counts, and page metadata. Use links[].href with navigate instead of clicking when the URL is visible. If headings is empty, the page has no semantic headings \u{2014} check landmarks instead."),
+            instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page. Use links[].href with navigate instead of clicking when the URL is visible."),
         },
         ToolSpec {
             name: "read_content",

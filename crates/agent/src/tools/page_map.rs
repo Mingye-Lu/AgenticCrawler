@@ -39,13 +39,13 @@ pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
 ) -> Result<ToolEffect, ToolExecutionError> {
-    let _ = input;
+    let scope = input.get("scope").and_then(Value::as_str);
 
     let mut result = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .page_map()
+        .page_map(scope)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
