@@ -357,7 +357,14 @@ async function bootstrap() {
       try {
         const scope = command.scope || null;
         const result = await page.evaluate((scope) => {
-          const root = scope ? (document.querySelector(scope) || document) : document;
+          let root = document;
+          if (scope) {
+            const scoped = document.querySelector(scope);
+            if (!scoped) {
+              return { scope_not_found: true, scope, headings: [], landmarks: [], forms: [], links: [], interactive: { buttons: 0, inputs: 0, selects: 0, textareas: 0, total: 0, elements: [] }, meta: { title: document.title, description: '', url: window.location.href }, total_landmarks: 0, total_forms: 0, total_links: 0 };
+            }
+            root = scoped;
+          }
 
           function cssPath(el) {
             if (el.id) return '#' + CSS.escape(el.id);
@@ -491,7 +498,7 @@ async function bootstrap() {
               }
             }
           }
-          const interactive = { counts, elements: interactiveEls };
+          const interactive = { buttons: counts.buttons, inputs: counts.inputs, selects: counts.selects, textareas: counts.textareas, total: counts.total, elements: interactiveEls };
 
           const meta = {
             title: document.title,
