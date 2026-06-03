@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 20 tools. 25 LLM providers. MCP server built-in.
+  Single binary. No Python runtime. 21 tools. 25 LLM providers. MCP server built-in.
 </p>
 
 ---
@@ -34,10 +34,10 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 - **No code required.** Describe the goal in English. The agent plans and executes.
 - **One binary, zero runtimes.** `cargo build --release` produces a self-contained executable. No Python, no Node runtime — just Rust and a Chromium download for browser automation.
 - **Smart fetching.** Static pages are served over HTTP (fast). When JavaScript or interaction is needed, acrawl detects JS framework markers (`__next_data__`, `__nuxt`, `__vue`, `ng-app`, React roots), auth redirects, and short `<noscript>` bodies — then transparently escalates to a headless browser.
-- **20 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
+- **21 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
 - **MCP client.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
-- **MCP server.** `acrawl mcp` exposes all 16 browser tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code, Zed, JetBrains, TRAE, Gemini CLI, and more. Install with `acrawl mcp install`.
+- **MCP server.** `acrawl mcp` exposes all 17 browser tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code, Zed, JetBrains, TRAE, Gemini CLI, and more. Install with `acrawl mcp install`.
 
 ### How does it compare?
 
@@ -167,7 +167,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 ## Features
 
-### 20-Tool Toolbox
+### 21-Tool Toolbox
 
 #### Navigation
 
@@ -184,6 +184,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | Tool | Description |
 |------|-------------|
 | `click` | Click an element by CSS selector. Returns `page_state` after the click. |
+| `click_at` | Click at specific viewport coordinates (x, y). Use for canvas, maps, or SVGs. Returns `page_state`. |
 | `fill_form` | Fill form fields by selector or name, with optional auto-submit. Returns `page_state`. |
 | `select_option` | Select a dropdown option by value, label, or index. Returns `page_state`. |
 | `hover` | Hover over an element to reveal tooltips or menus. Returns `page_state`. |
@@ -314,7 +315,7 @@ Use `--allowedTools` to restrict which tools the agent can invoke (comma-separat
 acrawl prompt "scrape titles" --allowedTools navigate,read_content,screenshot
 ```
 
-Omit `--allowedTools` to allow all 20 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
+Omit `--allowedTools` to allow all 21 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
 
 ### MCP Extensibility
 
@@ -326,10 +327,10 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 `acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, VS Code, Zed, JetBrains, TRAE, Gemini CLI, or any MCP-compatible client.
 
-The server provides **17 tools** in two modes:
+The server provides **18 tools** in two modes:
 
-**Direct browser tools (16)** — fine-grained control for clients that orchestrate themselves:
-`navigate`, `click`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`
+**Direct browser tools (17)** — fine-grained control for clients that orchestrate themselves:
+`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`
 
 **Autonomous agent (1)** — delegate a full crawl task:
 - **`run_goal`** — Execute a high-level crawl goal autonomously. The agent plans, navigates, and extracts data using its own LLM loop. Requires `~/.acrawl/credentials.json` configured with a model.
@@ -444,7 +445,7 @@ claude mcp add acrawl -- acrawl mcp
 
 The browser tools share a persistent session across calls. `run_goal` creates its own isolated agent and browser.
 
-**Requirements:** The 16 browser tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
+**Requirements:** The 17 browser tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
 
 ## Usage
 
@@ -550,7 +551,7 @@ flowchart LR
 ```
 
 1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/crawler/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
-2. Each turn, it picks from its 20 tools based on what it observes on the page.
+2. Each turn, it picks from its 21 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
 4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
 5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` or `done` merges results.
@@ -564,7 +565,7 @@ crates/
   core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer
-  agent/        20 tools, agent loop, sub-agent fork/join, CrawlState
+  agent/        21 tools, agent loop, sub-agent fork/join, CrawlState
   runtime/      ConversationRuntime, config, sessions, MCP client stack, OAuth PKCE
   render/       Markdown rendering, tool output formatting, OutputSink
   mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer
