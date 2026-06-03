@@ -31,11 +31,16 @@ fn validate_filename(filename: &str) -> Result<(), ToolExecutionError> {
     Ok(())
 }
 
-fn default_filename() -> String {
+fn default_filename(format: &str) -> String {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
-    format!("screenshot_{ms}.png")
+    let ext = match format {
+        "jpeg" => "jpg",
+        "webp" => "webp",
+        _ => "png",
+    };
+    format!("screenshot_{ms}.{ext}")
 }
 
 pub async fn execute(
@@ -44,20 +49,40 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let save = input.get("save").and_then(Value::as_bool).unwrap_or(false);
     let selector = input.get("selector").and_then(Value::as_str);
+    let format = input.get("format").and_then(Value::as_str);
+    let quality = input
+        .get("quality")
+        .and_then(Value::as_u64)
+        .map(|q| q.min(100) as u32);
+    let full_page = input
+        .get("full_page")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let opts = crate::ScreenshotOptions {
+        selector,
+        format,
+        quality,
+        full_page,
+    };
 
     let (screenshot_base64, size_bytes) = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .screenshot(selector)
+        .screenshot(&opts)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     if !save {
-        return Ok(ToolEffect::reply_json(&serde_json::json!({
+        let mut result = serde_json::json!({
             "screenshot_base64": screenshot_base64,
             "size_bytes": size_bytes
-        })));
+        });
+        if let Some(fmt) = format {
+            result["format"] = serde_json::json!(fmt);
+        }
+        return Ok(ToolEffect::reply_json(&result));
     }
 
     let filename = match input.get("filename").and_then(|v| v.as_str()) {
@@ -65,7 +90,7 @@ pub async fn execute(
             validate_filename(name)?;
             name.to_string()
         }
-        None => default_filename(),
+        None => default_filename(format.unwrap_or("png")),
     };
 
     let settings = runtime::load_settings();
@@ -100,7 +125,9 @@ mod tests {
 
     use async_trait::async_trait;
 
-    use crate::{BridgeError, BrowserBackend, BrowserState, PageInfo, SharedBridge};
+    use crate::{
+        BridgeError, BrowserBackend, BrowserState, PageInfo, ScreenshotOptions, SharedBridge,
+    };
 
     static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
@@ -224,7 +251,7 @@ mod tests {
         }
         async fn screenshot(
             &mut self,
-            _selector: Option<&str>,
+            _options: &ScreenshotOptions<'_>,
         ) -> Result<(String, usize), BridgeError> {
             match &self.screenshot_result {
                 Ok((b64, size)) => Ok((b64.clone(), *size)),
@@ -267,7 +294,7 @@ mod tests {
 
     #[test]
     fn default_filename_has_png_extension() {
-        let name = default_filename();
+        let name = default_filename("png");
         assert!(name.starts_with("screenshot_"));
         assert!(Path::new(&name)
             .extension()
@@ -456,5 +483,49 @@ mod tests {
         assert!(err_msg.contains("output directory") || err_msg.contains("write"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn default_filename_uses_format_extension() {
+        let jpeg_name = default_filename("jpeg");
+        assert!(Path::new(&jpeg_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jpg")));
+
+        let webp_name = default_filename("webp");
+        assert!(Path::new(&webp_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("webp")));
+
+        let png_name = default_filename("png");
+        assert!(Path::new(&png_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png")));
+    }
+
+    #[tokio::test]
+    async fn execute_returns_format_in_response() {
+        let mut browser = make_browser(MockBackend::with_valid_screenshot());
+        let input = serde_json::json!({"format": "jpeg"});
+
+        let effect = execute(&input, &mut browser).await.unwrap();
+        let json_str = format!("{effect:?}");
+        assert!(json_str.contains("jpeg"));
+    }
+
+    #[tokio::test]
+    async fn execute_options_are_parsed_correctly() {
+        let mut browser = make_browser(MockBackend::with_valid_screenshot());
+        let input = serde_json::json!({
+            "selector": "#main",
+            "format": "webp",
+            "quality": 85,
+            "full_page": true
+        });
+
+        let effect = execute(&input, &mut browser).await.unwrap();
+        let json_str = format!("{effect:?}");
+        assert!(json_str.contains("screenshot_base64"));
+        assert!(json_str.contains("webp"));
     }
 }

@@ -314,7 +314,7 @@ async function bootstrap() {
     if (command.action === 'screenshot') {
       try {
         const opts = { type: command.format || 'png' };
-        if (command.quality && opts.type === 'jpeg') opts.quality = command.quality;
+        if (command.quality && (opts.type === 'jpeg' || opts.type === 'webp')) opts.quality = command.quality;
         if (command.fullPage) opts.fullPage = true;
         let buffer;
         if (command.selector) {

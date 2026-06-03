@@ -25,7 +25,8 @@ pub use acrawl_core::ToolSpec;
 pub use browser::{
     generate_bridge_token, markdown, ws_server, BridgeCommand, BridgeError, BridgeResponse,
     BrowserBackend, BrowserContext, BrowserState, ExtensionBridge, FetchError, FetchRouter,
-    FetchedPage, PageInfo, PlaywrightBridge, SharedBridge, WsBridgeError, WsBridgeServer,
+    FetchedPage, PageInfo, PlaywrightBridge, ScreenshotOptions, SharedBridge, WsBridgeError,
+    WsBridgeServer,
 };
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
@@ -125,12 +126,12 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                     },
                     "format": {
                         "type": "string",
-                        "enum": ["png", "jpeg"],
-                        "description": "Image format. JPEG produces smaller files but no transparency. Default: png."
+                        "enum": ["png", "jpeg", "webp"],
+                        "description": "Image format. JPEG/WebP produce smaller files but no transparency. Default: png."
                     },
                     "quality": {
                         "type": "integer",
-                        "description": "JPEG quality 0-100. Only applies when format is jpeg. Default: 80."
+                        "description": "Image quality 0-100. Only applies when format is jpeg or webp. Default: 80."
                     },
                     "save": {
                         "type": "boolean",

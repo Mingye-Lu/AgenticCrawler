@@ -4,6 +4,19 @@ use async_trait::async_trait;
 
 use crate::{BridgeError, BrowserState, PageInfo};
 
+/// Options for the screenshot backend call.
+#[derive(Debug, Clone, Default)]
+pub struct ScreenshotOptions<'a> {
+    /// CSS selector to screenshot a specific element.
+    pub selector: Option<&'a str>,
+    /// Image format: "png", "jpeg", or "webp".
+    pub format: Option<&'a str>,
+    /// Quality for lossy formats (jpeg/webp), 0-100.
+    pub quality: Option<u32>,
+    /// Capture the full scrollable page.
+    pub full_page: bool,
+}
+
 #[async_trait]
 pub trait BrowserBackend: Debug {
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError>;
@@ -39,7 +52,7 @@ pub trait BrowserBackend: Debug {
     async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError>;
     async fn screenshot(
         &mut self,
-        selector: Option<&str>,
+        options: &ScreenshotOptions<'_>,
     ) -> Result<(String, usize), BridgeError>;
     async fn go_back(&mut self) -> Result<String, BridgeError>;
 }
