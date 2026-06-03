@@ -9,6 +9,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 const MAX_TIMEOUT_SECONDS: f64 = 300.0;
 
+#[derive(Debug)]
 pub struct WaitInput {
     pub selector: Option<String>,
     pub timeout_ms: u64,
@@ -35,6 +36,12 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
                 "wait state must be one of: visible, hidden, attached, detached (got: {s})"
             )));
         }
+    }
+
+    if state.is_some() && selector.is_none() {
+        return Err(CrawlError::new(
+            "wait state requires a selector (state has no effect with a time-only wait)",
+        ));
     }
 
     if selector.is_none() && timeout_ms == 0 {
@@ -158,5 +165,37 @@ mod tests {
 
         let input = json!({"seconds": 301.0});
         assert!(parse_input(&input).is_err());
+    }
+
+    #[test]
+    fn parses_valid_state() {
+        for state in &["visible", "hidden", "attached", "detached"] {
+            let input = json!({"selector": "div", "state": state});
+            let parsed = parse_input(&input).unwrap();
+            assert_eq!(parsed.state.as_deref(), Some(*state));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_state() {
+        let input = json!({"selector": "div", "state": "bogus"});
+        let err = parse_input(&input).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("visible, hidden, attached, detached"));
+    }
+
+    #[test]
+    fn rejects_state_without_selector() {
+        let input = json!({"seconds": 5, "state": "visible"});
+        let err = parse_input(&input).unwrap_err();
+        assert!(err.to_string().contains("state requires a selector"));
+    }
+
+    #[test]
+    fn state_none_when_omitted() {
+        let input = json!({"selector": "#btn"});
+        let parsed = parse_input(&input).unwrap();
+        assert!(parsed.state.is_none());
     }
 }

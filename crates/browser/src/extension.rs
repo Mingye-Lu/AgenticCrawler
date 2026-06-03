@@ -188,9 +188,7 @@ impl BrowserBackend for ExtensionBridge {
         if let Some(s) = state {
             payload["state"] = json!(s);
         }
-        let response = self
-            .send_command("wait_for_selector", payload)
-            .await?;
+        let response = self.send_command("wait_for_selector", payload).await?;
         let result = Self::require_result(response, "wait_for_selector")?;
         Ok(result
             .get("found")

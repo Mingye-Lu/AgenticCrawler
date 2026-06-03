@@ -12,9 +12,9 @@ async function handleWait(tabId, payload) {
     while (Date.now() - start < timeoutMs) {
       let checkExpr;
       if (state === 'visible') {
-        checkExpr = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return el && el.offsetWidth > 0 && el.offsetHeight > 0; })()`;
+        checkExpr = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return false; const s = getComputedStyle(el); if (s.display === 'none' || s.visibility === 'hidden') return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })()`;
       } else if (state === 'hidden') {
-        checkExpr = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); return !el || el.offsetWidth === 0 || el.offsetHeight === 0; })()`;
+        checkExpr = `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return true; const s = getComputedStyle(el); if (s.display === 'none' || s.visibility === 'hidden') return true; const r = el.getBoundingClientRect(); return r.width === 0 && r.height === 0; })()`;
       } else if (state === 'detached') {
         checkExpr = `!document.querySelector(${JSON.stringify(selector)})`;
       } else {
