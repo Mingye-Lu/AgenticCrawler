@@ -514,11 +514,17 @@ impl CrawlApiClient {
                                     if let Some(b64) =
                                         val.get("screenshot_base64").and_then(Value::as_str)
                                     {
+                                        let media_type =
+                                            match val.get("format").and_then(Value::as_str) {
+                                                Some("jpeg") => "image/jpeg",
+                                                Some("webp") => "image/webp",
+                                                _ => "image/png",
+                                            };
                                         let blocks = vec![
                                             api::ToolResultContentBlock::Image {
                                                 source: ImageSource {
                                                     source_type: "base64".to_string(),
-                                                    media_type: "image/png".to_string(),
+                                                    media_type: media_type.to_string(),
                                                     data: b64.to_string(),
                                                 },
                                             },

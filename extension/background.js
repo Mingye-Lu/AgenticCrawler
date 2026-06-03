@@ -276,7 +276,7 @@ async function handleCommand(cmd) {
             result = await handleFill(tabId, cmd.payload || {});
             break;
           case 'screenshot':
-            result = await handleScreenshot(tabId);
+            result = await handleScreenshot(tabId, cmd.payload || {});
             break;
           case 'execute_js':
             result = await handleExecuteJs(tabId, cmd.payload || {});

@@ -1,4 +1,4 @@
-use crate::browser_backend::BrowserBackend;
+use crate::browser_backend::{BrowserBackend, ScreenshotOptions};
 
 use super::bridge::PlaywrightBridge;
 use super::types::{BridgeError, BrowserState, PageInfo};
@@ -99,8 +99,11 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::fill(self, selector, value).await
     }
 
-    async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
-        PlaywrightBridge::screenshot(self).await
+    async fn screenshot(
+        &mut self,
+        options: &ScreenshotOptions<'_>,
+    ) -> Result<(String, usize), BridgeError> {
+        PlaywrightBridge::screenshot(self, options).await
     }
 
     async fn go_back(&mut self) -> Result<String, BridgeError> {

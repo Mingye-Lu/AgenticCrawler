@@ -6,7 +6,7 @@ pub mod markdown;
 pub mod playwright;
 pub mod ws_server;
 
-pub use browser_backend::BrowserBackend;
+pub use browser_backend::{BrowserBackend, ScreenshotOptions};
 pub use context::BrowserContext;
 pub use extension::ExtensionBridge;
 pub use fetch::{FetchError, FetchRouter, FetchedPage};

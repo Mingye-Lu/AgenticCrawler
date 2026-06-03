@@ -313,7 +313,15 @@ async function bootstrap() {
 
     if (command.action === 'screenshot') {
       try {
-        const buffer = await page.screenshot({ type: 'png' });
+        const opts = { type: command.format || 'png' };
+        if (command.quality && (opts.type === 'jpeg' || opts.type === 'webp')) opts.quality = command.quality;
+        if (command.fullPage) opts.fullPage = true;
+        let buffer;
+        if (command.selector) {
+          buffer = await page.locator(command.selector).screenshot(opts);
+        } else {
+          buffer = await page.screenshot(opts);
+        }
         const base64Data = buffer.toString('base64');
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { screenshot_base64: base64Data, size_bytes: buffer.length } }) + '\n');
       } catch (error) {

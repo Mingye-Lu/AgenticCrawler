@@ -25,7 +25,8 @@ pub use acrawl_core::ToolSpec;
 pub use browser::{
     generate_bridge_token, markdown, ws_server, BridgeCommand, BridgeError, BridgeResponse,
     BrowserBackend, BrowserContext, BrowserState, ExtensionBridge, FetchError, FetchRouter,
-    FetchedPage, PageInfo, PlaywrightBridge, SharedBridge, WsBridgeError, WsBridgeServer,
+    FetchedPage, PageInfo, PlaywrightBridge, ScreenshotOptions, SharedBridge, WsBridgeError,
+    WsBridgeServer,
 };
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
@@ -111,26 +112,43 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
         },
         ToolSpec {
             name: "screenshot",
-            description: "Capture a screenshot of the current page",
+            description: "Capture a screenshot of the current page or a specific element",
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector to screenshot a specific element. If omitted, captures the full viewport."
+                    },
+                    "full_page": {
+                        "type": "boolean",
+                        "description": "Capture the full scrollable page, not just the visible viewport. Ignored when selector is provided."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["png", "jpeg", "webp"],
+                        "description": "Image format. JPEG/WebP produce smaller files but no transparency. Default: png."
+                    },
+                    "quality": {
+                        "type": "integer",
+                        "description": "Image quality 0-100. Only applies when format is jpeg or webp. Default: 80."
+                    },
                     "save": {
                         "type": "boolean",
-                        "description": "If true, save the screenshot as a PNG in the workspace output directory and return the saved path instead of base64."
+                        "description": "If true, save the screenshot to the output directory and return the saved path instead of base64."
                     },
                     "filename": {
                         "type": "string",
-                        "description": "Filename for the saved PNG (e.g. \"shot.png\"). Only used when save is true. Defaults to a timestamped name if omitted."
+                        "description": "Filename for the saved image (e.g. \"shot.png\"). Only used when save is true. Defaults to a timestamped name if omitted."
                     },
                     "output_dir": {
                         "type": "string",
-                        "description": "Directory to save the screenshot in. Overrides the default output directory. Can be relative (resolved against CWD) or absolute."
+                        "description": "Directory to save the screenshot in. Overrides the default output directory."
                     }
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use ONLY when direct text access (page_map, read_content) is insufficient \u{2014} e.g. verifying visual layout, checking images, or debugging rendering. Never use screenshot to read text content; use read_content instead."),
+            instructions: Some("Use ONLY when direct text access (page_map, read_content) is insufficient \u{2014} e.g. verifying visual layout, checking images, or debugging rendering. Use selector to screenshot a specific element (auto-scrolls into view). Use full_page to capture below-the-fold content. Use format=jpeg with quality for smaller file sizes when transparency isn't needed."),
         },
         ToolSpec {
             name: "go_back",
