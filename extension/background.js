@@ -17,6 +17,7 @@ try {
     'commands/wait.js',
     'commands/select_option.js',
     'commands/save_file.js',
+    'commands/click_at.js',
     'commands/cookies.js'
   );
 } catch (e) {
@@ -267,6 +268,9 @@ async function handleCommand(cmd) {
             break;
           case 'click':
             result = await handleClick(tabId, cmd.payload || {});
+            break;
+          case 'click_at':
+            result = await handleClickAt(tabId, cmd.payload || {});
             break;
           case 'fill':
             result = await handleFill(tabId, cmd.payload || {});
