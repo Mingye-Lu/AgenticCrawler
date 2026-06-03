@@ -106,11 +106,7 @@ mod tests {
                 }
             ],
             "interactive": {
-                "buttons": 1,
-                "inputs": 2,
-                "selects": 3,
-                "textareas": 4,
-                "total": 10,
+                "counts": { "buttons": 1, "inputs": 2, "selects": 3, "textareas": 4, "total": 10 },
                 "elements": []
             },
             "meta": {
@@ -271,11 +267,7 @@ mod tests {
     fn page_map_interactive_backward_compat_shape() {
         let value = json!({
             "interactive": {
-                "buttons": 3,
-                "inputs": 2,
-                "selects": 1,
-                "textareas": 0,
-                "total": 6,
+                "counts": { "buttons": 3, "inputs": 2, "selects": 1, "textareas": 0, "total": 6 },
                 "elements": [
                     {"tag": "button", "text": "Submit", "selector": "#submit"}
                 ]
@@ -284,11 +276,11 @@ mod tests {
 
         let interactive = &value["interactive"];
 
-        assert_eq!(interactive["buttons"], json!(3));
-        assert_eq!(interactive["inputs"], json!(2));
-        assert_eq!(interactive["selects"], json!(1));
-        assert_eq!(interactive["textareas"], json!(0));
-        assert_eq!(interactive["total"], json!(6));
+        assert_eq!(interactive["counts"]["buttons"], json!(3));
+        assert_eq!(interactive["counts"]["inputs"], json!(2));
+        assert_eq!(interactive["counts"]["selects"], json!(1));
+        assert_eq!(interactive["counts"]["textareas"], json!(0));
+        assert_eq!(interactive["counts"]["total"], json!(6));
         assert!(interactive["elements"].is_array());
         assert_eq!(interactive["elements"].as_array().unwrap().len(), 1);
     }
@@ -303,11 +295,7 @@ mod tests {
             "forms": [],
             "links": [],
             "interactive": {
-                "buttons": 0,
-                "inputs": 0,
-                "selects": 0,
-                "textareas": 0,
-                "total": 0,
+                "counts": { "buttons": 0, "inputs": 0, "selects": 0, "textareas": 0, "total": 0 },
                 "elements": []
             },
             "meta": { "title": "Test", "description": "", "url": "https://example.com" },
