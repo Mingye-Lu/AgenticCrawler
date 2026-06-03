@@ -369,6 +369,16 @@ impl PlaywrightBridge {
         Ok(())
     }
 
+    pub async fn click_at(&mut self, x: f64, y: f64) -> Result<(), BridgeError> {
+        let cmd = serde_json::json!({
+            "action": "click_at",
+            "x": x,
+            "y": y,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
     pub async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "fill",

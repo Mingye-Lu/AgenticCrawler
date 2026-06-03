@@ -91,6 +91,10 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::click(self, selector).await
     }
 
+    async fn click_at(&mut self, x: f64, y: f64) -> Result<(), BridgeError> {
+        PlaywrightBridge::click_at(self, x, y).await
+    }
+
     async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         PlaywrightBridge::fill(self, selector, value).await
     }

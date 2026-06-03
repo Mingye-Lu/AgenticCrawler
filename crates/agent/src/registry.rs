@@ -10,6 +10,7 @@ pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionErr
 const ASYNC_TOOLS: &[&str] = &[
     "navigate",
     "click",
+    "click_at",
     "fill_form",
     "page_map",
     "read_content",
@@ -107,6 +108,7 @@ impl ToolRegistry {
         match name {
             "navigate" => crate::tools::navigate::execute(input, browser).await,
             "click" => crate::tools::click::execute(input, browser).await,
+            "click_at" => crate::tools::click_at::execute(input, browser).await,
             "fill_form" => crate::tools::fill_form::execute(input, browser).await,
             "page_map" => crate::tools::page_map::execute(input, browser).await,
             "read_content" => crate::tools::read_content::execute(input, browser).await,
@@ -137,7 +139,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_twenty() {
+    fn new_with_core_tools_registers_all_twenty_one() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -145,7 +147,7 @@ mod tests {
             "cancel_subagent",
             "subagent_status",
         ];
-        assert_eq!(registry.len(), 20);
+        assert_eq!(registry.len(), 21);
         for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
             assert!(registry.contains(name), "missing core tool: {name}");
         }
@@ -154,7 +156,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 20);
+        assert_eq!(registry.len(), 21);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
     }

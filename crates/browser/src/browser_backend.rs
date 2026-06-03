@@ -35,6 +35,7 @@ pub trait BrowserBackend: Debug {
     async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError>;
     async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError>;
     async fn click(&mut self, selector: &str) -> Result<(), BridgeError>;
+    async fn click_at(&mut self, x: f64, y: f64) -> Result<(), BridgeError>;
     async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError>;
     async fn screenshot(&mut self) -> Result<(String, usize), BridgeError>;
     async fn go_back(&mut self) -> Result<String, BridgeError>;

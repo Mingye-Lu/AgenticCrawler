@@ -215,6 +215,9 @@ mod tests {
         async fn click(&mut self, _: &str) -> Result<(), BridgeError> {
             Ok(())
         }
+        async fn click_at(&mut self, _: f64, _: f64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn fill(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {
             Ok(())
         }
