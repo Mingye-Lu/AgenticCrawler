@@ -9,7 +9,7 @@ pub struct BrowserContext {
     page_index: usize,
     current_url: Option<String>,
     browser_has_url: Option<String>,
-    /// Cached page_map from the last post-action feedback, keyed by URL.
+    /// Cached `page_map` from the last post-action feedback, keyed by URL.
     /// Used for differential comparison on subsequent same-page interactions.
     last_page_snapshot: Option<(String, Value)>,
 }

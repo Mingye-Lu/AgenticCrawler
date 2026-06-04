@@ -74,7 +74,7 @@ fn link_key(l: &Value) -> Option<String> {
 }
 
 fn landmark_key(lm: &Value) -> Option<String> {
-    let tag = lm.get("tag").and_then(Value::as_str).unwrap_or("");
+    let tag = lm.get("tag")?.as_str()?;
     let role = lm.get("role").and_then(Value::as_str).unwrap_or("");
     let id = lm.get("id").and_then(Value::as_str).unwrap_or("");
     Some(format!("{tag}\x00{role}\x00{id}"))
@@ -201,18 +201,24 @@ fn fallback_value() -> Value {
 
 /// Best-effort post-action page state for interaction tool responses.
 ///
-/// If a previous page_map snapshot exists for the same URL, returns a
-/// differential response (only added/removed elements). Otherwise returns
-/// the full page_map. Always updates the snapshot cache for next comparison.
+/// Calls `page_map_feedback` on the bridge (which may return a pre-computed
+/// diff from the extension, or a full `page_map` from Playwright). If the
+/// response is already a diff, passes it through. Otherwise applies
+/// Rust-side differential comparison against the cached snapshot.
 pub async fn post_action_page_state(browser: &mut BrowserContext) -> Value {
     let result = timeout(FEEDBACK_TIMEOUT, async {
         let mut bridge = browser.acquire_bridge().await?;
-        bridge.page_map(None).await
+        bridge.page_map_feedback().await
     })
     .await;
 
     match result {
-        Ok(Ok(mut pm)) => {
+        Ok(Ok(pm)) => {
+            if pm.get("changed").is_some() {
+                return pm;
+            }
+
+            let mut pm = pm;
             let full_url = extract_url(&pm).to_string();
             let cache_key = url_without_hash(&full_url).to_string();
 

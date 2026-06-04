@@ -1,5 +1,64 @@
 'use strict';
 
+const pageMapCache = new Map();
+
+function urlWithoutHash(url) {
+  const idx = url.indexOf('#');
+  return idx === -1 ? url : url.slice(0, idx);
+}
+
+function headingKey(h) { return `${h.level}:${h.text}`; }
+function linkKey(l) { return `${l.text}\x00${l.href}`; }
+function landmarkKey(lm) { return `${lm.tag || ''}\x00${lm.role || ''}\x00${lm.id || ''}`; }
+
+function diffArrays(prev, curr, keyFn) {
+  const prevKeys = new Set(prev.map(keyFn));
+  const currKeys = new Set(curr.map(keyFn));
+  const added = curr.filter(item => !prevKeys.has(keyFn(item)));
+  const removed = prev.filter(item => !currKeys.has(keyFn(item)));
+  return { added, removed };
+}
+
+function computePageMapDiff(prev, current) {
+  const url = current.meta?.url || 'unknown';
+  const title = current.meta?.title || 'unknown';
+
+  const { added: addedHeadings, removed: removedHeadings } =
+    diffArrays(prev.headings || [], current.headings || [], headingKey);
+  const { added: addedLinks, removed: removedLinks } =
+    diffArrays(prev.links || [], current.links || [], linkKey);
+  const { added: addedLandmarks, removed: removedLandmarks } =
+    diffArrays(prev.landmarks || [], current.landmarks || [], landmarkKey);
+
+  const hasChanges = addedHeadings.length + removedHeadings.length +
+    addedLinks.length + removedLinks.length +
+    addedLandmarks.length + removedLandmarks.length > 0;
+
+  if (!hasChanges) {
+    return { url, title, changed: false };
+  }
+
+  const totalPrev = (prev.headings || []).length +
+    (prev.links || []).length + (prev.landmarks || []).length;
+  const totalChanged = addedHeadings.length + removedHeadings.length +
+    addedLinks.length + removedLinks.length +
+    addedLandmarks.length + removedLandmarks.length;
+
+  if (totalPrev > 0 && totalChanged > totalPrev) {
+    return null; // diff too large, caller should return full
+  }
+
+  const changes = {};
+  if (addedHeadings.length) changes.added_headings = addedHeadings;
+  if (removedHeadings.length) changes.removed_headings = removedHeadings;
+  if (addedLinks.length) changes.added_links = addedLinks;
+  if (removedLinks.length) changes.removed_links = removedLinks;
+  if (addedLandmarks.length) changes.added_landmarks = addedLandmarks;
+  if (removedLandmarks.length) changes.removed_landmarks = removedLandmarks;
+
+  return { url, title, changed: true, changes };
+}
+
 function pageMapScript(scope) {
   let root = document;
   if (scope) {
@@ -157,6 +216,7 @@ async function handlePageMap(tabId, payload) {
   await ensureAttached(tabId);
 
   const scope = (payload && payload.scope) || null;
+  const diffMode = Boolean(payload && payload.diff);
   const expression = scope
     ? `(${pageMapScript.toString()})(${JSON.stringify(scope)})`
     : `(${pageMapScript.toString()})(null)`;
@@ -170,5 +230,25 @@ async function handlePageMap(tabId, payload) {
     throw new Error(res.exceptionDetails.text || 'page_map script threw exception');
   }
 
-  return res.result?.value || {};
+  const current = res.result?.value || {};
+
+  if (diffMode && !scope) {
+    const currentUrl = urlWithoutHash(current.meta?.url || '');
+    const cached = pageMapCache.get(tabId);
+
+    if (cached && cached.url === currentUrl) {
+      const diff = computePageMapDiff(cached.data, current);
+      pageMapCache.set(tabId, { url: currentUrl, data: current });
+      if (diff !== null) {
+        return diff;
+      }
+    } else {
+      pageMapCache.set(tabId, { url: currentUrl, data: current });
+    }
+  } else if (!scope) {
+    const currentUrl = urlWithoutHash(current.meta?.url || '');
+    pageMapCache.set(tabId, { url: currentUrl, data: current });
+  }
+
+  return current;
 }
