@@ -249,10 +249,7 @@ fn diff_interactive(prev_elements: &[Value], curr_elements: &[Value]) -> Interac
             let prev_val = prev_el.get(field);
             let curr_val = el.get(field);
             if prev_val != curr_val {
-                changed_fields.insert(
-                    field.to_string(),
-                    curr_val.cloned().unwrap_or(Value::Null),
-                );
+                changed_fields.insert(field.to_string(), curr_val.cloned().unwrap_or(Value::Null));
             }
         }
 
@@ -270,7 +267,11 @@ fn diff_interactive(prev_elements: &[Value], curr_elements: &[Value]) -> Interac
         }
     }
 
-    InteractiveDiff { added, removed, modified }
+    InteractiveDiff {
+        added,
+        removed,
+        modified,
+    }
 }
 
 pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
@@ -279,14 +280,25 @@ pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
     let url = extract_url(current).to_string();
     let title = extract_title(current).to_string();
 
-    let (added_headings, removed_headings) =
-        diff_array(get_array(prev, "headings"), get_array(current, "headings"), heading_key);
-    let (added_links, removed_links) =
-        diff_array(get_array(prev, "links"), get_array(current, "links"), link_key);
-    let (added_landmarks, removed_landmarks) =
-        diff_array(get_array(prev, "landmarks"), get_array(current, "landmarks"), landmark_key);
-    let interactive_diff =
-        diff_interactive(get_interactive_elements(prev), get_interactive_elements(current));
+    let (added_headings, removed_headings) = diff_array(
+        get_array(prev, "headings"),
+        get_array(current, "headings"),
+        heading_key,
+    );
+    let (added_links, removed_links) = diff_array(
+        get_array(prev, "links"),
+        get_array(current, "links"),
+        link_key,
+    );
+    let (added_landmarks, removed_landmarks) = diff_array(
+        get_array(prev, "landmarks"),
+        get_array(current, "landmarks"),
+        landmark_key,
+    );
+    let interactive_diff = diff_interactive(
+        get_interactive_elements(prev),
+        get_interactive_elements(current),
+    );
 
     let has_changes = !added_headings.is_empty()
         || !removed_headings.is_empty()
@@ -340,13 +352,22 @@ pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
         changes.insert("removed_landmarks".into(), Value::Array(removed_landmarks));
     }
     if !interactive_diff.added.is_empty() {
-        changes.insert("added_interactive".into(), Value::Array(interactive_diff.added));
+        changes.insert(
+            "added_interactive".into(),
+            Value::Array(interactive_diff.added),
+        );
     }
     if !interactive_diff.removed.is_empty() {
-        changes.insert("removed_interactive".into(), Value::Array(interactive_diff.removed));
+        changes.insert(
+            "removed_interactive".into(),
+            Value::Array(interactive_diff.removed),
+        );
     }
     if !interactive_diff.modified.is_empty() {
-        changes.insert("modified_interactive".into(), Value::Array(interactive_diff.modified));
+        changes.insert(
+            "modified_interactive".into(),
+            Value::Array(interactive_diff.modified),
+        );
     }
 
     json!({
@@ -607,7 +628,10 @@ mod tests {
         assert_eq!(changes["removed_headings"].as_array().unwrap().len(), 1);
         assert_eq!(changes["removed_headings"][0]["text"], "Sign Up");
         assert_eq!(changes["removed_links"].as_array().unwrap().len(), 1);
-        assert_eq!(changes["removed_links"][0]["href"], "https://example.com/login");
+        assert_eq!(
+            changes["removed_links"][0]["href"],
+            "https://example.com/login"
+        );
         assert!(changes.get("added_headings").is_none());
     }
 
@@ -694,10 +718,22 @@ mod tests {
     fn url_without_hash_strips_fragment() {
         use super::url_without_hash;
 
-        assert_eq!(url_without_hash("https://example.com/page#section"), "https://example.com/page");
-        assert_eq!(url_without_hash("https://example.com/page"), "https://example.com/page");
-        assert_eq!(url_without_hash("https://app.com/#/dashboard"), "https://app.com/#/dashboard");
-        assert_eq!(url_without_hash("https://app.com/#!/billing"), "https://app.com/#!/billing");
+        assert_eq!(
+            url_without_hash("https://example.com/page#section"),
+            "https://example.com/page"
+        );
+        assert_eq!(
+            url_without_hash("https://example.com/page"),
+            "https://example.com/page"
+        );
+        assert_eq!(
+            url_without_hash("https://app.com/#/dashboard"),
+            "https://app.com/#/dashboard"
+        );
+        assert_eq!(
+            url_without_hash("https://app.com/#!/billing"),
+            "https://app.com/#!/billing"
+        );
         assert_eq!(url_without_hash("unknown"), "unknown");
     }
 
@@ -740,10 +776,16 @@ mod tests {
         let modified = changes["modified_interactive"].as_array().unwrap();
         assert_eq!(modified.len(), 2);
 
-        let menu = modified.iter().find(|e| e["selector"] == "#menu-btn").unwrap();
+        let menu = modified
+            .iter()
+            .find(|e| e["selector"] == "#menu-btn")
+            .unwrap();
         assert_eq!(menu["state_changes"]["aria_expanded"], "true");
 
-        let submit = modified.iter().find(|e| e["selector"] == "#submit-btn").unwrap();
+        let submit = modified
+            .iter()
+            .find(|e| e["selector"] == "#submit-btn")
+            .unwrap();
         assert!(submit["state_changes"]["disabled"].is_null());
     }
 
