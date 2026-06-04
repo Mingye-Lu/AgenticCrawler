@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Mingye-Lu/acrawl",
+  "title": "acrawl",
+  "description": "Autonomous LLM-powered web crawler. 17 browser tools for direct control + run_goal for fully autonomous multi-step crawling. Single Rust binary, stealth browsing via CloakBrowser, 25 LLM providers.",
+  "repository": {
+    "url": "https://github.com/Mingye-Lu/AgenticCrawler",
+    "source": "github"
+  },
+  "version": "0.8.2",
+  "packages": [
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/Mingye-Lu/AgenticCrawler/releases/download/v0.8.2/acrawl-mcp.mcpb",
+      "fileSha256": "PLACEHOLDER_COMPUTED_AT_RELEASE_TIME",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
