@@ -485,6 +485,13 @@ async function bootstrap() {
                 };
                 if (el.disabled) entry.disabled = true;
                 if (el.type) entry.type = el.type;
+                if ((el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.value) {
+                  let val = el.value;
+                  if (el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions.length) {
+                    val = el.selectedOptions[0].text || val;
+                  }
+                  entry.value = val.slice(0, 60);
+                }
                 const ariaPressed = el.getAttribute('aria-pressed');
                 if (ariaPressed) entry.aria_pressed = ariaPressed;
                 const ariaExpanded = el.getAttribute('aria-expanded');

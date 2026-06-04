@@ -295,6 +295,18 @@ pub async fn execute(
         value
     };
 
+    let pm_url = page_map
+        .get("meta")
+        .and_then(|m| m.get("url"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let cache_key = match pm_url.split_once('#') {
+        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => pm_url.to_string(),
+        Some((base, _)) => base.to_string(),
+        None => pm_url.to_string(),
+    };
+    browser.set_page_snapshot(cache_key, page_map.clone());
+
     let content_length = content.chars().count();
 
     Ok(ToolEffect::reply_json(&json!({

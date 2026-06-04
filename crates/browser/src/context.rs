@@ -1,3 +1,4 @@
+use serde_json::Value;
 use tokio::sync::MutexGuard;
 
 use crate::{BridgeError, BrowserBackend, SharedBridge};
@@ -8,6 +9,9 @@ pub struct BrowserContext {
     page_index: usize,
     current_url: Option<String>,
     browser_has_url: Option<String>,
+    /// Cached `page_map` from the last post-action feedback, keyed by URL.
+    /// Used for differential comparison on subsequent same-page interactions.
+    last_page_snapshot: Option<(String, Value)>,
 }
 
 impl BrowserContext {
@@ -23,6 +27,7 @@ impl BrowserContext {
             page_index,
             current_url: None,
             browser_has_url: None,
+            last_page_snapshot: None,
         }
     }
 
@@ -78,5 +83,21 @@ impl BrowserContext {
 
     pub fn set_page_index(&mut self, page_index: usize) {
         self.page_index = page_index;
+    }
+
+    pub fn set_page_snapshot(&mut self, url: String, page_map: Value) {
+        self.last_page_snapshot = Some((url, page_map));
+    }
+
+    #[must_use]
+    pub fn page_snapshot_for_url(&self, url: &str) -> Option<&Value> {
+        self.last_page_snapshot
+            .as_ref()
+            .filter(|(cached_url, _)| cached_url == url)
+            .map(|(_, map)| map)
+    }
+
+    pub fn clear_page_snapshot(&mut self) {
+        self.last_page_snapshot = None;
     }
 }

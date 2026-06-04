@@ -56,4 +56,8 @@ pub trait BrowserBackend: Debug {
         options: &ScreenshotOptions<'_>,
     ) -> Result<(String, usize), BridgeError>;
     async fn go_back(&mut self) -> Result<String, BridgeError>;
+
+    async fn page_map_feedback(&mut self) -> Result<serde_json::Value, BridgeError> {
+        self.page_map(None).await
+    }
 }
