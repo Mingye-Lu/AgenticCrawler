@@ -284,6 +284,7 @@ jobs:
           curl -sL "https://github.com/Mingye-Lu/AgenticCrawler/releases/download/${GITHUB_REF_NAME}/acrawl-mcp-linux-x64.mcpb" -o acrawl-mcp.mcpb
 
       - name: Publish to Smithery
+        continue-on-error: true
         env:
           SMITHERY_API_KEY: ${{ secrets.SMITHERY_API_KEY }}
         run: |
