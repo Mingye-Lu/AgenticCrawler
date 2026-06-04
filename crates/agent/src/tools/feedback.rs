@@ -170,15 +170,68 @@ fn get_interactive_elements(pm: &Value) -> &[Value] {
 const STATE_FIELDS: &[&str] = &[
     "disabled",
     "checked",
+    "value",
     "aria_pressed",
     "aria_expanded",
     "aria_selected",
 ];
 
-fn diff_interactive(prev_elements: &[Value], curr_elements: &[Value]) -> Vec<Value> {
+const MAX_INTERACTIVE_DIFF: usize = 5;
+
+struct InteractiveDiff {
+    added: Vec<Value>,
+    removed: Vec<Value>,
+    modified: Vec<Value>,
+}
+
+fn interactive_entry_brief(el: &Value) -> Value {
+    let mut entry = serde_json::Map::new();
+    if let Some(selector) = el.get("selector") {
+        entry.insert("selector".into(), selector.clone());
+    }
+    if let Some(tag) = el.get("tag") {
+        entry.insert("tag".into(), tag.clone());
+    }
+    if let Some(text) = el.get("text") {
+        entry.insert("text".into(), text.clone());
+    }
+    if let Some(role) = el.get("role") {
+        entry.insert("role".into(), role.clone());
+    }
+    Value::Object(entry)
+}
+
+fn diff_interactive(prev_elements: &[Value], curr_elements: &[Value]) -> InteractiveDiff {
     let prev_by_selector: HashMap<&str, &Value> = prev_elements
         .iter()
         .filter_map(|el| el.get("selector").and_then(Value::as_str).map(|s| (s, el)))
+        .collect();
+
+    let curr_by_selector: HashMap<&str, &Value> = curr_elements
+        .iter()
+        .filter_map(|el| el.get("selector").and_then(Value::as_str).map(|s| (s, el)))
+        .collect();
+
+    let added: Vec<Value> = curr_elements
+        .iter()
+        .filter(|el| {
+            el.get("selector")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !prev_by_selector.contains_key(s))
+        })
+        .take(MAX_INTERACTIVE_DIFF)
+        .map(interactive_entry_brief)
+        .collect();
+
+    let removed: Vec<Value> = prev_elements
+        .iter()
+        .filter(|el| {
+            el.get("selector")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !curr_by_selector.contains_key(s))
+        })
+        .take(MAX_INTERACTIVE_DIFF)
+        .map(interactive_entry_brief)
         .collect();
 
     let mut modified = Vec::new();
@@ -217,7 +270,7 @@ fn diff_interactive(prev_elements: &[Value], curr_elements: &[Value]) -> Vec<Val
         }
     }
 
-    modified
+    InteractiveDiff { added, removed, modified }
 }
 
 pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
@@ -232,7 +285,7 @@ pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
         diff_array(get_array(prev, "links"), get_array(current, "links"), link_key);
     let (added_landmarks, removed_landmarks) =
         diff_array(get_array(prev, "landmarks"), get_array(current, "landmarks"), landmark_key);
-    let modified_interactive =
+    let interactive_diff =
         diff_interactive(get_interactive_elements(prev), get_interactive_elements(current));
 
     let has_changes = !added_headings.is_empty()
@@ -241,7 +294,9 @@ pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
         || !removed_links.is_empty()
         || !added_landmarks.is_empty()
         || !removed_landmarks.is_empty()
-        || !modified_interactive.is_empty();
+        || !interactive_diff.added.is_empty()
+        || !interactive_diff.removed.is_empty()
+        || !interactive_diff.modified.is_empty();
 
     if !has_changes {
         return json!({
@@ -284,8 +339,14 @@ pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
     if !removed_landmarks.is_empty() {
         changes.insert("removed_landmarks".into(), Value::Array(removed_landmarks));
     }
-    if !modified_interactive.is_empty() {
-        changes.insert("modified_interactive".into(), Value::Array(modified_interactive));
+    if !interactive_diff.added.is_empty() {
+        changes.insert("added_interactive".into(), Value::Array(interactive_diff.added));
+    }
+    if !interactive_diff.removed.is_empty() {
+        changes.insert("removed_interactive".into(), Value::Array(interactive_diff.removed));
+    }
+    if !interactive_diff.modified.is_empty() {
+        changes.insert("modified_interactive".into(), Value::Array(interactive_diff.modified));
     }
 
     json!({
@@ -718,5 +779,126 @@ mod tests {
         let removed = changes["removed_links"].as_array().unwrap();
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0]["text"], "Read more");
+    }
+
+    #[test]
+    fn diff_added_interactive_elements_detected() {
+        let prev = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let mut current = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"},
+                    {"tag": "button", "text": "Delete", "selector": "#del-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let result = build_diff_page_state(&prev, &mut current);
+
+        assert_eq!(result["changed"], true);
+        let changes = &result["changes"];
+        let added = changes["added_interactive"].as_array().unwrap();
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0]["text"], "Delete");
+        assert_eq!(added[0]["selector"], "#del-btn");
+    }
+
+    #[test]
+    fn diff_removed_interactive_elements_detected() {
+        let prev = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"},
+                    {"tag": "button", "text": "Delete", "selector": "#del-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let mut current = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let result = build_diff_page_state(&prev, &mut current);
+
+        assert_eq!(result["changed"], true);
+        let changes = &result["changes"];
+        let removed = changes["removed_interactive"].as_array().unwrap();
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0]["text"], "Delete");
+    }
+
+    #[test]
+    fn diff_select_value_change_detected() {
+        let prev = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 0, "inputs": 0, "selects": 1, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "select", "text": "Option 1\nOption 2", "selector": "#dropdown", "type": "select-one", "value": "Please select"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let mut current = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 0, "inputs": 0, "selects": 1, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "select", "text": "Option 1\nOption 2", "selector": "#dropdown", "type": "select-one", "value": "Option 1"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let result = build_diff_page_state(&prev, &mut current);
+
+        assert_eq!(result["changed"], true);
+        let changes = &result["changes"];
+        let modified = changes["modified_interactive"].as_array().unwrap();
+        assert_eq!(modified.len(), 1);
+        assert_eq!(modified[0]["selector"], "#dropdown");
+        assert_eq!(modified[0]["state_changes"]["value"], "Option 1");
     }
 }

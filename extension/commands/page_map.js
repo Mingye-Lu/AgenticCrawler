@@ -61,13 +61,37 @@ function computePageMapDiff(prev, current) {
   const { added: addedLandmarks, removed: removedLandmarks } =
     diffArrays(prev.landmarks || [], current.landmarks || [], landmarkKey);
 
-  const STATE_FIELDS = ['disabled', 'checked', 'aria_pressed', 'aria_expanded', 'aria_selected'];
+  const STATE_FIELDS = ['disabled', 'checked', 'value', 'aria_pressed', 'aria_expanded', 'aria_selected'];
+  const MAX_INTERACTIVE_DIFF = 5;
   const prevElements = prev.interactive?.elements || [];
   const currElements = current.interactive?.elements || [];
   const prevBySelector = Object.create(null);
   for (const el of prevElements) {
     if (el.selector) prevBySelector[el.selector] = el;
   }
+  const currBySelector = Object.create(null);
+  for (const el of currElements) {
+    if (el.selector) currBySelector[el.selector] = el;
+  }
+
+  const briefEntry = (el) => {
+    const e = { selector: el.selector };
+    if (el.tag) e.tag = el.tag;
+    if (el.text) e.text = el.text;
+    if (el.role) e.role = el.role;
+    return e;
+  };
+
+  const addedInteractive = currElements
+    .filter(el => el.selector && !prevBySelector[el.selector])
+    .slice(0, MAX_INTERACTIVE_DIFF)
+    .map(briefEntry);
+
+  const removedInteractive = prevElements
+    .filter(el => el.selector && !currBySelector[el.selector])
+    .slice(0, MAX_INTERACTIVE_DIFF)
+    .map(briefEntry);
+
   const modifiedInteractive = [];
   for (const el of currElements) {
     if (!el.selector) continue;
@@ -91,6 +115,7 @@ function computePageMapDiff(prev, current) {
   const hasChanges = addedHeadings.length + removedHeadings.length +
     addedLinks.length + removedLinks.length +
     addedLandmarks.length + removedLandmarks.length +
+    addedInteractive.length + removedInteractive.length +
     modifiedInteractive.length > 0;
 
   if (!hasChanges) {
@@ -114,6 +139,8 @@ function computePageMapDiff(prev, current) {
   if (removedLinks.length) changes.removed_links = removedLinks;
   if (addedLandmarks.length) changes.added_landmarks = addedLandmarks;
   if (removedLandmarks.length) changes.removed_landmarks = removedLandmarks;
+  if (addedInteractive.length) changes.added_interactive = addedInteractive;
+  if (removedInteractive.length) changes.removed_interactive = removedInteractive;
   if (modifiedInteractive.length) changes.modified_interactive = modifiedInteractive;
 
   return { url, title, changed: true, changes };
@@ -248,6 +275,13 @@ function pageMapScript(scope) {
         };
         if (el.disabled) entry.disabled = true;
         if (el.type) entry.type = el.type;
+        if ((el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.value) {
+          let val = el.value;
+          if (el.tagName === 'SELECT' && el.selectedOptions && el.selectedOptions.length) {
+            val = el.selectedOptions[0].text || val;
+          }
+          entry.value = val.slice(0, 60);
+        }
         const ariaPressed = el.getAttribute('aria-pressed');
         if (ariaPressed) entry.aria_pressed = ariaPressed;
         const ariaExpanded = el.getAttribute('aria-expanded');
