@@ -295,6 +295,17 @@ pub async fn execute(
         value
     };
 
+    let pm_url = page_map
+        .get("meta")
+        .and_then(|m| m.get("url"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let cache_key = pm_url
+        .split_once('#')
+        .map_or(pm_url, |(base, _)| base)
+        .to_string();
+    browser.set_page_snapshot(cache_key, page_map.clone());
+
     let content_length = content.chars().count();
 
     Ok(ToolEffect::reply_json(&json!({
