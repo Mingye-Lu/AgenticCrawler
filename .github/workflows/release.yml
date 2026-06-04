@@ -246,7 +246,7 @@ jobs:
             "\$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
             "name": "io.github.Mingye-Lu/acrawl",
             "title": "acrawl",
-            "description": "Autonomous LLM-powered web crawler. 17 browser tools for direct control + run_goal for fully autonomous multi-step crawling. Single Rust binary, stealth browsing via CloakBrowser, 25 LLM providers.",
+            "description": "Autonomous web crawler. 17 browser tools + goal-driven run_goal agent. Single binary, stealth.",
             "repository": {
               "url": "https://github.com/Mingye-Lu/AgenticCrawler",
               "source": "github"
