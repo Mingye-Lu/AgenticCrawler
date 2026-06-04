@@ -51,6 +51,16 @@ pub async fn execute(
 
     apply_page_map_caps(&mut result);
 
+    if scope.is_none() {
+        let url = result
+            .get("meta")
+            .and_then(|m| m.get("url"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let cache_key = url.split_once('#').map_or(url, |(base, _)| base).to_string();
+        browser.set_page_snapshot(cache_key, result.clone());
+    }
+
     Ok(ToolEffect::reply_json(&result))
 }
 
