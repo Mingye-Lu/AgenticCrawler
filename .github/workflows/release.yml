@@ -270,3 +270,24 @@ jobs:
 
       - name: Publish to MCP Registry
         run: mcp-publisher publish server.json
+
+  publish-smithery:
+    name: Publish to Smithery
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download MCPB artifact
+        run: |
+          curl -sL "https://github.com/Mingye-Lu/AgenticCrawler/releases/download/${GITHUB_REF_NAME}/acrawl-mcp-linux-x64.mcpb" -o acrawl-mcp.mcpb
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Publish to Smithery
+        env:
+          SMITHERY_API_KEY: ${{ secrets.SMITHERY_API_KEY }}
+        run: npx -y smithery@latest mcp publish ./acrawl-mcp.mcpb -n mingyel2/acrawl
