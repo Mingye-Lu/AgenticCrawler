@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "acrawl-cli"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "acrawl-tui",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "acrawl-core"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "acrawl-tui"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "acrawl-ui",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "acrawl-ui"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "agent",
@@ -86,7 +86,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "async-trait",
@@ -149,7 +149,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "aws-credential-types",
@@ -473,7 +473,7 @@ dependencies = [
 
 [[package]]
 name = "browser"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "async-trait",
@@ -591,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "commands"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "runtime",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-server"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "agent",
@@ -2842,7 +2842,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "render"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "commands",
  "crossterm 0.28.1",
@@ -2943,7 +2943,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "acrawl-core",
  "getrandom 0.2.17",

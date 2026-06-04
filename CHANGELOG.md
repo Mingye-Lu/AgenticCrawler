@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-06-04
+
+### Added
+
+- **Differential page_map feedback** — interaction tools (click, fill_form, select_option, hover, press_key) now return a differential page state showing exactly what changed instead of a full page dump. Includes added/removed headings, links, landmarks, and interactive elements, plus state changes (disabled, checked, value, aria-expanded, aria-pressed, aria-selected). Falls back to full page_map when changes exceed the previous element count.
+- **Interactive element value tracking** — page_map now captures the current `value` of select, input, and textarea elements (truncated to 60 chars). For selects, reports the selected option's display text.
+- **Smithery MCP marketplace listing** — added `smithery.yaml` for Smithery discovery.
+- **Dockerfile for MCP server introspection** — enables Glama verification and container-based deployment.
+- **Smithery MCPB publish step** — release workflow now publishes to Smithery marketplace.
+
+### Fixed
+
+- **Navigate seeds page snapshot cache** — the first interaction after `navigate` now produces a differential response instead of falling back to a full page_map.
+- **Hash-route fragment preservation** — cache keys now preserve `#/path` and `#!/path` fragments (hash-routed SPAs) while still stripping simple in-page anchors like `#section`.
+- **Multiset-aware structural diff** — duplicate headings/links/landmarks are now correctly counted (previously collapsed by set-based comparison).
+
 ## [0.8.3] - 2026-06-04
 
 ### Added
@@ -592,6 +608,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.4
 [0.8.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.3
 [0.8.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.1
