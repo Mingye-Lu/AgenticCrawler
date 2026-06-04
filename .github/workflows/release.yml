@@ -283,11 +283,12 @@ jobs:
         run: |
           curl -sL "https://github.com/Mingye-Lu/AgenticCrawler/releases/download/${GITHUB_REF_NAME}/acrawl-mcp-linux-x64.mcpb" -o acrawl-mcp.mcpb
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
       - name: Publish to Smithery
         env:
           SMITHERY_API_KEY: ${{ secrets.SMITHERY_API_KEY }}
-        run: npx -y smithery@latest mcp publish ./acrawl-mcp.mcpb -n mingyel2/acrawl
+        run: |
+          curl -sf -X PUT \
+            "https://api.smithery.ai/servers/mingyel2%2Facrawl/releases" \
+            -H "Authorization: Bearer ${SMITHERY_API_KEY}" \
+            -F 'payload={"type":"stdio"}' \
+            -F 'bundle=@./acrawl-mcp.mcpb'
