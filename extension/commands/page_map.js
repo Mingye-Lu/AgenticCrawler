@@ -4,7 +4,10 @@ const pageMapCache = new Map();
 
 function urlWithoutHash(url) {
   const idx = url.indexOf('#');
-  return idx === -1 ? url : url.slice(0, idx);
+  if (idx === -1) return url;
+  const frag = url.slice(idx + 1);
+  if (frag.startsWith('/') || frag.startsWith('!/')) return url;
+  return url.slice(0, idx);
 }
 
 function headingKey(h) { return `${h.level}:${h.text}`; }
@@ -12,10 +15,38 @@ function linkKey(l) { return `${l.text}\x00${l.href}`; }
 function landmarkKey(lm) { return `${lm.tag || ''}\x00${lm.role || ''}\x00${lm.id || ''}`; }
 
 function diffArrays(prev, curr, keyFn) {
-  const prevKeys = new Set(prev.map(keyFn));
-  const currKeys = new Set(curr.map(keyFn));
-  const added = curr.filter(item => !prevKeys.has(keyFn(item)));
-  const removed = prev.filter(item => !currKeys.has(keyFn(item)));
+  const prevCounts = Object.create(null);
+  for (const item of prev) {
+    const k = keyFn(item);
+    prevCounts[k] = (prevCounts[k] || 0) + 1;
+  }
+  const currCounts = Object.create(null);
+  for (const item of curr) {
+    const k = keyFn(item);
+    currCounts[k] = (currCounts[k] || 0) + 1;
+  }
+
+  const addedBudget = Object.create(null);
+  for (const k of Object.keys(currCounts)) {
+    const diff = currCounts[k] - (prevCounts[k] || 0);
+    if (diff > 0) addedBudget[k] = diff;
+  }
+  const removedBudget = Object.create(null);
+  for (const k of Object.keys(prevCounts)) {
+    const diff = prevCounts[k] - (currCounts[k] || 0);
+    if (diff > 0) removedBudget[k] = diff;
+  }
+
+  const added = curr.filter(item => {
+    const k = keyFn(item);
+    if (addedBudget[k] > 0) { addedBudget[k]--; return true; }
+    return false;
+  });
+  const removed = prev.filter(item => {
+    const k = keyFn(item);
+    if (removedBudget[k] > 0) { removedBudget[k]--; return true; }
+    return false;
+  });
   return { added, removed };
 }
 
@@ -30,9 +61,37 @@ function computePageMapDiff(prev, current) {
   const { added: addedLandmarks, removed: removedLandmarks } =
     diffArrays(prev.landmarks || [], current.landmarks || [], landmarkKey);
 
+  const STATE_FIELDS = ['disabled', 'checked', 'aria_pressed', 'aria_expanded', 'aria_selected'];
+  const prevElements = prev.interactive?.elements || [];
+  const currElements = current.interactive?.elements || [];
+  const prevBySelector = Object.create(null);
+  for (const el of prevElements) {
+    if (el.selector) prevBySelector[el.selector] = el;
+  }
+  const modifiedInteractive = [];
+  for (const el of currElements) {
+    if (!el.selector) continue;
+    const prevEl = prevBySelector[el.selector];
+    if (!prevEl) continue;
+    const stateChanges = {};
+    for (const field of STATE_FIELDS) {
+      const pv = prevEl[field] ?? null;
+      const cv = el[field] ?? null;
+      if (pv !== cv) stateChanges[field] = cv;
+    }
+    if (Object.keys(stateChanges).length > 0) {
+      const entry = { selector: el.selector };
+      if (el.tag) entry.tag = el.tag;
+      if (el.text) entry.text = el.text;
+      entry.state_changes = stateChanges;
+      modifiedInteractive.push(entry);
+    }
+  }
+
   const hasChanges = addedHeadings.length + removedHeadings.length +
     addedLinks.length + removedLinks.length +
-    addedLandmarks.length + removedLandmarks.length > 0;
+    addedLandmarks.length + removedLandmarks.length +
+    modifiedInteractive.length > 0;
 
   if (!hasChanges) {
     return { url, title, changed: false };
@@ -55,6 +114,7 @@ function computePageMapDiff(prev, current) {
   if (removedLinks.length) changes.removed_links = removedLinks;
   if (addedLandmarks.length) changes.added_landmarks = addedLandmarks;
   if (removedLandmarks.length) changes.removed_landmarks = removedLandmarks;
+  if (modifiedInteractive.length) changes.modified_interactive = modifiedInteractive;
 
   return { url, title, changed: true, changes };
 }

@@ -300,10 +300,11 @@ pub async fn execute(
         .and_then(|m| m.get("url"))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let cache_key = pm_url
-        .split_once('#')
-        .map_or(pm_url, |(base, _)| base)
-        .to_string();
+    let cache_key = match pm_url.split_once('#') {
+        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => pm_url.to_string(),
+        Some((base, _)) => base.to_string(),
+        None => pm_url.to_string(),
+    };
     browser.set_page_snapshot(cache_key, page_map.clone());
 
     let content_length = content.chars().count();

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -51,7 +51,11 @@ fn extract_url(pm: &Value) -> &str {
 }
 
 fn url_without_hash(url: &str) -> &str {
-    url.split_once('#').map_or(url, |(base, _)| base)
+    match url.split_once('#') {
+        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => url,
+        Some((base, _)) => base,
+        None => url,
+    }
 }
 
 fn extract_title(pm: &Value) -> &str {
@@ -80,24 +84,53 @@ fn landmark_key(lm: &Value) -> Option<String> {
     Some(format!("{tag}\x00{role}\x00{id}"))
 }
 
-fn collect_keys(items: &[Value], key_fn: fn(&Value) -> Option<String>) -> HashSet<String> {
-    items.iter().filter_map(key_fn).collect()
-}
-
 fn diff_array(
     prev_items: &[Value],
     curr_items: &[Value],
     key_fn: fn(&Value) -> Option<String>,
 ) -> (Vec<Value>, Vec<Value>) {
-    let prev_keys = collect_keys(prev_items, key_fn);
-    let curr_keys = collect_keys(curr_items, key_fn);
+    let mut prev_counts: HashMap<String, usize> = HashMap::new();
+    for item in prev_items {
+        if let Some(k) = key_fn(item) {
+            *prev_counts.entry(k).or_default() += 1;
+        }
+    }
+
+    let mut curr_counts: HashMap<String, usize> = HashMap::new();
+    for item in curr_items {
+        if let Some(k) = key_fn(item) {
+            *curr_counts.entry(k).or_default() += 1;
+        }
+    }
+
+    let mut added_budget: HashMap<&str, usize> = HashMap::new();
+    for (k, &curr_n) in &curr_counts {
+        let prev_n = prev_counts.get(k.as_str()).copied().unwrap_or(0);
+        if curr_n > prev_n {
+            added_budget.insert(k.as_str(), curr_n - prev_n);
+        }
+    }
+
+    let mut removed_budget: HashMap<&str, usize> = HashMap::new();
+    for (k, &prev_n) in &prev_counts {
+        let curr_n = curr_counts.get(k.as_str()).copied().unwrap_or(0);
+        if prev_n > curr_n {
+            removed_budget.insert(k.as_str(), prev_n - curr_n);
+        }
+    }
 
     let added: Vec<Value> = curr_items
         .iter()
         .filter(|item| {
-            key_fn(item)
-                .as_ref()
-                .is_some_and(|k| !prev_keys.contains(k))
+            if let Some(k) = key_fn(item) {
+                if let Some(budget) = added_budget.get_mut(k.as_str()) {
+                    if *budget > 0 {
+                        *budget -= 1;
+                        return true;
+                    }
+                }
+            }
+            false
         })
         .cloned()
         .collect();
@@ -105,9 +138,15 @@ fn diff_array(
     let removed: Vec<Value> = prev_items
         .iter()
         .filter(|item| {
-            key_fn(item)
-                .as_ref()
-                .is_some_and(|k| !curr_keys.contains(k))
+            if let Some(k) = key_fn(item) {
+                if let Some(budget) = removed_budget.get_mut(k.as_str()) {
+                    if *budget > 0 {
+                        *budget -= 1;
+                        return true;
+                    }
+                }
+            }
+            false
         })
         .cloned()
         .collect();
@@ -119,6 +158,66 @@ fn get_array<'a>(pm: &'a Value, key: &str) -> &'a [Value] {
     pm.get(key)
         .and_then(Value::as_array)
         .map_or(&[], Vec::as_slice)
+}
+
+fn get_interactive_elements(pm: &Value) -> &[Value] {
+    pm.get("interactive")
+        .and_then(|i| i.get("elements"))
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
+const STATE_FIELDS: &[&str] = &[
+    "disabled",
+    "checked",
+    "aria_pressed",
+    "aria_expanded",
+    "aria_selected",
+];
+
+fn diff_interactive(prev_elements: &[Value], curr_elements: &[Value]) -> Vec<Value> {
+    let prev_by_selector: HashMap<&str, &Value> = prev_elements
+        .iter()
+        .filter_map(|el| el.get("selector").and_then(Value::as_str).map(|s| (s, el)))
+        .collect();
+
+    let mut modified = Vec::new();
+
+    for el in curr_elements {
+        let Some(selector) = el.get("selector").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(prev_el) = prev_by_selector.get(selector) else {
+            continue;
+        };
+
+        let mut changed_fields = serde_json::Map::new();
+        for &field in STATE_FIELDS {
+            let prev_val = prev_el.get(field);
+            let curr_val = el.get(field);
+            if prev_val != curr_val {
+                changed_fields.insert(
+                    field.to_string(),
+                    curr_val.cloned().unwrap_or(Value::Null),
+                );
+            }
+        }
+
+        if !changed_fields.is_empty() {
+            let mut entry = serde_json::Map::new();
+            entry.insert("selector".into(), json!(selector));
+            if let Some(tag) = el.get("tag") {
+                entry.insert("tag".into(), tag.clone());
+            }
+            if let Some(text) = el.get("text") {
+                entry.insert("text".into(), text.clone());
+            }
+            entry.insert("state_changes".into(), Value::Object(changed_fields));
+            modified.push(Value::Object(entry));
+        }
+    }
+
+    modified
 }
 
 pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
@@ -133,13 +232,16 @@ pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
         diff_array(get_array(prev, "links"), get_array(current, "links"), link_key);
     let (added_landmarks, removed_landmarks) =
         diff_array(get_array(prev, "landmarks"), get_array(current, "landmarks"), landmark_key);
+    let modified_interactive =
+        diff_interactive(get_interactive_elements(prev), get_interactive_elements(current));
 
     let has_changes = !added_headings.is_empty()
         || !removed_headings.is_empty()
         || !added_links.is_empty()
         || !removed_links.is_empty()
         || !added_landmarks.is_empty()
-        || !removed_landmarks.is_empty();
+        || !removed_landmarks.is_empty()
+        || !modified_interactive.is_empty();
 
     if !has_changes {
         return json!({
@@ -181,6 +283,9 @@ pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
     }
     if !removed_landmarks.is_empty() {
         changes.insert("removed_landmarks".into(), Value::Array(removed_landmarks));
+    }
+    if !modified_interactive.is_empty() {
+        changes.insert("modified_interactive".into(), Value::Array(modified_interactive));
     }
 
     json!({
@@ -530,7 +635,88 @@ mod tests {
 
         assert_eq!(url_without_hash("https://example.com/page#section"), "https://example.com/page");
         assert_eq!(url_without_hash("https://example.com/page"), "https://example.com/page");
-        assert_eq!(url_without_hash("https://app.com/#/dashboard"), "https://app.com/");
+        assert_eq!(url_without_hash("https://app.com/#/dashboard"), "https://app.com/#/dashboard");
+        assert_eq!(url_without_hash("https://app.com/#!/billing"), "https://app.com/#!/billing");
         assert_eq!(url_without_hash("unknown"), "unknown");
+    }
+
+    #[test]
+    fn diff_interactive_state_changes_detected() {
+        let prev = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
+                "elements": [
+                    {"tag": "button", "text": "Menu", "selector": "#menu-btn", "aria_expanded": "false"},
+                    {"tag": "button", "text": "Submit", "selector": "#submit-btn", "disabled": true}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let mut current = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
+                "elements": [
+                    {"tag": "button", "text": "Menu", "selector": "#menu-btn", "aria_expanded": "true"},
+                    {"tag": "button", "text": "Submit", "selector": "#submit-btn"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let result = build_diff_page_state(&prev, &mut current);
+
+        assert_eq!(result["changed"], true);
+        let changes = &result["changes"];
+        let modified = changes["modified_interactive"].as_array().unwrap();
+        assert_eq!(modified.len(), 2);
+
+        let menu = modified.iter().find(|e| e["selector"] == "#menu-btn").unwrap();
+        assert_eq!(menu["state_changes"]["aria_expanded"], "true");
+
+        let submit = modified.iter().find(|e| e["selector"] == "#submit-btn").unwrap();
+        assert!(submit["state_changes"]["disabled"].is_null());
+    }
+
+    #[test]
+    fn diff_duplicate_links_counted_correctly() {
+        let prev = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Read more", "href": "https://example.com/post/1", "selector": "a:nth-of-type(1)"},
+                {"text": "Read more", "href": "https://example.com/post/1", "selector": "a:nth-of-type(2)"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let mut current = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Read more", "href": "https://example.com/post/1", "selector": "a:nth-of-type(1)"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let result = build_diff_page_state(&prev, &mut current);
+
+        assert_eq!(result["changed"], true);
+        let changes = &result["changes"];
+        let removed = changes["removed_links"].as_array().unwrap();
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0]["text"], "Read more");
     }
 }

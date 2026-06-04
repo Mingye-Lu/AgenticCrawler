@@ -57,7 +57,11 @@ pub async fn execute(
             .and_then(|m| m.get("url"))
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        let cache_key = url.split_once('#').map_or(url, |(base, _)| base).to_string();
+        let cache_key = match url.split_once('#') {
+            Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => url.to_string(),
+            Some((base, _)) => base.to_string(),
+            None => url.to_string(),
+        };
         browser.set_page_snapshot(cache_key, result.clone());
     }
 
