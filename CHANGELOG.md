@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-06-04
+
+### Added
+
+- **MCPB bundles in releases** — each release now includes platform-specific `.mcpb` archives (ZIP of manifest.json + binary) for single-click installation in Claude Desktop and other MCP hosts. Five bundles: linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64.
+- **Automated MCP Registry publishing** — the release workflow now automatically publishes acrawl to `registry.modelcontextprotocol.io` via GitHub OIDC after each release, making it discoverable in the MCP ecosystem.
+
 ## [0.8.2] - 2026-06-03
 
 ### Added
@@ -585,6 +592,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.3
 [0.8.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.2
 [0.8.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.1
 [0.8.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.0
