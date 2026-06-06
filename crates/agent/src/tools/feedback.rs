@@ -198,6 +198,9 @@ fn interactive_entry_brief(el: &Value) -> Value {
     if let Some(role) = el.get("role") {
         entry.insert("role".into(), role.clone());
     }
+    if let Some(ref_val) = el.get("ref") {
+        entry.insert("ref".into(), ref_val.clone());
+    }
     Value::Object(entry)
 }
 

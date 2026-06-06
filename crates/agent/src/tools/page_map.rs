@@ -7,6 +7,14 @@ const MAX_PAGE_MAP_LINKS: usize = 50;
 const MAX_PAGE_MAP_FORMS: usize = 10;
 const MAX_PAGE_MAP_LANDMARKS: usize = 20;
 
+fn normalized_page_map_url(url: &str) -> String {
+    match url.split_once('#') {
+        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => url.to_string(),
+        Some((base, _)) => base.to_string(),
+        None => url.to_string(),
+    }
+}
+
 pub fn apply_page_map_caps(value: &mut Value) {
     let truncated_links = truncate_array_field(value, "links", MAX_PAGE_MAP_LINKS);
     let truncated_forms = truncate_array_field(value, "forms", MAX_PAGE_MAP_FORMS);
@@ -57,11 +65,43 @@ pub async fn execute(
             .and_then(|m| m.get("url"))
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        let cache_key = match url.split_once('#') {
-            Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => url.to_string(),
-            Some((base, _)) => base.to_string(),
-            None => url.to_string(),
-        };
+
+        let cache_key = normalized_page_map_url(url);
+
+        if let Some(prev_url) = browser.snapshot_url() {
+            if prev_url != cache_key.as_str() {
+                browser.ref_map_mut().clear();
+            }
+        }
+
+        if let Some(elements) = result
+            .get_mut("interactive")
+            .and_then(|interactive| interactive.get_mut("elements"))
+            .and_then(Value::as_array_mut)
+        {
+            for el in elements.iter_mut() {
+                let selector = el.get("selector").and_then(Value::as_str).map(String::from);
+                if let Some(selector) = selector {
+                    let role = el
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let name = el
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let ref_id = browser
+                        .ref_map_mut()
+                        .assign_or_reuse(&selector, &role, &name);
+                    if let Some(obj) = el.as_object_mut() {
+                        obj.insert("ref".to_string(), Value::String(format!("@{ref_id}")));
+                    }
+                }
+            }
+        }
+
         browser.set_page_snapshot(cache_key, result.clone());
     }
 
@@ -297,6 +337,22 @@ mod tests {
         assert_eq!(interactive["counts"]["total"], json!(6));
         assert!(interactive["elements"].is_array());
         assert_eq!(interactive["elements"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn page_map_interactive_elements_get_ref_field() {
+        let value = json!({
+            "interactive": {
+                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "button", "text": "Submit", "selector": "#submit", "role": "button"}
+                ]
+            },
+            "headings": [], "landmarks": [], "forms": [], "links": [],
+            "meta": {"title": "T", "description": "", "url": "https://example.com"}
+        });
+
+        assert!(value["interactive"]["elements"][0].get("ref").is_none());
     }
 
     #[test]

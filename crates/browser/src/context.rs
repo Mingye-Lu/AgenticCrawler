@@ -104,6 +104,14 @@ impl BrowserContext {
         self.last_page_snapshot = None;
     }
 
+    /// Returns the URL of the currently cached page snapshot, if any.
+    #[must_use]
+    pub fn snapshot_url(&self) -> Option<&str> {
+        self.last_page_snapshot
+            .as_ref()
+            .map(|(url, _)| url.as_str())
+    }
+
     pub fn ref_map_mut(&mut self) -> &mut RefMap {
         &mut self.ref_map
     }
