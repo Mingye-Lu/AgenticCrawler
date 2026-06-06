@@ -76,7 +76,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "required": ["selector"],
                 "additionalProperties": false
             }),
-            instructions: Some("May trigger navigation or page changes. The response includes post-action page state (URL, title, page structure) so you can see what changed. Use navigate with a direct URL from page_map.links instead of click when possible \u{2014} it's more reliable."),
+            instructions: Some("May trigger navigation or page changes. The response includes post-action page state (URL, title, page structure) so you can see what changed. Use navigate with a direct URL from page_map.links instead of click when possible \u{2014} it's more reliable. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e3\")."),
         },
         ToolSpec {
             name: "click_at",
@@ -108,7 +108,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "required": ["fields"],
                 "additionalProperties": false
             }),
-            instructions: Some("Keys in `fields` can be CSS selectors (`#email`, `input[name=\"q\"]`) or plain field names/IDs that are resolved automatically. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms. The response includes post-action page state showing the resulting URL and page structure."),
+            instructions: Some("Keys in `fields` accept CSS selectors, plain field names/IDs, or @eN element refs from page_map (e.g., {\"@e5\": \"value\"}). Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms. The response includes post-action page state showing the resulting URL and page structure."),
         },
         ToolSpec {
             name: "screenshot",
@@ -205,7 +205,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "required": ["selector"],
                 "additionalProperties": false
             }),
-            instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option. Returns a `page_state` with the updated page structure after selection."),
+            instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option. Returns a `page_state` with the updated page structure after selection. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e4\")."),
         },
         ToolSpec {
             name: "execute_js",
@@ -231,7 +231,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "required": ["selector"],
                 "additionalProperties": false
             }),
-            instructions: Some("Use to reveal tooltips, dropdown menus, or hidden content. Returns a `page_state` with the updated page structure after hover."),
+            instructions: Some("Use to reveal tooltips, dropdown menus, or hidden content. Returns a `page_state` with the updated page structure after hover. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e2\")."),
         },
         ToolSpec {
             name: "press_key",
@@ -245,7 +245,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "required": ["key"],
                 "additionalProperties": false
             }),
-            instructions: Some("Press Enter to submit, Escape to close modals, Tab to move focus, or arrow keys to navigate. Optional `selector` targets a specific element. Returns a `page_state` with the updated page structure after the keypress."),
+            instructions: Some("Press Enter to submit, Escape to close modals, Tab to move focus, or arrow keys to navigate. Optional `selector` targets a specific element (accepts CSS selectors or @eN refs from page_map). Returns a `page_state` with the updated page structure after the keypress."),
         },
         ToolSpec {
             name: "switch_tab",
@@ -301,7 +301,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page. Use links[].href with navigate instead of clicking when the URL is visible."),
+            instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page. Use links[].href with navigate instead of clicking when the URL is visible. Each interactive element includes a `ref` field (@e1, @e2, ...) \u{2014} use these stable handles in click, fill_form, hover, press_key, and select_option instead of copying full CSS selectors."),
         },
         ToolSpec {
             name: "read_content",
