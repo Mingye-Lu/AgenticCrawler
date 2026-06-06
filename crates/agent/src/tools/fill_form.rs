@@ -58,7 +58,17 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 
-    for (selector, value) in &params.fields {
+    let resolved_fields: Vec<(String, String)> = params
+        .fields
+        .iter()
+        .map(|(sel, val)| {
+            let resolved = super::ref_resolve::resolve_selector(sel, browser.ref_map())
+                .map_err(ToolExecutionError::new)?;
+            Ok::<_, ToolExecutionError>((resolved, val.clone()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (selector, value) in &resolved_fields {
         browser
             .acquire_bridge()
             .await

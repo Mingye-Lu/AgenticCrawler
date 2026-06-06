@@ -30,12 +30,14 @@ pub async fn execute(
     browser: &mut BrowserContext,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
+    let resolved = super::ref_resolve::resolve_selector(&parsed.selector, browser.ref_map())
+        .map_err(ToolExecutionError::new)?;
 
     browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .select_option(&parsed.selector, &parsed.value)
+        .select_option(&resolved, &parsed.value)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
