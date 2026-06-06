@@ -378,4 +378,151 @@ mod tests {
         assert_eq!(value["scope"], json!("[role='dialog']"));
         assert!(value["headings"].as_array().unwrap().is_empty());
     }
+
+    // ─── Integration tests: @eN ref lifecycle ───────────────────────────────
+
+    #[test]
+    fn page_map_injects_ref_into_interactive_elements() {
+        let mut value = json!({
+            "interactive": {
+                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "button", "text": "Submit", "selector": "#submit", "role": "button"}
+                ]
+            },
+            "headings": [], "landmarks": [], "forms": [], "links": [],
+            "meta": {"title": "Test", "description": "", "url": "https://example.com"}
+        });
+
+        apply_page_map_caps(&mut value);
+
+        // Verify element structure is intact (ref would be injected by execute() with browser)
+        let elements = value["interactive"]["elements"].as_array().unwrap();
+        assert_eq!(elements.len(), 1);
+        assert_eq!(elements[0]["selector"], json!("#submit"));
+        assert_eq!(elements[0]["role"], json!("button"));
+    }
+
+    #[test]
+    fn page_map_ref_assignment_stability() {
+        use browser::RefMap;
+
+        let mut ref_map = RefMap::new();
+        // Assign twice for same selector → same ref
+        let r1 = ref_map.assign_or_reuse("#submit", "button", "Submit");
+        let r2 = ref_map.assign_or_reuse("#submit", "button", "Submit");
+        assert_eq!(r1, r2);
+        assert_eq!(r1, "e1");
+
+        // Different selector → new ref
+        let r3 = ref_map.assign_or_reuse("#email", "textbox", "Email");
+        assert_ne!(r1, r3);
+        assert_eq!(r3, "e2");
+    }
+
+    #[test]
+    fn page_map_ref_reset_on_clear() {
+        use browser::RefMap;
+
+        let mut ref_map = RefMap::new();
+        let r1 = ref_map.assign_or_reuse("#btn", "button", "Click me");
+        assert_eq!(r1, "e1");
+
+        ref_map.clear();
+
+        // After clear, counter resets
+        let r2 = ref_map.assign_or_reuse("#other-btn", "button", "Other");
+        assert_eq!(r2, "e1");
+        // Original ref no longer exists — e1 now points to #other-btn
+        assert_eq!(
+            ref_map.get("e1").map(|e| e.selector.as_str()),
+            Some("#other-btn")
+        );
+    }
+
+    #[test]
+    fn fill_form_fields_css_selectors_pass_through_resolve() {
+        use browser::RefMap;
+
+        use crate::tools::ref_resolve::resolve_selector;
+
+        let map = RefMap::new();
+        // Pure CSS selectors pass through unchanged
+        assert_eq!(resolve_selector("#email", &map).unwrap(), "#email");
+        assert_eq!(
+            resolve_selector("input[name='q']", &map).unwrap(),
+            "input[name='q']"
+        );
+    }
+
+    #[test]
+    fn fill_form_ref_key_resolves_to_selector() {
+        use browser::RefMap;
+
+        use crate::tools::ref_resolve::resolve_selector;
+
+        let mut map = RefMap::new();
+        map.assign_or_reuse("#email-input", "textbox", "Email");
+        // @e1 should resolve to "#email-input"
+        let resolved = resolve_selector("@e1", &map).unwrap();
+        assert_eq!(resolved, "#email-input");
+    }
+
+    #[test]
+    fn invalid_ref_produces_clear_error_message() {
+        use browser::RefMap;
+
+        use crate::tools::ref_resolve::resolve_selector;
+
+        let map = RefMap::new(); // empty map
+        let err = resolve_selector("@e999", &map).unwrap_err();
+        assert!(err.contains("Unknown element ref"));
+        assert!(err.contains("page_map"));
+    }
+
+    #[test]
+    fn backward_compat_css_selectors_work_alongside_refs() {
+        use browser::RefMap;
+
+        use crate::tools::ref_resolve::resolve_selector;
+
+        let mut map = RefMap::new();
+        map.assign_or_reuse("button.submit", "button", "Submit");
+
+        // @e1 resolves to CSS selector
+        assert_eq!(resolve_selector("@e1", &map).unwrap(), "button.submit");
+        // Unrelated CSS selectors pass through unchanged
+        assert_eq!(resolve_selector("#other", &map).unwrap(), "#other");
+        assert_eq!(
+            resolve_selector(".class-selector", &map).unwrap(),
+            ".class-selector"
+        );
+    }
+
+    #[test]
+    fn sub_agent_isolation_separate_ref_maps() {
+        use browser::RefMap;
+
+        // Two independent RefMaps (simulating two BrowserContexts)
+        let mut map_a = RefMap::new();
+        let mut map_b = RefMap::new();
+
+        // Assign to map_a
+        let ref_a = map_a.assign_or_reuse("#btn-a", "button", "A");
+        // Assign different selector to map_b
+        let ref_b = map_b.assign_or_reuse("#btn-b", "button", "B");
+
+        // Both start at e1 (independent counters)
+        assert_eq!(ref_a, "e1");
+        assert_eq!(ref_b, "e1");
+
+        // map_a's e1 points to #btn-a, not #btn-b
+        assert_eq!(map_a.get("e1").unwrap().selector, "#btn-a");
+        assert_eq!(map_b.get("e1").unwrap().selector, "#btn-b");
+
+        // Clearing map_a doesn't affect map_b
+        map_a.clear();
+        assert!(map_a.get("e1").is_none());
+        assert!(map_b.get("e1").is_some());
+    }
 }

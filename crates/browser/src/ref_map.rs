@@ -12,15 +12,16 @@ pub struct RefEntry {
 /// Provides stable ref assignment: same selector always gets the same ref number.
 #[derive(Debug, Clone)]
 pub struct RefMap {
-    /// Maps ref_id (e.g. "e1") to RefEntry
+    /// Maps `ref_id` (e.g. "e1") to `RefEntry`
     map: HashMap<String, RefEntry>,
-    /// Maps selector → ref_id (for stable lookup)
+    /// Maps selector to `ref_id` (for stable lookup)
     selector_to_ref: HashMap<String, String>,
     next_ref: usize,
 }
 
 impl RefMap {
-    /// Create a new empty RefMap.
+    /// Create a new empty `RefMap`.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
@@ -31,7 +32,7 @@ impl RefMap {
 
     /// If element with same selector already has a ref, return that ref.
     /// Otherwise assign next available ref number and return it.
-    /// Returns the ref_id string (e.g. "e1", "e5").
+    /// Returns the `ref_id` string (e.g. "e1", "e5").
     pub fn assign_or_reuse(&mut self, selector: &str, role: &str, name: &str) -> String {
         if let Some(existing) = self.selector_to_ref.get(selector) {
             return existing.clone();
@@ -51,7 +52,8 @@ impl RefMap {
         ref_id
     }
 
-    /// Look up a RefEntry by ref_id (e.g. "e1").
+    /// Look up a `RefEntry` by `ref_id` (e.g. "e1").
+    #[must_use]
     pub fn get(&self, ref_id: &str) -> Option<&RefEntry> {
         self.map.get(ref_id)
     }
@@ -70,9 +72,10 @@ impl Default for RefMap {
     }
 }
 
-/// Parse @eN or bare eN → returns Some("eN") or None.
+/// Parse @eN or bare eN → returns `Some("eN")` or None.
 /// Accepts: @e1, @e99, @e123, e1, e99, e123
 /// Rejects: @ex, @e, #foo, .bar, empty string
+#[must_use]
 pub fn parse_ref(input: &str) -> Option<String> {
     let stripped = input.strip_prefix('@').unwrap_or(input);
     if stripped.starts_with('e') && stripped.len() > 1 {

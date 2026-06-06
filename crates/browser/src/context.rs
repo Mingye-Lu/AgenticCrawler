@@ -116,6 +116,7 @@ impl BrowserContext {
         &mut self.ref_map
     }
 
+    #[must_use]
     pub fn ref_map(&self) -> &RefMap {
         &self.ref_map
     }
