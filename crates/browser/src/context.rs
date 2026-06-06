@@ -1,6 +1,7 @@
 use serde_json::Value;
 use tokio::sync::MutexGuard;
 
+use crate::ref_map::RefMap;
 use crate::{BridgeError, BrowserBackend, SharedBridge};
 
 #[derive(Debug, Clone)]
@@ -12,6 +13,7 @@ pub struct BrowserContext {
     /// Cached `page_map` from the last post-action feedback, keyed by URL.
     /// Used for differential comparison on subsequent same-page interactions.
     last_page_snapshot: Option<(String, Value)>,
+    ref_map: RefMap,
 }
 
 impl BrowserContext {
@@ -28,6 +30,7 @@ impl BrowserContext {
             current_url: None,
             browser_has_url: None,
             last_page_snapshot: None,
+            ref_map: RefMap::new(),
         }
     }
 
@@ -99,5 +102,13 @@ impl BrowserContext {
 
     pub fn clear_page_snapshot(&mut self) {
         self.last_page_snapshot = None;
+    }
+
+    pub fn ref_map_mut(&mut self) -> &mut RefMap {
+        &mut self.ref_map
+    }
+
+    pub fn ref_map(&self) -> &RefMap {
+        &self.ref_map
     }
 }

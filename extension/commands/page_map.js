@@ -288,9 +288,55 @@ function pageMapScript(scope) {
         if (ariaExpanded) entry.aria_expanded = ariaExpanded;
         const ariaSelected = el.getAttribute('aria-selected');
         if (ariaSelected) entry.aria_selected = ariaSelected;
-        const role = el.getAttribute('role');
-        if (role) entry.role = role;
         if (el.checked) entry.checked = true;
+
+        // Computed ARIA role (always set, based on element type)
+        const ariaRoleAttr = el.getAttribute('role');
+        if (ariaRoleAttr) {
+          entry.role = ariaRoleAttr;
+        } else {
+          const tag = el.tagName;
+          const inputType = (el.type || '').toLowerCase();
+          if (tag === 'BUTTON' || (tag === 'INPUT' && inputType === 'button') || (tag === 'INPUT' && inputType === 'submit') || (tag === 'INPUT' && inputType === 'reset') || (tag === 'INPUT' && inputType === 'image')) {
+            entry.role = 'button';
+          } else if (tag === 'A') {
+            entry.role = 'link';
+          } else if (tag === 'INPUT' && (inputType === 'checkbox')) {
+            entry.role = 'checkbox';
+          } else if (tag === 'INPUT' && (inputType === 'radio')) {
+            entry.role = 'radio';
+          } else if (tag === 'INPUT' && (inputType === 'range')) {
+            entry.role = 'slider';
+          } else if (tag === 'INPUT') {
+            entry.role = 'textbox';
+          } else if (tag === 'SELECT') {
+            entry.role = 'combobox';
+          } else if (tag === 'TEXTAREA') {
+            entry.role = 'textbox';
+          } else {
+            entry.role = tag.toLowerCase();
+          }
+        }
+
+        // Accessible name: prefer aria-label > aria-labelledby > innerText > placeholder > title > name attr
+        const ariaLabel = el.getAttribute('aria-label');
+        const ariaLabelledBy = el.getAttribute('aria-labelledby');
+        let elName = '';
+        if (ariaLabel) {
+          elName = ariaLabel.trim().slice(0, 60);
+        } else if (ariaLabelledBy) {
+          const labelEl = document.getElementById(ariaLabelledBy);
+          if (labelEl) elName = (labelEl.innerText || '').trim().slice(0, 60);
+        }
+        if (!elName) {
+          const innerTxt = (el.innerText || '').trim();
+          if (innerTxt) elName = innerTxt.slice(0, 60);
+        }
+        if (!elName && el.placeholder) elName = el.placeholder.slice(0, 60);
+        if (!elName && el.title) elName = el.title.slice(0, 60);
+        if (!elName && el.name) elName = el.name.slice(0, 60);
+        if (elName) entry.name = elName;
+
         interactiveEls.push(entry);
       }
     }
