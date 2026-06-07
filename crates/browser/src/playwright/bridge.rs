@@ -86,16 +86,21 @@ impl PlaywrightBridge {
     fn bridge_command(program: &str, args: &[String]) -> Command {
         let mut command = Command::new(program);
         let acrawl_node_modules = config_home_dir().join("node_modules");
-        let node_path = match std::env::var_os("NODE_PATH") {
-            Some(existing) => {
-                let mut paths = std::env::split_paths(&existing).collect::<Vec<_>>();
-                if !paths.contains(&acrawl_node_modules) {
-                    paths.insert(0, acrawl_node_modules.clone());
-                }
-                std::env::join_paths(paths).unwrap_or_else(|_| acrawl_node_modules.into())
-            }
-            None => acrawl_node_modules.into(),
+        let mut paths: Vec<std::path::PathBuf> = match std::env::var_os("NODE_PATH") {
+            Some(existing) => std::env::split_paths(&existing).collect(),
+            None => Vec::new(),
         };
+        if !paths.contains(&acrawl_node_modules) {
+            paths.insert(0, acrawl_node_modules.clone());
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            let cwd_node_modules = cwd.join("node_modules");
+            if !paths.contains(&cwd_node_modules) {
+                paths.push(cwd_node_modules);
+            }
+        }
+        let node_path =
+            std::env::join_paths(&paths).unwrap_or_else(|_| acrawl_node_modules.into());
         command
             .args(args)
             .stdin(Stdio::piped())
