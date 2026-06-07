@@ -30,7 +30,10 @@ pub type SharedBridge = Arc<Mutex<Box<dyn BrowserBackend + Send>>>;
 
 impl PlaywrightBridge {
     pub async fn new() -> Result<Self, BridgeError> {
-        let script_path = config_home_dir().join("bridge.cjs");
+        let config_dir = config_home_dir();
+        std::fs::create_dir_all(&config_dir)
+            .map_err(|e| BridgeError::Protocol(format!("failed to create config dir: {e}")))?;
+        let script_path = config_dir.join("bridge.cjs");
         std::fs::write(&script_path, PLAYWRIGHT_BRIDGE_NODE_SCRIPT)
             .map_err(|e| BridgeError::Protocol(format!("failed to write bridge script: {e}")))?;
 
