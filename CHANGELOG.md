@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-06-07
+
+### Added
+
+- **Stable `@eN` element references** — `page_map` now assigns short, stable handles (`@e1`, `@e2`, …) to each interactive element. Interaction tools (`click`, `hover`, `fill_form`, `press_key`, `select_option`) accept `@eN` in their selector fields, resolving them to the underlying CSS selector. This eliminates the need to copy long, fragile CSS paths — the LLM can just say `click @e3`.
+- **RefMap data structure** (`crates/browser/src/ref_map.rs`) — maps integer IDs to CSS selectors with stable reuse (same selector always gets the same ref) and lifecycle management (clear on navigation).
+- **Ref resolution module** (`crates/agent/src/tools/ref_resolve.rs`) — centralized `@eN` → CSS selector resolution shared across all interaction tools. Plain CSS selectors pass through unchanged for full backward compatibility.
+- **Navigate embedded refs** — the `page_map` returned inline with `navigate` responses now includes `@eN` annotations, so the first page view the LLM sees already has stable handles (no extra `page_map` call needed).
+- **Scoped `page_map` refs** — `page_map` with a `scope` parameter (e.g. modals/dialogs) now also annotates interactive elements with refs.
+- **`NopBridge` test utility** (`crates/browser/src/testing.rs`) — no-op `BrowserBackend` implementation for unit testing `BrowserContext` without launching a real browser.
+- **Glama MCP registry verification** — added `glama.json` for Glama marketplace discovery.
+
+### Fixed
+
+- **Ref invalidation on navigation** — `navigate`, `go_back`, and `switch_tab` now clear the ref map immediately, preventing stale refs from resolving against a different page and clicking wrong elements.
+- **Bridge script launch on Windows** — the CloakBrowser bridge script is now written to `~/.acrawl/bridge.cjs` and executed via `node <path>` instead of `node -e <script>`, fixing the Windows command-line length limit (OS error 206) that prevented all browser features from working.
+- **URL normalization deduplication** — consolidated duplicate URL-normalization helpers into a single shared `normalize_url` function used by both `page_map` and `feedback`.
+
 ## [0.8.4] - 2026-06-04
 
 ### Added
@@ -608,6 +626,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.5
 [0.8.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.4
 [0.8.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.3
 [0.8.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.2
