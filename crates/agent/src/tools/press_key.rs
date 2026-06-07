@@ -29,11 +29,19 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
+    let resolved_selector: Option<String> = if let Some(sel) = &parsed.selector {
+        let r = super::ref_resolve::resolve_selector(sel, browser.ref_map())
+            .map_err(ToolExecutionError::new)?;
+        Some(r)
+    } else {
+        None
+    };
+
     browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .press_key(&parsed.key, parsed.selector.as_deref())
+        .press_key(&parsed.key, resolved_selector.as_deref())
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
