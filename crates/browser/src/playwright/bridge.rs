@@ -30,19 +30,21 @@ pub type SharedBridge = Arc<Mutex<Box<dyn BrowserBackend + Send>>>;
 
 impl PlaywrightBridge {
     pub async fn new() -> Result<Self, BridgeError> {
-        let config_dir = config_home_dir();
-        std::fs::create_dir_all(&config_dir)
-            .map_err(|e| BridgeError::Protocol(format!("failed to create config dir: {e}")))?;
-        let script_path = config_dir.join("bridge.cjs");
-        std::fs::write(&script_path, PLAYWRIGHT_BRIDGE_NODE_SCRIPT)
-            .map_err(|e| BridgeError::Protocol(format!("failed to write bridge script: {e}")))?;
+        let args = if cfg!(windows) {
+            let config_dir = config_home_dir();
+            std::fs::create_dir_all(&config_dir).map_err(|e| {
+                BridgeError::Protocol(format!("failed to create config dir: {e}"))
+            })?;
+            let script_path = config_dir.join("bridge.cjs");
+            std::fs::write(&script_path, PLAYWRIGHT_BRIDGE_NODE_SCRIPT).map_err(|e| {
+                BridgeError::Protocol(format!("failed to write bridge script: {e}"))
+            })?;
+            vec![script_path.to_string_lossy().into_owned()]
+        } else {
+            vec!["-e".to_string(), PLAYWRIGHT_BRIDGE_NODE_SCRIPT.to_string()]
+        };
 
-        Self::new_with_invocation(
-            "node",
-            vec![script_path.to_string_lossy().into_owned()],
-            DEFAULT_LAUNCH_TIMEOUT,
-        )
-        .await
+        Self::new_with_invocation("node", args, DEFAULT_LAUNCH_TIMEOUT).await
     }
 
     async fn new_with_invocation(
