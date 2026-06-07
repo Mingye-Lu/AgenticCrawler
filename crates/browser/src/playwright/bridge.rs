@@ -32,9 +32,8 @@ impl PlaywrightBridge {
     pub async fn new() -> Result<Self, BridgeError> {
         let args = if cfg!(windows) {
             let config_dir = config_home_dir();
-            std::fs::create_dir_all(&config_dir).map_err(|e| {
-                BridgeError::Protocol(format!("failed to create config dir: {e}"))
-            })?;
+            std::fs::create_dir_all(&config_dir)
+                .map_err(|e| BridgeError::Protocol(format!("failed to create config dir: {e}")))?;
             let script_path = config_dir.join("bridge.cjs");
             std::fs::write(&script_path, PLAYWRIGHT_BRIDGE_NODE_SCRIPT).map_err(|e| {
                 BridgeError::Protocol(format!("failed to write bridge script: {e}"))
@@ -101,8 +100,7 @@ impl PlaywrightBridge {
                 paths.push(cwd_node_modules);
             }
         }
-        let node_path =
-            std::env::join_paths(&paths).unwrap_or_else(|_| acrawl_node_modules.into());
+        let node_path = std::env::join_paths(&paths).unwrap_or_else(|_| acrawl_node_modules.into());
         command
             .args(args)
             .stdin(Stdio::piped())
