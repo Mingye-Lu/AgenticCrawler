@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn threshold_boundary() {
         let low_html = r#"<html><body><div class="nav footer ads"><br></div></body></html>"#;
-        let high_html = r#"<html><body><div>abc</div></body></html>"#;
+        let high_html = r"<html><body><div>abc</div></body></html>";
         let low_score = first_body_child_score(low_html);
         let high_score = first_body_child_score(high_html);
 
