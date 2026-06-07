@@ -6,7 +6,7 @@ use tokio::time::timeout;
 
 use crate::BrowserContext;
 
-use super::page_map::apply_page_map_caps;
+use super::page_map::{apply_page_map_caps, normalize_url};
 
 const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -48,14 +48,6 @@ fn extract_url(pm: &Value) -> &str {
         .and_then(|m| m.get("url"))
         .and_then(Value::as_str)
         .unwrap_or("unknown")
-}
-
-fn url_without_hash(url: &str) -> &str {
-    match url.split_once('#') {
-        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => url,
-        Some((base, _)) => base,
-        None => url,
-    }
 }
 
 fn extract_title(pm: &Value) -> &str {
@@ -410,7 +402,7 @@ pub async fn post_action_page_state(browser: &mut BrowserContext) -> Value {
 
             let mut pm = pm;
             let full_url = extract_url(&pm).to_string();
-            let cache_key = url_without_hash(&full_url).to_string();
+            let cache_key = normalize_url(&full_url).to_string();
 
             let response = match browser.page_snapshot_for_url(&cache_key) {
                 Some(prev) => build_diff_page_state(prev, &mut pm),
@@ -719,25 +711,25 @@ mod tests {
 
     #[test]
     fn url_without_hash_strips_fragment() {
-        use super::url_without_hash;
+        use super::super::page_map::normalize_url;
 
         assert_eq!(
-            url_without_hash("https://example.com/page#section"),
+            normalize_url("https://example.com/page#section"),
             "https://example.com/page"
         );
         assert_eq!(
-            url_without_hash("https://example.com/page"),
+            normalize_url("https://example.com/page"),
             "https://example.com/page"
         );
         assert_eq!(
-            url_without_hash("https://app.com/#/dashboard"),
+            normalize_url("https://app.com/#/dashboard"),
             "https://app.com/#/dashboard"
         );
         assert_eq!(
-            url_without_hash("https://app.com/#!/billing"),
+            normalize_url("https://app.com/#!/billing"),
             "https://app.com/#!/billing"
         );
-        assert_eq!(url_without_hash("unknown"), "unknown");
+        assert_eq!(normalize_url("unknown"), "unknown");
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let index = parse_input(input);
 
+    browser.ref_map_mut().clear();
+
     let result = browser
         .bridge()
         .lock()

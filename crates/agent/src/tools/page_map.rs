@@ -7,11 +7,46 @@ const MAX_PAGE_MAP_LINKS: usize = 50;
 const MAX_PAGE_MAP_FORMS: usize = 10;
 const MAX_PAGE_MAP_LANDMARKS: usize = 20;
 
-fn normalized_page_map_url(url: &str) -> String {
+/// Normalize a URL for page-map caching and ref lifecycle comparison.
+/// Strips fragment unless it looks like a hash-based route (`#/…` or `#!/…`).
+#[must_use]
+pub fn normalize_url(url: &str) -> &str {
     match url.split_once('#') {
-        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => url.to_string(),
-        Some((base, _)) => base.to_string(),
-        None => url.to_string(),
+        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => url,
+        Some((base, _)) => base,
+        None => url,
+    }
+}
+
+/// Annotate interactive elements in a `page_map` value with `@eN` refs.
+/// Assigns or reuses stable refs via the browser context's `RefMap`.
+pub fn annotate_refs(result: &mut Value, browser: &mut BrowserContext) {
+    if let Some(elements) = result
+        .get_mut("interactive")
+        .and_then(|interactive| interactive.get_mut("elements"))
+        .and_then(Value::as_array_mut)
+    {
+        for el in elements.iter_mut() {
+            let selector = el.get("selector").and_then(Value::as_str).map(String::from);
+            if let Some(selector) = selector {
+                let role = el
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let name = el
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let ref_id = browser
+                    .ref_map_mut()
+                    .assign_or_reuse(&selector, &role, &name);
+                if let Some(obj) = el.as_object_mut() {
+                    obj.insert("ref".to_string(), Value::String(format!("@{ref_id}")));
+                }
+            }
+        }
     }
 }
 
@@ -66,7 +101,7 @@ pub async fn execute(
             .and_then(Value::as_str)
             .unwrap_or("unknown");
 
-        let cache_key = normalized_page_map_url(url);
+        let cache_key = normalize_url(url).to_string();
 
         if let Some(prev_url) = browser.snapshot_url() {
             if prev_url != cache_key.as_str() {
@@ -74,35 +109,10 @@ pub async fn execute(
             }
         }
 
-        if let Some(elements) = result
-            .get_mut("interactive")
-            .and_then(|interactive| interactive.get_mut("elements"))
-            .and_then(Value::as_array_mut)
-        {
-            for el in elements.iter_mut() {
-                let selector = el.get("selector").and_then(Value::as_str).map(String::from);
-                if let Some(selector) = selector {
-                    let role = el
-                        .get("role")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    let name = el
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    let ref_id = browser
-                        .ref_map_mut()
-                        .assign_or_reuse(&selector, &role, &name);
-                    if let Some(obj) = el.as_object_mut() {
-                        obj.insert("ref".to_string(), Value::String(format!("@{ref_id}")));
-                    }
-                }
-            }
-        }
-
+        annotate_refs(&mut result, browser);
         browser.set_page_snapshot(cache_key, result.clone());
+    } else {
+        annotate_refs(&mut result, browser);
     }
 
     Ok(ToolEffect::reply_json(&result))
@@ -524,5 +534,138 @@ mod tests {
         map_a.clear();
         assert!(map_a.get("e1").is_none());
         assert!(map_b.get("e1").is_some());
+    }
+
+    // ─── Lifecycle integration tests: annotate_refs + invalidation ──────────
+
+    #[test]
+    fn annotate_refs_injects_ref_fields_into_elements() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        use browser::BrowserContext;
+
+        use super::annotate_refs;
+
+        let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
+            Arc::new(Mutex::new(Box::new(browser::NopBridge)));
+        let mut ctx = BrowserContext::new(bridge);
+
+        let mut value = json!({
+            "interactive": {
+                "elements": [
+                    {"tag": "button", "text": "Submit", "selector": "#submit", "role": "button", "name": "Submit"},
+                    {"tag": "input", "text": "", "selector": "#email", "role": "textbox", "name": "Email"}
+                ]
+            }
+        });
+
+        annotate_refs(&mut value, &mut ctx);
+
+        let elements = value["interactive"]["elements"].as_array().unwrap();
+        assert_eq!(elements[0]["ref"], json!("@e1"));
+        assert_eq!(elements[1]["ref"], json!("@e2"));
+
+        assert_eq!(ctx.ref_map().get("e1").unwrap().selector, "#submit");
+        assert_eq!(ctx.ref_map().get("e2").unwrap().selector, "#email");
+    }
+
+    #[test]
+    fn annotate_refs_reuses_existing_refs_for_same_selector() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        use browser::BrowserContext;
+
+        use super::annotate_refs;
+
+        let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
+            Arc::new(Mutex::new(Box::new(browser::NopBridge)));
+        let mut ctx = BrowserContext::new(bridge);
+
+        let mut value1 = json!({
+            "interactive": {
+                "elements": [
+                    {"selector": "#submit", "role": "button", "name": "Submit"}
+                ]
+            }
+        });
+        annotate_refs(&mut value1, &mut ctx);
+
+        let mut value2 = json!({
+            "interactive": {
+                "elements": [
+                    {"selector": "#submit", "role": "button", "name": "Submit"},
+                    {"selector": "#cancel", "role": "button", "name": "Cancel"}
+                ]
+            }
+        });
+        annotate_refs(&mut value2, &mut ctx);
+
+        let elements = value2["interactive"]["elements"].as_array().unwrap();
+        assert_eq!(elements[0]["ref"], json!("@e1"));
+        assert_eq!(elements[1]["ref"], json!("@e2"));
+    }
+
+    #[test]
+    fn ref_clear_invalidates_stale_refs() {
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        use browser::BrowserContext;
+
+        use super::annotate_refs;
+        use crate::tools::ref_resolve::resolve_selector;
+
+        let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
+            Arc::new(Mutex::new(Box::new(browser::NopBridge)));
+        let mut ctx = BrowserContext::new(bridge);
+
+        let mut value = json!({
+            "interactive": {
+                "elements": [
+                    {"selector": "#old-btn", "role": "button", "name": "Old"}
+                ]
+            }
+        });
+        annotate_refs(&mut value, &mut ctx);
+        assert_eq!(resolve_selector("@e1", ctx.ref_map()).unwrap(), "#old-btn");
+
+        ctx.ref_map_mut().clear();
+
+        let err = resolve_selector("@e1", ctx.ref_map()).unwrap_err();
+        assert!(err.contains("Unknown element ref"));
+
+        let mut value2 = json!({
+            "interactive": {
+                "elements": [
+                    {"selector": "#new-btn", "role": "button", "name": "New"}
+                ]
+            }
+        });
+        annotate_refs(&mut value2, &mut ctx);
+        assert_eq!(resolve_selector("@e1", ctx.ref_map()).unwrap(), "#new-btn");
+    }
+
+    #[test]
+    fn normalize_url_strips_hash_preserves_routes() {
+        use super::normalize_url;
+
+        assert_eq!(
+            normalize_url("https://example.com/page#section"),
+            "https://example.com/page"
+        );
+        assert_eq!(
+            normalize_url("https://app.com/#/dashboard"),
+            "https://app.com/#/dashboard"
+        );
+        assert_eq!(
+            normalize_url("https://app.com/#!/billing"),
+            "https://app.com/#!/billing"
+        );
+        assert_eq!(
+            normalize_url("https://example.com/page"),
+            "https://example.com/page"
+        );
     }
 }

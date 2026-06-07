@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
-use crate::tools::page_map::apply_page_map_caps;
+use crate::tools::page_map::{annotate_refs, apply_page_map_caps, normalize_url};
 use crate::BrowserContext;
 use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
@@ -262,8 +262,9 @@ pub async fn execute(
     };
 
     browser.set_navigated_url(&page.url, page.fetched_via_browser);
+    browser.ref_map_mut().clear();
 
-    let page_map = if page.fetched_via_browser {
+    let mut page_map = if page.fetched_via_browser {
         match browser.acquire_bridge().await {
             Ok(mut bridge) => match bridge.page_map(None).await {
                 Ok(mut value) => {
@@ -295,16 +296,14 @@ pub async fn execute(
         value
     };
 
+    annotate_refs(&mut page_map, browser);
+
     let pm_url = page_map
         .get("meta")
         .and_then(|m| m.get("url"))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
-    let cache_key = match pm_url.split_once('#') {
-        Some((_, frag)) if frag.starts_with('/') || frag.starts_with("!/") => pm_url.to_string(),
-        Some((base, _)) => base.to_string(),
-        None => pm_url.to_string(),
-    };
+    let cache_key = normalize_url(pm_url).to_string();
     browser.set_page_snapshot(cache_key, page_map.clone());
 
     let content_length = content.chars().count();

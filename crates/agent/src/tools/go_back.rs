@@ -9,6 +9,8 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
 
+    browser.ref_map_mut().clear();
+
     let url = browser
         .acquire_bridge()
         .await
