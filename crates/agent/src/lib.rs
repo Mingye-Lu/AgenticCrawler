@@ -23,7 +23,7 @@ pub use acrawl_core::effect::{
 pub use acrawl_core::error::ToolExecutionError;
 pub use acrawl_core::ToolSpec;
 pub use browser::{
-    generate_bridge_token, markdown, ws_server, BridgeCommand, BridgeError, BridgeResponse,
+    generate_bridge_token, markdown, prune, ws_server, BridgeCommand, BridgeError, BridgeResponse,
     BrowserBackend, BrowserContext, BrowserState, ExtensionBridge, FetchError, FetchRouter,
     FetchedPage, PageInfo, PlaywrightBridge, ScreenshotOptions, SharedBridge, WsBridgeError,
     WsBridgeServer,
@@ -56,14 +56,14 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                 "type": "object",
                 "properties": {
                     "url": { "type": "string" },
-                    "format": { "type": "string", "enum": ["markdown", "text", "html"] },
+                    "format": { "type": "string", "enum": ["markdown", "text", "html", "fit_markdown"] },
                     "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main" },
                     "strip_images": { "type": "boolean", "default": true }
                 },
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context \u{2014} set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking."),
+            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context \u{2014} set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking. Use format='fit_markdown' to filter low-value DOM nodes before conversion, reducing token consumption on noisy pages."),
         },
         ToolSpec {
             name: "click",

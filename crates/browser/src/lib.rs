@@ -4,6 +4,7 @@ pub mod extension;
 pub mod fetch;
 pub mod markdown;
 pub mod playwright;
+pub mod prune;
 pub mod ref_map;
 pub mod testing;
 pub mod ws_server;
