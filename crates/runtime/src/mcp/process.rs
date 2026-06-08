@@ -66,6 +66,7 @@ impl McpStdioProcess {
         self.stdin.flush().await
     }
 
+    // Utility methods for future MCP transport extensions (line-delimited mode).
     #[allow(dead_code)]
     pub async fn write_line(&mut self, line: &str) -> io::Result<()> {
         self.write_all(line.as_bytes()).await?;
