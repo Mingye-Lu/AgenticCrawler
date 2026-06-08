@@ -646,4 +646,413 @@ mod tests {
             context: "assignment to `value`".to_string(),
         }));
     }
+
+    #[test]
+    fn validate_all_17_browser_tools_accepted() {
+        use crate::grammar::ALLOWED_TOOLS;
+
+        let steps: Vec<ScriptNode> = ALLOWED_TOOLS
+            .iter()
+            .map(|tool| ScriptNode::ToolCall {
+                tool: (*tool).to_string(),
+                input: json!({}),
+                output: None,
+            })
+            .collect();
+        assert_eq!(steps.len(), 17);
+
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: Some("all_tools".to_string()),
+            steps,
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_rejects_agent_control_tools() {
+        let agent_tools = [
+            "fork",
+            "wait_for_subagents",
+            "cancel_subagent",
+            "subagent_status",
+        ];
+
+        for tool_name in &agent_tools {
+            let script = ScriptDefinition {
+                schema_version: SCHEMA_VERSION,
+                name: None,
+                steps: vec![ScriptNode::ToolCall {
+                    tool: tool_name.to_string(),
+                    input: json!({}),
+                    output: None,
+                }],
+            };
+
+            let errors = validate_script(&script, &limits())
+                .expect_err(&format!("agent tool `{tool_name}` should be rejected"));
+            assert!(
+                errors.contains(&ValidationError::UnknownTool {
+                    tool: tool_name.to_string(),
+                }),
+                "expected UnknownTool for `{tool_name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_script_tools() {
+        let script_tools = [
+            "run_script",
+            "script_status",
+            "cancel_script",
+            "wait_for_scripts",
+        ];
+
+        for tool_name in &script_tools {
+            let script = ScriptDefinition {
+                schema_version: SCHEMA_VERSION,
+                name: None,
+                steps: vec![ScriptNode::ToolCall {
+                    tool: tool_name.to_string(),
+                    input: json!({}),
+                    output: None,
+                }],
+            };
+
+            let errors = validate_script(&script, &limits())
+                .expect_err(&format!("script tool `{tool_name}` should be rejected"));
+            assert!(
+                errors.contains(&ValidationError::UnknownTool {
+                    tool: tool_name.to_string(),
+                }),
+                "expected UnknownTool for `{tool_name}`"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_script_rejects_version_2() {
+        let json = json!({
+            "schema_version": 2,
+            "steps": []
+        });
+
+        let error = parse_script(&json).expect_err("version 2 should be rejected");
+        assert!(matches!(
+            error,
+            ScriptParseError::WrongSchemaVersion {
+                found: 2,
+                expected: SCHEMA_VERSION,
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_too_many_parallel_branches() {
+        let branches: Vec<Vec<ScriptNode>> = (0..5)
+            .map(|_| {
+                vec![ScriptNode::ToolCall {
+                    tool: "scroll".to_string(),
+                    input: json!({"direction": "down", "pixels": 100}),
+                    output: None,
+                }]
+            })
+            .collect();
+
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::Parallel { branches }],
+        };
+
+        let errors =
+            validate_script(&script, &limits()).expect_err("too many branches should fail");
+        assert!(errors.contains(&ValidationError::TooManyParallelBranches {
+            branch_count: 5,
+            max: 4,
+        }));
+    }
+
+    #[test]
+    fn validate_rejects_empty_top_level_steps() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![],
+        };
+
+        let errors = validate_script(&script, &limits()).expect_err("empty steps should fail");
+        assert!(errors.contains(&ValidationError::EmptySteps {
+            context: "top-level script steps".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_rejects_empty_for_loop_body() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::ForLoop {
+                variable: "i".to_string(),
+                from: Expression::Literal(json!(0)),
+                to: Expression::Literal(json!(5)),
+                steps: vec![],
+            }],
+        };
+
+        let errors =
+            validate_script(&script, &limits()).expect_err("empty for_loop body should fail");
+        assert!(errors.contains(&ValidationError::EmptySteps {
+            context: "for_loop `i` body".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_rejects_empty_parallel_branches() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::Parallel { branches: vec![] }],
+        };
+
+        let errors =
+            validate_script(&script, &limits()).expect_err("empty parallel branches should fail");
+        assert!(errors.contains(&ValidationError::EmptySteps {
+            context: "parallel branches".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_rejects_script_too_large() {
+        let tiny_limits = ScriptLimits {
+            max_script_size_bytes: 50,
+            ..limits()
+        };
+
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: Some("oversized_script_with_a_very_long_name_to_push_size".to_string()),
+            steps: vec![ScriptNode::ToolCall {
+                tool: "navigate".to_string(),
+                input: json!({"url": "https://example.com/a/very/long/path/to/ensure/size/exceeds/limit"}),
+                output: Some("result".to_string()),
+            }],
+        };
+
+        let errors =
+            validate_script(&script, &tiny_limits).expect_err("oversized script should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, ValidationError::ScriptTooLarge { .. })),
+            "expected ScriptTooLarge error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_for_loop() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::ForLoop {
+                variable: "page".to_string(),
+                from: Expression::Literal(json!(1)),
+                to: Expression::Literal(json!(10)),
+                steps: vec![ScriptNode::ToolCall {
+                    tool: "navigate".to_string(),
+                    input: json!({"url": "https://example.com"}),
+                    output: None,
+                }],
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_while_loop() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::WhileLoop {
+                condition: Expression::JsEval("page < 10".to_string()),
+                steps: vec![ScriptNode::ToolCall {
+                    tool: "scroll".to_string(),
+                    input: json!({"direction": "down", "pixels": 500}),
+                    output: None,
+                }],
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_yield_only_script() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::Yield {
+                value: Expression::Literal(json!({"status": "done"})),
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_loop_variable_accessible_in_body() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::ForLoop {
+                variable: "idx".to_string(),
+                from: Expression::Literal(json!(0)),
+                to: Expression::Literal(json!(3)),
+                steps: vec![ScriptNode::Assign {
+                    variable: "current".to_string(),
+                    value: Expression::Variable("idx".to_string()),
+                }],
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_none_name() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::ToolCall {
+                tool: "navigate".to_string(),
+                input: json!({"url": "https://example.com"}),
+                output: None,
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_assign_and_collect() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![
+                ScriptNode::ToolCall {
+                    tool: "read_content".to_string(),
+                    input: json!({"selector": "h1"}),
+                    output: Some("title".to_string()),
+                },
+                ScriptNode::Assign {
+                    variable: "processed".to_string(),
+                    value: Expression::FieldAccess {
+                        object: Box::new(Expression::Variable("title".to_string())),
+                        field: "text".to_string(),
+                    },
+                },
+                ScriptNode::Collect {
+                    value: Expression::Variable("processed".to_string()),
+                },
+            ],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_for_each_standalone() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![
+                ScriptNode::ToolCall {
+                    tool: "list_resources".to_string(),
+                    input: json!({}),
+                    output: Some("links".to_string()),
+                },
+                ScriptNode::ForEach {
+                    variable: "link".to_string(),
+                    iterable: Expression::Variable("links".to_string()),
+                    steps: vec![ScriptNode::Collect {
+                        value: Expression::Variable("link".to_string()),
+                    }],
+                },
+            ],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_if_else_standalone() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::IfElse {
+                condition: Expression::JsEval("items.length > 0".to_string()),
+                then_steps: vec![ScriptNode::ToolCall {
+                    tool: "click".to_string(),
+                    input: json!({"selector": ".next"}),
+                    output: None,
+                }],
+                else_steps: Some(vec![ScriptNode::Yield {
+                    value: Expression::Literal(json!("no items")),
+                }]),
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_try_catch_standalone() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::TryCatch {
+                try_steps: vec![ScriptNode::ToolCall {
+                    tool: "click".to_string(),
+                    input: json!({"selector": ".submit"}),
+                    output: None,
+                }],
+                catch_steps: Some(vec![ScriptNode::ToolCall {
+                    tool: "screenshot".to_string(),
+                    input: json!({}),
+                    output: None,
+                }]),
+                finally_steps: None,
+                error_var: Some("err".to_string()),
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn validate_accepts_parallel_standalone() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: None,
+            steps: vec![ScriptNode::Parallel {
+                branches: vec![
+                    vec![ScriptNode::ToolCall {
+                        tool: "navigate".to_string(),
+                        input: json!({"url": "https://a.com"}),
+                        output: None,
+                    }],
+                    vec![ScriptNode::ToolCall {
+                        tool: "navigate".to_string(),
+                        input: json!({"url": "https://b.com"}),
+                        output: None,
+                    }],
+                ],
+            }],
+        };
+
+        assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
 }

@@ -8,6 +8,9 @@ mod control_flow;
 mod data;
 mod parallel;
 
+#[cfg(test)]
+mod tests;
+
 use acrawl_core::{ScriptLimits, ScriptResult, ScriptState, ScriptStatus};
 use script::grammar::{Expression, ScriptDefinition, ScriptNode, ALLOWED_TOOLS};
 use serde_json::{json, Value};

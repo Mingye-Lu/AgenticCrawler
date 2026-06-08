@@ -67,7 +67,10 @@ pub fn validate_script_name(name: &str) -> Result<(), PersistenceError> {
     }
 
     // Allow alphanumeric, underscore, and hyphen
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    {
         return Err(PersistenceError::InvalidName(
             "script name must contain only alphanumeric characters, underscores, and hyphens"
                 .to_string(),
@@ -101,8 +104,8 @@ pub fn save_script_to_disk(
     fs::create_dir_all(scripts_dir)?;
 
     // Serialize to pretty JSON
-    let json_str = serde_json::to_string_pretty(script)
-        .map_err(|e| PersistenceError::Parse(e.to_string()))?;
+    let json_str =
+        serde_json::to_string_pretty(script).map_err(|e| PersistenceError::Parse(e.to_string()))?;
 
     // Write to file
     let file_path = scripts_dir.join(format!("{}.json", name));

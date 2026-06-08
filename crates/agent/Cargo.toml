@@ -21,6 +21,7 @@ url = "2"
 [dev-dependencies]
 async-trait = "0.1"
 futures-util = "0.3"
+tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
 tokio-tungstenite = "0.26"
 
