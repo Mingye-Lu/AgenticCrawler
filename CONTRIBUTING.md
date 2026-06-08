@@ -59,7 +59,7 @@ crates/
   tui/          Ratatui terminal UI (acrawl-tui)
   cli/          Thin binary entry point, orchestration
   commands/     Slash command registry
-  crawler/      Transitional re-export shim (will be removed)
+  ui/           Shared application layer (LiveCli, session management, tool executor)
 ```
 
 ## License
