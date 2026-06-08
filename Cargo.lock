@@ -3210,6 +3210,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "script"
+version = "0.8.7"
+dependencies = [
+ "acrawl-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "security-framework"
 version = "3.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

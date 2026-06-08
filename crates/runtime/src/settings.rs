@@ -5,6 +5,62 @@ use std::path::PathBuf;
 
 use acrawl_core::config_home_dir as core_config_home_dir;
 
+/// Script resource limits and configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptSettings {
+    /// Maximum number of script execution steps (default: 200)
+    #[serde(default)]
+    pub max_steps: Option<usize>,
+
+    /// Maximum timeout in seconds for script execution (default: 300)
+    #[serde(default)]
+    pub max_timeout_secs: Option<u64>,
+
+    /// Maximum output size in bytes (default: 10_485_760 = 10MB)
+    #[serde(default)]
+    pub max_output_bytes: Option<usize>,
+
+    /// Maximum number of parallel branches (default: 10)
+    #[serde(default)]
+    pub max_parallel_branches: Option<usize>,
+
+    /// Maximum number of concurrent scripts (default: 5)
+    #[serde(default)]
+    pub max_concurrent_scripts: Option<usize>,
+
+    /// Timeout in seconds per individual step (default: 30)
+    #[serde(default)]
+    pub per_step_timeout_secs: Option<u64>,
+
+    /// Maximum script size in bytes (default: 1_048_576 = 1MB)
+    #[serde(default)]
+    pub max_script_size_bytes: Option<usize>,
+
+    /// Maximum nesting depth for script calls (default: 10)
+    #[serde(default)]
+    pub max_nesting_depth: Option<usize>,
+
+    /// Directory for storing scripts (default: ~/.acrawl/scripts/)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts_dir: Option<PathBuf>,
+}
+
+impl Default for ScriptSettings {
+    fn default() -> Self {
+        Self {
+            max_steps: Some(200),
+            max_timeout_secs: Some(300),
+            max_output_bytes: Some(10_485_760),
+            max_parallel_branches: Some(10),
+            max_concurrent_scripts: Some(5),
+            per_step_timeout_secs: Some(30),
+            max_script_size_bytes: Some(1_048_576),
+            max_nesting_depth: Some(10),
+            scripts_dir: Some(core_config_home_dir().join("scripts")),
+        }
+    }
+}
+
 /// Settings loaded from settings.json configuration file.
 /// All fields are optional with serde defaults to support partial JSON files.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,6 +144,10 @@ pub struct Settings {
     /// Compaction: enable LLM-powered summarization (default: false)
     #[serde(default)]
     pub compaction_llm_summarization: Option<bool>,
+
+    /// Script resource limits and configuration
+    #[serde(default)]
+    pub script: Option<ScriptSettings>,
 }
 
 impl Default for Settings {
@@ -113,6 +173,7 @@ impl Default for Settings {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
         }
     }
 }
@@ -389,6 +450,7 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
         };
 
         save_settings(&original).expect("Failed to save settings");
@@ -594,6 +656,7 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
         })
         .expect("save settings");
 
@@ -656,6 +719,7 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
         };
 
         save_settings(&original).expect("Failed to save settings");
@@ -718,6 +782,7 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: None,
         };
 
         assert_eq!(settings_get_max_concurrent_per_parent(&settings), 5);
