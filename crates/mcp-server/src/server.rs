@@ -954,6 +954,23 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    fn assert_jsonrpc_error(
+        outcome: Result<RunGoalRequest, RunGoalOutcome>,
+        expected_code: i32,
+        expected_message: &str,
+    ) {
+        match outcome {
+            Err(RunGoalOutcome::JsonRpcError { code, message }) => {
+                assert_eq!(code, expected_code);
+                assert!(
+                    message.contains(expected_message),
+                    "expected `{message}` to contain `{expected_message}`"
+                );
+            }
+            other => panic!("expected JsonRpcError, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_standard_content_length_frame() {
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
@@ -971,6 +988,7 @@ mod tests {
         let parsed =
             read_protocol_message(&mut cursor).expect("line-delimited request should parse");
         assert_eq!(parsed, body.as_bytes());
+        assert_eq!(output_mode(), TransportMode::LineDelimited);
     }
 
     #[test]
@@ -981,6 +999,16 @@ mod tests {
         let parsed =
             read_protocol_message(&mut cursor).expect("leading whitespace should be drained");
         assert_eq!(parsed, body.as_bytes());
+    }
+
+    #[test]
+    fn read_protocol_message_accepts_framed_mode() {
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let framed = encode_mcp_frame(body.as_bytes());
+        let mut cursor = Cursor::new(framed);
+        let parsed = read_protocol_message(&mut cursor).expect("framed request should parse");
+        assert_eq!(parsed, body.as_bytes());
+        assert_eq!(output_mode(), TransportMode::Framed);
     }
 
     #[test]
@@ -1027,31 +1055,155 @@ mod tests {
     }
 
     #[test]
-    fn validate_tool_names_rejects_unknown_tool() {
-        let names = vec!["nonexistent_tool".to_string()];
-        let err = validate_tool_names(&names).unwrap_err();
-        assert!(err.contains("unknown tool"));
+    fn validate_tool_names_accepts_empty_list() {
+        assert!(validate_tool_names(&[]).is_ok());
     }
 
     #[test]
-    fn parse_run_goal_request_normalizes_allowed_tools() {
+    fn validate_tool_names_rejects_unknown_tool() {
+        let names = vec!["nonexistent-tool".to_string()];
+        let err = validate_tool_names(&names).unwrap_err();
+        assert!(err.contains("unknown tool"));
+        assert!(err.contains("nonexistent-tool"));
+    }
+
+    #[test]
+    fn normalize_tool_name_replaces_dashes_and_lowercases() {
+        assert_eq!(normalize_tool_name("Read-Content"), "read_content");
+        assert_eq!(normalize_tool_name("SAVE_FILE"), "save_file");
+    }
+
+    #[test]
+    fn normalize_tool_names_deduplicates_names() {
+        let names = vec![
+            "read-content".to_string(),
+            "read_content".to_string(),
+            "Read-Content".to_string(),
+            "navigate".to_string(),
+        ];
+
+        assert_eq!(
+            normalize_tool_names(&names),
+            vec!["navigate", "read_content"]
+        );
+    }
+
+    #[test]
+    fn filtered_tool_specs_with_empty_allowed_list_returns_all_tools() {
+        let filtered = filtered_tool_specs(&[]);
+
+        assert_eq!(filtered.len(), mvp_tool_specs().len());
+        assert_eq!(
+            filtered.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            mvp_tool_specs()
+                .iter()
+                .map(|spec| spec.name)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn filtered_tool_specs_with_specific_allowed_list_returns_subset() {
+        let filtered = filtered_tool_specs(&["navigate".to_string(), "click".to_string()]);
+
+        assert_eq!(
+            filtered.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            vec!["navigate", "click"]
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_accepts_valid_input() {
         let request = parse_run_goal_request(&json!({
             "goal": "Collect product titles",
             "model": "anthropic/claude-sonnet-4-6",
             "allowed_tools": ["read-content", "navigate", "read_content"],
-            "max_steps": 7
+            "max_steps": 200
         }))
         .expect("request should parse");
 
         assert_eq!(request.goal, "Collect product titles");
+        assert_eq!(request.model, "anthropic/claude-sonnet-4-6");
         assert_eq!(request.allowed_tools, vec!["navigate", "read_content"]);
-        assert_eq!(request.max_steps, Some(7));
+        assert_eq!(request.max_steps, Some(200));
     }
 
     #[test]
-    fn parse_run_goal_request_rejects_blank_goal() {
-        let outcome = parse_run_goal_request(&json!({"goal": "  ", "model": "x/y"}));
-        assert!(outcome.is_err());
+    fn parse_run_goal_request_rejects_missing_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({})),
+            -32602,
+            "missing required parameter: goal",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_empty_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({"goal": "", "model": "x/y"})),
+            -32602,
+            "missing required parameter: goal",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_whitespace_only_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({"goal": "  ", "model": "x/y"})),
+            -32602,
+            "missing required parameter: goal",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_oversized_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "x".repeat(100_001),
+                "model": "anthropic/claude-sonnet-4-6"
+            })),
+            -32602,
+            "goal exceeds maximum length",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_invalid_allowed_tools() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "Collect product titles",
+                "model": "anthropic/claude-sonnet-4-6",
+                "allowed_tools": ["totally-fake-tool"]
+            })),
+            -32602,
+            "unknown tool `totally-fake-tool`",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_max_steps_below_range() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "Collect product titles",
+                "model": "anthropic/claude-sonnet-4-6",
+                "max_steps": 0
+            })),
+            -32602,
+            "max_steps must be between 1 and 200, got 0",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_max_steps_above_range() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "Collect product titles",
+                "model": "anthropic/claude-sonnet-4-6",
+                "max_steps": 201
+            })),
+            -32602,
+            "max_steps must be between 1 and 200, got 201",
+        );
     }
 
     #[derive(Debug, Clone)]
@@ -1086,6 +1238,7 @@ mod tests {
         };
         assert_eq!(result["isError"], false);
         assert_eq!(result["structuredContent"]["steps_executed"], 3);
+        assert_eq!(result["structuredContent"]["goal"], "Collect titles");
     }
 
     #[test]
@@ -1103,6 +1256,82 @@ mod tests {
             panic!("expected tool error result");
         };
         assert_eq!(result["isError"], true);
+        assert_eq!(result["content"][0]["text"], "Crawl failed: blocked");
+    }
+
+    #[test]
+    fn execute_run_goal_internal_error_returns_jsonrpc_error() {
+        let executor = FakeGoalExecutor {
+            result: Err(RunGoalExecutionError::Internal(
+                "provider exploded".to_string(),
+            )),
+        };
+
+        let outcome = execute_run_goal(
+            &executor,
+            &json!({"goal": "Collect titles", "model": "anthropic/claude-sonnet-4-6"}),
+        );
+
+        assert_eq!(
+            outcome,
+            RunGoalOutcome::JsonRpcError {
+                code: -32603,
+                message: "provider exploded".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn build_run_goal_success_response_returns_expected_json_structure() {
+        let request = RunGoalRequest {
+            goal: "Collect titles".to_string(),
+            model: "anthropic/claude-sonnet-4-6".to_string(),
+            allowed_tools: vec!["navigate".to_string(), "read_content".to_string()],
+            max_steps: Some(5),
+        };
+        let result = CrawlResult {
+            summary: "Finished crawl".to_string(),
+            extracted_data: vec![json!({"title": "Example"})],
+            steps_executed: 3,
+            messages: Vec::new(),
+        };
+
+        let response = build_run_goal_success_response(&request, &result);
+
+        assert_eq!(response["isError"], false);
+        assert_eq!(response["content"][0]["type"], "text");
+        assert!(response["content"][0]["text"]
+            .as_str()
+            .expect("text content")
+            .contains("Crawl completed in 3 steps."));
+        assert_eq!(response["structuredContent"]["summary"], "Finished crawl");
+        assert_eq!(
+            response["structuredContent"]["extracted_data"][0]["title"],
+            "Example"
+        );
+        assert_eq!(response["structuredContent"]["steps_executed"], 3);
+        assert_eq!(
+            response["structuredContent"]["model_used"],
+            "anthropic/claude-sonnet-4-6"
+        );
+        assert_eq!(
+            response["structuredContent"]["allowed_tools"],
+            json!(["navigate", "read_content"])
+        );
+        assert_eq!(response["structuredContent"]["goal"], "Collect titles");
+    }
+
+    #[test]
+    fn build_run_goal_failure_response_returns_expected_error_structure() {
+        let response = build_run_goal_failure_response("blocked");
+
+        assert_eq!(
+            response,
+            json!({
+                "content": [{"type": "text", "text": "Crawl failed: blocked"}],
+                "isError": true,
+            })
+        );
     }
 
     #[test]
@@ -1111,60 +1340,5 @@ mod tests {
             serde_json::from_str(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap();
         assert_eq!(req.jsonrpc, "2.0");
         assert_eq!(req.method, "tools/list");
-    }
-
-    #[test]
-    fn parse_run_goal_rejects_empty_goal() {
-        let args = serde_json::json!({"goal": ""});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_rejects_whitespace_only_goal() {
-        let args = serde_json::json!({"goal": "   "});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_rejects_oversized_goal() {
-        let huge = "x".repeat(100_001);
-        let args = serde_json::json!({"goal": huge});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_accepts_max_length_goal() {
-        let max_goal = "x".repeat(100_000);
-        let args = serde_json::json!({
-            "goal": max_goal,
-            "model": "anthropic/claude-sonnet-4-6"
-        });
-        let result = parse_run_goal_request(&args);
-        if let Err(RunGoalOutcome::JsonRpcError { message, .. }) = result {
-            assert!(
-                !message.contains("length"),
-                "should not reject on length: {message}"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_run_goal_missing_goal_field() {
-        let args = serde_json::json!({});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_non_string_allowed_tools_uses_default() {
-        let args = serde_json::json!({
-            "goal": "test",
-            "model": "anthropic/claude-sonnet-4-6",
-            "allowed_tools": 123
-        });
-        let _ = parse_run_goal_request(&args);
     }
 }
