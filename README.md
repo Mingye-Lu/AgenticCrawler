@@ -179,6 +179,36 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
 | `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). |
 
+#### Content Formats
+
+The `navigate` tool's `format` parameter controls how the page is returned:
+
+| Format | Description |
+|--------|-------------|
+| `markdown` | Full HTML → markdown conversion. All content preserved. |
+| `fit_markdown` | **Recommended.** Prunes boilerplate before conversion, saving 30-60% tokens on typical pages. |
+| `text` | Plain text, no markdown. |
+| `html` | Raw HTML. |
+
+`fit_markdown` works in two passes:
+
+1. **Hard-block removal**, elements whose `class` or `id` attribute contains any of these strings are removed immediately: `nav`, `footer`, `header`, `sidebar`, `ads`, `comment`, `promo`, `advert`, `social`, `share`.
+2. **Score-based pruning**, remaining elements are scored; anything below 0.48 is removed. The score is:
+
+   ```
+   0.4 × text_density
+   + 0.2 × (1 − link_density)
+   + 0.2 × tag_weight
+   + 0.1 × class_id_score
+   + 0.1 × ln(text_length + 1)
+   ```
+
+   Tag weights: `article` = 1.5 · `h1` = 1.2 · `h2` = 1.1 · `h3/p/section` = 1.0 · `h4` = 0.9 · `h5/table` = 0.8 · `h6` = 0.7 · `span` = 0.3 · `div/li/ul/ol` = 0.5.
+
+**Use `markdown` instead of `fit_markdown` when:** the page has important content inside elements named `sidebar`, `nav`, or similar, for example, metadata panels, related-article links, or author info stored in a sidebar div.
+
+If `fit_markdown` prunes all content (empty result), the tool automatically falls back to plain text.
+
 #### Interaction
 
 | Tool | Description |
@@ -210,6 +240,53 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `subagent_status` | Check the status and results of one or all active sub-agents without blocking. |
 | `cancel_subagent` | Cancel a running sub-agent by ID. |
 
+#### page_state Reference
+
+Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_back`, `scroll`, `switch_tab`, `select_option`) all return a `page_state` object. There are two variants:
+
+**Full page_state**, returned after the first interaction on a URL, or when changes are too extensive to diff:
+
+```json
+{
+  "url": "https://example.com/page",
+  "title": "Page Title",
+  "page_map": {
+    "headings": [{ "level": 1, "text": "...", "id": "...", "selector": "...", "char_count": 0, "preview": "..." }],
+    "landmarks": [{ "tag": "nav", "role": "navigation", "id": "...", "selector": "...", "text_preview": "..." }],
+    "links": [{ "text": "...", "href": "...", "selector": "..." }],
+    "interactive": { "counts": { "buttons": 0, "inputs": 0, "selects": 0, "textareas": 0, "total": 0 }, "elements": [] },
+    "meta": { "title": "...", "url": "...", "description": "..." },
+    "truncated_links": false,
+    "truncated_forms": false,
+    "truncated_landmarks": false
+  }
+}
+```
+
+**Diff page_state**, returned on subsequent interactions on the same URL, showing only what changed:
+
+```json
+{
+  "url": "https://example.com/page",
+  "title": "Page Title",
+  "changed": true,
+  "changes": {
+    "added_headings": [],
+    "removed_headings": [],
+    "added_links": [],
+    "removed_links": [],
+    "added_landmarks": [],
+    "removed_landmarks": [],
+    "added_interactive": [{ "selector": "...", "tag": "...", "text": "..." }],
+    "removed_interactive": [],
+    "modified_interactive": [{ "selector": "...", "tag": "...", "text": "...", "state_changes": { "aria_expanded": "true" } }]
+  }
+}
+```
+
+If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. Caps: max 50 links, 20 landmarks per page_state.
+
+
 ### Sub-Agent Parallelism
 
 The agent can fork child agents to crawl multiple pages concurrently. Each child gets its own browser tab, step budget, and independent state.
@@ -221,6 +298,19 @@ The agent can fork child agents to crawl multiple pages concurrently. Each child
 | `max_total_agents` | 10 | Global cap across all parents |
 | `fork_child_max_steps` | 15 | Step budget per child agent |
 | `fork_wait_timeout_secs` | 60 | Timeout waiting for sub-agents |
+
+#### URL Claiming
+
+Before a child agent is spawned, its scope is registered in a shared claim registry. This prevents two sibling agents from crawling the same URL simultaneously.
+
+**Rules:**
+- **First-claimer-wins**, if a second agent tries to claim a URL already claimed by a sibling, the fork fails immediately with a conflict message naming the owner agent. The parent LLM sees this conflict and can adjust scope.
+- **Three scope types:** `SinglePage` (exact URL), `UrlList` (all-or-nothing batch), `UrlPattern` (regex, checked for overlap with all existing claims).
+- **RAII lifetime**, a claim is held for the life of the child. When the child finishes, is cancelled, or its parent aborts setup, the claim is released automatically and the URL becomes available again.
+- **Cross-type checking**, an exact URL conflicts with any already-claimed regex that matches it, and a new regex conflicts with any already-claimed exact URL it would match.
+- **Intra-list deduplication**, if the same URL appears twice in a `UrlList`, it is silently deduplicated (the LLM sometimes produces duplicates).
+
+Claiming is **automatic**, it happens inside `fork` before the child starts, not inside `navigate`. The agent does not call it explicitly.
 
 ### Smart Fetch Routing
 
@@ -272,7 +362,66 @@ When `--no-headless` / `--headed` is set, all fetches go directly through the br
 <tr><td>Custom (OpenAI-compatible)</td><td>API key (optional)</td><td>—</td></tr>
 </table>
 
+#### Custom / Local Providers
+
+To use any OpenAI-compatible endpoint (Ollama, LMStudio, vLLM, a local proxy, etc.):
+
+```bash
+acrawl auth other
+```
+
+You'll be prompted for a base URL and an optional API key. Examples:
+
+| Setup | Base URL | Model string |
+|-------|----------|--------------|
+| Ollama (local) | `http://localhost:11434/v1` | `other/llama3.2` |
+| LMStudio | `http://localhost:1234/v1` | `other/local-model` |
+| vLLM | `http://localhost:8000/v1` | `other/meta-llama/Llama-3.1-8B` |
+| Any OpenAI-compatible API | Your endpoint | `other/<model-id>` |
+
+This creates a `credentials.json` entry with `auth_method: "api_key"` and your `base_url`. Leave the API key blank if your server doesn't require one.
+
+
 Models use the `provider/model-id` format: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, `amazon-bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0`, etc.
+
+#### Providers With Non-Standard Auth
+
+**GitHub Copilot, device code flow:**
+
+```bash
+acrawl auth copilot
+```
+
+1. acrawl prints a URL (`https://github.com/login/device`) and an 8-character user code, and attempts to open your browser automatically.
+2. Paste the code at the GitHub page and authorize the app.
+3. acrawl polls GitHub until authorization completes, then exchanges the GitHub token for a short-lived Copilot API token, which is stored in `credentials.json`.
+
+No API key is needed, the entire flow is interactive. If authorization succeeds, credentials are stored automatically.
+
+**GitLab Duo, API key:**
+
+```bash
+acrawl auth gitlab
+```
+
+Prompts for a GitLab Personal Access Token (PAT). Paste your token and press Enter. No browser redirect required. Note: GitLab Duo does not support tool calling.
+
+**Amazon Bedrock, AWS credentials:**
+
+```bash
+acrawl auth amazon-bedrock
+```
+
+Prompts for AWS Access Key ID, AWS Secret Access Key, and region (default: `us-east-1`). These are stored directly in `credentials.json` and used to sign requests with AWS SigV4.
+
+**Azure OpenAI:**
+
+```bash
+acrawl auth azure
+```
+
+Prompts for Resource Name (e.g. `myresource`), Deployment Name (e.g. `gpt-4o`), and API key.
+
 
 ### Interactive TUI
 
@@ -305,7 +454,13 @@ Running `acrawl` without a TTY on stdout (e.g. piped or redirected) exits with a
 - **Auto-save** — sessions are saved automatically on exit.
 - **Resume** — `--resume session.json` reloads a conversation. Resume-safe slash commands (`/status`, `/compact`, `/cost`, `/config`, `/version`, `/export`, `/help`, `/clear`) can be appended to the command line.
 - **Export** — `/export [file]` writes a human-readable markdown transcript.
-- **Auto-compaction** — when context exceeds the token threshold (default 200K), acrawl summarizes older messages while preserving the most recent turns, unique tools used, and pending work items.
+- **Auto-compaction**, when cumulative input tokens exceed the threshold (default 200K), acrawl compacts the session:
+  - **Preserved verbatim:** the most recent ~80K tokens of messages (always at least 2 messages), with tool call pairs kept intact, no `ToolResult` is ever left without its matching `ToolUse`.
+  - **Preserved as metadata:** message counts, deduplicated tool list, last 3 user requests (160 chars each), pending work items (inferred from messages containing "todo", "next", "pending", "follow up", "remaining"), up to 10 key URLs, and the most recent non-empty message as "current work".
+  - **Tool output pruning:** tool outputs older than the innermost 40K-token window are truncated to 2,000 chars with a `[… output truncated from N chars]` marker before the preserved window is calculated.
+  - **Summary generation:** template-based by default (no LLM call). Opt in to LLM summarization via `compaction_llm_summarization: true` in `settings.json`, this sends the removed messages to the model and uses its output as the summary, with a fallback to the template if the LLM fails.
+  - **Continuation prompt:** the compacted session prepends a system message instructing the agent to resume directly without recapping or asking questions.
+  - **Browser state is unaffected**, compaction only modifies message history; the current browser tab, URL, cookies, and page state are unchanged.
 - **Multiple sessions** — `/session list` to browse, `/session switch <id>` to switch.
 
 ### Tool Allowlist
@@ -539,6 +694,21 @@ Created with defaults on first run.
 | `ACRAWL_CONFIG_HOME` | Override config directory (default: `~/.acrawl/`) |
 
 Provider-specific env vars (see [provider table](#24-llm-providers) above) are read as fallbacks when no `credentials.json` entry exists.
+
+## Known Limitations
+
+acrawl works well on most public web content, but some situations are outside what the agent can reliably handle:
+
+| Scenario | Behavior |
+|----------|----------|
+| **CAPTCHA / bot challenges** | CloakBrowser uses stealth techniques to avoid bot detection, but unsolvable CAPTCHAs (image puzzles, Cloudflare Turnstile requiring proof-of-work) will block progress. Use the real-browser extension (`/extension`) where your browser already has a trusted session. |
+| **SMS / TOTP 2FA** | The agent can fill in a 2FA code if you paste it into the REPL, but it cannot receive or generate codes itself. |
+| **Login-walled content** | For sites where you must be logged in, use the extension mode so the agent operates in your existing authenticated browser session. |
+| **Single-page apps that load content on scroll** | The agent can `scroll` to trigger lazy loading, but infinite-scroll feeds with no end condition may require explicit step limits. |
+| **PDF and binary file content** | `save_file` downloads any URL to disk. The agent cannot read the text content of a saved PDF, use `navigate` on a URL that serves HTML, or pipe the download through a text extractor externally. |
+| **WebGL / canvas fingerprinting** | Some anti-bot systems fingerprint the GPU via WebGL. CloakBrowser mitigates common checks but cannot spoof hardware-level fingerprints. |
+| **Sites that require a real mouse trajectory** | Bot-detection systems that analyse mouse movement patterns may flag headless browser interactions. Switch to extension mode for these sites. |
+
 
 ## How It Works
 
