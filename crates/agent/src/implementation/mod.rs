@@ -633,16 +633,22 @@ mod tests {
         let manager = default_agent_manager();
         manager.lock().await.register_root("root");
 
+        let bridge = match crate::PlaywrightBridge::new().await {
+            Ok(b) => b,
+            Err(crate::BridgeError::PlaywrightNotInstalled(_)) => {
+                eprintln!("skipping test: CloakBrowser not installed");
+                return;
+            }
+            Err(e) => panic!("unexpected bridge error: {e}"),
+        };
+
         let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
             .with_agent_id("root".to_string())
             .with_agent_manager(manager.clone());
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
-        agent.shared_bridge = Some(Arc::new(Mutex::new(Box::new(
-            crate::PlaywrightBridge::new()
-                .await
-                .expect("bridge should initialize for spawn test"),
-        )
-            as Box<dyn BrowserBackend + Send>)));
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            Box::new(bridge) as Box<dyn BrowserBackend + Send>
+        )));
         agent.fork_page_index_override = Some(1);
 
         let observation = agent
@@ -876,16 +882,22 @@ mod tests {
         let manager = default_agent_manager();
         manager.lock().await.register_root("root");
 
+        let bridge = match crate::PlaywrightBridge::new().await {
+            Ok(b) => b,
+            Err(crate::BridgeError::PlaywrightNotInstalled(_)) => {
+                eprintln!("skipping test: CloakBrowser not installed");
+                return;
+            }
+            Err(e) => panic!("unexpected bridge error: {e}"),
+        };
+
         let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())
             .with_agent_id("root".to_string())
             .with_agent_manager(manager);
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
-        agent.shared_bridge = Some(Arc::new(Mutex::new(Box::new(
-            crate::PlaywrightBridge::new()
-                .await
-                .expect("bridge should initialize for fork test"),
-        )
-            as Box<dyn BrowserBackend + Send>)));
+        agent.shared_bridge = Some(Arc::new(Mutex::new(
+            Box::new(bridge) as Box<dyn BrowserBackend + Send>
+        )));
         agent.fork_page_index_override = Some(1);
 
         let observation = agent

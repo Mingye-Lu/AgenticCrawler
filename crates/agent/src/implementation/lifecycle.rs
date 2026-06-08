@@ -221,10 +221,14 @@ mod tests {
         std::env::set_var("HEADLESS", "true");
         let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new());
 
-        agent
-            .ensure_browser()
-            .await
-            .expect("first initialization should succeed");
+        match agent.ensure_browser().await {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("not installed") => {
+                eprintln!("skipping test: CloakBrowser not installed");
+                return;
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+        }
         let first_bridge = agent.shared_bridge.clone().expect("bridge should exist");
 
         agent
@@ -241,10 +245,14 @@ mod tests {
         assert!(agent.browser.is_none());
         assert!(agent.shared_bridge.is_none());
 
-        agent
-            .ensure_browser()
-            .await
-            .expect("reinitialization after reset should succeed");
+        match agent.ensure_browser().await {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("not installed") => {
+                eprintln!("skipping test: CloakBrowser unavailable after reset");
+                return;
+            }
+            Err(e) => panic!("reinitialization after reset failed: {e}"),
+        }
         let second_bridge = agent
             .shared_bridge
             .clone()
