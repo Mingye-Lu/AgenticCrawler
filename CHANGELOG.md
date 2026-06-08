@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.6] - 2026-06-08
+
+### Added
+
+- **`fit_markdown` format for navigate** — new `format="fit_markdown"` option that prunes boilerplate DOM nodes (ads, navs, sidebars, footers) before markdown conversion, dramatically reducing token consumption on noisy pages. Scores elements by text density, descendant link density, semantic tag weight, and class/id signals. Falls back to plain text when pruning removes all content. Tool instructions now recommend `fit_markdown` as the preferred default format.
+
 ## [0.8.5] - 2026-06-07
 
 ### Added
@@ -626,6 +632,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.6
 [0.8.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.5
 [0.8.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.4
 [0.8.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.3

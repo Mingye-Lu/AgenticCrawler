@@ -173,7 +173,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 | Tool | Description |
 |------|-------------|
-| `navigate` | Go to a URL (supports `format`: markdown/text/html). Uses HTTP first, auto-escalates to browser when JS is detected. Returns structured content with a `page_map`. |
+| `navigate` | Go to a URL (supports `format`: markdown/text/html/fit_markdown). Uses HTTP first, auto-escalates to browser when JS is detected. Returns structured content with a `page_map`. `fit_markdown` prunes boilerplate DOM nodes before conversion, saving tokens. |
 | `go_back` | Browser back button. Returns `page_state` with the resulting page structure. |
 | `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
