@@ -58,12 +58,13 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
                     "url": { "type": "string" },
                     "format": { "type": "string", "enum": ["markdown", "text", "html", "fit_markdown"] },
                     "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main" },
-                    "strip_images": { "type": "boolean", "default": true }
+                    "strip_images": { "type": "boolean", "default": true },
+                    "page_map_depth": { "type": "string", "enum": ["full", "slim", "none"], "default": "slim" }
                 },
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context \u{2014} set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking. PREFER format='fit_markdown' \u{2014} it prunes boilerplate (ads, navs, sidebars) before conversion, saving tokens. Fall back to 'markdown' or 'text' only if content seems missing."),
+            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context \u{2014} set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking. PREFER format='fit_markdown' \u{2014} it prunes boilerplate (ads, navs, sidebars) before conversion, saving tokens. Fall back to 'markdown' or 'text' only if content seems missing. page_map_depth controls structural data verbosity: 'slim' (default) strips CSS selectors from all elements to save tokens \u{2014} use @eN refs for interaction instead. Set 'full' only when you need raw selectors, 'none' to omit page_map entirely."),
         },
         ToolSpec {
             name: "click",

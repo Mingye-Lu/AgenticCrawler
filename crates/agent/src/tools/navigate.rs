@@ -8,11 +8,19 @@ use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const SLIM_MAX_CHARS: usize = 2000;
+const MAX_LINK_TEXT_LEN: usize = 60;
 
 #[derive(Debug, PartialEq)]
 enum ContentDepth {
     Full,
     Main,
+    Slim,
+    None,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum PageMapDepth {
+    Full,
     Slim,
     None,
 }
@@ -23,6 +31,7 @@ struct NavigateInput {
     format: String,
     content_depth: ContentDepth,
     strip_images: bool,
+    page_map_depth: PageMapDepth,
 }
 
 fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
@@ -87,11 +96,27 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         .and_then(Value::as_bool)
         .unwrap_or(true);
 
+    let page_map_depth = match input
+        .get("page_map_depth")
+        .and_then(Value::as_str)
+        .unwrap_or("slim")
+    {
+        "full" => PageMapDepth::Full,
+        "slim" => PageMapDepth::Slim,
+        "none" => PageMapDepth::None,
+        _ => {
+            return Err(CrawlError::new(
+                "page_map_depth must be one of: full, slim, none",
+            ))
+        }
+    };
+
     Ok(NavigateInput {
         url: url.to_string(),
         format: format.to_string(),
         content_depth,
         strip_images,
+        page_map_depth,
     })
 }
 
@@ -252,6 +277,62 @@ fn resolve_content(
     }
 }
 
+fn slim_page_map(page_map: &mut Value) {
+    if let Some(links) = page_map.get_mut("links").and_then(Value::as_array_mut) {
+        for link in links.iter_mut() {
+            if let Some(obj) = link.as_object_mut() {
+                obj.remove("selector");
+                let needs_truncation = obj
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| t.len() > MAX_LINK_TEXT_LEN);
+                if needs_truncation {
+                    let text = obj["text"].as_str().unwrap();
+                    let truncated: String = text.chars().take(MAX_LINK_TEXT_LEN).collect();
+                    obj.insert("text".to_string(), json!(format!("{truncated}...")));
+                }
+            }
+        }
+    }
+
+    if let Some(headings) = page_map.get_mut("headings").and_then(Value::as_array_mut) {
+        for heading in headings.iter_mut() {
+            if let Some(obj) = heading.as_object_mut() {
+                obj.remove("selector");
+            }
+        }
+    }
+
+    if let Some(interactive) = page_map.get_mut("interactive") {
+        if let Some(elements) = interactive
+            .get_mut("elements")
+            .and_then(Value::as_array_mut)
+        {
+            for element in elements.iter_mut() {
+                if let Some(obj) = element.as_object_mut() {
+                    obj.remove("selector");
+                }
+            }
+        }
+    }
+
+    if let Some(landmarks) = page_map.get_mut("landmarks").and_then(Value::as_array_mut) {
+        for landmark in landmarks.iter_mut() {
+            if let Some(obj) = landmark.as_object_mut() {
+                obj.remove("selector");
+            }
+        }
+    }
+
+    if let Some(forms) = page_map.get_mut("forms").and_then(Value::as_array_mut) {
+        for form in forms.iter_mut() {
+            if let Some(obj) = form.as_object_mut() {
+                obj.remove("selector");
+            }
+        }
+    }
+}
+
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
@@ -283,6 +364,24 @@ pub async fn execute(
 
     browser.set_navigated_url(&page.url, page.fetched_via_browser);
     browser.ref_map_mut().clear();
+
+    if params.page_map_depth == PageMapDepth::None {
+        let content_length = content.chars().count();
+        return Ok(ToolEffect::reply_json(&json!({
+            "url": page.url,
+            "title": title,
+            "content": content,
+            "format": params.format,
+            "content_depth": match params.content_depth {
+                ContentDepth::Full => "full",
+                ContentDepth::Main => "main",
+                ContentDepth::Slim => "slim",
+                ContentDepth::None => "none",
+            },
+            "truncated": truncated,
+            "content_length": content_length,
+        })));
+    }
 
     let mut page_map = if page.fetched_via_browser {
         match browser.acquire_bridge().await {
@@ -325,6 +424,10 @@ pub async fn execute(
         .unwrap_or("unknown");
     let cache_key = normalize_url(pm_url).to_string();
     browser.set_page_snapshot(cache_key, page_map.clone());
+
+    if params.page_map_depth == PageMapDepth::Slim {
+        slim_page_map(&mut page_map);
+    }
 
     let content_length = content.chars().count();
 
@@ -607,5 +710,79 @@ mod tests {
             content.contains("fallback text"),
             "should fall back to text when pruning removes all content, got: {content}"
         );
+    }
+
+    #[test]
+    fn parse_page_map_depth_defaults_to_slim() {
+        let input = json!({"url": "https://example.com"});
+        let result = parse_input(&input).unwrap();
+        assert_eq!(result.page_map_depth, PageMapDepth::Slim);
+    }
+
+    #[test]
+    fn parse_page_map_depth_all_values() {
+        for (value, expected) in [
+            ("full", PageMapDepth::Full),
+            ("slim", PageMapDepth::Slim),
+            ("none", PageMapDepth::None),
+        ] {
+            let input = json!({"url": "https://example.com", "page_map_depth": value});
+            let result = parse_input(&input).unwrap();
+            assert_eq!(result.page_map_depth, expected);
+        }
+    }
+
+    #[test]
+    fn parse_page_map_depth_rejects_invalid() {
+        let input = json!({"url": "https://example.com", "page_map_depth": "bogus"});
+        assert!(parse_input(&input).is_err());
+    }
+
+    #[test]
+    fn slim_page_map_strips_selectors_and_caps_text() {
+        let mut page_map = json!({
+            "links": [
+                {"text": "Short", "href": "https://a.com", "selector": "a.long-selector"},
+                {"text": "This is a very long link text that definitely exceeds sixty characters and should be truncated", "href": "https://b.com", "selector": "a.other"}
+            ],
+            "headings": [
+                {"level": 1, "text": "Title", "selector": "h1.main", "char_count": 100}
+            ],
+            "interactive": {
+                "elements": [
+                    {"ref": "@e1", "role": "button", "selector": "button.submit", "text": "Submit"}
+                ]
+            },
+            "landmarks": [
+                {"tag": "main", "role": "main", "selector": "#content", "text_preview": "Main"}
+            ],
+            "forms": [
+                {"action": "/submit", "selector": "form#contact"}
+            ]
+        });
+
+        slim_page_map(&mut page_map);
+
+        let links = page_map["links"].as_array().unwrap();
+        assert!(links[0].get("selector").is_none());
+        assert_eq!(links[0]["text"], "Short");
+        assert!(links[1].get("selector").is_none());
+        let long_text = links[1]["text"].as_str().unwrap();
+        assert!(long_text.ends_with("..."));
+        assert!(long_text.len() <= MAX_LINK_TEXT_LEN + 3);
+
+        let headings = page_map["headings"].as_array().unwrap();
+        assert!(headings[0].get("selector").is_none());
+        assert_eq!(headings[0]["text"], "Title");
+
+        let elements = page_map["interactive"]["elements"].as_array().unwrap();
+        assert!(elements[0].get("selector").is_none());
+        assert_eq!(elements[0]["ref"], "@e1");
+
+        let landmarks = page_map["landmarks"].as_array().unwrap();
+        assert!(landmarks[0].get("selector").is_none());
+
+        let forms = page_map["forms"].as_array().unwrap();
+        assert!(forms[0].get("selector").is_none());
     }
 }
