@@ -12,6 +12,7 @@ use acrawl_core::{ScriptLimits, ScriptResult, ScriptState, ScriptStatus};
 use script::grammar::{Expression, ScriptDefinition, ScriptNode, ALLOWED_TOOLS};
 use serde_json::{json, Value};
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 
 use crate::{BrowserContext, ToolEffect, ToolExecutionError, ToolRegistry};
 
@@ -20,6 +21,7 @@ pub enum ScriptExecutionError {
     StepLimitExceeded,
     WallClockTimeout,
     PerStepTimeout,
+    Cancelled,
     ToolError(String),
     VariableNotFound(String),
 }
@@ -30,6 +32,7 @@ impl std::fmt::Display for ScriptExecutionError {
             Self::StepLimitExceeded => write!(f, "script step limit exceeded"),
             Self::WallClockTimeout => write!(f, "script wall-clock timeout exceeded"),
             Self::PerStepTimeout => write!(f, "script step timed out"),
+            Self::Cancelled => write!(f, "script cancelled"),
             Self::ToolError(message) => write!(f, "tool error: {message}"),
             Self::VariableNotFound(name) => write!(f, "variable not found: {name}"),
         }
@@ -41,17 +44,25 @@ impl std::error::Error for ScriptExecutionError {}
 pub struct ScriptExecutor {
     browser: BrowserContext,
     state: ScriptState,
+    shared_state: Arc<RwLock<ScriptState>>,
     limits: ScriptLimits,
     variables: HashMap<String, Value>,
     extracted_data: Vec<Value>,
     pub yielded_data: Arc<RwLock<Vec<Value>>>,
     start_time: Instant,
     step_counter: Arc<AtomicUsize>,
+    cancel_token: CancellationToken,
 }
 
 impl ScriptExecutor {
     #[must_use]
-    pub fn new(script_id: String, browser: BrowserContext, limits: ScriptLimits) -> Self {
+    pub fn new(
+        script_id: String,
+        browser: BrowserContext,
+        limits: ScriptLimits,
+        shared_state: Arc<RwLock<ScriptState>>,
+        cancel_token: CancellationToken,
+    ) -> Self {
         Self {
             browser,
             state: ScriptState {
@@ -65,12 +76,14 @@ impl ScriptExecutor {
                 errors_caught: 0,
                 yielded_data: Vec::new(),
             },
+            shared_state,
             limits,
             variables: HashMap::new(),
             extracted_data: Vec::new(),
             yielded_data: Arc::new(RwLock::new(Vec::new())),
             start_time: Instant::now(),
             step_counter: Arc::new(AtomicUsize::new(0)),
+            cancel_token,
         }
     }
 
@@ -78,12 +91,15 @@ impl ScriptExecutor {
         self.start_time = Instant::now();
         self.state.status = ScriptStatus::Running;
         self.state.total_steps = Some(script.steps.len());
+        self.sync_shared_state();
 
         let execution_result = async {
             for node in &script.steps {
+                self.check_limits()?;
                 self.execute_node(node).await?;
                 self.state.step = self.step_counter.load(Ordering::Relaxed);
                 self.state.elapsed_secs = self.start_time.elapsed().as_secs_f64();
+                self.sync_shared_state();
             }
             Ok::<(), ScriptExecutionError>(())
         }
@@ -94,9 +110,11 @@ impl ScriptExecutor {
 
         let (status, error) = match execution_result {
             Ok(()) => (ScriptStatus::Completed, None),
+            Err(ScriptExecutionError::Cancelled) => (ScriptStatus::Cancelled, None),
             Err(error) => (ScriptStatus::Failed, Some(error.to_string())),
         };
         self.state.status = status;
+        self.sync_shared_state();
 
         let yielded_data = self
             .yielded_data
@@ -123,17 +141,21 @@ impl ScriptExecutor {
             } => {
                 self.state.step = self.step_counter.fetch_add(1, Ordering::Relaxed) + 1;
                 self.check_limits()?;
-                self.execute_tool_call(tool, input, output.as_deref()).await
+                let result = self.execute_tool_call(tool, input, output.as_deref()).await;
+                self.sync_shared_state();
+                result
             }
             ScriptNode::Assign { variable, value } => {
                 let resolved = self.evaluate_expression(value).await?;
                 self.variables.insert(variable.clone(), resolved);
+                self.sync_shared_state();
                 Ok(())
             }
             ScriptNode::Collect { value } => {
                 let resolved = self.evaluate_expression(value).await?;
                 self.extracted_data.push(resolved);
                 self.state.items_collected = self.extracted_data.len();
+                self.sync_shared_state();
                 Ok(())
             }
             ScriptNode::Yield { value } => {
@@ -143,6 +165,8 @@ impl ScriptExecutor {
                     ScriptExecutionError::ToolError(format!("yield buffer lock poisoned: {error}"))
                 })?;
                 yielded_data.push(resolved);
+                drop(yielded_data);
+                self.sync_shared_state();
                 Ok(())
             }
             ScriptNode::ForLoop {
@@ -163,7 +187,10 @@ impl ScriptExecutor {
                 condition,
                 then_steps,
                 else_steps,
-            } => self.execute_if_else(condition, then_steps, else_steps.as_deref()).await,
+            } => {
+                self.execute_if_else(condition, then_steps, else_steps.as_deref())
+                    .await
+            }
             ScriptNode::TryCatch {
                 try_steps,
                 catch_steps,
@@ -228,6 +255,10 @@ impl ScriptExecutor {
     }
 
     fn check_limits(&self) -> Result<(), ScriptExecutionError> {
+        if self.cancel_token.is_cancelled() {
+            return Err(ScriptExecutionError::Cancelled);
+        }
+
         let steps = self.step_counter.load(Ordering::Relaxed);
 
         if steps > self.limits.max_steps {
@@ -244,7 +275,8 @@ impl ScriptExecutor {
     fn evaluate_expression<'a>(
         &'a mut self,
         expression: &'a Expression,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Value, ScriptExecutionError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<Value, ScriptExecutionError>> + Send + 'a>>
+    {
         Box::pin(async move {
             match expression {
                 Expression::Literal(value) => self.try_substitute_variables(value),
@@ -385,5 +417,11 @@ impl ScriptExecutor {
 
     fn map_tool_error(error: ToolExecutionError) -> ScriptExecutionError {
         ScriptExecutionError::ToolError(error.to_string())
+    }
+
+    fn sync_shared_state(&self) {
+        if let Ok(mut state) = self.shared_state.write() {
+            *state = self.state.clone();
+        }
     }
 }

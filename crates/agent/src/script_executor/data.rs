@@ -118,9 +118,10 @@ impl ScriptExecutor {
     /// ```
     pub(super) fn push_yielded(&mut self, value: Value) -> Result<(), String> {
         self.state.yielded_data.push(value.clone());
-        let mut yielded_data = self.yielded_data.write().map_err(|error| {
-            format!("yield buffer lock poisoned: {error}")
-        })?;
+        let mut yielded_data = self
+            .yielded_data
+            .write()
+            .map_err(|error| format!("yield buffer lock poisoned: {error}"))?;
         yielded_data.push(value);
         Ok(())
     }

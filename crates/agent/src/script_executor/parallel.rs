@@ -54,12 +54,14 @@ impl ScriptExecutor {
                 let branch_executor = Self {
                     browser,
                     state: self.state.clone(),
+                    shared_state: self.shared_state.clone(),
                     limits: self.limits.clone(),
                     variables: self.variables.clone(),
                     extracted_data: Vec::new(),
                     yielded_data: self.yielded_data.clone(),
                     start_time: self.start_time,
                     step_counter: self.step_counter.clone(),
+                    cancel_token: self.cancel_token.clone(),
                 };
                 let branch_steps = branch.clone();
 
@@ -93,7 +95,9 @@ impl ScriptExecutor {
                 }
             }
 
-            let cleanup_error = Self::close_parallel_pages(shared_bridge, &page_indices).await.err();
+            let cleanup_error = Self::close_parallel_pages(shared_bridge, &page_indices)
+                .await
+                .err();
             self.state.step = self.step_counter.load(Ordering::Relaxed);
 
             if let Some(error) = first_error.or(cleanup_error) {
@@ -115,9 +119,11 @@ impl ScriptExecutor {
         branch_steps: Vec<ScriptNode>,
     ) -> Result<ParallelBranchResult, ScriptExecutionError> {
         for step in &branch_steps {
+            executor.check_limits()?;
             executor.execute_node(step).await?;
             executor.state.step = executor.step_counter.load(Ordering::Relaxed);
             executor.state.elapsed_secs = executor.start_time.elapsed().as_secs_f64();
+            executor.sync_shared_state();
         }
 
         Ok(ParallelBranchResult {

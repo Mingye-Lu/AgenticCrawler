@@ -22,3 +22,11 @@ pub mod subagent_status;
 pub mod switch_tab;
 pub mod wait;
 pub mod wait_for_subagents;
+
+pub mod cancel_script;
+pub mod list_scripts;
+pub mod read_script;
+pub mod run_script;
+pub mod save_script;
+pub mod script_status;
+pub mod wait_for_scripts;

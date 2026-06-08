@@ -14,18 +14,14 @@ impl ScriptExecutor {
         steps: &'a [ScriptNode],
     ) -> Pin<Box<dyn Future<Output = Result<(), ScriptExecutionError>> + Send + 'a>> {
         Box::pin(async move {
-            let start = Self::value_to_i64(
-                self.evaluate_expression(from).await?,
-                "for loop `from`",
-            )?;
+            let start =
+                Self::value_to_i64(self.evaluate_expression(from).await?, "for loop `from`")?;
             let end = Self::value_to_i64(self.evaluate_expression(to).await?, "for loop `to`")?;
 
             for value in start..end {
                 self.check_limits()?;
-                self.variables.insert(
-                    variable.to_string(),
-                    Value::Number(Number::from(value)),
-                );
+                self.variables
+                    .insert(variable.to_string(), Value::Number(Number::from(value)));
 
                 for step in steps {
                     self.execute_node(step).await?;
@@ -133,14 +129,19 @@ impl ScriptExecutor {
             for step in try_steps {
                 match self.execute_node(step).await {
                     Ok(()) => {}
-                    Err(error @ (ScriptExecutionError::StepLimitExceeded
-                    | ScriptExecutionError::WallClockTimeout
-                    | ScriptExecutionError::PerStepTimeout)) => {
+                    Err(
+                        error @ (ScriptExecutionError::StepLimitExceeded
+                        | ScriptExecutionError::WallClockTimeout
+                        | ScriptExecutionError::PerStepTimeout
+                        | ScriptExecutionError::Cancelled),
+                    ) => {
                         pending_error = Some(error);
                         break;
                     }
-                    Err(error @ (ScriptExecutionError::ToolError(_)
-                    | ScriptExecutionError::VariableNotFound(_))) => {
+                    Err(
+                        error @ (ScriptExecutionError::ToolError(_)
+                        | ScriptExecutionError::VariableNotFound(_)),
+                    ) => {
                         self.state.errors_caught += 1;
 
                         if let Some(name) = error_var {
