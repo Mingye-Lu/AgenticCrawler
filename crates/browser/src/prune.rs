@@ -3,6 +3,7 @@ use std::fmt::Write;
 use std::sync::LazyLock;
 
 static BODY_SELECTOR: LazyLock<Option<Selector>> = LazyLock::new(|| Selector::parse("body").ok());
+static ANCHOR_SELECTOR: LazyLock<Option<Selector>> = LazyLock::new(|| Selector::parse("a").ok());
 
 const THRESHOLD: f64 = 0.48;
 const NEGATIVE_PATTERNS: [&str; 10] = [
@@ -62,9 +63,10 @@ fn prune_node(element: ElementRef<'_>) -> Option<String> {
 }
 
 fn score_element(element: ElementRef<'_>) -> f64 {
-    let text_len = normalized_text_len(element);
+    let text: String = element.text().collect();
+    let text_len = text.trim().len();
     let tag_len = element.inner_html().len();
-    let link_text_len = direct_link_text_len(element);
+    let link_text_len = descendant_link_text_len(element);
     let text_density = if tag_len > 0 {
         usize_to_f64(text_len) / usize_to_f64(tag_len)
     } else {
@@ -89,16 +91,13 @@ fn score_element(element: ElementRef<'_>) -> f64 {
         + 0.1 * ln_term
 }
 
-fn normalized_text_len(element: ElementRef<'_>) -> usize {
-    element.text().collect::<String>().trim().len()
-}
-
-fn direct_link_text_len(element: ElementRef<'_>) -> usize {
+fn descendant_link_text_len(element: ElementRef<'_>) -> usize {
+    let Some(selector) = ANCHOR_SELECTOR.as_ref() else {
+        return 0;
+    };
     element
-        .children()
-        .filter_map(ElementRef::wrap)
-        .filter(|child| child.value().name() == "a")
-        .map(|child| child.text().collect::<String>().trim().len())
+        .select(selector)
+        .map(|anchor| anchor.text().collect::<String>().trim().len())
         .sum()
 }
 
@@ -246,6 +245,23 @@ mod tests {
                 r#"<html><body><div class="ads"><span class="ads">x</span></div></body></html>"#
             ),
             ""
+        );
+    }
+
+    #[test]
+    fn nested_link_sidebar_pruned() {
+        let html = r#"<html><body>
+            <div class="menu"><ul><li><a href="/a">Link A</a></li><li><a href="/b">Link B</a></li><li><a href="/c">Link C</a></li></ul></div>
+            <article><p>This is a substantial paragraph of real content that should survive pruning.</p></article>
+        </body></html>"#;
+        let result = prune_html(html);
+        assert!(
+            result.contains("substantial paragraph"),
+            "article content should survive"
+        );
+        assert!(
+            !result.contains("Link A"),
+            "nested link-heavy sidebar should be pruned"
         );
     }
 }

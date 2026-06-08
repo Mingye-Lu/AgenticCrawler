@@ -602,9 +602,10 @@ mod tests {
         let markdown = html_to_markdown(html);
         let (content, _) =
             resolve_content(html, text, &markdown, "fit_markdown", &ContentDepth::Main);
+        // Pruning removes all content (ads class) → must fall back to text
         assert!(
-            content.is_empty() || content.contains("advertisement"),
-            "should either fall back to text or return empty, got: {content}"
+            content.contains("fallback text"),
+            "should fall back to text when pruning removes all content, got: {content}"
         );
     }
 }
