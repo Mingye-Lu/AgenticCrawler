@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-06-08
+
+### Added
+
+- **`page_map_depth` parameter for navigate** — new `page_map_depth` option (`full`, `slim`, `none`, default: `slim`) controls how much structural data is returned inline with navigation responses. `slim` strips CSS selectors from links/headings/landmarks and caps link text at 60 chars, reducing token usage while preserving `@eN` refs for interaction. `none` omits the page_map entirely. Full page_map is still cached internally for differential feedback.
+- **MCP server unit tests** — 18 tests covering `parse_run_goal_request`, `validate_tool_names`, `normalize_tool_name`, `filtered_tool_specs`, `execute_run_goal`, and framed/line-delimited protocol detection.
+- **Render crate unit tests** — tests for `MarkdownStreamState` push/flush, incremental streaming, partial content boundaries, and long-line handling.
+
+### Changed
+
+- **`mvp_tool_specs()` refactored** — the 376-line monolithic tool specification function is now split into `navigation_tools()`, `interaction_tools()`, `extraction_tools()`, and `agent_control_tools()` helpers. Public API unchanged.
+
+### Fixed
+
+- **CloakBrowser-dependent tests skip gracefully** — tests requiring PlaywrightBridge now detect `PlaywrightNotInstalled` and return early instead of panicking, eliminating 3 false failures on machines without Node.js/CloakBrowser.
+
 ## [0.8.6] - 2026-06-08
 
 ### Added
@@ -632,6 +648,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.8.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.7
 [0.8.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.6
 [0.8.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.5
 [0.8.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.4
