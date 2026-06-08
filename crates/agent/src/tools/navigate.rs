@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
+use crate::prune::prune_html;
 use crate::tools::page_map::{annotate_refs, apply_page_map_caps, normalize_url};
 use crate::BrowserContext;
 use crate::FetchRouter;
@@ -59,9 +60,9 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         .and_then(Value::as_str)
         .unwrap_or("markdown");
 
-    if !matches!(format, "markdown" | "text" | "html") {
+    if !matches!(format, "markdown" | "text" | "html" | "fit_markdown") {
         return Err(CrawlError::new(
-            "format must be one of: markdown, text, html",
+            "format must be one of: markdown, text, html, fit_markdown",
         ));
     }
 
@@ -205,6 +206,15 @@ fn resolve_content(
             "markdown" => cap_content(markdown, max_chars),
             "text" => cap_content(text, max_chars),
             "html" => cap_content(html, max_chars),
+            "fit_markdown" => {
+                let pruned = prune_html(html);
+                let md = html_to_markdown(&pruned);
+                if md.trim().is_empty() && !text.trim().is_empty() {
+                    cap_content(text, max_chars)
+                } else {
+                    cap_content(&md, max_chars)
+                }
+            }
             _ => unreachable!(),
         },
         ContentDepth::Main | ContentDepth::Slim => {
@@ -224,6 +234,15 @@ fn resolve_content(
                         cap_content(html, max_chars)
                     } else {
                         cap_content(&main_html, max_chars)
+                    }
+                }
+                "fit_markdown" => {
+                    let pruned = prune_html(&main_html);
+                    let md = html_to_markdown(&pruned);
+                    if md.trim().is_empty() && !text.trim().is_empty() {
+                        cap_content(text, max_chars)
+                    } else {
+                        cap_content(&md, max_chars)
                     }
                 }
                 _ => unreachable!(),
@@ -255,11 +274,12 @@ pub async fn execute(
         &params.content_depth,
     );
 
-    let content = if params.strip_images && params.format == "markdown" {
-        strip_markdown_images(&content)
-    } else {
-        content
-    };
+    let content =
+        if params.strip_images && matches!(params.format.as_str(), "markdown" | "fit_markdown") {
+            strip_markdown_images(&content)
+        } else {
+            content
+        };
 
     browser.set_navigated_url(&page.url, page.fetched_via_browser);
     browser.ref_map_mut().clear();
@@ -341,7 +361,7 @@ mod tests {
 
     #[test]
     fn navigate_parse_format_accepts_text_html_markdown() {
-        for format in ["text", "html", "markdown"] {
+        for format in ["text", "html", "markdown", "fit_markdown"] {
             let input = json!({"url": "https://example.com", "format": format});
             let result = parse_input(&input).unwrap();
             assert_eq!(result.format, format);
@@ -544,5 +564,48 @@ mod tests {
         let input = json!({"url": "https://x.com", "strip_images": false});
         let result = parse_input(&input).unwrap();
         assert!(!result.strip_images);
+    }
+
+    #[test]
+    fn fit_markdown_prunes_noisy_content() {
+        let html = r#"<html><body><article><p>Main content here</p></article><div class="sidebar-ads"><span>Buy now!</span></div><nav>menu</nav></body></html>"#;
+        let text = "Main content here Buy now! menu";
+        let markdown = html_to_markdown(html);
+        let (content, _) =
+            resolve_content(html, text, &markdown, "fit_markdown", &ContentDepth::Main);
+        assert!(
+            content.contains("Main content"),
+            "main content should survive pruning"
+        );
+        assert!(!content.contains("Buy now"), "sidebar ads should be pruned");
+    }
+
+    #[test]
+    fn fit_markdown_full_depth_works() {
+        let html = r"<html><body><article><h1>Title</h1><p>Quality paragraph content.</p></article></body></html>";
+        let text = "Title Quality paragraph content.";
+        let markdown = html_to_markdown(html);
+        let (content, truncated) =
+            resolve_content(html, text, &markdown, "fit_markdown", &ContentDepth::Full);
+        assert!(
+            !content.is_empty(),
+            "full depth fit_markdown should return content"
+        );
+        assert!(!truncated, "short content should not be truncated");
+        assert!(content.contains("Title"), "title should survive");
+    }
+
+    #[test]
+    fn fit_markdown_fallback_to_text() {
+        let html = r#"<html><body><div class="ads"><span class="ads">advertisement</span></div></body></html>"#;
+        let text = "advertisement fallback text";
+        let markdown = html_to_markdown(html);
+        let (content, _) =
+            resolve_content(html, text, &markdown, "fit_markdown", &ContentDepth::Main);
+        // Pruning removes all content (ads class) → must fall back to text
+        assert!(
+            content.contains("fallback text"),
+            "should fall back to text when pruning removes all content, got: {content}"
+        );
     }
 }
