@@ -41,18 +41,53 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 
 ### How does it compare?
 
-| | acrawl | Scrapy | Playwright scripts | Browser-use |
-|---|:---:|:---:|:---:|:---:|
-| No code needed | Yes | No | No | Yes |
-| Single binary | Yes | No | No | No |
-| JS rendering | Yes | No | Yes | Yes |
-| LLM-powered | Yes | No | No | Yes |
-| No Python required | Yes | No | No | No |
-| Form filling / interaction | Yes | Limited | Yes | Yes |
-| Sub-agent parallelism | Yes | N/A | No | No |
-| 25 provider support | Yes | N/A | N/A | Limited |
-| MCP client (use external tools) | Yes | No | No | No |
-| MCP server (expose as tools) | Yes | No | No | No |
+#### vs. AI web agents and scraping tools
+
+| | acrawl | browser-use | Stagehand | Skyvern | Firecrawl | Playwright MCP | Scrapy | Playwright scripts |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| No code needed | Yes | No | No | Partial | No | No | No | No |
+| Single binary | Yes | No | No | No | No | No | No | No |
+| JS rendering | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes |
+| LLM-powered navigation | Yes | Yes | Yes | Yes | Limited | No | No | No |
+| No Python / Node needed | Yes | No | No | No | No | No | No | No |
+| Form filling / interaction | Yes | Yes | Yes | Yes | No | Yes | No | Yes |
+| Sub-agent parallelism | Yes | No | No | Partial | Partial | No | Partial | No |
+| 25 LLM providers | Yes | Via LiteLLM | Partial | Partial | N/A | N/A | N/A | N/A |
+| MCP client (use tools) | Yes | No | No | No | No | No | No | No |
+| MCP server (expose as tools) | Yes | No | No | No | Yes | Yes | No | No |
+| Stealth browser built-in | Yes | Cloud only | Via Browserbase | Cloud only | No | No | No | No |
+| Open source | Yes | Yes (MIT) | Yes (MIT) | Yes (Apache) | Engine only | Yes (MIT) | Yes (BSD) | Yes (Apache) |
+
+Notes:
+- **browser-use** (85k+ GitHub stars): Python + Playwright, DOM + screenshots, supports GPT/Claude/Gemini/Ollama via LiteLLM, 89.1% WebVoyager. No single binary — requires Python and `pip install`. Every action calls an LLM: 2-5s/step, ~$0.02-0.30/task. Cloud tier adds stealth; self-hosted is bare Playwright.
+- **Stagehand** (Browserbase, 21k+ stars): TypeScript + CDP (v3), mixes deterministic Playwright with AI primitives (`act()`, `extract()`, `observe()`). Action caching reuses successful clicks without re-calling the LLM. Requires Node and, for production, Browserbase cloud hosting.
+- **Skyvern** (21k+ stars, Apache 2.0): vision-first (screenshot-only, no DOM), handles legacy portals and government forms that DOM tools struggle with. No-code cloud UI available. Each step costs vision-model tokens — ~$0.10-0.50/task. 85.85% WebVoyager.
+- **Firecrawl** (82k+ stars): managed scraping API. Returns LLM-ready Markdown, JSON extraction, site-wide crawl. Not an agentic tool — minimal multi-step interaction. Ships an official MCP server. Per-page pricing from $19/month.
+- **Playwright MCP** (Microsoft, 29k+ stars): MCP server that exposes browser control via the accessibility tree. Sub-100ms actions, zero vision tokens. Drives an LLM client's browser rather than having its own reasoning — no autonomous goal navigation. Used in GitHub Copilot Agent.
+
+#### vs. native LLM provider browsing
+
+Most AI providers offer some form of browsing, but it is designed for **conversational information retrieval**, not programmatic web automation. Key constraints:
+
+| | acrawl | ChatGPT Agent | Claude Computer Use | Claude in Chrome | Gemini Deep Research | Copilot / Edge |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Real JS-rendered browser | Yes | Yes (sandboxed cloud VM) | Indirect (dev provides env) | Yes (your Chrome) | No (search API only) | Limited (Bing retrieval) |
+| Click / fill forms | Yes | Yes (requires user confirmation) | Yes | Yes | No | Limited |
+| Programmable / scriptable | Yes | No | Yes (API beta) | No | No | No |
+| Sub-agent parallelism | Yes | No | No | No | No | No |
+| MCP server (expose as tools) | Yes | No | No | No | No | No |
+| Returns structured data | Yes | No (text summaries) | No (screenshots) | No | No | No |
+| Stealth / anti-bot | Yes | No | No | No | No | No |
+| No vendor lock-in | Yes (25 providers) | OpenAI only | Anthropic only | Anthropic only | Google only | OpenAI / Bing only |
+| Runs without paid subscription | Yes (OSS; LLM key needed) | No (Plus/Pro/Business) | No (API cost) | No (Max plan) | Partial | Yes (free tier) |
+
+Notes:
+- **ChatGPT Agent** (OpenAI, July 2025): runs in a sandboxed cloud virtual machine with its own Chromium instance. Can browse, click, and fill forms but pauses for user confirmation on sensitive actions (purchases, logins). Uses two modes: a fast text browser for research queries and a visual browser for interaction. Cannot run code in the browser, install extensions, or access your local file system. Susceptible to prompt injection. Available to Plus/Pro/Business subscribers.
+- **ChatGPT Atlas** (OpenAI, October 2025): a full Chromium browser with ChatGPT integrated as a sidebar + agent. Agent mode drives the same sandboxed cloud VM as ChatGPT Agent; core limitations are identical.
+- **Claude Computer Use** (Anthropic API, beta since October 2024): screenshot + mouse/keyboard API for any desktop application, not just browsers. Vision-only — no DOM access. Developers must provide and manage the entire computing environment (typically a Docker container with Xvfb + Firefox). Not a ready-to-use binary. Requires significant infrastructure to operate in production.
+- **Claude in Chrome** (Anthropic Chrome extension, beta November 2025+): lets Claude operate within your existing Chrome session using your real cookies and logins. Available to Max plan subscribers. Not an open API — no programmatic control. Good for interactive personal tasks; not suitable for batch automation.
+- **Gemini / Deep Research** (Google): browsing is grounded via Google Search API calls, not a live browser session. Deep Research synthesizes across many searches but cannot interact with pages (click, fill forms, navigate dynamically). Project Mariner (experimental computer use) is a separate, limited research preview.
+- **Copilot / Edge** (Microsoft): Edge's Copilot Mode uses Bing retrieval with some ability to navigate pages. Real-world tests show high latency (6+ minutes for multi-page comparison tasks) and frequent interruptions for user confirmation. Not a developer API.
 
 ## Quick Start
 
