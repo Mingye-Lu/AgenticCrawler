@@ -207,7 +207,8 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 |------|-------------|
 | `fork` | Spawn a sub-agent on a new browser tab with its own goal and step budget. |
 | `wait_for_subagents` | Wait for specific or all sub-agents to finish and collect results. |
-| `done` | Signal task completion. Auto-waits for any active sub-agents and merges their data. |
+| `subagent_status` | Check the status and results of one or all active sub-agents without blocking. |
+| `cancel_subagent` | Cancel a running sub-agent by ID. |
 
 ### Sub-Agent Parallelism
 
@@ -319,7 +320,7 @@ Omit `--allowedTools` to allow all 21 tools. Useful for locking down a crawl to 
 
 ### MCP Extensibility
 
-acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 20.
+acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 21.
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
@@ -481,16 +482,15 @@ Options:
 | `/compact` | Compact conversation history | Yes |
 | `/clear` | Start a fresh session | Yes |
 | `/cost` | Detailed cost breakdown | Yes |
-| `/session [list\|switch]` | List or switch sessions | No |
+| `/sessions` | Open the session picker (TUI) | No |
 | `/export [file]` | Export conversation to markdown | Yes |
-| `/resume <path>` | Load a saved session | No |
-| `/config [section]` | View acrawl config | Yes |
+| `/config [model]` | View acrawl config | Yes |
 | `/auth [provider]` | Configure credentials | No |
 | `/headed` | Switch to visible browser | No |
 | `/headless` | Switch to headless browser | No |
-| `/extension` | Start extension bridge server, show token | No |
+| `/extension [stop]` | Start/show the extension bridge, or stop it | No |
 | `/cloakbrowser` | Switch back to CloakBrowser mode | No |
-| `/debug` | Toggle raw tool output | No |
+| `/debug` | Show debug details for the last browser tool call | No |
 | `/version` | Version and build info | Yes |
 | `/exit` | Exit and save session | No |
 
@@ -550,13 +550,13 @@ flowchart LR
     Extract --> Output([Output\nJSON / CSV])
 ```
 
-1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/crawler/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
+1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/agent/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
 2. Each turn, it picks from its 21 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
 4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
-5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` or `done` merges results.
+5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` collects results; `cancel_subagent` aborts a running child; `subagent_status` polls without blocking.
 6. When context grows large, auto-compaction summarizes older messages while preserving recent turns, tool usage, and pending work items.
-7. The agent calls `done` when the goal is met, or stops when the step limit is reached.
+7. The agent stops when the goal is met and all sub-agents have finished, or when the step limit is reached.
 
 ## Architecture
 
@@ -570,9 +570,9 @@ crates/
   render/       Markdown rendering, tool output formatting, OutputSink
   mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer
   tui/          Ratatui terminal UI (acrawl-tui)
-  cli/          Thin binary entry point, LiveCli orchestration, session management
+  ui/           Shared application layer (LiveCli, session management, tool executor, auth)
+  cli/          Thin binary entry point (main.rs, self_update.rs, uninstall.rs)
   commands/     17 slash commands with resume-safety annotations
-  crawler/      Transitional re-export shim (will be removed)
 ```
 
 11 crates, ~38K lines of Rust, 770 tests.
