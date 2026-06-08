@@ -53,8 +53,20 @@ pub struct ScriptLimits {
     pub max_steps: usize,
     pub max_timeout_secs: u64,
     pub max_output_bytes: usize,
+    #[serde(default = "default_max_script_size_bytes")]
+    pub max_script_size_bytes: usize,
     pub max_parallel_branches: usize,
+    #[serde(default = "default_max_nesting_depth")]
+    pub max_nesting_depth: usize,
     pub per_step_timeout_secs: u64,
+}
+
+const fn default_max_script_size_bytes() -> usize {
+    1_048_576
+}
+
+const fn default_max_nesting_depth() -> usize {
+    10
 }
 
 /// Parameters for waiting on script execution.

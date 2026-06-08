@@ -4,6 +4,7 @@ pub mod manager;
 pub mod output;
 pub mod prompt;
 pub mod registry;
+pub mod script_executor;
 mod shared_client;
 pub mod state;
 pub mod tools;

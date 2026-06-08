@@ -468,9 +468,7 @@ impl CrawlerAgent {
             ToolEffect::RunScript(_spec) => {
                 Err(ToolError::new("script execution not yet implemented"))
             }
-            ToolEffect::ScriptWait(_spec) => {
-                Err(ToolError::new("script wait not yet implemented"))
-            }
+            ToolEffect::ScriptWait(_spec) => Err(ToolError::new("script wait not yet implemented")),
             ToolEffect::ScriptCancel(_spec) => {
                 Err(ToolError::new("script cancel not yet implemented"))
             }
