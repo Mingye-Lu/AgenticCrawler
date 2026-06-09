@@ -1127,3 +1127,58 @@ async fn shared_state_reflects_progress() {
     assert_eq!(state.status, ScriptStatus::Completed);
     assert_eq!(state.items_collected, 2);
 }
+
+#[tokio::test]
+async fn collect_over_output_byte_limit_fails() {
+    let tiny_limits = ScriptLimits {
+        max_output_bytes: 10,
+        ..default_limits()
+    };
+    let bridge = make_shared_bridge(MockBridge::new());
+    let executor = make_executor(bridge, tiny_limits);
+
+    let result = executor
+        .execute(script(vec![ScriptNode::Collect {
+            value: literal(json!("hello world")),
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("output size limit exceeded"),
+        "expected 'output size limit exceeded' in: {:?}",
+        result.error
+    );
+    assert_eq!(result.extracted_data.len(), 0);
+}
+
+#[tokio::test]
+async fn yield_over_output_byte_limit_fails() {
+    let tiny_limits = ScriptLimits {
+        max_output_bytes: 5,
+        ..default_limits()
+    };
+    let bridge = make_shared_bridge(MockBridge::new());
+    let executor = make_executor(bridge, tiny_limits);
+
+    let result = executor
+        .execute(script(vec![ScriptNode::Yield {
+            value: literal(json!("too long")),
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("output size limit exceeded"),
+        "expected 'output size limit exceeded' in: {:?}",
+        result.error
+    );
+}

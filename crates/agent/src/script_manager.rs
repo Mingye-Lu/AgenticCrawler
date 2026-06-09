@@ -274,3 +274,69 @@ impl ScriptManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, RwLock};
+
+    use acrawl_core::{ScriptResult, ScriptState, ScriptStatus};
+    use runtime::settings::ScriptSettings;
+    use tokio_util::sync::CancellationToken;
+
+    use super::{RunningScript, ScriptManager};
+
+    fn completed_script_entry(id: &str) -> RunningScript {
+        let state = Arc::new(RwLock::new(ScriptState {
+            script_id: id.to_string(),
+            status: ScriptStatus::Completed,
+            step: 1,
+            total_steps: Some(1),
+            current_url: None,
+            items_collected: 0,
+            elapsed_secs: 0.0,
+            errors_caught: 0,
+            yielded_data: Vec::new(),
+        }));
+        let handle = tokio::task::spawn(async {
+            ScriptResult {
+                script_id: "first".to_string(),
+                status: ScriptStatus::Completed,
+                extracted_data: vec![],
+                yielded_data: vec![],
+                steps_executed: 1,
+                elapsed_secs: 0.0,
+                error: None,
+            }
+        });
+        RunningScript {
+            script_id: id.to_string(),
+            state,
+            handle,
+            cancel_token: CancellationToken::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_script_survives_subsequent_spawn_check() {
+        let mut manager = ScriptManager::new(ScriptSettings::default());
+        manager
+            .scripts
+            .insert("first".to_string(), completed_script_entry("first"));
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        assert!(manager.scripts["first"].handle.is_finished());
+        assert_eq!(manager.scripts.len(), 1, "completed entry must stay in map");
+
+        manager.check_can_spawn().expect("should be able to spawn");
+        assert!(
+            manager.scripts.contains_key("first"),
+            "check_can_spawn must not evict completed entry"
+        );
+
+        let status = manager
+            .get_status("first")
+            .expect("first must still be retrievable after spawn check");
+        assert_eq!(status.status, ScriptStatus::Completed);
+    }
+}
