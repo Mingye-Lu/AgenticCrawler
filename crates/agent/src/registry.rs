@@ -61,6 +61,29 @@ impl ToolRegistry {
             "subagent_status",
             Box::new(crate::tools::subagent_status::execute),
         );
+        // Script management tools (sync, no browser needed)
+        registry.register("run_script", Box::new(crate::tools::run_script::execute));
+        registry.register("save_script", Box::new(crate::tools::save_script::execute));
+        registry.register(
+            "list_scripts",
+            Box::new(crate::tools::list_scripts::execute),
+        );
+        registry.register(
+            "read_script",
+            Box::new(crate::tools::read_script::execute),
+        );
+        registry.register(
+            "script_status",
+            Box::new(crate::tools::script_status::execute),
+        );
+        registry.register(
+            "wait_for_scripts",
+            Box::new(crate::tools::wait_for_scripts::execute),
+        );
+        registry.register(
+            "cancel_script",
+            Box::new(crate::tools::cancel_script::execute),
+        );
         registry
     }
 
@@ -139,7 +162,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_twenty_one() {
+    fn new_with_core_tools_registers_all_twenty_eight() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -147,8 +170,21 @@ mod tests {
             "cancel_subagent",
             "subagent_status",
         ];
-        assert_eq!(registry.len(), 21);
-        for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
+        let script_tools = [
+            "run_script",
+            "save_script",
+            "list_scripts",
+            "read_script",
+            "script_status",
+            "wait_for_scripts",
+            "cancel_script",
+        ];
+        assert_eq!(registry.len(), 28);
+        for &name in ASYNC_TOOLS
+            .iter()
+            .chain(effect_tools.iter())
+            .chain(script_tools.iter())
+        {
             assert!(registry.contains(name), "missing core tool: {name}");
         }
     }
@@ -156,9 +192,10 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 21);
+        assert_eq!(registry.len(), 28);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
+        assert!(registry.contains("list_scripts"));
     }
 
     #[test]
