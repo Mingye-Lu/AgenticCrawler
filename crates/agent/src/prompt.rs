@@ -42,6 +42,7 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
         section_error_recovery(),
         section_completion(),
         section_parallel_exploration(),
+        section_autonomous_scripts(),
     ]
 }
 
@@ -172,10 +173,50 @@ fn section_parallel_exploration() -> String {
        - Each subagent gets a copy of your history and works independently.\n\
        - You can fork multiple subagents at once (up to the configured limit).\n\
        - After forking, continue your own work — subagents run in parallel.\n\
-        - Use `wait_for_subagents` to block and collect results when you need them.\n\
+       - Use `wait_for_subagents` to block and collect results when you need them.\n\
        - Prefer forking over sequential navigation when visiting multiple independent pages.\n\
        - Example: Scraping 5 product pages? Fork 5 subagents, each visiting one page, then wait for their results."
          .to_string()
+}
+
+fn section_autonomous_scripts() -> String {
+    "Autonomous scripts:\n\
+      When you detect a **repetitive page pattern** (same structure across 3+ URLs/items), switch from per-step LLM navigation to a **deterministic script**. Scripts execute browser tools in loops without LLM round-trips — dramatically faster and cheaper for batch operations.\n\n\
+      When to use scripts:\n\
+      - After manually navigating 2–3 similar pages and identifying a consistent extraction pattern\n\
+      - For pagination scraping (50 product pages with identical structure)\n\
+      - For repeated actions across a list (filling N forms, clicking N buttons)\n\n\
+      Workflow:\n\
+      1. Navigate manually to 2–3 sample pages to understand the pattern\n\
+      2. Write the script inline in `run_script` using the patterns you observed\n\
+      3. The script returns a `script_id` immediately (non-blocking)\n\
+      4. Poll `script_status` to monitor progress or use `wait_for_scripts` to block until done\n\
+      5. Collect results from the final `ScriptResult`\n\n\
+      Script tools:\n\
+      - **`run_script`** — Execute a script inline or by saved name. Returns `script_id`.\n\
+      - **`script_status`** — Check real-time status, step count, and yielded data.\n\
+      - **`wait_for_scripts`** — Block until script(s) complete. Returns all results.\n\
+      - **`cancel_script`** — Abort a running script.\n\
+      - **`save_script`** — Save a script definition for reuse.\n\
+      - **`list_scripts`** — Show all saved scripts.\n\
+      - **`read_script`** — Read a saved script definition.\n\n\
+      Example: Scrape 50 product pages\n\
+      ```json\n\
+      {\n\
+        \"schema_version\": 1,\n\
+        \"steps\": [\n\
+          {\"type\": \"assign\", \"variable\": \"urls\", \"value\": {\"kind\": \"literal\", \"value\": [\"https://shop.example.com/p/1\", \"...\"]}},\n\
+          {\"type\": \"for_each\", \"variable\": \"url\", \"iterable\": {\"kind\": \"variable\", \"value\": \"urls\"}, \"steps\": [\n\
+            {\"type\": \"tool_call\", \"tool\": \"navigate\", \"input\": {\"url\": \"$url\"}, \"output\": \"page\"},\n\
+            {\"type\": \"tool_call\", \"tool\": \"read_content\", \"input\": {\"selector\": \".product-title\"}, \"output\": \"title\"},\n\
+            {\"type\": \"collect\", \"value\": {\"kind\": \"variable\", \"value\": \"title\"}},\n\
+            {\"type\": \"yield\", \"value\": {\"kind\": \"variable\", \"value\": \"title\"}}\n\
+          ]}\n\
+        ]\n\
+      }\n\
+      ```\n\n\
+      Scripts support: `for`/`foreach`/`while` loops, `if`/`else` branches, `try`/`catch`/`finally`, `parallel` branches, `yield` checkpoints, `assign` variables, and inline JS via `execute_js`."
+        .to_string()
 }
 
 #[cfg(test)]
@@ -275,6 +316,7 @@ mod tests {
         assert!(joined.contains("Error recovery by situation:"));
         assert!(joined.contains("Completion:"));
         assert!(joined.contains("Parallel exploration:"));
+        assert!(joined.contains("Autonomous scripts:"));
     }
 
     #[test]
@@ -303,6 +345,37 @@ mod tests {
             joined.contains("wait_for_subagents"),
             "should mention wait_for_subagents"
         );
-        assert_eq!(prompt.len(), 7, "should have 7 sections");
+        assert_eq!(prompt.len(), 8, "should have 8 sections");
+    }
+
+    #[test]
+    fn test_system_prompt_contains_autonomous_scripts() {
+        let specs = crate::mvp_tool_specs();
+        let prompt = build_system_prompt(&specs);
+        let joined = prompt.join("\n");
+        assert!(
+            joined.contains("Autonomous scripts:"),
+            "should mention autonomous scripts"
+        );
+        assert!(joined.contains("run_script"), "should mention run_script");
+        assert!(
+            joined.contains("script_status"),
+            "should mention script_status"
+        );
+        assert!(
+            joined.contains("wait_for_scripts"),
+            "should mention wait_for_scripts"
+        );
+        assert!(
+            joined.contains("cancel_script"),
+            "should mention cancel_script"
+        );
+        assert!(joined.contains("save_script"), "should mention save_script");
+        assert!(
+            joined.contains("list_scripts"),
+            "should mention list_scripts"
+        );
+        assert!(joined.contains("read_script"), "should mention read_script");
+        assert_eq!(prompt.len(), 8, "should have 8 sections");
     }
 }

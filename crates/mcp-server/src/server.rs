@@ -7,6 +7,7 @@ use acrawl_core::{
     ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage, MessageRole,
     RuntimeError, TokenUsage, ToolEffect, ToolSpec,
 };
+use agent::script_manager::ScriptManager;
 use agent::{mvp_tool_specs, ToolRegistry};
 use agent::{CrawlResult, CrawlerAgent};
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
@@ -32,6 +33,16 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "wait_for_subagents",
     "cancel_subagent",
     "subagent_status",
+];
+
+const SCRIPT_TOOLS: &[&str] = &[
+    "run_script",
+    "script_status",
+    "wait_for_scripts",
+    "cancel_script",
+    "save_script",
+    "list_scripts",
+    "read_script",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +255,98 @@ fn execute_browser_tool(
             Err(e) => Err(e.to_string()),
         }
     })
+}
+
+fn execute_script_tool(
+    name: &str,
+    input: &Value,
+    script_manager: &mut ScriptManager,
+    browser: &mut Option<BrowserContext>,
+    rt: &tokio::runtime::Runtime,
+) -> Result<String, String> {
+    match name {
+        "save_script" => match agent::tools::save_script::execute(input) {
+            Ok(ToolEffect::Reply(output)) => Ok(output),
+            Ok(_) => Err("save_script returned unexpected effect".to_string()),
+            Err(e) => Err(e.to_string()),
+        },
+        "list_scripts" => match agent::tools::list_scripts::execute(input) {
+            Ok(ToolEffect::Reply(output)) => Ok(output),
+            Ok(_) => Err("list_scripts returned unexpected effect".to_string()),
+            Err(e) => Err(e.to_string()),
+        },
+        "read_script" => match agent::tools::read_script::execute(input) {
+            Ok(ToolEffect::Reply(output)) => Ok(output),
+            Ok(_) => Err("read_script returned unexpected effect".to_string()),
+            Err(e) => Err(e.to_string()),
+        },
+        "run_script" => {
+            let task = match agent::tools::run_script::execute(input) {
+                Ok(ToolEffect::RunScript(task)) => task,
+                Ok(_) => return Err("run_script returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+
+            // Ensure browser is initialized for script execution
+            if browser.is_none() {
+                match rt.block_on(PlaywrightBridge::new()) {
+                    Ok(bridge) => {
+                        let shared = std::sync::Arc::new(tokio::sync::Mutex::new(
+                            Box::new(bridge) as Box<dyn BrowserBackend + Send>
+                        ));
+                        *browser = Some(BrowserContext::new(shared));
+                    }
+                    Err(e) => {
+                        return Err(format!("failed to launch browser for script: {e}"));
+                    }
+                }
+            }
+
+            let browser_ctx = browser.as_ref().unwrap().clone();
+            match rt.block_on(async { script_manager.spawn_script(task, browser_ctx) }) {
+                Ok(script_id) => Ok(json!({"script_id": script_id}).to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        "script_status" => {
+            let spec = match agent::tools::script_status::execute(input) {
+                Ok(ToolEffect::ScriptStatus(spec)) => spec,
+                Ok(_) => return Err("script_status returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+            match script_manager.get_status(&spec.script_id) {
+                Ok(state) => serde_json::to_string(&state)
+                    .map_err(|e| format!("failed to serialize script state: {e}")),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        "wait_for_scripts" => {
+            let spec = match agent::tools::wait_for_scripts::execute(input) {
+                Ok(ToolEffect::ScriptWait(spec)) => spec,
+                Ok(_) => return Err("wait_for_scripts returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+            rt.block_on(async {
+                match script_manager.wait_for_scripts(spec.script_ids).await {
+                    Ok(results) => serde_json::to_string(&results)
+                        .map_err(|e| format!("failed to serialize script results: {e}")),
+                    Err(e) => Err(e.to_string()),
+                }
+            })
+        }
+        "cancel_script" => {
+            let spec = match agent::tools::cancel_script::execute(input) {
+                Ok(ToolEffect::ScriptCancel(spec)) => spec,
+                Ok(_) => return Err("cancel_script returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+            match script_manager.cancel_script(&spec.script_id) {
+                Ok(()) => Ok(format!("Script '{}' cancelled", spec.script_id)),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        _ => Err(format!("unknown script tool: {name}")),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -797,11 +900,13 @@ fn handle_run_goal(id: Option<Value>, arguments: Value) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_tools_call(
     id: Option<Value>,
     params: Option<Value>,
     registry: &ToolRegistry,
     browser: &mut Option<BrowserContext>,
+    script_manager: &mut ScriptManager,
     rt: &tokio::runtime::Runtime,
 ) {
     let Some(params) = params else {
@@ -837,6 +942,36 @@ fn handle_tools_call(
         .collect();
     if !valid_browser_tools.contains(name) {
         send_error(id, -32601, format!("unknown tool: {name}"));
+        return;
+    }
+
+    if SCRIPT_TOOLS.contains(&name) {
+        match execute_script_tool(name, &arguments, script_manager, browser, rt) {
+            Ok(output) => {
+                let result = json!({
+                    "content": [{ "type": "text", "text": output }],
+                    "isError": false,
+                });
+                send_response(&JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(result),
+                    error: None,
+                });
+            }
+            Err(message) => {
+                let result = json!({
+                    "content": [{ "type": "text", "text": format!("Error: {message}") }],
+                    "isError": true,
+                });
+                send_response(&JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(result),
+                    error: None,
+                });
+            }
+        }
         return;
     }
 
@@ -902,6 +1037,9 @@ pub fn run_mcp_server() {
 
     let mut browser: Option<BrowserContext> = None;
     let registry = ToolRegistry::new_with_core_tools();
+    let settings = runtime::load_settings();
+    let script_settings = settings.script.unwrap_or_default();
+    let mut script_manager = ScriptManager::new(script_settings);
 
     let stdin = io::stdin().lock();
     let mut reader = BufReader::new(stdin);
@@ -940,7 +1078,14 @@ pub fn run_mcp_server() {
             "notifications/initialized" => {}
             "tools/list" => tools_list_response(request.id),
             "tools/call" => {
-                handle_tools_call(request.id, request.params, &registry, &mut browser, &rt);
+                handle_tools_call(
+                    request.id,
+                    request.params,
+                    &registry,
+                    &mut browser,
+                    &mut script_manager,
+                    &rt,
+                );
             }
             method => {
                 send_error(request.id, -32601, format!("method not found: {method}"));
@@ -1023,16 +1168,23 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_17_browser_tools_plus_run_goal() {
+    fn tools_list_has_24_nonexcluded_tools_plus_run_goal() {
         let browser_specs: Vec<_> = mvp_tool_specs()
             .into_iter()
             .filter(|spec| !EXCLUDED_TOOLS.contains(&spec.name))
             .collect();
-        assert_eq!(browser_specs.len(), 17);
+        assert_eq!(browser_specs.len(), 24);
         let names: BTreeSet<&str> = browser_specs.iter().map(|s| s.name).collect();
         assert!(names.contains("navigate"));
         assert!(names.contains("click"));
         assert!(names.contains("screenshot"));
+        assert!(names.contains("run_script"));
+        assert!(names.contains("script_status"));
+        assert!(names.contains("wait_for_scripts"));
+        assert!(names.contains("cancel_script"));
+        assert!(names.contains("save_script"));
+        assert!(names.contains("list_scripts"));
+        assert!(names.contains("read_script"));
         assert!(!names.contains("fork"));
         assert!(!names.contains("wait_for_subagents"));
     }

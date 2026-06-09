@@ -96,9 +96,13 @@ dependencies = [
  "futures-util",
  "regex",
  "runtime",
+ "script",
  "serde_json",
+ "tempfile",
+ "time",
  "tokio",
  "tokio-tungstenite",
+ "tokio-util",
  "url",
 ]
 
@@ -3207,6 +3211,18 @@ dependencies = [
  "precomputed-hash",
  "selectors",
  "tendril 0.4.3",
+]
+
+[[package]]
+name = "script"
+version = "0.8.7"
+dependencies = [
+ "acrawl-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

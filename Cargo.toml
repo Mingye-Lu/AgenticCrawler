@@ -11,6 +11,7 @@ members = [
     "crates/browser",
     "crates/tui",
     "crates/ui",
+    "crates/script",
 ]
 resolver = "2"
 

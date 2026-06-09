@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
 use crate::registry::ToolRegistry;
+use crate::script_manager::{ScriptError, ScriptManager};
 use crate::state::CrawlState;
 use crate::tool_effect::ToolEffect;
 use crate::{mvp_tool_specs, AgentManager, BrowserContext, SharedApiClient, SharedBridge};
@@ -108,6 +109,7 @@ pub struct CrawlerAgent {
     /// being reused after children are drained/waited on.
     pub(super) child_id_counter: std::sync::atomic::AtomicU64,
     pub(super) api_client_arc: Option<SharedApiClient>,
+    script_manager: ScriptManager,
     control_state: Option<Arc<ControlState>>,
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
     child_control_registry: Option<crate::child_events::ChildControlRegistry>,
@@ -145,6 +147,7 @@ impl CrawlerAgent {
             child_tasks: HashMap::new(),
             child_id_counter: std::sync::atomic::AtomicU64::new(0),
             api_client_arc: None,
+            script_manager: default_script_manager(),
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
@@ -173,6 +176,7 @@ impl CrawlerAgent {
             child_tasks: HashMap::new(),
             child_id_counter: std::sync::atomic::AtomicU64::new(0),
             api_client_arc: None,
+            script_manager: default_script_manager(),
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
@@ -201,6 +205,7 @@ impl CrawlerAgent {
             child_tasks: HashMap::new(),
             child_id_counter: std::sync::atomic::AtomicU64::new(0),
             api_client_arc: None,
+            script_manager: default_script_manager(),
             control_state: None,
             child_event_tx: None,
             child_control_registry: None,
@@ -465,7 +470,130 @@ impl CrawlerAgent {
             ToolEffect::Wait(spec) => self.handle_wait_effect(spec).await,
             ToolEffect::Cancel(spec) => self.handle_cancel_effect(spec).await,
             ToolEffect::Status(spec) => self.handle_status_effect(spec).await,
+            ToolEffect::RunScript(task) => self.handle_run_script_effect(task).await,
+            ToolEffect::ScriptWait(spec) => self.handle_script_wait_effect(spec).await,
+            ToolEffect::ScriptCancel(spec) => self.handle_script_cancel_effect(spec),
+            ToolEffect::ScriptStatus(spec) => self.handle_script_status_effect(spec),
         }
+    }
+
+    async fn handle_run_script_effect(
+        &mut self,
+        mut task: acrawl_core::ScriptTask,
+    ) -> Result<String, ToolError> {
+        self.ensure_browser().await?;
+
+        if task
+            .script
+            .get("__load_from_disk")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            task.script = self.load_script_from_disk(&task)?;
+        }
+
+        let current_url = self.crawl_state.current_url.clone();
+        let cloned_context = self
+            .clone_browser_context_for_script(current_url.as_deref())
+            .await?;
+        let script_id = self
+            .script_manager
+            .spawn_script(task, cloned_context)
+            .map_err(script_error_to_tool)?;
+
+        Ok(format!("Script started: {script_id}"))
+    }
+
+    async fn handle_script_wait_effect(
+        &mut self,
+        spec: acrawl_core::ScriptWaitSpec,
+    ) -> Result<String, ToolError> {
+        let results = self
+            .script_manager
+            .wait_for_scripts(spec.script_ids)
+            .await
+            .map_err(script_error_to_tool)?;
+        serde_json::to_string(&results)
+            .map_err(|error| ToolError::new(format!("failed to serialize script results: {error}")))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn handle_script_cancel_effect(
+        &mut self,
+        spec: acrawl_core::ScriptCancelSpec,
+    ) -> Result<String, ToolError> {
+        self.script_manager
+            .cancel_script(&spec.script_id)
+            .map_err(script_error_to_tool)?;
+        Ok(format!("Script cancelled: {}", spec.script_id))
+    }
+
+    #[allow(clippy::needless_pass_by_value)]
+    fn handle_script_status_effect(
+        &mut self,
+        spec: acrawl_core::ScriptStatusSpec,
+    ) -> Result<String, ToolError> {
+        let status = self
+            .script_manager
+            .get_status(&spec.script_id)
+            .map_err(script_error_to_tool)?;
+        serde_json::to_string(&status)
+            .map_err(|error| ToolError::new(format!("failed to serialize script status: {error}")))
+    }
+
+    async fn clone_browser_context_for_script(
+        &mut self,
+        target_url: Option<&str>,
+    ) -> Result<BrowserContext, ToolError> {
+        let shared_bridge = self
+            .shared_bridge
+            .clone()
+            .or_else(|| {
+                self.browser
+                    .as_ref()
+                    .map(|browser| browser.bridge().clone())
+            })
+            .ok_or_else(|| ToolError::new("script: browser bridge not initialized"))?;
+        let page_index = {
+            let mut bridge = shared_bridge.lock().await;
+            bridge
+                .new_page(target_url)
+                .await
+                .map_err(|error| ToolError::new(error.to_string()))?
+        };
+
+        let mut browser = BrowserContext::new_shared(shared_bridge, page_index);
+        if let Some(url) = target_url {
+            browser.set_navigated_url(url, true);
+        }
+        Ok(browser)
+    }
+
+    fn load_script_from_disk(&self, task: &acrawl_core::ScriptTask) -> Result<Value, ToolError> {
+        let script_name = task
+            .script
+            .get("__load_from_disk")
+            .and_then(Value::as_str)
+            .ok_or_else(|| ToolError::new("script loader requires __load_from_disk string"))?;
+        let script_settings = self.script_manager.settings.clone();
+        let scripts_dir = script_settings.scripts_dir.unwrap_or_else(|| {
+            runtime::settings::ScriptSettings::default()
+                .scripts_dir
+                .unwrap_or_else(|| acrawl_core::config_home_dir().join("scripts"))
+        });
+        let script_path = scripts_dir.join(format!("{script_name}.json"));
+        let script_text = std::fs::read_to_string(&script_path).map_err(|error| {
+            ToolError::new(format!(
+                "failed to read script `{script_name}` from {}: {error}",
+                script_path.display()
+            ))
+        })?;
+        serde_json::from_str(&script_text).map_err(|error| {
+            ToolError::new(format!(
+                "failed to parse script `{script_name}` from {}: {error}",
+                script_path.display()
+            ))
+        })
     }
 }
 
@@ -475,6 +603,16 @@ fn default_agent_manager() -> SharedAgentManager {
         DEFAULT_MAX_FORK_DEPTH,
         DEFAULT_MAX_TOTAL_AGENTS,
     )))
+}
+
+fn default_script_manager() -> ScriptManager {
+    let settings = runtime::load_settings();
+    ScriptManager::new(settings.script.unwrap_or_default())
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn script_error_to_tool(error: ScriptError) -> ToolError {
+    ToolError::new(error.to_string())
 }
 
 fn generate_agent_id() -> String {

@@ -4,6 +4,8 @@ pub mod manager;
 pub mod output;
 pub mod prompt;
 pub mod registry;
+pub mod script_executor;
+pub mod script_manager;
 mod shared_client;
 pub mod state;
 pub mod tools;
@@ -482,6 +484,133 @@ fn agent_control_tools() -> Vec<ToolSpec> {
     ]
 }
 
+#[allow(clippy::too_many_lines)]
+fn script_management_tools() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "run_script",
+            description: "Generate and execute a deterministic multi-step script without per-step LLM round-trips",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "script": {
+                        "type": "object",
+                        "description": "Inline script definition object (use instead of `name`)"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Name of a previously saved script to run (alternative to inline `script`)"
+                    },
+                    "save_as": {
+                        "type": "string",
+                        "description": "Save the script under this name after execution for future reuse"
+                    },
+                    "limits": {
+                        "type": "object",
+                        "description": "Override default execution limits (max_steps, max_timeout_secs, max_output_bytes, max_parallel_branches, per_step_timeout_secs)"
+                    }
+                },
+                "additionalProperties": false
+            }),
+            instructions: Some("Generate and execute a deterministic multi-step script without per-step LLM round-trips. Use when you detect a repetitive pattern (same operation on 3+ pages/items). Workflow: navigate manually first to understand the pattern, then generate a script with for/while loops. Scripts support: tool calls, for/while/if/try-catch/parallel branches, yield checkpoints, and variable capture. Scripts run on a cloned browser tab. Returns a script_id; use wait_for_scripts to collect results. Provide either an inline `script` definition or `name` to load a previously saved script. You can also set `save_as` to persist the executed script and `limits` to override execution limits. Script definition must include: version (\"1.0\"), steps (array of nodes), and limits (max_steps, max_script_size_bytes, max_nesting_depth, max_parallel_branches). Each step is a node: ToolCall (invoke a tool), Assign (set variable), Collect (append to results), Yield (checkpoint), ForLoop/ForEach/WhileLoop (iteration), IfElse (conditional), TryCatch (error handling), or Parallel (concurrent branches)."),
+        },
+        ToolSpec {
+            name: "script_status",
+            description: "Check the status of a running or completed script",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "script_id": {
+                        "type": "string",
+                        "description": "Script ID returned by run_script (format: scr_XXXXXXXX)"
+                    }
+                },
+                "required": ["script_id"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Returns the current status of a script: running, completed, failed, or cancelled. Includes step count, extracted data so far, and any error message. Use this to monitor long-running scripts without blocking."),
+        },
+        ToolSpec {
+            name: "wait_for_scripts",
+            description: "Wait for one or more scripts to finish and collect their results",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "script_ids": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional list of script IDs to wait for. If omitted, waits for all active scripts."
+                    }
+                },
+                "additionalProperties": false
+            }),
+            instructions: Some("Blocks until the specified scripts finish (or all active scripts if script_ids is omitted). Returns a JSON array of ScriptResult objects, each containing: script_id, status (completed/failed/cancelled), extracted_data (array of values), yielded_data (checkpoints), step_count, and error (if failed). Use this after run_script to collect results."),
+        },
+        ToolSpec {
+            name: "cancel_script",
+            description: "Abort a running script immediately",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "script_id": {
+                        "type": "string",
+                        "description": "Script ID to cancel (format: scr_XXXXXXXX)"
+                    }
+                },
+                "required": ["script_id"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Cancels a running script. The script's browser page is closed and any partial results are discarded. Returns confirmation of cancellation."),
+        },
+        ToolSpec {
+            name: "save_script",
+            description: "Save a script definition to disk for later reuse",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name to save the script under (alphanumeric + underscore, no extension)"
+                    },
+                    "script": {
+                        "type": "object",
+                        "description": "Script definition object (same format as run_script)"
+                    }
+                },
+                "required": ["name", "script"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Saves a script definition to ~/.acrawl/scripts/<name>.json for later reuse. Once saved, you can run it again with run_script using name: \"name\" instead of providing the full script object inline. Useful for complex patterns you want to reuse across multiple crawl sessions."),
+        },
+        ToolSpec {
+            name: "list_scripts",
+            description: "List all saved scripts",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            instructions: Some("Returns a JSON array of saved script names and their metadata (creation date, last modified, size). Use this to discover available scripts before running them with run_script + name."),
+        },
+        ToolSpec {
+            name: "read_script",
+            description: "Read a saved script definition",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the saved script to read"
+                    }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Returns the full script definition (JSON) for a saved script. Use this to inspect or modify a script before running it, or to understand what a saved script does."),
+        },
+    ]
+}
+
 /// Returns the built-in tool specifications.
 #[must_use]
 pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
@@ -489,6 +618,7 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
     specs.extend(interaction_tools());
     specs.extend(extraction_tools());
     specs.extend(agent_control_tools());
+    specs.extend(script_management_tools());
     specs
 }
 
@@ -499,12 +629,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_21_tools() {
+    fn mvp_tool_specs_contains_expected_28_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 21);
+        assert_eq!(specs.len(), 28);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 21, "tool names should be unique");
+        assert_eq!(names.len(), 28, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
@@ -512,6 +642,13 @@ mod tests {
         assert!(names.contains("wait_for_subagents"));
         assert!(names.contains("cancel_subagent"));
         assert!(names.contains("subagent_status"));
+        assert!(names.contains("run_script"));
+        assert!(names.contains("script_status"));
+        assert!(names.contains("wait_for_scripts"));
+        assert!(names.contains("cancel_script"));
+        assert!(names.contains("save_script"));
+        assert!(names.contains("list_scripts"));
+        assert!(names.contains("read_script"));
     }
 
     #[test]
