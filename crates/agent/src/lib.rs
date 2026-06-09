@@ -495,16 +495,24 @@ fn script_management_tools() -> Vec<ToolSpec> {
                 "properties": {
                     "script": {
                         "type": "object",
-                        "description": "Script definition object with version, steps, and limits"
+                        "description": "Inline script definition object (use instead of `name`)"
                     },
-                    "__load_from_disk": {
+                    "name": {
                         "type": "string",
-                        "description": "Internal: load a saved script by name instead of inline definition"
+                        "description": "Name of a previously saved script to run (alternative to inline `script`)"
+                    },
+                    "save_as": {
+                        "type": "string",
+                        "description": "Save the script under this name after execution for future reuse"
+                    },
+                    "limits": {
+                        "type": "object",
+                        "description": "Override default execution limits (max_steps, max_timeout_secs, max_output_bytes, max_parallel_branches, per_step_timeout_secs)"
                     }
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Generate and execute a deterministic multi-step script without per-step LLM round-trips. Use when you detect a repetitive pattern (same operation on 3+ pages/items). Workflow: navigate manually first to understand the pattern, then generate a script with for/while loops. Scripts support: tool calls, for/while/if/try-catch/parallel branches, yield checkpoints, and variable capture. Scripts run on a cloned browser tab. Returns a script_id; use wait_for_scripts to collect results. Script definition must include: version (\"1.0\"), steps (array of nodes), and limits (max_steps, max_script_size_bytes, max_nesting_depth, max_parallel_branches). Each step is a node: ToolCall (invoke a tool), Assign (set variable), Collect (append to results), Yield (checkpoint), ForLoop/ForEach/WhileLoop (iteration), IfElse (conditional), TryCatch (error handling), or Parallel (concurrent branches)."),
+            instructions: Some("Generate and execute a deterministic multi-step script without per-step LLM round-trips. Use when you detect a repetitive pattern (same operation on 3+ pages/items). Workflow: navigate manually first to understand the pattern, then generate a script with for/while loops. Scripts support: tool calls, for/while/if/try-catch/parallel branches, yield checkpoints, and variable capture. Scripts run on a cloned browser tab. Returns a script_id; use wait_for_scripts to collect results. Provide either an inline `script` definition or `name` to load a previously saved script. You can also set `save_as` to persist the executed script and `limits` to override execution limits. Script definition must include: version (\"1.0\"), steps (array of nodes), and limits (max_steps, max_script_size_bytes, max_nesting_depth, max_parallel_branches). Each step is a node: ToolCall (invoke a tool), Assign (set variable), Collect (append to results), Yield (checkpoint), ForLoop/ForEach/WhileLoop (iteration), IfElse (conditional), TryCatch (error handling), or Parallel (concurrent branches)."),
         },
         ToolSpec {
             name: "script_status",
@@ -572,7 +580,7 @@ fn script_management_tools() -> Vec<ToolSpec> {
                 "required": ["name", "script"],
                 "additionalProperties": false
             }),
-            instructions: Some("Saves a script definition to ~/.acrawl/scripts/<name>.json for later reuse. Once saved, you can run it again with run_script using __load_from_disk: \"name\" instead of providing the full script object inline. Useful for complex patterns you want to reuse across multiple crawl sessions."),
+            instructions: Some("Saves a script definition to ~/.acrawl/scripts/<name>.json for later reuse. Once saved, you can run it again with run_script using name: \"name\" instead of providing the full script object inline. Useful for complex patterns you want to reuse across multiple crawl sessions."),
         },
         ToolSpec {
             name: "list_scripts",
@@ -582,7 +590,7 @@ fn script_management_tools() -> Vec<ToolSpec> {
                 "properties": {},
                 "additionalProperties": false
             }),
-            instructions: Some("Returns a JSON array of saved script names and their metadata (creation date, last modified, size). Use this to discover available scripts before running them with run_script + __load_from_disk."),
+            instructions: Some("Returns a JSON array of saved script names and their metadata (creation date, last modified, size). Use this to discover available scripts before running them with run_script + name."),
         },
         ToolSpec {
             name: "read_script",
