@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-09
+
+### Added
+
+- **Autonomous Script Protocol** — a new deterministic execution layer that lets the LLM run multi-step browser automation without per-step LLM round-trips. Write scripts once, execute them in tight loops — dramatically faster and cheaper for repetitive page patterns (pagination, form filling, bulk extraction).
+
+- **New `crates/script/` crate** — standalone grammar, parser, and persistence layer:
+  - AST types: `ScriptDefinition`, `ScriptNode` (10 node kinds), `Expression` (5 expression kinds)
+  - `parse_script` + `validate_script` with comprehensive error reporting (unknown tools, undefined variables, excessive nesting, oversized scripts)
+  - Disk persistence: `save_script_to_disk`, `load_script_from_disk`, `list_scripts_on_disk`
+
+- **7 new script tools** (available in the agent loop, MCP server, and via `run_goal`):
+  - `run_script` — execute an inline script or load a saved one by `name`; returns `script_id` immediately (non-blocking). Accepts `save_as` to persist the script after execution and `limits` to override defaults.
+  - `wait_for_scripts` — block until script(s) complete and collect full `ScriptResult` (extracted_data, yielded_data, steps_executed, elapsed_secs, error)
+  - `script_status` — non-blocking poll returning live state (step, items_collected, current_url, elapsed_secs, errors_caught)
+  - `cancel_script` — abort a running script via cooperative cancellation token
+  - `save_script` — persist a script definition to `~/.acrawl/scripts/<name>.json`
+  - `list_scripts` — list all saved scripts with ISO 8601 UTC timestamps (`modified_at`) and file sizes
+  - `read_script` — read back a full script definition from disk
+
+- **Script execution engine** (`crates/agent/src/script_executor/`):
+  - Supported nodes: `tool_call`, `assign`, `collect`, `yield`, `for_loop`, `for_each`, `while_loop`, `if_else`, `try_catch` (with `catch`/`finally`/`error_var`), `parallel`
+  - Limits enforced at runtime: `max_steps`, `max_timeout_secs`, `per_step_timeout_secs`, `max_output_bytes`, `max_parallel_branches`, `max_nesting_depth`
+  - `parallel` branches each get their own browser page; share a global step counter and cancellation token; `errors_caught` and `output_bytes` are propagated back to the parent executor on completion
+  - `collect` accumulates to `extracted_data`; `yield` writes to a shared `Arc<RwLock<Vec<Value>>>` readable via `script_status` mid-execution
+  - Variable substitution: `$varname` strings in tool inputs are replaced with their current values
+
+### Fixed
+
+- **`Expression` serde deserialization** — changed from internally-tagged (`#[serde(tag="kind")]`) to adjacently-tagged (`#[serde(tag="kind", content="value")]`). The old tag caused `Literal`, `Variable`, and `JsEval` newtype variants to fail deserialization from JSON — meaning no user-submitted script with variables or literals would parse.
+- **MCP server `run_script` panic** — `spawn_script` calls `tokio::task::spawn` internally but was invoked outside any `block_on` context, causing an immediate `"no reactor running"` panic that killed the server process. Wrapped in `rt.block_on(async { … })`.
+- **`cleanup_completed` result race** — `spawn_script` called `cleanup_completed()` before checking concurrency limits, silently evicting just-completed scripts from the map. `wait_for_scripts` would then return `NotFound` for fast-completing scripts. Removed the premature cleanup.
+- **`max_output_bytes` not enforced** — the limit was stored and validated but never checked during execution. `push_extracted` and `push_yielded` now track accumulated byte count and return `ScriptExecutionError` on overflow.
+- **`validate_script_name` duplicated with inconsistent rules** — three separate implementations in `save_script.rs`, `read_script.rs`, and `persistence.rs`. Consolidated into `persistence::validate_script_name` with the strictest ruleset (rejects leading dash, dots, path separators, non-normal path components).
+- **`list_scripts` timestamp format** — `modified_at` previously returned a raw Unix epoch integer (e.g. `"1780991949"`). Now returns ISO 8601 UTC (e.g. `"2026-06-09T13:39:09Z"`) via `time::OffsetDateTime + Rfc3339`.
+
 ## [0.8.7] - 2026-06-08
 
 ### Added
@@ -648,6 +684,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.9.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.0
 [0.8.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.7
 [0.8.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.6
 [0.8.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.5
