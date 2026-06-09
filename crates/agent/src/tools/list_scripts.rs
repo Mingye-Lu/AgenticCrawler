@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 use std::fs;
 use std::time::SystemTime;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 use crate::{ToolEffect, ToolExecutionError};
 use acrawl_core::config_home_dir;
@@ -56,7 +58,11 @@ fn format_system_time(time: Option<SystemTime>) -> String {
     match time {
         Some(t) => t
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map_or_else(|_| "unknown".to_string(), |d| d.as_secs().to_string()),
+            .ok()
+            .and_then(|d| i64::try_from(d.as_secs()).ok())
+            .and_then(|secs| OffsetDateTime::from_unix_timestamp(secs).ok())
+            .and_then(|dt| dt.format(&Rfc3339).ok())
+            .unwrap_or_else(|| "unknown".to_string()),
         None => "unknown".to_string(),
     }
 }
@@ -72,11 +78,11 @@ mod tests {
     }
 
     #[test]
-    fn format_system_time_returns_unix_epoch_seconds() {
+    fn format_system_time_returns_iso8601() {
         use std::time::{Duration, UNIX_EPOCH};
 
         let t = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
         let result = format_system_time(Some(t));
-        assert_eq!(result, "1700000000");
+        assert_eq!(result, "2023-11-14T22:13:20Z");
     }
 }
