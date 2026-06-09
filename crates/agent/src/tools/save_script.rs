@@ -67,23 +67,22 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
 
     // Validate script JSON via parser
     script::parser::parse_script(&script)
-        .map_err(|e| ToolExecutionError::new(format!("invalid script: {}", e)))?;
+        .map_err(|e| ToolExecutionError::new(format!("invalid script: {e}")))?;
 
     // Create scripts directory
     let scripts_dir = config_home_dir().join("scripts");
-    fs::create_dir_all(&scripts_dir).map_err(|e| {
-        ToolExecutionError::new(format!("failed to create scripts directory: {}", e))
-    })?;
+    fs::create_dir_all(&scripts_dir)
+        .map_err(|e| ToolExecutionError::new(format!("failed to create scripts directory: {e}")))?;
 
     // Write script file
-    let script_path = scripts_dir.join(format!("{}.json", name));
+    let script_path = scripts_dir.join(format!("{name}.json"));
     let script_json = serde_json::to_string_pretty(&script)
-        .map_err(|e| ToolExecutionError::new(format!("failed to serialize script: {}", e)))?;
+        .map_err(|e| ToolExecutionError::new(format!("failed to serialize script: {e}")))?;
 
     fs::write(&script_path, script_json)
-        .map_err(|e| ToolExecutionError::new(format!("failed to write script file: {}", e)))?;
+        .map_err(|e| ToolExecutionError::new(format!("failed to write script file: {e}")))?;
 
-    Ok(ToolEffect::Reply(format!("Script '{}' saved", name)))
+    Ok(ToolEffect::Reply(format!("Script '{name}' saved")))
 }
 
 #[cfg(test)]

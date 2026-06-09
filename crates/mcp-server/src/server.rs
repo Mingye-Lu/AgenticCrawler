@@ -900,6 +900,7 @@ fn handle_run_goal(id: Option<Value>, arguments: Value) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_tools_call(
     id: Option<Value>,
     params: Option<Value>,

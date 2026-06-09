@@ -42,9 +42,9 @@
 //! Expressions are evaluated recursively and support:
 //! - **Literal**: JSON values (strings, numbers, objects, arrays)
 //! - **Variable**: `{ "kind": "variable", "name": "varname" }` → looks up `$varname` in the variables map
-//! - **JsEval**: `{ "kind": "js_eval", "script": "..." }` → executes JavaScript in the browser context
-//! - **FieldAccess**: `{ "kind": "field_access", "object": {...}, "field": "key" }` → accesses object properties
-//! - **ArrayIndex**: `{ "kind": "array_index", "array": {...}, "index": {...} }` → accesses array elements by index
+//! - **`JsEval`**: `{ "kind": "js_eval", "script": "..." }` → executes JavaScript in the browser context
+//! - **`FieldAccess`**: `{ "kind": "field_access", "object": {...}, "field": "key" }` → accesses object properties
+//! - **`ArrayIndex`**: `{ "kind": "array_index", "array": {...}, "index": {...} }` → accesses array elements by index
 //!
 //! ## Variable Substitution Pattern
 //!
@@ -87,7 +87,7 @@ impl ScriptExecutor {
     /// Called by `Collect` nodes to accumulate extracted values.
     ///
     /// # Arguments
-    /// * `value` - The value to append to extracted_data
+    /// * `value` - The value to append to `extracted_data`
     ///
     /// # Example
     /// ```ignore
@@ -103,13 +103,13 @@ impl ScriptExecutor {
     /// Push a value to the yielded data collection.
     ///
     /// Called by `Yield` nodes to emit values for concurrent access.
-    /// Updates both the state's yielded_data and the Arc<RwLock<>> for concurrent reads.
+    /// Updates both the state's `yielded_data` and the `Arc<RwLock<>>` for concurrent reads.
     ///
     /// # Arguments
     /// * `value` - The value to yield
     ///
     /// # Errors
-    /// Returns a tool error if the RwLock is poisoned (should not happen in normal operation).
+    /// Returns a tool error if the `RwLock` is poisoned (should not happen in normal operation).
     ///
     /// # Example
     /// ```ignore

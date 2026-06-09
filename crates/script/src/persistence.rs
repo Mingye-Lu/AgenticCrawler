@@ -108,7 +108,7 @@ pub fn save_script_to_disk(
         serde_json::to_string_pretty(script).map_err(|e| PersistenceError::Parse(e.to_string()))?;
 
     // Write to file
-    let file_path = scripts_dir.join(format!("{}.json", name));
+    let file_path = scripts_dir.join(format!("{name}.json"));
     fs::write(file_path, json_str)?;
 
     Ok(())
@@ -131,7 +131,7 @@ pub fn load_script_from_disk(
 ) -> Result<ScriptDefinition, PersistenceError> {
     validate_script_name(name)?;
 
-    let file_path = scripts_dir.join(format!("{}.json", name));
+    let file_path = scripts_dir.join(format!("{name}.json"));
     let json_str = fs::read_to_string(file_path)?;
 
     let script = serde_json::from_str::<ScriptDefinition>(&json_str)
@@ -241,20 +241,20 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let scripts_dir = temp_dir.path();
 
-        let script1 = ScriptDefinition {
+        let first_script_def = ScriptDefinition {
             schema_version: 1,
             name: Some("script_a".to_string()),
             steps: vec![],
         };
 
-        let script2 = ScriptDefinition {
+        let second_script_def = ScriptDefinition {
             schema_version: 1,
             name: Some("script_b".to_string()),
             steps: vec![],
         };
 
-        save_script_to_disk(scripts_dir, "script_a", &script1).unwrap();
-        save_script_to_disk(scripts_dir, "script_b", &script2).unwrap();
+        save_script_to_disk(scripts_dir, "script_a", &first_script_def).unwrap();
+        save_script_to_disk(scripts_dir, "script_b", &second_script_def).unwrap();
 
         let scripts = list_scripts_on_disk(scripts_dir).unwrap();
         assert_eq!(scripts.len(), 2);

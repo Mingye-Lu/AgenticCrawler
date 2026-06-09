@@ -252,6 +252,7 @@ impl ScriptExecutor {
         Ok(())
     }
 
+    #[must_use]
     pub fn substitute_variables(&self, value: &Value) -> Value {
         self.try_substitute_variables(value)
             .unwrap_or_else(|_| value.clone())
@@ -418,6 +419,7 @@ impl ScriptExecutor {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn map_tool_error(error: ToolExecutionError) -> ScriptExecutionError {
         ScriptExecutionError::ToolError(error.to_string())
     }

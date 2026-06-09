@@ -517,6 +517,7 @@ impl CrawlerAgent {
             .map_err(|error| ToolError::new(format!("failed to serialize script results: {error}")))
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn handle_script_cancel_effect(
         &mut self,
         spec: acrawl_core::ScriptCancelSpec,
@@ -527,6 +528,7 @@ impl CrawlerAgent {
         Ok(format!("Script cancelled: {}", spec.script_id))
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn handle_script_status_effect(
         &mut self,
         spec: acrawl_core::ScriptStatusSpec,
@@ -608,6 +610,7 @@ fn default_script_manager() -> ScriptManager {
     ScriptManager::new(settings.script.unwrap_or_default())
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn script_error_to_tool(error: ScriptError) -> ToolError {
     ToolError::new(error.to_string())
 }

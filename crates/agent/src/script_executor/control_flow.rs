@@ -188,6 +188,7 @@ impl ScriptExecutor {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     fn value_to_i64(value: Value, context: &str) -> Result<i64, ScriptExecutionError> {
         value.as_i64().ok_or_else(|| {
             ScriptExecutionError::ToolError(format!("{context} must evaluate to an integer"))

@@ -59,17 +59,16 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
 
     let script_path = config_home_dir()
         .join("scripts")
-        .join(format!("{}.json", name));
+        .join(format!("{name}.json"));
 
     if !script_path.exists() {
         return Err(ToolExecutionError::new(format!(
-            "script '{}' not found",
-            name
+            "script '{name}' not found",
         )));
     }
 
     let content = fs::read_to_string(&script_path)
-        .map_err(|e| ToolExecutionError::new(format!("failed to read script file: {}", e)))?;
+        .map_err(|e| ToolExecutionError::new(format!("failed to read script file: {e}")))?;
 
     Ok(ToolEffect::Reply(content))
 }

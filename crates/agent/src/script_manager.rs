@@ -63,6 +63,7 @@ impl ScriptManager {
         }
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn spawn_script(
         &mut self,
         task: ScriptTask,
@@ -208,6 +209,7 @@ impl ScriptManager {
             now_nanos.hash(&mut hasher);
             self.scripts.len().hash(&mut hasher);
             attempt.hash(&mut hasher);
+            #[allow(clippy::cast_possible_truncation)]
             let candidate = format!("scr_{:08x}", (hasher.finish() as u32));
 
             if !self.scripts.contains_key(&candidate) {

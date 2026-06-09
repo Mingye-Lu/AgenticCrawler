@@ -216,6 +216,7 @@ fn validate_steps(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_node(
     node: &ScriptNode,
     depth: usize,

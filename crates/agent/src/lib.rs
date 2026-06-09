@@ -484,6 +484,7 @@ fn agent_control_tools() -> Vec<ToolSpec> {
     ]
 }
 
+#[allow(clippy::too_many_lines)]
 fn script_management_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {

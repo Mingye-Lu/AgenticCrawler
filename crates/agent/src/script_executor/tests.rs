@@ -3,7 +3,10 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use acrawl_core::{ScriptLimits, ScriptState, ScriptStatus};
 use async_trait::async_trait;
-use browser::{BridgeError, BrowserBackend, BrowserContext, BrowserState, PageInfo, ScreenshotOptions, SharedBridge};
+use browser::{
+    BridgeError, BrowserBackend, BrowserContext, BrowserState, PageInfo, ScreenshotOptions,
+    SharedBridge,
+};
 use script::grammar::{Expression, ScriptDefinition, ScriptNode};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
@@ -47,7 +50,10 @@ impl MockBridge {
     }
 
     fn log(&self, method: &str, args: Value) {
-        self.call_log.lock().unwrap().push((method.to_string(), args));
+        self.call_log
+            .lock()
+            .unwrap()
+            .push((method.to_string(), args));
     }
 
     fn call_log(&self) -> Arc<Mutex<Vec<(String, Value)>>> {
@@ -123,12 +129,18 @@ impl BrowserBackend for MockBridge {
         timeout_ms: u64,
         state: Option<&str>,
     ) -> Result<bool, BridgeError> {
-        self.log("wait_for_selector", json!({"selector": selector, "timeout_ms": timeout_ms, "state": state}));
+        self.log(
+            "wait_for_selector",
+            json!({"selector": selector, "timeout_ms": timeout_ms, "state": state}),
+        );
         Ok(true)
     }
 
     async fn select_option(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
-        self.log("select_option", json!({"selector": selector, "value": value}));
+        self.log(
+            "select_option",
+            json!({"selector": selector, "value": value}),
+        );
         Ok(())
     }
 
@@ -216,8 +228,6 @@ impl BrowserBackend for MockBridge {
         Ok("https://mock.test/previous".to_string())
     }
 }
-
-
 
 fn default_limits() -> ScriptLimits {
     ScriptLimits {
@@ -356,8 +366,7 @@ async fn sequential_three_tool_calls() {
 
 #[tokio::test]
 async fn variable_assignment_and_usage() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![json!({"value": "hello world"})]);
+    let mock = MockBridge::new().with_evaluate_responses(vec![json!({"value": "hello world"})]);
     let bridge = make_shared_bridge(mock);
     let executor = make_executor(bridge, default_limits());
 
@@ -377,8 +386,7 @@ async fn variable_assignment_and_usage() {
 
 #[tokio::test]
 async fn tool_call_output_captured_as_variable() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![json!({"value": "page title"})]);
+    let mock = MockBridge::new().with_evaluate_responses(vec![json!({"value": "page title"})]);
     let bridge = make_shared_bridge(mock);
     let executor = make_executor(bridge, default_limits());
 
@@ -572,25 +580,20 @@ async fn while_loop_exits_on_false_condition() {
 
 #[tokio::test]
 async fn while_loop_step_limit_terminates() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![
-            json!({"value": true}),
-            json!({"value": true}),
-            json!({"value": true}),
-            json!({"value": true}),
-            json!({"value": true}),
-        ]);
+    let mock = MockBridge::new().with_evaluate_responses(vec![
+        json!({"value": true}),
+        json!({"value": true}),
+        json!({"value": true}),
+        json!({"value": true}),
+        json!({"value": true}),
+    ]);
     let bridge = make_shared_bridge(mock);
     let executor = make_executor(bridge, low_step_limits(3));
 
     let result = executor
         .execute(script(vec![ScriptNode::WhileLoop {
             condition: literal(json!(true)),
-            steps: vec![tool_call(
-                "execute_js",
-                json!({"script": "1+1"}),
-                None,
-            )],
+            steps: vec![tool_call("execute_js", json!({"script": "1+1"}), None)],
         }]))
         .await;
 
@@ -702,12 +705,11 @@ async fn try_catch_finally_always_runs() {
 
 #[tokio::test]
 async fn try_catch_step_limit_not_catchable() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![
-            json!({"value": true}),
-            json!({"value": true}),
-            json!({"value": true}),
-        ]);
+    let mock = MockBridge::new().with_evaluate_responses(vec![
+        json!({"value": true}),
+        json!({"value": true}),
+        json!({"value": true}),
+    ]);
     let bridge = make_shared_bridge(mock);
     let executor = make_executor(bridge, low_step_limits(2));
 
@@ -783,23 +785,18 @@ async fn parallel_max_branches_enforced() {
         .await;
 
     assert_eq!(result.status, ScriptStatus::Failed);
-    assert!(result
-        .error
-        .as_ref()
-        .unwrap()
-        .contains("exceeds limit"));
+    assert!(result.error.as_ref().unwrap().contains("exceeds limit"));
 }
 
 #[tokio::test]
 async fn step_limit_stops_execution() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![
-            json!({"value": 1}),
-            json!({"value": 2}),
-            json!({"value": 3}),
-            json!({"value": 4}),
-            json!({"value": 5}),
-        ]);
+    let mock = MockBridge::new().with_evaluate_responses(vec![
+        json!({"value": 1}),
+        json!({"value": 2}),
+        json!({"value": 3}),
+        json!({"value": 4}),
+        json!({"value": 5}),
+    ]);
     let bridge = make_shared_bridge(mock);
     let executor = make_executor(bridge, low_step_limits(2));
 
@@ -818,8 +815,7 @@ async fn step_limit_stops_execution() {
 
 #[tokio::test]
 async fn variable_substitution_in_tool_input() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![json!({"value": "executed"})]);
+    let mock = MockBridge::new().with_evaluate_responses(vec![json!({"value": "executed"})]);
     let log = mock.call_log();
     let bridge = make_shared_bridge(mock);
     let executor = make_executor(bridge, default_limits());
@@ -897,11 +893,8 @@ async fn disallowed_tool_returns_error() {
 
 #[tokio::test]
 async fn cancellation_stops_execution() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![
-            json!({"value": 1}),
-            json!({"value": 2}),
-        ]);
+    let mock =
+        MockBridge::new().with_evaluate_responses(vec![json!({"value": 1}), json!({"value": 2})]);
     let bridge = make_shared_bridge(mock);
     let (executor, cancel_token) = make_executor_with_cancel(bridge, default_limits());
 
@@ -939,8 +932,7 @@ async fn variable_not_found_error() {
 
 #[tokio::test]
 async fn js_eval_expression() {
-    let mock = MockBridge::new()
-        .with_evaluate_responses(vec![json!({"value": 42, "result": 42})]);
+    let mock = MockBridge::new().with_evaluate_responses(vec![json!({"value": 42, "result": 42})]);
     let bridge = make_shared_bridge(mock);
     let executor = make_executor(bridge, default_limits());
 
@@ -1077,11 +1069,7 @@ async fn try_catch_binds_error_var() {
 
     let result = executor
         .execute(script(vec![ScriptNode::TryCatch {
-            try_steps: vec![tool_call(
-                "click",
-                json!({"selector": "#btn"}),
-                None,
-            )],
+            try_steps: vec![tool_call("click", json!({"selector": "#btn"}), None)],
             catch_steps: Some(vec![ScriptNode::Collect {
                 value: variable("err_msg"),
             }]),

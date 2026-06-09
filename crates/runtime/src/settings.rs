@@ -16,7 +16,7 @@ pub struct ScriptSettings {
     #[serde(default)]
     pub max_timeout_secs: Option<u64>,
 
-    /// Maximum output size in bytes (default: 10_485_760 = 10MB)
+    /// Maximum output size in bytes (default: `10_485_760` = 10MB)
     #[serde(default)]
     pub max_output_bytes: Option<usize>,
 
@@ -32,7 +32,7 @@ pub struct ScriptSettings {
     #[serde(default)]
     pub per_step_timeout_secs: Option<u64>,
 
-    /// Maximum script size in bytes (default: 1_048_576 = 1MB)
+    /// Maximum script size in bytes (default: `1_048_576` = 1MB)
     #[serde(default)]
     pub max_script_size_bytes: Option<usize>,
 
