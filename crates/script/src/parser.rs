@@ -185,13 +185,17 @@ fn expression_to_value(expression: &Expression) -> serde_json::Value {
         }),
         Expression::FieldAccess { object, field } => serde_json::json!({
             "kind": "field_access",
-            "object": expression_to_value(object),
-            "field": field,
+            "value": {
+                "object": expression_to_value(object),
+                "field": field,
+            },
         }),
         Expression::ArrayIndex { array, index } => serde_json::json!({
             "kind": "array_index",
-            "array": expression_to_value(array),
-            "index": expression_to_value(index),
+            "value": {
+                "array": expression_to_value(array),
+                "index": expression_to_value(index),
+            },
         }),
     }
 }
@@ -1055,5 +1059,84 @@ mod tests {
         };
 
         assert_eq!(validate_script(&script, &limits()), Ok(()));
+    }
+
+    #[test]
+    fn parse_script_expression_round_trip() {
+        let script = ScriptDefinition {
+            schema_version: SCHEMA_VERSION,
+            name: Some("round-trip".to_string()),
+            steps: vec![
+                ScriptNode::ToolCall {
+                    tool: "navigate".to_string(),
+                    input: json!({"url": "https://example.com"}),
+                    output: Some("nav_result".to_string()),
+                },
+                ScriptNode::Assign {
+                    variable: "copied".to_string(),
+                    value: Expression::Variable("nav_result".to_string()),
+                },
+                ScriptNode::Assign {
+                    variable: "literal_value".to_string(),
+                    value: Expression::Literal(json!(42)),
+                },
+                ScriptNode::Assign {
+                    variable: "evaluated".to_string(),
+                    value: Expression::JsEval("2+2".to_string()),
+                },
+                ScriptNode::Assign {
+                    variable: "title".to_string(),
+                    value: Expression::FieldAccess {
+                        object: Box::new(Expression::Variable("nav_result".to_string())),
+                        field: "title".to_string(),
+                    },
+                },
+                ScriptNode::Collect {
+                    value: Expression::ArrayIndex {
+                        array: Box::new(Expression::Variable("nav_result".to_string())),
+                        index: Box::new(Expression::Literal(json!(0))),
+                    },
+                },
+            ],
+        };
+
+        let json = serde_json::to_value(&script).unwrap();
+        let parsed = parse_script(&json).unwrap();
+
+        assert!(matches!(
+            &parsed.steps[1],
+            ScriptNode::Assign {
+                value: Expression::Variable(name),
+                ..
+            } if name == "nav_result"
+        ));
+        assert!(matches!(
+            &parsed.steps[2],
+            ScriptNode::Assign {
+                value: Expression::Literal(value),
+                ..
+            } if value == &json!(42)
+        ));
+        assert!(matches!(
+            &parsed.steps[3],
+            ScriptNode::Assign {
+                value: Expression::JsEval(code),
+                ..
+            } if code == "2+2"
+        ));
+        assert!(matches!(
+            &parsed.steps[4],
+            ScriptNode::Assign {
+                value: Expression::FieldAccess { object, field },
+                ..
+            } if matches!(object.as_ref(), Expression::Variable(name) if name == "nav_result") && field == "title"
+        ));
+        assert!(matches!(
+            &parsed.steps[5],
+            ScriptNode::Collect {
+                value: Expression::ArrayIndex { array, index },
+            } if matches!(array.as_ref(), Expression::Variable(name) if name == "nav_result")
+                && matches!(index.as_ref(), Expression::Literal(value) if value == &json!(0))
+        ));
     }
 }
