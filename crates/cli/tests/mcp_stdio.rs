@@ -261,8 +261,8 @@ fn stdio_server_run_script_returns_script_id_and_survives() {
                 },
                 "limits": {
                     "max_steps": 10, "max_timeout_secs": 30,
-                    "max_output_bytes": 1048576, "max_parallel_branches": 2,
-                    "max_script_size_bytes": 65536, "max_nesting_depth": 5,
+                    "max_output_bytes": 1_048_576, "max_parallel_branches": 2,
+                    "max_script_size_bytes": 65_536, "max_nesting_depth": 5,
                     "per_step_timeout_secs": 10
                 }
             }
