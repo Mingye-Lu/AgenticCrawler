@@ -41,10 +41,10 @@
 //!
 //! Expressions are evaluated recursively and support:
 //! - **Literal**: JSON values (strings, numbers, objects, arrays)
-//! - **Variable**: `{ "kind": "variable", "name": "varname" }` → looks up `$varname` in the variables map
-//! - **`JsEval`**: `{ "kind": "js_eval", "script": "..." }` → executes JavaScript in the browser context
-//! - **`FieldAccess`**: `{ "kind": "field_access", "object": {...}, "field": "key" }` → accesses object properties
-//! - **`ArrayIndex`**: `{ "kind": "array_index", "array": {...}, "index": {...} }` → accesses array elements by index
+//! - **Variable**: `{ "kind": "variable", "value": "varname" }` → looks up `$varname` in the variables map
+//! - **`JsEval`**: `{ "kind": "js_eval", "value": "..." }` → executes JavaScript in the browser context
+//! - **`FieldAccess`**: `{ "kind": "field_access", "value": {"object": {...}, "field": "key"} }` → accesses object properties
+//! - **`ArrayIndex`**: `{ "kind": "array_index", "value": {"array": {...}, "index": {...}} }` → accesses array elements by index
 //!
 //! ## Variable Substitution Pattern
 //!
@@ -62,26 +62,10 @@
 //!
 //! If `base_url` is `"https://example.com"`, the input becomes `{ "url": "https://example.com" }`.
 
-use super::ScriptExecutor;
+use super::{ScriptExecutionError, ScriptExecutor};
 use serde_json::Value;
 
-#[allow(dead_code)]
 impl ScriptExecutor {
-    /// Store a variable in the executor's variable map.
-    ///
-    /// # Arguments
-    /// * `name` - The variable name (without the `$` prefix)
-    /// * `value` - The value to store
-    ///
-    /// # Example
-    /// ```ignore
-    /// executor.store_variable("page_title".to_string(), Value::String("Example".to_string()));
-    /// // Later: expressions can reference $page_title
-    /// ```
-    pub(super) fn store_variable(&mut self, name: String, value: Value) {
-        self.variables.insert(name, value);
-    }
-
     /// Push a value to the extracted data collection.
     ///
     /// Called by `Collect` nodes to accumulate extracted values.
@@ -91,13 +75,22 @@ impl ScriptExecutor {
     ///
     /// # Example
     /// ```ignore
-    /// executor.push_extracted(Value::String("item 1".to_string()));
-    /// executor.push_extracted(Value::String("item 2".to_string()));
+    /// executor.push_extracted(Value::String("item 1".to_string()))?;
+    /// executor.push_extracted(Value::String("item 2".to_string()))?;
     /// // Later: ScriptResult.extracted_data contains both values
     /// ```
-    pub(super) fn push_extracted(&mut self, value: Value) {
+    pub(super) fn push_extracted(&mut self, value: Value) -> Result<(), ScriptExecutionError> {
+        let item_bytes = value.to_string().len();
+        if self.output_bytes + item_bytes > self.limits.max_output_bytes {
+            return Err(ScriptExecutionError::ToolError(format!(
+                "output size limit exceeded: {} bytes accumulated, {} bytes new, {} bytes max",
+                self.output_bytes, item_bytes, self.limits.max_output_bytes
+            )));
+        }
+        self.output_bytes += item_bytes;
         self.extracted_data.push(value);
         self.state.items_collected = self.extracted_data.len();
+        Ok(())
     }
 
     /// Push a value to the yielded data collection.
@@ -109,34 +102,27 @@ impl ScriptExecutor {
     /// * `value` - The value to yield
     ///
     /// # Errors
-    /// Returns a tool error if the `RwLock` is poisoned (should not happen in normal operation).
+    /// Returns a tool error if the output limit is exceeded or the `RwLock` is poisoned.
     ///
     /// # Example
     /// ```ignore
     /// executor.push_yielded(Value::String("progress update".to_string()))?;
     /// // Value is now available for concurrent reads via script_status
     /// ```
-    pub(super) fn push_yielded(&mut self, value: Value) -> Result<(), String> {
+    pub(super) fn push_yielded(&mut self, value: Value) -> Result<(), ScriptExecutionError> {
+        let item_bytes = value.to_string().len();
+        if self.output_bytes + item_bytes > self.limits.max_output_bytes {
+            return Err(ScriptExecutionError::ToolError(format!(
+                "output size limit exceeded: {} bytes accumulated, {} bytes new, {} bytes max",
+                self.output_bytes, item_bytes, self.limits.max_output_bytes
+            )));
+        }
+        self.output_bytes += item_bytes;
         self.state.yielded_data.push(value.clone());
-        let mut yielded_data = self
-            .yielded_data
-            .write()
-            .map_err(|error| format!("yield buffer lock poisoned: {error}"))?;
+        let mut yielded_data = self.yielded_data.write().map_err(|error| {
+            ScriptExecutionError::ToolError(format!("yield buffer lock poisoned: {error}"))
+        })?;
         yielded_data.push(value);
         Ok(())
-    }
-
-    /// Get a reference to the current variables map.
-    ///
-    /// Useful for debugging or inspecting the current variable state.
-    pub(super) fn variables(&self) -> &std::collections::HashMap<String, Value> {
-        &self.variables
-    }
-
-    /// Get a reference to the extracted data collection.
-    ///
-    /// Useful for debugging or inspecting collected values during execution.
-    pub(super) fn extracted_data(&self) -> &[Value] {
-        &self.extracted_data
     }
 }

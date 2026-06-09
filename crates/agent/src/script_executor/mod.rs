@@ -49,6 +49,7 @@ pub struct ScriptExecutor {
     state: ScriptState,
     shared_state: Arc<RwLock<ScriptState>>,
     limits: ScriptLimits,
+    output_bytes: usize,
     variables: HashMap<String, Value>,
     extracted_data: Vec<Value>,
     pub yielded_data: Arc<RwLock<Vec<Value>>>,
@@ -81,6 +82,7 @@ impl ScriptExecutor {
             },
             shared_state,
             limits,
+            output_bytes: 0,
             variables: HashMap::new(),
             extracted_data: Vec::new(),
             yielded_data: Arc::new(RwLock::new(Vec::new())),
@@ -156,19 +158,13 @@ impl ScriptExecutor {
             }
             ScriptNode::Collect { value } => {
                 let resolved = self.evaluate_expression(value).await?;
-                self.extracted_data.push(resolved);
-                self.state.items_collected = self.extracted_data.len();
+                self.push_extracted(resolved)?;
                 self.sync_shared_state();
                 Ok(())
             }
             ScriptNode::Yield { value } => {
                 let resolved = self.evaluate_expression(value).await?;
-                self.state.yielded_data.push(resolved.clone());
-                let mut yielded_data = self.yielded_data.write().map_err(|error| {
-                    ScriptExecutionError::ToolError(format!("yield buffer lock poisoned: {error}"))
-                })?;
-                yielded_data.push(resolved);
-                drop(yielded_data);
+                self.push_yielded(resolved)?;
                 self.sync_shared_state();
                 Ok(())
             }
