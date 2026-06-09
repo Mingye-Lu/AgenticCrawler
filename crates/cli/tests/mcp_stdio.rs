@@ -233,6 +233,101 @@ fn stdio_server_returns_jsonrpc_error_when_run_goal_is_missing_goal() {
 }
 
 #[test]
+fn stdio_server_run_script_returns_script_id_and_survives() {
+    let mut server = TestServer::spawn();
+
+    server.send(&json!({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "initialize",
+        "params": { "protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": { "name": "e2e", "version": "1" } }
+    }));
+    server.read_response();
+
+    server.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized", "params": {} }));
+
+    server.send(&json!({
+        "jsonrpc": "2.0", "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "run_script",
+            "arguments": {
+                "script": {
+                    "schema_version": 1,
+                    "steps": [
+                        { "type": "assign", "variable": "n", "value": { "kind": "literal", "value": 7 } },
+                        { "type": "collect", "value": { "kind": "variable", "value": "n" } },
+                        { "type": "yield",   "value": { "kind": "literal",  "value": "ok" } }
+                    ]
+                },
+                "limits": {
+                    "max_steps": 10, "max_timeout_secs": 30,
+                    "max_output_bytes": 1048576, "max_parallel_branches": 2,
+                    "max_script_size_bytes": 65536, "max_nesting_depth": 5,
+                    "per_step_timeout_secs": 10
+                }
+            }
+        }
+    }));
+    let run_response = server.read_response();
+    assert_eq!(run_response["jsonrpc"], "2.0");
+    assert_eq!(run_response["id"], 2);
+
+    let content_text = run_response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("");
+
+    if run_response["result"]["isError"] == true
+        && content_text.contains("failed to launch browser")
+    {
+        return;
+    }
+
+    assert_eq!(
+        run_response["result"]["isError"], false,
+        "run_script failed: {content_text}"
+    );
+    let spawned: Value = serde_json::from_str(content_text).expect("parse script_id response");
+    let script_id = spawned["script_id"].as_str().expect("script_id present");
+    assert!(
+        script_id.starts_with("scr_"),
+        "script_id should have scr_ prefix: {script_id}"
+    );
+
+    server.send(&json!({
+        "jsonrpc": "2.0", "id": 3,
+        "method": "tools/call",
+        "params": { "name": "wait_for_scripts", "arguments": {} }
+    }));
+    let wait_response = server.read_response();
+    assert_eq!(wait_response["result"]["isError"], false);
+
+    let results: Vec<Value> = serde_json::from_str(
+        wait_response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("result text"),
+    )
+    .expect("parse results");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["script_id"], script_id);
+    assert_eq!(results[0]["status"], "Completed");
+    assert_eq!(results[0]["extracted_data"][0], 7);
+    assert_eq!(results[0]["yielded_data"][0], "ok");
+
+    server.send(&json!({
+        "jsonrpc": "2.0", "id": 4,
+        "method": "tools/call",
+        "params": { "name": "list_scripts", "arguments": {} }
+    }));
+    let alive = server.read_response();
+    assert_eq!(
+        alive["id"], 4,
+        "server must still be alive after run_script"
+    );
+
+    server.shutdown();
+}
+
+#[test]
 fn stdio_server_supports_line_delimited_jsonrpc() {
     let mut server = TestServer::spawn();
 

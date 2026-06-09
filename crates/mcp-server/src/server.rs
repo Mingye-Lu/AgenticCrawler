@@ -303,7 +303,7 @@ fn execute_script_tool(
             }
 
             let browser_ctx = browser.as_ref().unwrap().clone();
-            match script_manager.spawn_script(task, browser_ctx) {
+            match rt.block_on(async { script_manager.spawn_script(task, browser_ctx) }) {
                 Ok(script_id) => Ok(json!({"script_id": script_id}).to_string()),
                 Err(e) => Err(e.to_string()),
             }
