@@ -8,9 +8,12 @@ use tokio::task::JoinSet;
 use super::{ScriptExecutionError, ScriptExecutor};
 use crate::BrowserContext;
 
+#[derive(Clone)]
 struct ParallelBranchResult {
     index: usize,
     extracted_data: Vec<Value>,
+    errors_caught: usize,
+    output_bytes: usize,
 }
 
 impl ScriptExecutor {
@@ -56,6 +59,7 @@ impl ScriptExecutor {
                     state: self.state.clone(),
                     shared_state: self.shared_state.clone(),
                     limits: self.limits.clone(),
+                    output_bytes: self.output_bytes,
                     variables: self.variables.clone(),
                     extracted_data: Vec::new(),
                     yielded_data: self.yielded_data.clone(),
@@ -70,13 +74,14 @@ impl ScriptExecutor {
                 });
             }
 
-            let mut branch_results = vec![None; branches.len()];
+            let mut branch_results: Vec<Option<ParallelBranchResult>> = vec![None; branches.len()];
             let mut first_error = None;
 
             while let Some(result) = join_set.join_next().await {
                 match result {
                     Ok(Ok(branch_result)) => {
-                        branch_results[branch_result.index] = Some(branch_result.extracted_data);
+                        let index = branch_result.index;
+                        branch_results[index] = Some(branch_result);
                     }
                     Ok(Err(error)) => {
                         if first_error.is_none() {
@@ -104,8 +109,10 @@ impl ScriptExecutor {
                 return Err(error);
             }
 
-            for extracted_data in branch_results.into_iter().flatten() {
-                self.extracted_data.extend(extracted_data);
+            for result in branch_results.into_iter().flatten() {
+                self.extracted_data.extend(result.extracted_data);
+                self.state.errors_caught += result.errors_caught;
+                self.output_bytes += result.output_bytes;
             }
             self.state.items_collected = self.extracted_data.len();
 
@@ -129,6 +136,8 @@ impl ScriptExecutor {
         Ok(ParallelBranchResult {
             index,
             extracted_data: executor.extracted_data,
+            errors_caught: executor.state.errors_caught,
+            output_bytes: executor.output_bytes,
         })
     }
 

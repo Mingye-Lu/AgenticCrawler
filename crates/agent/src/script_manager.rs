@@ -69,7 +69,6 @@ impl ScriptManager {
         task: ScriptTask,
         browser: BrowserContext,
     ) -> Result<String, ScriptError> {
-        self.cleanup_completed();
         self.check_can_spawn()?;
 
         let script_id = self.generate_script_id();
