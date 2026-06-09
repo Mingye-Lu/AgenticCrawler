@@ -54,12 +54,9 @@ pub fn execute(_input: &Value) -> Result<ToolEffect, ToolExecutionError> {
 
 fn format_system_time(time: Option<SystemTime>) -> String {
     match time {
-        Some(t) => match t.duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(_duration) => {
-                format!("{t:?}")
-            }
-            Err(_) => "unknown".to_string(),
-        },
+        Some(t) => t
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or_else(|_| "unknown".to_string(), |d| d.as_secs().to_string()),
         None => "unknown".to_string(),
     }
 }
@@ -72,5 +69,14 @@ mod tests {
     fn format_system_time_handles_none() {
         let result = format_system_time(None);
         assert_eq!(result, "unknown");
+    }
+
+    #[test]
+    fn format_system_time_returns_unix_epoch_seconds() {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let t = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let result = format_system_time(Some(t));
+        assert_eq!(result, "1700000000");
     }
 }

@@ -5,7 +5,7 @@
 
 use crate::grammar::ScriptDefinition;
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path};
 use std::time::SystemTime;
 use thiserror::Error;
 
@@ -54,16 +54,32 @@ pub fn validate_script_name(name: &str) -> Result<(), PersistenceError> {
         ));
     }
 
+    if name.starts_with('-') {
+        return Err(PersistenceError::InvalidName(
+            "script name cannot start with '-'".to_string(),
+        ));
+    }
+
     if name.contains('\0') {
         return Err(PersistenceError::InvalidName(
             "script name cannot contain null bytes".to_string(),
         ));
     }
 
-    if name.contains('/') || name.contains('\\') {
+    if name.contains('/') || name.contains('\\') || name.contains('.') {
         return Err(PersistenceError::InvalidName(
-            "script name cannot contain path separators".to_string(),
+            "script name cannot contain path separators or dots (path traversal not allowed)"
+                .to_string(),
         ));
+    }
+
+    for component in Path::new(name).components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(PersistenceError::InvalidName(
+                "script name must be a simple filename without path components (path traversal not allowed)"
+                    .to_string(),
+            ));
+        }
     }
 
     // Allow alphanumeric, underscore, and hyphen
@@ -207,8 +223,10 @@ mod tests {
         assert!(validate_script_name("").is_err());
         assert!(validate_script_name("my/script").is_err());
         assert!(validate_script_name("my\\script").is_err());
+        assert!(validate_script_name("-script").is_err());
         assert!(validate_script_name("my script").is_err());
         assert!(validate_script_name("my.script").is_err());
+        assert!(validate_script_name("..").is_err());
         assert!(validate_script_name("my@script").is_err());
     }
 
