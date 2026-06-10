@@ -1403,9 +1403,11 @@ fn drain_events_tool_result_message_removes_live_tool_call() {
     let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
     let mut state = ReplTuiState::new();
 
-    state
-        .live_tool_calls
-        .push(("navigate".to_string(), "example.com".to_string(), ToolCallStatus::Running));
+    state.live_tool_calls.push((
+        "navigate".to_string(),
+        "example.com".to_string(),
+        ToolCallStatus::Running,
+    ));
 
     let tool_result_msg = ConversationMessage {
         role: MessageRole::Tool,
@@ -1433,12 +1435,16 @@ fn drain_events_tool_result_message_only_removes_matching_tool() {
     let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
     let mut state = ReplTuiState::new();
 
-    state
-        .live_tool_calls
-        .push(("navigate".to_string(), "a.com".to_string(), ToolCallStatus::Running));
-    state
-        .live_tool_calls
-        .push(("click".to_string(), "#btn".to_string(), ToolCallStatus::Running));
+    state.live_tool_calls.push((
+        "navigate".to_string(),
+        "a.com".to_string(),
+        ToolCallStatus::Running,
+    ));
+    state.live_tool_calls.push((
+        "click".to_string(),
+        "#btn".to_string(),
+        ToolCallStatus::Running,
+    ));
 
     let tool_result_msg = ConversationMessage {
         role: MessageRole::Tool,
@@ -1455,7 +1461,11 @@ fn drain_events_tool_result_message_only_removes_matching_tool() {
         .unwrap();
     state.drain_events(&rx);
 
-    assert_eq!(state.live_tool_calls.len(), 1, "only the navigate entry should be removed");
+    assert_eq!(
+        state.live_tool_calls.len(),
+        1,
+        "only the navigate entry should be removed"
+    );
     assert_eq!(state.live_tool_calls[0].0, "click");
 }
 
