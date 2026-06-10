@@ -67,7 +67,7 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
     let format = input
         .get("format")
         .and_then(Value::as_str)
-        .unwrap_or("markdown");
+        .unwrap_or("fit_markdown");
 
     if !matches!(format, "markdown" | "text" | "html" | "fit_markdown") {
         return Err(CrawlError::new(
@@ -455,11 +455,11 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn navigate_parse_format_defaults_to_markdown() {
+    fn navigate_parse_format_defaults_to_fit_markdown() {
         let input = json!({"url": "https://example.com"});
         let result = parse_input(&input).unwrap();
         assert_eq!(result.url, "https://example.com");
-        assert_eq!(result.format, "markdown");
+        assert_eq!(result.format, "fit_markdown");
     }
 
     #[test]
