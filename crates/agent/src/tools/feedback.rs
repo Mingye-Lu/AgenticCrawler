@@ -4,6 +4,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::time::timeout;
 
+use crate::page_fingerprint::PageFingerprint;
+use crate::state::CrawlState;
 use crate::BrowserContext;
 
 use super::page_map::{apply_page_map_caps, normalize_url};
@@ -414,6 +416,17 @@ pub async fn post_action_page_state(browser: &mut BrowserContext) -> Value {
         }
         _ => fallback_value(),
     }
+}
+
+/// Record a page fingerprint into `CrawlState` if the `page_fingerprinting`
+/// optimization flag is enabled in settings.
+pub fn record_page_fingerprint(url: &str, page_map: &Value, crawl_state: &mut CrawlState) {
+    let settings = runtime::load_settings();
+    if !runtime::settings_get_page_fingerprinting(&settings) {
+        return;
+    }
+    let fingerprint = PageFingerprint::compute(url, page_map);
+    crawl_state.page_fingerprints.push(fingerprint);
 }
 
 #[cfg(test)]

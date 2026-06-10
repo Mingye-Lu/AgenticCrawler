@@ -1,7 +1,9 @@
 pub mod agent;
 pub mod child_events;
+pub mod loop_detector;
 pub mod manager;
 pub mod output;
+pub mod page_fingerprint;
 pub mod prompt;
 pub mod registry;
 pub mod script_executor;

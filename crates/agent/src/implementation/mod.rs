@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::manager::SharedAgentManager;
-use crate::prompt::build_system_prompt;
+use crate::prompt::{build_system_prompt, DynamicPromptContext};
 use crate::registry::ToolRegistry;
 use crate::script_manager::{ScriptError, ScriptManager};
 use crate::state::CrawlState;
@@ -118,6 +118,7 @@ pub struct CrawlerAgent {
     pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     prompt_override_slot: Arc<Mutex<Option<Vec<String>>>>,
     last_assistant_text_slot: Arc<Mutex<Option<String>>>,
+    step_count: usize,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
@@ -155,6 +156,7 @@ impl CrawlerAgent {
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             prompt_override_slot,
             last_assistant_text_slot,
+            step_count: 0,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -388,7 +390,14 @@ impl ToolExecutor for CrawlerAgent {
         input: &str,
     ) -> impl std::future::Future<Output = Result<ToolOutcome, ToolError>> + Send {
         async move {
-            let _ = (&self.prompt_override_slot, &self.last_assistant_text_slot);
+            // Load settings and apply planning interval guidance
+            let settings = runtime::load_settings();
+            let interval = runtime::settings_get_planning_interval(&settings);
+            self.step_count += 1;
+
+            if interval > 0 {
+                self.apply_planning_guidance(interval);
+            }
 
             if self
                 .allowed_tools
@@ -423,7 +432,7 @@ impl ToolExecutor for CrawlerAgent {
                             .as_mut()
                             .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
                         self.registry
-                            .execute_async(tool_name, &input_value, browser)
+                            .execute_async(tool_name, &input_value, browser, &mut self.crawl_state)
                             .await
                             .map_err(|error| ToolError::new(error.to_string()))?
                     }
@@ -436,7 +445,7 @@ impl ToolExecutor for CrawlerAgent {
                     .as_mut()
                     .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
                 self.registry
-                    .execute_async(tool_name, &input_value, browser)
+                    .execute_async(tool_name, &input_value, browser, &mut self.crawl_state)
                     .await
                     .map_err(|error| ToolError::new(error.to_string()))?
             } else {
@@ -448,18 +457,76 @@ impl ToolExecutor for CrawlerAgent {
                 effect => Some(effect.clone()),
             };
 
-            self.dispatch_tool_effect(tool_effect).await.map(|text| {
-                if let Some(effect) = observed_effect {
-                    ToolOutcome::with_effect(text, effect)
-                } else {
-                    ToolOutcome::reply(text)
-                }
+            let text = self.dispatch_tool_effect(tool_effect).await?;
+
+            if runtime::settings_get_loop_detection(&settings) {
+                self.apply_loop_detection(&settings, tool_name, &input_value);
+            }
+
+            Ok(if let Some(effect) = observed_effect {
+                ToolOutcome::with_effect(text, effect)
+            } else {
+                ToolOutcome::reply(text)
             })
         }
     }
 }
 
 impl CrawlerAgent {
+    fn apply_planning_guidance(&self, interval: usize) {
+        let planning_guidance = if self.step_count.is_multiple_of(interval) {
+            "Planning checkpoint: Review your overall goal, assess progress, and decide your next major objective."
+                .to_string()
+        } else {
+            "Execution mode: Focus on the current step. Take precise action and evaluate the result."
+                .to_string()
+        };
+
+        self.write_prompt_override(&DynamicPromptContext {
+            planning_guidance: Some(planning_guidance),
+            ..Default::default()
+        });
+    }
+
+    fn apply_loop_detection(
+        &mut self,
+        settings: &runtime::Settings,
+        tool_name: &str,
+        input: &Value,
+    ) {
+        let window = runtime::settings_get_loop_detection_window(settings);
+        let threshold = runtime::settings_get_loop_nudge_threshold(settings);
+
+        if self.crawl_state.loop_detector.is_none() {
+            self.crawl_state.loop_detector =
+                Some(crate::loop_detector::LoopDetector::new(window, threshold));
+        }
+
+        if let Some(detector) = self.crawl_state.loop_detector.as_mut() {
+            detector.record_action(tool_name, input);
+
+            if let Some(fingerprint) = self.crawl_state.page_fingerprints.last() {
+                detector.record_page_state(fingerprint);
+            }
+
+            if let Some(nudge) = detector.detect_loop() {
+                self.write_prompt_override(&DynamicPromptContext {
+                    loop_nudge: Some(nudge.message().to_string()),
+                    ..DynamicPromptContext::default()
+                });
+            }
+        }
+    }
+
+    fn write_prompt_override(&self, ctx: &DynamicPromptContext) {
+        let specs = crate::mvp_tool_specs();
+        let new_prompt = build_system_prompt(&specs, Some(ctx));
+        *self
+            .prompt_override_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(new_prompt);
+    }
+
     async fn dispatch_tool_effect(&mut self, tool_effect: ToolEffect) -> Result<String, ToolError> {
         match tool_effect {
             ToolEffect::Reply(output) => Ok(output),
@@ -1349,5 +1416,39 @@ mod tests {
             result.extracted_data,
             vec![serde_json::json!({"from_state": true})]
         );
+    }
+
+    #[tokio::test]
+    async fn test_planning_interval_disabled_by_default() {
+        let _env_guard = env_lock().lock().await;
+        std::env::set_var("ACRAWL_CONFIG_HOME", "");
+
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        let initial_slot = agent
+            .prompt_override_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert_eq!(initial_slot, None, "slot should be empty initially");
+
+        let _ = agent
+            .execute("navigate", r#"{"url":"https://example.com"}"#)
+            .await;
+
+        let slot_after = agent
+            .prompt_override_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert_eq!(
+            slot_after, None,
+            "slot should remain empty when interval=0 (default)"
+        );
+    }
+
+    #[test]
+    fn test_step_count_increments_on_each_execute() {
+        let agent = CrawlerAgent::new_for_testing(mock_registry());
+        assert_eq!(agent.step_count, 0, "step_count should start at 0");
     }
 }
