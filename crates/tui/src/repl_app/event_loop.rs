@@ -77,6 +77,24 @@ impl ReplTuiState {
                     self.push_system(&s);
                 }
                 ReplTuiEvent::MessageCompleted(message) => {
+                    // When a tool-result message is committed to the conversation
+                    // history, the tool is now rendered via `state.messages` +
+                    // `tool_results`.  Remove the matching `live_tool_calls` entry
+                    // so the same call is not rendered a second time from that
+                    // list, which would produce a visible duplicate in the TUI.
+                    if message.role == MessageRole::Tool {
+                        for block in &message.blocks {
+                            if let ContentBlock::ToolResult { tool_name, .. } = block {
+                                if let Some(pos) = self
+                                    .live_tool_calls
+                                    .iter()
+                                    .position(|(name, _, _)| name == tool_name)
+                                {
+                                    self.live_tool_calls.remove(pos);
+                                }
+                            }
+                        }
+                    }
                     self.typewriter.chars.clear();
                     self.typewriter.live.clear();
                     self.messages.push(message);
