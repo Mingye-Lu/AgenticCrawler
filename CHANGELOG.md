@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-06-10
+
+### Changed
+
+- **`navigate` defaults to `fit_markdown`** — the `format` parameter now defaults to `fit_markdown` instead of `markdown`, saving 30–40% tokens on typical pages. Pass `format: "markdown"` explicitly to restore full output.
+- **`wait` returns `page_state`** — both the selector-based and fixed-duration wait branches now return a `page_state` diff (URL, title, added/removed/modified elements) after the condition resolves, consistent with all other action tools (`click`, `fill_form`, `press_key`, `scroll`, etc.). Eliminates the extra `page_map` call previously needed to observe what changed.
+
+### Fixed
+
+- **Script tools missing from `ToolRegistry`** — `run_script`, `wait_for_scripts`, `script_status`, `cancel_script`, `save_script`, `list_scripts`, and `read_script` were parsed and validated correctly but not dispatched by the agent loop. All 7 script tools are now registered.
+
+### Improved
+
+- **MCP tool descriptions** — all 28 tool descriptions and parameter schemas enriched with concrete examples, edge-case guidance, and clearer return-value documentation for better LLM tool selection and Glama TDQS scoring.
+
 ## [0.9.0] - 2026-06-09
 
 ### Added
@@ -684,6 +699,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.9.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.0
 [0.8.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.7
 [0.8.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.6
