@@ -68,10 +68,7 @@ impl ToolRegistry {
             "list_scripts",
             Box::new(crate::tools::list_scripts::execute),
         );
-        registry.register(
-            "read_script",
-            Box::new(crate::tools::read_script::execute),
-        );
+        registry.register("read_script", Box::new(crate::tools::read_script::execute));
         registry.register(
             "script_status",
             Box::new(crate::tools::script_status::execute),
