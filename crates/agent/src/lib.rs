@@ -102,7 +102,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait",
-            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns when the condition is met or the timeout expires.",
+            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -116,7 +116,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner)."),
+            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner). Returns post-action page_state (URL, title, and structural diff) so you can see what changed without a separate page_map call."),
         },
     ]
 }

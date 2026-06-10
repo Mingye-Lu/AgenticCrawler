@@ -212,7 +212,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `go_back` | Browser back button. Returns `page_state` with the resulting page structure. |
 | `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
-| `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). |
+| `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). Returns `page_state` after the condition is met. |
 
 #### Content Formats
 

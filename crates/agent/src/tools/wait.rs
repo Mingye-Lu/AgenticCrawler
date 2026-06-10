@@ -106,18 +106,24 @@ pub async fn execute(
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
+        let page_state = super::feedback::post_action_page_state(browser).await;
+
         Ok(ToolEffect::reply_json(&json!({
             "success": true,
             "found": found,
             "selector": selector,
-            "timeout_ms": parsed.timeout_ms
+            "timeout_ms": parsed.timeout_ms,
+            "page_state": page_state
         })))
     } else {
         tokio::time::sleep(Duration::from_millis(parsed.timeout_ms)).await;
 
+        let page_state = super::feedback::post_action_page_state(browser).await;
+
         Ok(ToolEffect::reply_json(&json!({
             "success": true,
-            "waited_ms": parsed.timeout_ms
+            "waited_ms": parsed.timeout_ms,
+            "page_state": page_state
         })))
     }
 }
