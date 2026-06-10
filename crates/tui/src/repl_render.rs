@@ -499,7 +499,22 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
                     }
                 }
             }
-            MessageRole::Tool | MessageRole::System => {}
+            MessageRole::Tool => {}
+            MessageRole::System => {
+                for block in &message.blocks {
+                    if let ContentBlock::Text { text } = block {
+                        for row in wrap_plain_text(text, width) {
+                            text_out.push(row.clone());
+                            out.push(ListItem::new(Line::from(Span::styled(
+                                row,
+                                system_style,
+                            ))));
+                        }
+                        out.push(ListItem::new(Line::from(" ")));
+                        text_out.push(" ".to_string());
+                    }
+                }
+            }
         }
     }
 

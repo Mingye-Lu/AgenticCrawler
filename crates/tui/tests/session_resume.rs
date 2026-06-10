@@ -157,25 +157,34 @@ fn session_with_child_sessions_populates_tabs() {
 }
 
 #[test]
-fn compacted_session_renders_normally() {
+fn compacted_session_renders_system_summary() {
+    use acrawl_core::message::{ConversationMessage, MessageRole};
+    let summary_text =
+        "This session is being continued. Summary: Previously we scraped 50 pages of book data.";
     let messages = vec![
-        ConversationMessage::user_text("(Context above was compacted)"),
+        ConversationMessage {
+            role: MessageRole::System,
+            blocks: vec![ContentBlock::Text {
+                text: summary_text.to_string(),
+            }],
+            usage: None,
+        },
+        ConversationMessage::user_text("continue"),
         ConversationMessage::assistant(vec![ContentBlock::Text {
-            text: "Summary: Previously we scraped 50 pages of book data.".to_string(),
+            text: "Continuing from where we left off.".to_string(),
         }]),
     ];
     let tool_results = build_tool_result_index(&messages);
 
-    let (items, text_lines) = render_messages(&messages, &tool_results);
+    let (_items, text_lines) = render_messages(&messages, &tool_results);
 
-    assert!(
-        items.len() > 1,
-        "expected more than 1 item for compacted session, got {}",
-        items.len()
-    );
     let joined = text_lines.join("\n");
     assert!(
         joined.contains("Summary"),
-        "expected 'Summary' text in output, got: {joined}"
+        "compacted summary (System message) must be visible in resumed transcript, got: {joined}"
+    );
+    assert!(
+        joined.contains("Continuing from where"),
+        "assistant reply must also be visible, got: {joined}"
     );
 }
