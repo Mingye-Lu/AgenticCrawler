@@ -1,6 +1,7 @@
 use runtime::ChildSession;
 use serde_json::Value;
 
+use crate::action_cache::ActionCache;
 use crate::loop_detector::LoopDetector;
 use crate::page_fingerprint::PageFingerprint;
 use crate::tools::html_diff::HtmlDiffTracker;
@@ -22,6 +23,7 @@ pub struct CrawlState {
     pub max_steps: usize,
     pub captured_child_sessions: Vec<ChildSession>,
     pub page_fingerprints: Vec<PageFingerprint>,
+    pub action_cache: Option<ActionCache>,
     pub html_diff_tracker: Option<HtmlDiffTracker>,
     pub loop_detector: Option<LoopDetector>,
 }
@@ -38,6 +40,7 @@ impl CrawlState {
             max_steps: child_max_steps,
             captured_child_sessions: Vec::new(),
             page_fingerprints: Vec::new(),
+            action_cache: None,
             html_diff_tracker: None,
             loop_detector: None,
         }

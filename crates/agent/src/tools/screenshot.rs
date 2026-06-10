@@ -121,15 +121,12 @@ pub async fn execute(
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::OnceLock;
 
     use async_trait::async_trait;
 
     use crate::{
         BridgeError, BrowserBackend, BrowserState, PageInfo, ScreenshotOptions, SharedBridge,
     };
-
-    static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
 
     fn setup_temp_dir(suffix: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -333,10 +330,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_writes_file_default_filename() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("default_fn");
         let output_dir = temp_dir.join("output");
 
@@ -378,10 +372,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_custom_filename() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("custom_fn");
         let output_dir = temp_dir.join("screenshots");
 
@@ -431,10 +422,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_invalid_base64_errors() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("bad_b64");
         let output_dir = temp_dir.join("output");
 
@@ -462,10 +450,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_write_error_on_invalid_dir() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("write_err");
         // Point output_dir at a FILE, so create_dir_all will fail
         let blocker = temp_dir.join("blocked");
