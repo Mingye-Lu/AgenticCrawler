@@ -1,5 +1,13 @@
 use acrawl_core::ToolSpec;
 
+#[derive(Debug, Default, Clone)]
+pub struct DynamicPromptContext {
+    pub stagnation_alert: Option<String>,
+    pub planning_guidance: Option<String>,
+    pub budget_warning: Option<String>,
+    pub loop_nudge: Option<String>,
+}
+
 fn format_tool(spec: &ToolSpec) -> String {
     let required: Vec<&str> = spec
         .input_schema
@@ -33,8 +41,11 @@ fn list_tools(specs: &[ToolSpec]) -> String {
 ///
 /// Returns `Vec<String>` for [`runtime::ConversationRuntime`]'s `system_prompt` parameter.
 #[must_use]
-pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
-    vec![
+pub fn build_system_prompt(
+    tool_specs: &[ToolSpec],
+    dynamic_context: Option<&DynamicPromptContext>,
+) -> Vec<String> {
+    let mut sections = vec![
         section_identity(tool_specs),
         section_operating_procedure(),
         section_data_integrity(),
@@ -43,7 +54,37 @@ pub fn build_system_prompt(tool_specs: &[ToolSpec]) -> Vec<String> {
         section_completion(),
         section_parallel_exploration(),
         section_autonomous_scripts(),
-    ]
+    ];
+
+    if let Some(dynamic_section) = dynamic_context.and_then(build_dynamic_section) {
+        sections.push(dynamic_section);
+    }
+
+    sections
+}
+
+#[must_use]
+pub fn build_dynamic_section(ctx: &DynamicPromptContext) -> Option<String> {
+    let mut items = Vec::new();
+
+    if let Some(value) = &ctx.stagnation_alert {
+        items.push(format!("- Stagnation alert: {value}"));
+    }
+    if let Some(value) = &ctx.planning_guidance {
+        items.push(format!("- Planning guidance: {value}"));
+    }
+    if let Some(value) = &ctx.budget_warning {
+        items.push(format!("- Budget warning: {value}"));
+    }
+    if let Some(value) = &ctx.loop_nudge {
+        items.push(format!("- Loop nudge: {value}"));
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(format!("Dynamic guidance:\n{}", items.join("\n")))
+    }
 }
 
 fn section_identity(tool_specs: &[ToolSpec]) -> String {
@@ -261,7 +302,7 @@ mod tests {
 
     #[test]
     fn build_system_prompt_includes_tool_listing() {
-        let prompt = build_system_prompt(&sample_specs());
+        let prompt = build_system_prompt(&sample_specs(), None);
         assert!(prompt.len() >= 2, "should have at least 2 prompt sections");
 
         let first = &prompt[0];
@@ -308,7 +349,7 @@ mod tests {
 
     #[test]
     fn build_system_prompt_contains_all_sections() {
-        let prompt = build_system_prompt(&sample_specs());
+        let prompt = build_system_prompt(&sample_specs(), None);
         let joined = prompt.join("\n");
         assert!(joined.contains("Operating procedure:"));
         assert!(joined.contains("Data integrity:"));
@@ -322,7 +363,7 @@ mod tests {
     #[test]
     fn build_system_prompt_lists_all_tools() {
         let specs = crate::mvp_tool_specs();
-        let prompt = build_system_prompt(&specs);
+        let prompt = build_system_prompt(&specs, None);
         let first = &prompt[0];
         for spec in &specs {
             assert!(
@@ -336,7 +377,7 @@ mod tests {
     #[test]
     fn test_system_prompt_contains_parallel_exploration() {
         let specs = crate::mvp_tool_specs();
-        let prompt = build_system_prompt(&specs);
+        let prompt = build_system_prompt(&specs, None);
         let joined = prompt.join("\n");
         assert!(joined.contains("fork"), "should mention fork tool");
         assert!(joined.contains("parallel"), "should mention parallel");
@@ -351,7 +392,7 @@ mod tests {
     #[test]
     fn test_system_prompt_contains_autonomous_scripts() {
         let specs = crate::mvp_tool_specs();
-        let prompt = build_system_prompt(&specs);
+        let prompt = build_system_prompt(&specs, None);
         let joined = prompt.join("\n");
         assert!(
             joined.contains("Autonomous scripts:"),
@@ -377,5 +418,40 @@ mod tests {
         );
         assert!(joined.contains("read_script"), "should mention read_script");
         assert_eq!(prompt.len(), 8, "should have 8 sections");
+    }
+
+    #[test]
+    fn build_system_prompt_is_unchanged_when_dynamic_context_is_none() {
+        let specs = sample_specs();
+        let prompt = build_system_prompt(&specs, None);
+
+        assert_eq!(
+            prompt,
+            vec![
+                section_identity(&specs),
+                section_operating_procedure(),
+                section_data_integrity(),
+                section_constraints(),
+                section_error_recovery(),
+                section_completion(),
+                section_parallel_exploration(),
+                section_autonomous_scripts(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_system_prompt_appends_dynamic_section_when_present() {
+        let specs = sample_specs();
+        let prompt = build_system_prompt(
+            &specs,
+            Some(&DynamicPromptContext {
+                stagnation_alert: Some("You are stuck".to_string()),
+                ..DynamicPromptContext::default()
+            }),
+        );
+
+        assert_eq!(prompt.len(), 9);
+        assert!(prompt[8].contains("You are stuck"));
     }
 }

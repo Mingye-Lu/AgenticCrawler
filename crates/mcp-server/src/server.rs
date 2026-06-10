@@ -440,7 +440,7 @@ fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<ToolSpec> {
 }
 
 fn build_run_goal_system_prompt(allowed_tools: &[String]) -> Vec<String> {
-    agent::build_system_prompt(&filtered_tool_specs(allowed_tools))
+    agent::build_system_prompt(&filtered_tool_specs(allowed_tools), None)
 }
 
 fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOutcome> {

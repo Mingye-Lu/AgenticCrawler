@@ -119,6 +119,8 @@ mod tests {
             TextDeltaApiClient,
             StaticToolExecutor::new(),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
@@ -170,6 +172,8 @@ mod tests {
                 Ok(ToolOutcome::reply(format!("echo:{input}")))
             }),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
@@ -229,6 +233,8 @@ mod tests {
                 ))
             }),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
@@ -269,6 +275,8 @@ mod tests {
             FinishedApiClient,
             StaticToolExecutor::new(),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
@@ -298,6 +306,8 @@ mod tests {
                 Ok(ToolOutcome::reply(format!("echo:{input}")))
             }),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
@@ -362,6 +372,8 @@ mod tests {
                     ))
                 }),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
@@ -391,6 +403,8 @@ mod tests {
                 ))
             }),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
@@ -421,6 +435,8 @@ mod tests {
             ErrorApiClient,
             StaticToolExecutor::new(),
             vec!["system".to_string()],
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
         )
         .with_observer(Box::new(observer));
 
