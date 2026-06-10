@@ -1,12 +1,12 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use acrawl_core::{ApiClient, ContentBlock, ToolError, ToolExecutor, ToolOutcome};
 use runtime::{ControlState, ConversationMessage, ConversationRuntime, Session, TurnSummary};
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::manager::SharedAgentManager;
 use crate::prompt::build_system_prompt;
@@ -116,11 +116,50 @@ pub struct CrawlerAgent {
     extension_mode: bool,
     is_child: bool,
     pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
+    prompt_override_slot: Arc<Mutex<Option<Vec<String>>>>,
+    last_assistant_text_slot: Arc<Mutex<Option<String>>>,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
 
 impl CrawlerAgent {
+    fn new_with_slots(
+        browser: Option<BrowserContext>,
+        registry: ToolRegistry,
+        agent_id: String,
+        prompt_override_slot: Arc<Mutex<Option<Vec<String>>>>,
+        last_assistant_text_slot: Arc<Mutex<Option<String>>>,
+    ) -> Self {
+        let shared_bridge = browser.as_ref().map(|context| context.bridge().clone());
+        Self {
+            shared_bridge,
+            browser,
+            registry,
+            allowed_tools: None,
+            max_steps: DEFAULT_MAX_STEPS,
+            agent_id,
+            agent_manager: default_agent_manager(),
+            crawl_state: CrawlState {
+                max_steps: DEFAULT_MAX_STEPS,
+                ..CrawlState::default()
+            },
+            child_tasks: HashMap::new(),
+            child_id_counter: std::sync::atomic::AtomicU64::new(0),
+            api_client_arc: None,
+            script_manager: default_script_manager(),
+            control_state: None,
+            child_event_tx: None,
+            child_control_registry: None,
+            extension_mode: false,
+            is_child: false,
+            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
+            prompt_override_slot,
+            last_assistant_text_slot,
+            #[cfg(test)]
+            fork_page_index_override: None,
+        }
+    }
+
     #[must_use]
     pub fn take_captured_child_sessions(&mut self) -> Vec<runtime::ChildSession> {
         std::mem::take(&mut self.crawl_state.captured_child_sessions)
@@ -132,89 +171,35 @@ impl CrawlerAgent {
 
     #[must_use]
     pub fn new(browser: BrowserContext, registry: ToolRegistry) -> Self {
-        Self {
-            shared_bridge: Some(browser.bridge().clone()),
-            browser: Some(browser),
+        Self::new_with_slots(
+            Some(browser),
             registry,
-            allowed_tools: None,
-            max_steps: DEFAULT_MAX_STEPS,
-            agent_id: generate_agent_id(),
-            agent_manager: default_agent_manager(),
-            crawl_state: CrawlState {
-                max_steps: DEFAULT_MAX_STEPS,
-                ..CrawlState::default()
-            },
-            child_tasks: HashMap::new(),
-            child_id_counter: std::sync::atomic::AtomicU64::new(0),
-            api_client_arc: None,
-            script_manager: default_script_manager(),
-            control_state: None,
-            child_event_tx: None,
-            child_control_registry: None,
-            extension_mode: false,
-            is_child: false,
-            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
-            #[cfg(test)]
-            fork_page_index_override: None,
-        }
+            generate_agent_id(),
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
+        )
     }
 
     #[must_use]
     pub fn new_lazy(registry: ToolRegistry) -> Self {
-        Self {
-            browser: None,
+        Self::new_with_slots(
+            None,
             registry,
-            allowed_tools: None,
-            max_steps: DEFAULT_MAX_STEPS,
-            agent_id: generate_agent_id(),
-            agent_manager: default_agent_manager(),
-            shared_bridge: None,
-            crawl_state: CrawlState {
-                max_steps: DEFAULT_MAX_STEPS,
-                ..CrawlState::default()
-            },
-            child_tasks: HashMap::new(),
-            child_id_counter: std::sync::atomic::AtomicU64::new(0),
-            api_client_arc: None,
-            script_manager: default_script_manager(),
-            control_state: None,
-            child_event_tx: None,
-            child_control_registry: None,
-            extension_mode: false,
-            is_child: false,
-            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
-            #[cfg(test)]
-            fork_page_index_override: None,
-        }
+            generate_agent_id(),
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
+        )
     }
 
     #[cfg(test)]
     fn new_for_testing(registry: ToolRegistry) -> Self {
-        Self {
-            browser: None,
+        Self::new_with_slots(
+            None,
             registry,
-            allowed_tools: None,
-            max_steps: DEFAULT_MAX_STEPS,
-            agent_id: "test-agent".to_string(),
-            agent_manager: default_agent_manager(),
-            shared_bridge: None,
-            crawl_state: CrawlState {
-                max_steps: DEFAULT_MAX_STEPS,
-                ..CrawlState::default()
-            },
-            child_tasks: HashMap::new(),
-            child_id_counter: std::sync::atomic::AtomicU64::new(0),
-            api_client_arc: None,
-            script_manager: default_script_manager(),
-            control_state: None,
-            child_event_tx: None,
-            child_control_registry: None,
-            extension_mode: false,
-            is_child: false,
-            child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
-            #[cfg(test)]
-            fork_page_index_override: None,
-        }
+            "test-agent".to_string(),
+            Arc::new(Mutex::new(None)),
+            Arc::new(Mutex::new(None)),
+        )
     }
 
     #[must_use]
@@ -308,7 +293,7 @@ impl CrawlerAgent {
                 .collect(),
             None => mvp_tool_specs(),
         };
-        let system_prompt = build_system_prompt(&specs);
+        let system_prompt = build_system_prompt(&specs, None);
         self.run_with_system_prompt(goal, api_client, system_prompt)
             .await
     }
@@ -335,9 +320,19 @@ impl CrawlerAgent {
         }
 
         let max_steps = self.max_steps;
-        let mut runtime =
-            ConversationRuntime::new(Session::new(), shared_client.clone(), self, system_prompt)
-                .with_max_iterations(max_steps);
+        let prompt_override_slot = Arc::new(Mutex::new(None));
+        let last_assistant_text_slot = Arc::new(Mutex::new(None));
+        self.prompt_override_slot = Arc::clone(&prompt_override_slot);
+        self.last_assistant_text_slot = Arc::clone(&last_assistant_text_slot);
+        let mut runtime = ConversationRuntime::new(
+            Session::new(),
+            shared_client.clone(),
+            self,
+            system_prompt,
+            prompt_override_slot,
+            last_assistant_text_slot,
+        )
+        .with_max_iterations(max_steps);
 
         // Attach child event observer for streaming child output to TUI and
         // mirroring lifecycle/heartbeat data into the shared snapshot registry.
@@ -393,6 +388,8 @@ impl ToolExecutor for CrawlerAgent {
         input: &str,
     ) -> impl std::future::Future<Output = Result<ToolOutcome, ToolError>> + Send {
         async move {
+            let _ = (&self.prompt_override_slot, &self.last_assistant_text_slot);
+
             if self
                 .allowed_tools
                 .as_ref()
@@ -598,7 +595,7 @@ impl CrawlerAgent {
 }
 
 fn default_agent_manager() -> SharedAgentManager {
-    Arc::new(Mutex::new(AgentManager::new(
+    Arc::new(AsyncMutex::new(AgentManager::new(
         DEFAULT_MAX_CONCURRENT_PER_PARENT,
         DEFAULT_MAX_FORK_DEPTH,
         DEFAULT_MAX_TOTAL_AGENTS,
@@ -784,7 +781,7 @@ mod tests {
             .with_agent_id("root".to_string())
             .with_agent_manager(manager.clone());
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
-        agent.shared_bridge = Some(Arc::new(Mutex::new(
+        agent.shared_bridge = Some(Arc::new(AsyncMutex::new(
             Box::new(bridge) as Box<dyn BrowserBackend + Send>
         )));
         agent.fork_page_index_override = Some(1);
@@ -979,7 +976,7 @@ mod tests {
             .with_agent_id("root".to_string())
             .with_agent_manager(manager.clone());
         agent.api_client_arc = Some(shared_client);
-        agent.shared_bridge = Some(Arc::new(Mutex::new(Box::new(
+        agent.shared_bridge = Some(Arc::new(AsyncMutex::new(Box::new(
             crate::PlaywrightBridge::new()
                 .await
                 .expect("bridge should initialize for fork test"),
@@ -1033,7 +1030,7 @@ mod tests {
             .with_agent_id("root".to_string())
             .with_agent_manager(manager);
         agent.api_client_arc = Some(SharedApiClient::new(TextOnlyApiClient));
-        agent.shared_bridge = Some(Arc::new(Mutex::new(
+        agent.shared_bridge = Some(Arc::new(AsyncMutex::new(
             Box::new(bridge) as Box<dyn BrowserBackend + Send>
         )));
         agent.fork_page_index_override = Some(1);
@@ -1059,7 +1056,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fork_at_limit_returns_error() {
-        let manager = Arc::new(Mutex::new(AgentManager::new(0, 3, 10)));
+        let manager = Arc::new(AsyncMutex::new(AgentManager::new(0, 3, 10)));
         manager.lock().await.register_root("root");
 
         let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new_with_core_tools())

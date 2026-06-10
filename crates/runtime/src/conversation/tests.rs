@@ -7,6 +7,11 @@ use crate::compact::CompactionConfig;
 use crate::prompt::SystemPromptBuilder;
 use crate::session::{ContentBlock, MessageRole, Session};
 use crate::usage::TokenUsage;
+use std::sync::{Arc, Mutex};
+
+fn runtime_slots() -> (Arc<Mutex<Option<Vec<String>>>>, Arc<Mutex<Option<String>>>) {
+    (Arc::new(Mutex::new(None)), Arc::new(Mutex::new(None)))
+}
 
 struct ScriptedApiClient {
     call_count: usize,
@@ -89,8 +94,15 @@ async fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
         Ok(ToolOutcome::reply(total.to_string()))
     });
     let system_prompt = SystemPromptBuilder::new().append_section("# Tools").build();
-    let mut runtime =
-        ConversationRuntime::new(Session::new(), api_client, tool_executor, system_prompt);
+    let (prompt_override, last_assistant_text) = runtime_slots();
+    let mut runtime = ConversationRuntime::new(
+        Session::new(),
+        api_client,
+        tool_executor,
+        system_prompt,
+        prompt_override,
+        last_assistant_text,
+    );
 
     let summary = runtime
         .run_turn("what is 2 + 2?")
@@ -143,11 +155,14 @@ fn reconstructs_usage_tracker_from_restored_session() {
             }),
         ));
 
+    let (prompt_override, last_assistant_text) = runtime_slots();
     let runtime = ConversationRuntime::new(
         session,
         SimpleApi,
         StaticToolExecutor::new(),
         vec!["system".to_string()],
+        prompt_override,
+        last_assistant_text,
     );
 
     assert_eq!(runtime.usage().turns(), 1);
@@ -166,11 +181,14 @@ async fn compacts_session_after_turns() {
         }
     }
 
+    let (prompt_override, last_assistant_text) = runtime_slots();
     let mut runtime = ConversationRuntime::new(
         Session::new(),
         SimpleApi,
         StaticToolExecutor::new(),
         vec!["system".to_string()],
+        prompt_override,
+        last_assistant_text,
     );
     runtime.run_turn("a").await.expect("turn a");
     runtime.run_turn("b").await.expect("turn b");
@@ -340,11 +358,14 @@ async fn auto_compacts_when_cumulative_input_threshold_is_crossed() {
         child_sessions: Vec::new(),
     };
 
+    let (prompt_override, last_assistant_text) = runtime_slots();
     let mut runtime = ConversationRuntime::new(
         session,
         SimpleApi,
         StaticToolExecutor::new(),
         vec!["system".to_string()],
+        prompt_override,
+        last_assistant_text,
     )
     .with_auto_compaction_input_tokens_threshold(100_000);
 
@@ -380,11 +401,14 @@ async fn skips_auto_compaction_below_threshold() {
         }
     }
 
+    let (prompt_override, last_assistant_text) = runtime_slots();
     let mut runtime = ConversationRuntime::new(
         Session::new(),
         SimpleApi,
         StaticToolExecutor::new(),
         vec!["system".to_string()],
+        prompt_override,
+        last_assistant_text,
     )
     .with_auto_compaction_input_tokens_threshold(100_000);
 
@@ -428,4 +452,78 @@ fn reasoning_event_stored_in_message() {
         ContentBlock::Reasoning { data } if data == r#"{"id":"rs_123","content":[]}"#
     ));
     assert!(matches!(&message.blocks[1], ContentBlock::Text { text } if text == "answer"));
+}
+
+#[tokio::test]
+async fn prepare_iteration_applies_and_clears_prompt_override() {
+    struct PromptRecordingApiClient {
+        prompts: Arc<Mutex<Vec<Vec<String>>>>,
+    }
+
+    impl ApiClient for PromptRecordingApiClient {
+        fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.prompts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(request.system_prompt);
+            Ok(vec![
+                AssistantEvent::TextDelta("done".to_string()),
+                AssistantEvent::MessageStop,
+            ])
+        }
+    }
+
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let prompt_override = Arc::new(Mutex::new(Some(vec!["override".to_string()])));
+    let last_assistant_text = Arc::new(Mutex::new(None));
+    let mut runtime = ConversationRuntime::new(
+        Session::new(),
+        PromptRecordingApiClient {
+            prompts: Arc::clone(&prompts),
+        },
+        StaticToolExecutor::new(),
+        vec!["original".to_string()],
+        Arc::clone(&prompt_override),
+        last_assistant_text,
+    );
+
+    runtime.run_turn("hi").await.expect("turn should succeed");
+
+    assert_eq!(
+        prompts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_slice(),
+        &[vec!["override".to_string()]]
+    );
+    assert!(prompt_override
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_none());
+}
+
+#[tokio::test]
+async fn stream_assistant_message_records_last_assistant_text() {
+    let (prompt_override, last_assistant_text) = runtime_slots();
+    let mut runtime = ConversationRuntime::new(
+        Session::new(),
+        MockApiClientWithText("latest assistant text".to_string()),
+        StaticToolExecutor::new(),
+        vec!["system".to_string()],
+        prompt_override,
+        Arc::clone(&last_assistant_text),
+    );
+
+    runtime
+        .run_turn("hello")
+        .await
+        .expect("turn should succeed");
+
+    assert_eq!(
+        last_assistant_text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_deref(),
+        Some("latest assistant text")
+    );
 }

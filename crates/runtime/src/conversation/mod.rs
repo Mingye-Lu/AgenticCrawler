@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
@@ -42,6 +42,8 @@ pub struct ConversationRuntime<C, T> {
     usage_tracker: UsageTracker,
     auto_compaction_input_tokens_threshold: u32,
     control_state: Arc<ControlState>,
+    prompt_override: Arc<Mutex<Option<Vec<String>>>>,
+    last_assistant_text: Arc<Mutex<Option<String>>>,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -55,12 +57,16 @@ where
         api_client: C,
         tool_executor: T,
         system_prompt: Vec<String>,
+        prompt_override: Arc<Mutex<Option<Vec<String>>>>,
+        last_assistant_text: Arc<Mutex<Option<String>>>,
     ) -> Self {
         Self::new_with_features(
             session,
             api_client,
             tool_executor,
             system_prompt,
+            prompt_override,
+            last_assistant_text,
             &RuntimeFeatureConfig::default(),
         )
     }
@@ -71,6 +77,8 @@ where
         api_client: C,
         tool_executor: T,
         system_prompt: Vec<String>,
+        prompt_override: Arc<Mutex<Option<Vec<String>>>>,
+        last_assistant_text: Arc<Mutex<Option<String>>>,
         _feature_config: &RuntimeFeatureConfig,
     ) -> Self {
         let usage_tracker = UsageTracker::from_session(&session);
@@ -84,6 +92,8 @@ where
             usage_tracker,
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
             control_state: Arc::new(ControlState::default()),
+            prompt_override,
+            last_assistant_text,
         }
     }
 
@@ -229,6 +239,15 @@ where
         self.fail_if_cancelled()?;
         self.check_cancel()?;
 
+        if let Some(new_prompt) = self
+            .prompt_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            self.system_prompt = new_prompt;
+        }
+
         let next_iterations = iterations + 1;
         if next_iterations > self.max_iterations {
             return Err(RuntimeError::new(
@@ -252,6 +271,11 @@ where
         let events = self.api_client.stream(self.build_api_request())?;
         notify_observer_about_events(&mut self.observer, &events);
         let (assistant_message, usage) = build_assistant_message(events)?;
+        let assistant_text = assistant_text_from_message(&assistant_message);
+        *self
+            .last_assistant_text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(assistant_text);
         if let Some(usage) = usage {
             self.usage_tracker.record(usage);
         }
@@ -630,6 +654,19 @@ fn build_assistant_message(
         ConversationMessage::assistant_with_usage(blocks, usage),
         usage,
     ))
+}
+
+fn assistant_text_from_message(message: &ConversationMessage) -> String {
+    message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            ContentBlock::ToolUse { .. }
+            | ContentBlock::ToolResult { .. }
+            | ContentBlock::Reasoning { .. } => None,
+        })
+        .collect()
 }
 
 fn notify_observer_about_events(

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::{AllowedToolSet, CliError, CliToolExecutor, LlmRuntimeClient};
 use agent::{
@@ -11,7 +11,7 @@ use runtime::{
 };
 
 pub(super) fn build_system_prompt() -> Vec<String> {
-    build_agent_system_prompt(&mvp_tool_specs())
+    build_agent_system_prompt(&mvp_tool_specs(), None)
 }
 
 pub(super) fn build_runtime_feature_config() -> Result<runtime::RuntimeFeatureConfig, CliError> {
@@ -75,6 +75,8 @@ pub(super) fn build_runtime_with_options(
             child_control_registry,
         ),
         system_prompt,
+        Arc::new(Mutex::new(None)),
+        Arc::new(Mutex::new(None)),
         &build_runtime_feature_config()?,
     )
     .with_control_state(shared_control)

@@ -428,7 +428,7 @@ fn parse_resume_args(args: &[String]) -> Result<CliAction, String> {
 fn print_system_prompt() {
     println!(
         "{}",
-        agent::build_system_prompt(&mvp_tool_specs()).join("\n\n")
+        agent::build_system_prompt(&mvp_tool_specs(), None).join("\n\n")
     );
 }
 
@@ -889,7 +889,7 @@ mod tests {
 
     #[test]
     fn system_prompt_contains_no_ide_content() {
-        let prompt = agent::build_system_prompt(&mvp_tool_specs()).join("\n\n");
+        let prompt = agent::build_system_prompt(&mvp_tool_specs(), None).join("\n\n");
         assert!(
             !prompt.contains("Working directory"),
             "system prompt should not mention working directory"
