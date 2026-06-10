@@ -1,5 +1,8 @@
+pub mod action_cache;
 pub mod agent;
 pub mod child_events;
+pub mod confidence;
+pub mod failure_classifier;
 pub mod loop_detector;
 pub mod manager;
 pub mod output;
@@ -8,6 +11,7 @@ pub mod prompt;
 pub mod registry;
 pub mod script_executor;
 pub mod script_manager;
+pub mod self_healing;
 mod shared_client;
 pub mod state;
 pub mod tools;
@@ -47,6 +51,12 @@ pub use state::{ChildBlock, CrawlState};
 pub use url_claim::{ClaimConflict, ClaimGuard, UrlClaimRegistry};
 
 use serde_json::json;
+
+#[cfg(test)]
+pub(crate) fn test_async_env_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 
 fn navigation_tools() -> Vec<ToolSpec> {
     vec![

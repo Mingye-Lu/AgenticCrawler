@@ -748,7 +748,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_forks_on_same_url_second_is_rejected() {
-        let _env_guard = env_lock().lock().await;
+        let _env_guard = crate::test_async_env_lock().lock().await;
         std::env::set_var("HEADLESS", "true");
         let manager = super::super::default_agent_manager();
         manager.lock().await.register_root("root");
@@ -784,12 +784,6 @@ mod tests {
         for (_, (_, handle, _)) in agent.child_tasks.drain() {
             handle.abort();
         }
-    }
-
-    fn env_lock() -> &'static tokio::sync::Mutex<()> {
-        use std::sync::OnceLock;
-        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
     #[tokio::test]
