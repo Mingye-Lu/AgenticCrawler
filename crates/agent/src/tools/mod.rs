@@ -5,6 +5,7 @@ pub mod feedback;
 pub mod fill_form;
 pub mod fork;
 pub mod go_back;
+pub mod html_diff;
 pub mod navigate;
 pub mod page_map;
 pub mod read_content;

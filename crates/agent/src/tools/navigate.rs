@@ -2,6 +2,8 @@ use serde_json::{json, Value};
 
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
 use crate::prune::prune_html;
+use crate::state::CrawlState;
+use crate::tools::html_diff::HtmlDiffTracker;
 use crate::tools::page_map::{annotate_refs, apply_page_map_caps, normalize_url};
 use crate::BrowserContext;
 use crate::FetchRouter;
@@ -333,9 +335,38 @@ fn slim_page_map(page_map: &mut Value) {
     }
 }
 
+fn apply_html_diff(crawl_state: &mut CrawlState, url: &str, content: &mut String) {
+    let settings = runtime::load_settings();
+    if !runtime::settings_get_html_diff_mode(&settings) {
+        return;
+    }
+
+    if crawl_state.html_diff_tracker.is_none() {
+        crawl_state.html_diff_tracker = Some(HtmlDiffTracker::new());
+    }
+
+    if let Some(tracker) = crawl_state.html_diff_tracker.as_mut() {
+        if let Some(diff_output) = tracker.diff(url, content) {
+            *content = diff_output;
+        } else {
+            tracker.update(url, content);
+        }
+    }
+}
+
+fn content_depth_label(depth: &ContentDepth) -> &'static str {
+    match depth {
+        ContentDepth::Full => "full",
+        ContentDepth::Main => "main",
+        ContentDepth::Slim => "slim",
+        ContentDepth::None => "none",
+    }
+}
+
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 
@@ -355,14 +386,17 @@ pub async fn execute(
         &params.content_depth,
     );
 
-    let content =
+    let mut content =
         if params.strip_images && matches!(params.format.as_str(), "markdown" | "fit_markdown") {
             strip_markdown_images(&content)
         } else {
             content
         };
 
+    apply_html_diff(crawl_state, &page.url, &mut content);
+
     browser.set_navigated_url(&page.url, page.fetched_via_browser);
+    crawl_state.current_url = Some(page.url.clone());
     browser.ref_map_mut().clear();
 
     if params.page_map_depth == PageMapDepth::None {
@@ -372,12 +406,7 @@ pub async fn execute(
             "title": title,
             "content": content,
             "format": params.format,
-            "content_depth": match params.content_depth {
-                ContentDepth::Full => "full",
-                ContentDepth::Main => "main",
-                ContentDepth::Slim => "slim",
-                ContentDepth::None => "none",
-            },
+            "content_depth": content_depth_label(&params.content_depth),
             "truncated": truncated,
             "content_length": content_length,
         })));
@@ -436,12 +465,7 @@ pub async fn execute(
         "title": title,
         "content": content,
         "format": params.format,
-        "content_depth": match params.content_depth {
-            ContentDepth::Full => "full",
-            ContentDepth::Main => "main",
-            ContentDepth::Slim => "slim",
-            ContentDepth::None => "none",
-        },
+        "content_depth": content_depth_label(&params.content_depth),
         "truncated": truncated,
         "content_length": content_length,
         "page_map": page_map

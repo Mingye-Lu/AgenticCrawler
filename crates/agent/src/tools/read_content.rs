@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::state::CrawlState;
+use crate::tools::html_diff::HtmlDiffTracker;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
@@ -36,16 +38,42 @@ fn parse_input(
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let (heading, selector, offset, max_chars) = parse_input(input)?;
     let mut bridge = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
-    let result = bridge
+    let mut result = bridge
         .read_content(heading.as_deref(), selector.as_deref(), offset, max_chars)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+
+    let settings = runtime::load_settings();
+    if runtime::settings_get_html_diff_mode(&settings) {
+        if let Some(url) = crawl_state.current_url.as_deref() {
+            if crawl_state.html_diff_tracker.is_none() {
+                crawl_state.html_diff_tracker = Some(HtmlDiffTracker::new());
+            }
+
+            if let Some(content) = result.get("content").and_then(Value::as_str) {
+                let mut content = content.to_string();
+                if let Some(tracker) = crawl_state.html_diff_tracker.as_mut() {
+                    if let Some(diff_output) = tracker.diff(url, &content) {
+                        content = diff_output;
+                    } else {
+                        tracker.update(url, &content);
+                    }
+                }
+
+                if let Some(obj) = result.as_object_mut() {
+                    obj.insert("content".to_string(), Value::String(content));
+                }
+            }
+        }
+    }
+
     Ok(ToolEffect::reply_json(&result))
 }
 

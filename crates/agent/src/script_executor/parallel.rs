@@ -56,6 +56,7 @@ impl ScriptExecutor {
 
                 let branch_executor = Self {
                     browser,
+                    crawl_state: self.crawl_state.clone(),
                     state: self.state.clone(),
                     shared_state: self.shared_state.clone(),
                     limits: self.limits.clone(),

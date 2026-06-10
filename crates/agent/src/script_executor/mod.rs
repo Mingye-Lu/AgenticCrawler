@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use crate::{BrowserContext, ToolEffect, ToolExecutionError, ToolRegistry};
+use crate::{BrowserContext, CrawlState, ToolEffect, ToolExecutionError, ToolRegistry};
 
 #[derive(Debug)]
 pub enum ScriptExecutionError {
@@ -46,6 +46,7 @@ impl std::error::Error for ScriptExecutionError {}
 
 pub struct ScriptExecutor {
     browser: BrowserContext,
+    crawl_state: CrawlState,
     state: ScriptState,
     shared_state: Arc<RwLock<ScriptState>>,
     limits: ScriptLimits,
@@ -69,6 +70,7 @@ impl ScriptExecutor {
     ) -> Self {
         Self {
             browser,
+            crawl_state: CrawlState::default(),
             state: ScriptState {
                 script_id,
                 status: ScriptStatus::Pending,
@@ -338,7 +340,7 @@ impl ScriptExecutor {
     ) -> Result<ToolEffect, ScriptExecutionError> {
         timeout(
             Duration::from_secs(self.limits.per_step_timeout_secs),
-            registry.execute_async(tool, input, &mut self.browser),
+            registry.execute_async(tool, input, &mut self.browser, &mut self.crawl_state),
         )
         .await
         .map_err(|_| ScriptExecutionError::PerStepTimeout)?
@@ -403,6 +405,7 @@ impl ScriptExecutor {
     fn update_current_url(&mut self, output: &Value) {
         if let Some(url) = output.get("url").and_then(Value::as_str) {
             self.state.current_url = Some(url.to_string());
+            self.crawl_state.current_url = Some(url.to_string());
             return;
         }
 
@@ -412,6 +415,7 @@ impl ScriptExecutor {
             .and_then(Value::as_str)
         {
             self.state.current_url = Some(url.to_string());
+            self.crawl_state.current_url = Some(url.to_string());
         }
     }
 

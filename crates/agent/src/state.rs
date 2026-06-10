@@ -1,6 +1,10 @@
 use runtime::ChildSession;
 use serde_json::Value;
 
+use crate::loop_detector::LoopDetector;
+use crate::page_fingerprint::PageFingerprint;
+use crate::tools::html_diff::HtmlDiffTracker;
+
 #[derive(Debug, Clone)]
 pub struct ChildBlock {
     pub child_id: String,
@@ -17,6 +21,9 @@ pub struct CrawlState {
     pub child_blocks: Vec<ChildBlock>,
     pub max_steps: usize,
     pub captured_child_sessions: Vec<ChildSession>,
+    pub page_fingerprints: Vec<PageFingerprint>,
+    pub html_diff_tracker: Option<HtmlDiffTracker>,
+    pub loop_detector: Option<LoopDetector>,
 }
 
 impl CrawlState {
@@ -30,6 +37,9 @@ impl CrawlState {
             child_blocks: Vec::new(),
             max_steps: child_max_steps,
             captured_child_sessions: Vec::new(),
+            page_fingerprints: Vec::new(),
+            html_diff_tracker: None,
+            loop_detector: None,
         }
     }
 

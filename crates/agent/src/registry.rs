@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::BrowserContext;
+use crate::{BrowserContext, CrawlState};
 use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
@@ -124,14 +124,17 @@ impl ToolRegistry {
         name: &str,
         input: &Value,
         browser: &mut BrowserContext,
+        crawl_state: &mut CrawlState,
     ) -> Result<ToolEffect, ToolExecutionError> {
         match name {
-            "navigate" => crate::tools::navigate::execute(input, browser).await,
+            "navigate" => crate::tools::navigate::execute(input, browser, crawl_state).await,
             "click" => crate::tools::click::execute(input, browser).await,
             "click_at" => crate::tools::click_at::execute(input, browser).await,
             "fill_form" => crate::tools::fill_form::execute(input, browser).await,
             "page_map" => crate::tools::page_map::execute(input, browser).await,
-            "read_content" => crate::tools::read_content::execute(input, browser).await,
+            "read_content" => {
+                crate::tools::read_content::execute(input, browser, crawl_state).await
+            }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser).await,
             "scroll" => crate::tools::scroll::execute(input, browser).await,
