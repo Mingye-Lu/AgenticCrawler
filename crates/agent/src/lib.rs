@@ -50,15 +50,15 @@ fn navigation_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "navigate",
-            description: "Navigate to a URL and get page content as structured markdown (default), plain text, or raw HTML",
+            description: "Navigate to a URL and return the page content as structured markdown (default), plain text, or raw HTML. Automatically escalates from fast HTTP fetch to full headless browser when JavaScript rendering is detected (React, Next.js, Vue, Angular markers, or short <noscript> bodies). Returns content with an embedded page_map of headings, links, forms, and interactive elements for subsequent tool calls. Use this as the primary tool for accessing any web page; prefer fit_markdown format for token efficiency.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "url": { "type": "string" },
-                    "format": { "type": "string", "enum": ["markdown", "text", "html", "fit_markdown"] },
-                    "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main" },
-                    "strip_images": { "type": "boolean", "default": true },
-                    "page_map_depth": { "type": "string", "enum": ["full", "slim", "none"], "default": "slim" }
+                    "url": { "type": "string", "description": "Fully qualified URL to navigate to (must include protocol, e.g. https://example.com). Relative URLs are not supported." },
+                    "format": { "type": "string", "enum": ["markdown", "text", "html", "fit_markdown"], "description": "Output format for page content. 'markdown' (default) preserves structure with full content; 'fit_markdown' prunes boilerplate (navs, footers, ads) for ~40% token savings; 'text' strips all formatting; 'html' returns raw source." },
+                    "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main", "description": "Controls how much page content to return. 'main' (default) extracts article/main content only; 'full' returns everything; 'slim' returns first 2000 chars of main content; 'none' skips content entirely (returns page_map only)." },
+                    "strip_images": { "type": "boolean", "default": true, "description": "If true (default), removes image references from output to save context tokens. Set false only when you need image URLs or alt text." },
+                    "page_map_depth": { "type": "string", "enum": ["full", "slim", "none"], "default": "slim", "description": "Controls page_map verbosity. 'slim' (default) omits CSS selectors from elements (use @eN refs instead); 'full' includes raw CSS selectors for all elements; 'none' omits the page_map entirely." }
                 },
                 "required": ["url"],
                 "additionalProperties": false
@@ -67,7 +67,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "go_back",
-            description: "Navigate back to the previous page",
+            description: "Navigate the browser back to the previous page in history (equivalent to the browser back button). Returns the URL navigated to and a page_state object with headings, landmarks, and links of the resulting page. Use after clicking into a page to return to a listing or search results without re-navigating by URL.",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -77,12 +77,12 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "scroll",
-            description: "Scroll the page up or down",
+            description: "Scroll the current page up or down by a specified pixel amount to reveal content beyond the visible viewport. Returns updated page_state after scrolling, reflecting any newly loaded lazy content. Use to reveal below-the-fold content, trigger infinite scroll loading, or navigate long pages section by section.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "direction": { "type": "string", "enum": ["up", "down"] },
-                    "pixels": { "type": "integer", "description": "Pixels to scroll (default: 500). Use 300–800 for a normal page scroll." }
+                    "direction": { "type": "string", "enum": ["up", "down"], "description": "Scroll direction. 'down' reveals content below the viewport; 'up' scrolls back toward the top." },
+                    "pixels": { "type": "integer", "description": "Number of pixels to scroll (default: 500). Use 300–800 for a normal page scroll; larger values for quickly reaching page bottom." }
                 },
                 "additionalProperties": false
             }),
@@ -90,11 +90,11 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "switch_tab",
-            description: "Switch to a different browser tab",
+            description: "Switch the browser focus to a different open tab by its zero-based index. Returns the tab count and a page_state object reflecting the switched-to tab's content (headings, landmarks, links). Use to access pages opened by link targets, popups, or forked sub-agents without re-navigating.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "index": { "type": "integer" }
+                    "index": { "type": "integer", "description": "Zero-based tab index to switch to (0 = first tab). Use the tab count from previous responses to determine valid indices." }
                 },
                 "additionalProperties": false
             }),
@@ -102,16 +102,16 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait",
-            description: "Wait for an element or timeout",
+            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns when the condition is met or the timeout expires.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "selector": { "type": "string" },
-                    "seconds": { "type": "number" },
+                    "selector": { "type": "string", "description": "CSS selector of the element to wait for (e.g. \".results-loaded\", \"#spinner\"). Mutually exclusive with 'seconds' — provide one or the other." },
+                    "seconds": { "type": "number", "description": "Fixed number of seconds to wait (max 300). Use when no specific element signals completion. Mutually exclusive with 'selector'." },
                     "state": {
                         "type": "string",
                         "enum": ["visible", "hidden", "attached", "detached"],
-                        "description": "Wait for element to reach this state. Default: attached (exists in DOM)."
+                        "description": "Target state to wait for. 'attached' (default) = element exists in DOM; 'visible' = element is rendered and not hidden; 'hidden' = element is no longer visible; 'detached' = element removed from DOM. Use 'hidden' to wait for loading spinners to disappear."
                     }
                 },
                 "additionalProperties": false
@@ -146,11 +146,11 @@ fn extraction_tools() -> Vec<ToolSpec> {
 fn click_tool() -> ToolSpec {
     ToolSpec {
         name: "click",
-        description: "Click on an element by CSS selector",
+        description: "Click on a page element identified by CSS selector or @eN reference from page_map. May trigger navigation, form submission, or dynamic content changes. Returns post-action page_state showing the resulting URL, title, and structural diff. Prefer navigate with a direct URL from page_map.links when available — use click only for buttons, toggles, and elements without direct links.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string" }
+                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Use @eN refs for stability." }
             },
             "required": ["selector"],
             "additionalProperties": false
@@ -162,12 +162,12 @@ fn click_tool() -> ToolSpec {
 fn click_at_tool() -> ToolSpec {
     ToolSpec {
         name: "click_at",
-        description: "Click at specific viewport coordinates (x, y). Use for canvas, maps, SVGs, or elements without stable CSS selectors",
+        description: "Click at specific viewport coordinates (x, y) using a real mouse event. Use exclusively for elements without stable CSS selectors: canvas drawings, interactive maps, SVG regions, or coordinate-based UIs. Returns post-action page_state. Prefer the selector-based 'click' tool for normal DOM elements — it is more reliable and does not require coordinate calculation.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "x": { "type": "number", "description": "X coordinate in viewport pixels" },
-                "y": { "type": "number", "description": "Y coordinate in viewport pixels" }
+                "x": { "type": "number", "description": "X coordinate in viewport pixels (0 = left edge). Obtain via execute_js with getBoundingClientRect() on the target element." },
+                "y": { "type": "number", "description": "Y coordinate in viewport pixels (0 = top edge). Obtain via execute_js with getBoundingClientRect() on the target element." }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -179,16 +179,17 @@ fn click_at_tool() -> ToolSpec {
 fn fill_form_tool() -> ToolSpec {
     ToolSpec {
         name: "fill_form",
-        description: "Fill a form field with a value",
+        description: "Fill one or more form fields with values and optionally submit the form. Accepts field identifiers as CSS selectors, field names/IDs, or @eN references from page_map. Returns post-action page_state with the resulting URL and structural diff. Use form_selector to disambiguate when the page contains multiple forms.",
         input_schema: json!({
             "type": "object",
             "properties": {
                 "fields": {
                     "type": "object",
-                    "additionalProperties": { "type": "string" }
+                    "additionalProperties": { "type": "string" },
+                    "description": "Map of field identifiers to values. Keys can be CSS selectors (\"input[name='email']\"), field name/ID attributes (\"email\"), or @eN refs from page_map (\"@e5\"). Values are the text to type into each field."
                 },
-                "submit": { "type": "boolean" },
-                "form_selector": { "type": "string" }
+                "submit": { "type": "boolean", "description": "If true, submit the form after filling all fields (triggers form submission event). Default: false." },
+                "form_selector": { "type": "string", "description": "CSS selector or @eN ref targeting a specific <form> element. Required when the page has multiple forms to disambiguate which form to fill." }
             },
             "required": ["fields"],
             "additionalProperties": false
@@ -200,14 +201,14 @@ fn fill_form_tool() -> ToolSpec {
 fn select_option_tool() -> ToolSpec {
     ToolSpec {
         name: "select_option",
-        description: "Select a dropdown option by value",
+        description: "Select an option from a <select> dropdown element. Identify the target dropdown via CSS selector or @eN ref, then specify which option to select by its value attribute, visible label text, or zero-based index. Returns post-action page_state showing any page changes triggered by the selection (e.g. dependent dropdowns updating).",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string" },
-                "value": { "type": "string" },
-                "label": { "type": "string" },
-                "index": { "type": "integer" }
+                "selector": { "type": "string", "description": "CSS selector or @eN ref targeting the <select> element (e.g. \"@e4\", \"select#country\", \"select[name='size']\")." },
+                "value": { "type": "string", "description": "The value attribute of the <option> to select (e.g. \"us\", \"medium\"). Use when you know the option's value." },
+                "label": { "type": "string", "description": "The visible text of the <option> to select (e.g. \"United States\", \"Medium\"). Use when you know the display text." },
+                "index": { "type": "integer", "description": "Zero-based index of the <option> to select (0 = first option). Use when value/label are unknown." }
             },
             "required": ["selector"],
             "additionalProperties": false
@@ -219,11 +220,11 @@ fn select_option_tool() -> ToolSpec {
 fn hover_tool() -> ToolSpec {
     ToolSpec {
         name: "hover",
-        description: "Hover over an element",
+        description: "Hover the mouse over a page element to trigger hover-dependent UI such as tooltips, dropdown menus, or expandable content. Returns post-action page_state showing any newly revealed elements. Use this before click when content only appears on mouseover; use click instead if the element needs activation rather than hover.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string" }
+                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map targeting the element to hover over (e.g. \"@e2\", \".menu-trigger\", \"nav li\")." }
             },
             "required": ["selector"],
             "additionalProperties": false
@@ -235,12 +236,12 @@ fn hover_tool() -> ToolSpec {
 fn press_key_tool() -> ToolSpec {
     ToolSpec {
         name: "press_key",
-        description: "Press a keyboard key",
+        description: "Dispatch a keyboard key press event on the page or a targeted element. Supports named keys (Enter, Escape, Tab, ArrowDown, Backspace) and character keys. Returns post-action page_state reflecting any DOM changes caused by the keypress. Use for form submission (Enter), closing modals (Escape), focus navigation (Tab), or keyboard shortcuts.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "key": { "type": "string" },
-                "selector": { "type": "string" }
+                "key": { "type": "string", "description": "Key to press — use Playwright key names: \"Enter\", \"Escape\", \"Tab\", \"ArrowDown\", \"ArrowUp\", \"Backspace\", \"Space\", or single characters like \"a\". Modifier combos: \"Control+a\", \"Shift+Tab\"." },
+                "selector": { "type": "string", "description": "Optional CSS selector or @eN ref to focus before pressing the key. If omitted, the key is dispatched to the currently focused element or the page." }
             },
             "required": ["key"],
             "additionalProperties": false
@@ -252,11 +253,11 @@ fn press_key_tool() -> ToolSpec {
 fn execute_js_tool() -> ToolSpec {
     ToolSpec {
         name: "execute_js",
-        description: "Execute JavaScript on the page",
+        description: "Execute arbitrary JavaScript in the page context and return the evaluation result. The script runs synchronously in the browser's main frame with full access to the DOM, window, and page APIs. Use as a last resort when CSS selectors and other tools cannot achieve the interaction — prefer click, fill_form, and select_option for standard interactions.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "script": { "type": "string" }
+                "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." }
             },
             "required": ["script"],
             "additionalProperties": false
@@ -268,13 +269,13 @@ fn execute_js_tool() -> ToolSpec {
 fn page_map_tool() -> ToolSpec {
     ToolSpec {
         name: "page_map",
-        description: "Get comprehensive page structure: headings, landmarks, forms, interactive elements, and links",
+        description: "Get a comprehensive structural map of the current page including headings (h1–h6 with section sizes), landmark regions, forms with field details, links (text + href, capped at 50), and interactive elements (buttons, inputs, selects with state and @eN refs). Use to discover page structure before interacting, or with scope to inspect a specific modal/dialog without background noise. Each interactive element returns a stable @eN reference for use in click, fill_form, hover, press_key, and select_option.",
         input_schema: json!({
             "type": "object",
             "properties": {
                 "scope": {
                     "type": "string",
-                    "description": "CSS selector to scope all queries within (e.g. \"[role='dialog']\" for modal content only). If omitted, queries the full page."
+                    "description": "CSS selector to scope all queries within (e.g. \"[role='dialog']\" for modal content only, \".sidebar\" for a specific region). If omitted, queries the full page."
                 }
             },
             "additionalProperties": false
@@ -286,25 +287,25 @@ fn page_map_tool() -> ToolSpec {
 fn read_content_tool() -> ToolSpec {
     ToolSpec {
         name: "read_content",
-        description: "Extract text content from a specific page section by heading name or CSS selector",
+        description: "Extract plain text content from a specific page section identified by heading name or CSS selector. Supports pagination via offset and max_chars for large sections. Returns content, total character count, and whether more content is available. Use after page_map to read specific sections without re-fetching the entire page; use navigate instead when you need the full page content.",
         input_schema: json!({
             "type": "object",
             "properties": {
                 "heading": {
                     "type": "string",
-                    "description": "Exact heading text to find (case-insensitive)"
+                    "description": "Exact heading text to find (case-insensitive match). Extracts all content under that heading until the next heading of equal or higher level. If not found, the response lists available headings as a hint."
                 },
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector to extract content from"
+                    "description": "CSS selector to extract content from (e.g. \".article-body\", \"#main-content\"). Use when content isn't under a heading or you need a precise DOM target."
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Character offset to start reading from (default: 0)"
+                    "description": "Character offset to start reading from (default: 0). Use with max_chars to paginate through large sections."
                 },
                 "max_chars": {
                     "type": "integer",
-                    "description": "Maximum characters to return (default: 10000)"
+                    "description": "Maximum characters to return (default: 10000). Reduce for token efficiency; increase to get more content in one call."
                 }
             },
             "required": [],
@@ -317,7 +318,7 @@ fn read_content_tool() -> ToolSpec {
 fn list_resources_tool() -> ToolSpec {
     ToolSpec {
         name: "list_resources",
-        description: "List page resources (links, images, forms)",
+        description: "List all discoverable resources on the current page: links (with href and text), images (with src and alt), and forms (with action and method). Returns the complete set without caps — use this when page_map's 50-link limit is insufficient or when you need image URLs. No parameters required.",
         input_schema: json!({
             "type": "object",
             "properties": {},
@@ -330,38 +331,38 @@ fn list_resources_tool() -> ToolSpec {
 fn screenshot_tool() -> ToolSpec {
     ToolSpec {
         name: "screenshot",
-        description: "Capture a screenshot of the current page or a specific element",
+        description: "Capture a screenshot of the current page viewport, a specific element, or the full scrollable page. Returns base64-encoded image data by default, or saves to disk when save=true. Use as a LAST RESORT only after text-based tools (page_map, read_content, execute_js) have failed to provide the needed information — screenshots are expensive and cannot be searched or parsed programmatically.",
         input_schema: json!({
             "type": "object",
             "properties": {
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector to screenshot a specific element. If omitted, captures the full viewport."
+                    "description": "CSS selector to screenshot a specific element (e.g. \"#chart\", \".product-image\"). If omitted, captures the full viewport."
                 },
                 "full_page": {
                     "type": "boolean",
-                    "description": "Capture the full scrollable page, not just the visible viewport. Ignored when selector is provided."
+                    "description": "If true, capture the full scrollable page height (not just the visible viewport). Ignored when selector is provided. Default: false."
                 },
                 "format": {
                     "type": "string",
                     "enum": ["png", "jpeg", "webp"],
-                    "description": "Image format. JPEG/WebP produce smaller files but no transparency. Default: png."
+                    "description": "Image format. 'png' (default) supports transparency; 'jpeg'/'webp' produce smaller files for photos. Default: png."
                 },
                 "quality": {
                     "type": "integer",
-                    "description": "Image quality 0-100. Only applies when format is jpeg or webp. Default: 80."
+                    "description": "Compression quality 0–100 for jpeg/webp formats only (ignored for png). Lower values = smaller files. Default: 80."
                 },
                 "save": {
                     "type": "boolean",
-                    "description": "If true, save the screenshot to the output directory and return the saved path instead of base64."
+                    "description": "If true, save the screenshot to the output directory and return the file path instead of base64 data. Default: false."
                 },
                 "filename": {
                     "type": "string",
-                    "description": "Filename for the saved image (e.g. \"shot.png\"). Only used when save is true. Defaults to a timestamped name if omitted."
+                    "description": "Custom filename for the saved image (e.g. \"homepage.png\"). Only used when save=true. Defaults to a timestamped name if omitted."
                 },
                 "output_dir": {
                     "type": "string",
-                    "description": "Directory to save the screenshot in. Overrides the default output directory."
+                    "description": "Directory to save the screenshot in (absolute or relative to CWD). Only used when save=true. Overrides the default output directory."
                 }
             },
             "additionalProperties": false
@@ -373,16 +374,16 @@ fn screenshot_tool() -> ToolSpec {
 fn save_file_tool() -> ToolSpec {
     ToolSpec {
         name: "save_file",
-        description: "Save a file to the output directory",
+        description: "Download a resource from a URL and save it to the local output directory. Handles any file type (images, PDFs, CSVs, etc.) via HTTP GET. Returns the absolute path of the saved file. Use to persist crawl artifacts; path traversal is blocked for security.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "url": { "type": "string" },
-                "filename": { "type": "string" },
-                "subdir": { "type": "string" },
+                "url": { "type": "string", "description": "Fully qualified URL of the resource to download (e.g. \"https://example.com/report.pdf\"). Must include protocol." },
+                "filename": { "type": "string", "description": "Custom filename to save as (e.g. \"report.pdf\"). If omitted, derived from the URL's last path segment. Path traversal characters (../) are rejected." },
+                "subdir": { "type": "string", "description": "Subdirectory within the output directory to save into (e.g. \"images\", \"data/csv\"). Created automatically if it doesn't exist." },
                 "output_dir": {
                     "type": "string",
-                    "description": "Directory to save the file in. Overrides the default output directory. Can be relative (resolved against CWD) or absolute."
+                    "description": "Override the default output directory. Can be relative (resolved against CWD) or absolute. If omitted, uses the configured output_dir from settings."
                 }
             },
             "required": ["url"],
@@ -396,31 +397,31 @@ fn agent_control_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "fork",
-            description: "Spawn a parallel subagent on a new browser tab with a typed work packet. The packet declares an `objective` (what to do) and a `scope` (which URLs the child is allowed to claim). Sibling forks CANNOT claim overlapping URLs/patterns — the call errors atomically with the conflicting owner.",
+            description: "Spawn a parallel sub-agent on a new browser tab with a declared objective and URL scope. The child agent operates independently with its own step budget and browser context. Sibling forks CANNOT claim overlapping URLs — the call errors atomically with the conflicting owner's ID. Returns the child_id for use with subagent_status, wait_for_subagents, or cancel_subagent. Use to parallelize multi-page crawls (pagination, search results, product comparisons).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "objective": {
                         "type": "string",
-                        "description": "Human-readable goal for the subagent (e.g., 'extract all product titles')."
+                        "description": "Human-readable goal for the sub-agent (e.g. 'Extract all product titles and prices from this category page'). Should be self-contained — the child has no access to the parent's conversation history."
                     },
                     "scope": {
                         "type": "object",
-                        "description": "Declared work boundary. Exactly one of single_page, url_list, or url_pattern.",
+                        "description": "Declared URL boundary for the child. Prevents sibling overlap. Exactly one of: single_page (one URL), url_list (explicit set), or url_pattern (regex). First-claimer-wins: if a sibling already claimed a URL in this scope, fork fails with the conflicting child_id.",
                         "properties": {
-                            "type": { "type": "string", "enum": ["single_page", "url_list", "url_pattern"] },
-                            "url": { "type": "string", "description": "Required when type=single_page." },
+                            "type": { "type": "string", "enum": ["single_page", "url_list", "url_pattern"], "description": "Scope type. 'single_page' for one URL, 'url_list' for a small explicit set, 'url_pattern' for regex-based matching over a subdomain or path prefix." },
+                            "url": { "type": "string", "description": "The URL to crawl. Required when type='single_page'." },
                             "urls": {
                                 "type": "array",
                                 "items": { "type": "string" },
                                 "minItems": 1,
-                                "description": "Required when type=url_list."
+                                "description": "List of URLs to crawl (claimed as an all-or-nothing batch). Required when type='url_list'."
                             },
-                            "regex": { "type": "string", "description": "Required when type=url_pattern. Must compile." }
+                            "regex": { "type": "string", "description": "Regex pattern matching allowed URLs (e.g. 'https://example\\.com/products/.*'). Must be a valid regex. Required when type='url_pattern'." }
                         },
                         "required": ["type"]
                     },
-                    "max_steps": { "type": "integer", "minimum": 1, "description": "Override the child's step budget." }
+                    "max_steps": { "type": "integer", "minimum": 1, "description": "Override the child's step budget (default: fork_child_max_steps from settings, typically 15). Increase for complex multi-page tasks." }
                 },
                 "required": ["objective", "scope"],
                 "additionalProperties": false
@@ -429,14 +430,14 @@ fn agent_control_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait_for_subagents",
-            description: "Wait for active subagents and return a JSON snapshot of each one's status. Children that finish during the wait have their items collected and merged. Children that have not finished by the timeout are reported as `status: \"running\"` and KEEP RUNNING — wait NEVER cancels or aborts. Use `cancel_subagent` if you actually want to stop a child.",
+            description: "Block until one or more sub-agents finish and collect their extracted results. Children that complete during the wait have their data merged into the response. Children still running after the timeout (default: 60s) are reported as status='running' and KEEP RUNNING — this tool never cancels or aborts children. Use cancel_subagent explicitly to stop a child you no longer need.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "child_ids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Optional list of child IDs to wait for. Defaults to all active children."
+                        "description": "List of child IDs to wait for (returned by fork). If omitted, waits for ALL active children. Specify IDs to wait for a subset."
                     }
                 },
                 "additionalProperties": false
@@ -445,14 +446,14 @@ fn agent_control_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "subagent_status",
-            description: "Read-only poll: returns a JSON snapshot of each subagent's lifecycle, current step, last tool call, last text output, items extracted, and how long ago its last event was observed. Never joins or cancels — safe to call between any other actions.",
+            description: "Non-blocking read-only poll of sub-agent lifecycle state. Returns each child's current step, last tool call, last text output, items extracted count, and seconds since last activity. Never joins, blocks, or cancels — safe to call between any other actions. Use to monitor progress and decide whether to wait, cancel, or fork additional agents.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "child_ids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Optional list of child IDs to inspect. Defaults to all tracked children."
+                        "description": "List of child IDs to inspect (returned by fork). If omitted, returns status for ALL tracked children (active and completed)."
                     }
                 },
                 "additionalProperties": false
@@ -461,7 +462,7 @@ fn agent_control_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "cancel_subagent",
-            description: "Abort one or more running subagents immediately. Their in-flight work is discarded. Use this only when you have decided the child's result is no longer needed.",
+            description: "Abort one or more running sub-agents immediately, discarding their in-flight work and partial results. The child's browser tab is closed and its URL claims are released. Use only when you have decided the child's result is no longer needed — there is no way to recover cancelled work. Use wait_for_subagents instead if you want results.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -469,11 +470,11 @@ fn agent_control_tools() -> Vec<ToolSpec> {
                         "type": "array",
                         "items": { "type": "string" },
                         "minItems": 1,
-                        "description": "Child IDs to cancel (required, non-empty)."
+                        "description": "Child IDs to cancel (required, non-empty). Obtain IDs from the fork response or subagent_status."
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Optional human-readable reason for cancellation (logged in the Finished event)."
+                        "description": "Optional human-readable reason for cancellation (e.g. 'duplicate work', 'no longer needed'). Logged in the child's Finished event for debugging."
                     }
                 },
                 "required": ["child_ids"],
@@ -489,25 +490,25 @@ fn script_management_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "run_script",
-            description: "Generate and execute a deterministic multi-step script without per-step LLM round-trips",
+            description: "Execute a deterministic multi-step script without per-step LLM round-trips, running on a cloned browser tab. Scripts support loops (for/while/forEach), conditionals (if/else), error handling (try/catch), parallel branches, and variable capture. Returns a script_id immediately — use wait_for_scripts to collect results. Provide either an inline script definition or a name to load a previously saved script. Use when you detect a repetitive pattern (same operation on 3+ pages/items).",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "script": {
                         "type": "object",
-                        "description": "Inline script definition object (use instead of `name`)"
+                        "description": "Inline script definition object. Must include: version (\"1.0\"), steps (array of node objects: ToolCall, Assign, Collect, Yield, ForLoop, ForEach, WhileLoop, IfElse, TryCatch, Parallel), and optional limits. Use instead of 'name' for new scripts."
                     },
                     "name": {
                         "type": "string",
-                        "description": "Name of a previously saved script to run (alternative to inline `script`)"
+                        "description": "Name of a previously saved script to run (alternative to inline 'script'). Mutually exclusive with 'script' — provide one or the other."
                     },
                     "save_as": {
                         "type": "string",
-                        "description": "Save the script under this name after execution for future reuse"
+                        "description": "Save the script under this name after execution for future reuse (alphanumeric + underscore). Persists to ~/.acrawl/scripts/<name>.json."
                     },
                     "limits": {
                         "type": "object",
-                        "description": "Override default execution limits (max_steps, max_timeout_secs, max_output_bytes, max_parallel_branches, per_step_timeout_secs)"
+                        "description": "Override default execution limits. Keys: max_steps (int), max_timeout_secs (int), max_output_bytes (int), max_parallel_branches (int), per_step_timeout_secs (int)."
                     }
                 },
                 "additionalProperties": false
@@ -516,13 +517,13 @@ fn script_management_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "script_status",
-            description: "Check the status of a running or completed script",
+            description: "Check the current execution status of a running or completed script without blocking. Returns the script's state (running, completed, failed, cancelled), current step count, extracted data so far, and any error message. Use to monitor long-running scripts between other actions; use wait_for_scripts to block until completion.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "script_id": {
                         "type": "string",
-                        "description": "Script ID returned by run_script (format: scr_XXXXXXXX)"
+                        "description": "Script ID returned by run_script (format: scr_XXXXXXXX). Obtain from the run_script response."
                     }
                 },
                 "required": ["script_id"],
@@ -532,14 +533,14 @@ fn script_management_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait_for_scripts",
-            description: "Wait for one or more scripts to finish and collect their results",
+            description: "Block until one or more scripts finish execution and return their collected results. Returns a JSON array of ScriptResult objects with extracted_data, yielded checkpoints, step count, and status. If script_ids is omitted, waits for ALL active scripts. Use after run_script to collect final results.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "script_ids": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "description": "Optional list of script IDs to wait for. If omitted, waits for all active scripts."
+                        "description": "List of script IDs to wait for (format: scr_XXXXXXXX each). If omitted, waits for all currently active scripts to finish."
                     }
                 },
                 "additionalProperties": false
@@ -548,13 +549,13 @@ fn script_management_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "cancel_script",
-            description: "Abort a running script immediately",
+            description: "Abort a running script immediately, closing its browser tab and discarding any partial results not yet yielded. The script transitions to 'cancelled' status. Use when a script is stuck, taking too long, or its results are no longer needed.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "script_id": {
                         "type": "string",
-                        "description": "Script ID to cancel (format: scr_XXXXXXXX)"
+                        "description": "Script ID to cancel (format: scr_XXXXXXXX). Obtain from the run_script response or list_scripts."
                     }
                 },
                 "required": ["script_id"],
@@ -564,17 +565,17 @@ fn script_management_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "save_script",
-            description: "Save a script definition to disk for later reuse",
+            description: "Persist a script definition to disk at ~/.acrawl/scripts/<name>.json for reuse across sessions. Once saved, run it later with run_script using name instead of providing the full inline definition. Use for complex extraction patterns you want to apply repeatedly.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Name to save the script under (alphanumeric + underscore, no extension)"
+                        "description": "Name to save the script under (alphanumeric characters and underscores only, no file extension). Must be unique — overwrites any existing script with the same name."
                     },
                     "script": {
                         "type": "object",
-                        "description": "Script definition object (same format as run_script)"
+                        "description": "Script definition object (same format as the 'script' parameter in run_script). Must include version, steps, and optionally limits."
                     }
                 },
                 "required": ["name", "script"],
@@ -584,7 +585,7 @@ fn script_management_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "list_scripts",
-            description: "List all saved scripts",
+            description: "List all previously saved scripts with their metadata (name, creation date, last modified, size). Returns a JSON array. Use to discover available scripts before running them with run_script by name, or to audit what scripts exist on disk.",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -594,13 +595,13 @@ fn script_management_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "read_script",
-            description: "Read a saved script definition",
+            description: "Read the full JSON definition of a previously saved script. Returns the complete script object including version, steps, and limits. Use to inspect a saved script's logic before running it, or to understand what an existing script does before modifying and re-saving it.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Name of the saved script to read"
+                        "description": "Name of the saved script to read (as shown in list_scripts output, without .json extension)."
                     }
                 },
                 "required": ["name"],
