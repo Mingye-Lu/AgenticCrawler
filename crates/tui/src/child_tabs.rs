@@ -302,6 +302,7 @@ mod tests {
         let sessions = vec![
             ChildSession {
                 id: "c1".to_string(),
+                model: None,
                 goal: "scrape prices".to_string(),
                 messages: vec![
                     ConversationMessage::user_text("scrape"),
@@ -312,6 +313,7 @@ mod tests {
             },
             ChildSession {
                 id: "c2".to_string(),
+                model: None,
                 goal: "fetch reviews".to_string(),
                 messages: vec![ConversationMessage::user_text("fetch")],
             },

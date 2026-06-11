@@ -131,6 +131,7 @@ fn session_with_child_sessions_populates_tabs() {
     let sessions = vec![
         ChildSession {
             id: "c1".to_string(),
+            model: None,
             goal: "scrape prices".to_string(),
             messages: vec![
                 ConversationMessage::user_text("scrape prices from page"),
@@ -141,6 +142,7 @@ fn session_with_child_sessions_populates_tabs() {
         },
         ChildSession {
             id: "c2".to_string(),
+            model: None,
             goal: "fetch reviews".to_string(),
             messages: vec![ConversationMessage::user_text("fetch reviews")],
         },

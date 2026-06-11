@@ -840,7 +840,7 @@ crates/
   commands/     17 slash commands with resume-safety annotations
 ```
 
-11 crates, ~38K lines of Rust, 770 tests.
+11 crates, ~40K lines of Rust, 1,097 tests.
 
 ## Development
 

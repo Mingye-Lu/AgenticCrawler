@@ -1103,6 +1103,14 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    fn with_transport_mode_lock<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = JOB_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        set_output_mode(TransportMode::Framed);
+        f()
+    }
+
     fn assert_jsonrpc_error(
         outcome: Result<RunGoalRequest, RunGoalOutcome>,
         expected_code: i32,
@@ -1131,13 +1139,15 @@ mod tests {
 
     #[test]
     fn read_protocol_message_accepts_json_line_mode() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-        let data = format!("{body}\n").into_bytes();
-        let mut cursor = Cursor::new(data);
-        let parsed =
-            read_protocol_message(&mut cursor).expect("line-delimited request should parse");
-        assert_eq!(parsed, body.as_bytes());
-        assert_eq!(output_mode(), TransportMode::LineDelimited);
+        with_transport_mode_lock(|| {
+            let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+            let data = format!("{body}\n").into_bytes();
+            let mut cursor = Cursor::new(data);
+            let parsed =
+                read_protocol_message(&mut cursor).expect("line-delimited request should parse");
+            assert_eq!(parsed, body.as_bytes());
+            assert_eq!(output_mode(), TransportMode::LineDelimited);
+        });
     }
 
     #[test]
@@ -1152,12 +1162,14 @@ mod tests {
 
     #[test]
     fn read_protocol_message_accepts_framed_mode() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-        let framed = encode_mcp_frame(body.as_bytes());
-        let mut cursor = Cursor::new(framed);
-        let parsed = read_protocol_message(&mut cursor).expect("framed request should parse");
-        assert_eq!(parsed, body.as_bytes());
-        assert_eq!(output_mode(), TransportMode::Framed);
+        with_transport_mode_lock(|| {
+            let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+            let framed = encode_mcp_frame(body.as_bytes());
+            let mut cursor = Cursor::new(framed);
+            let parsed = read_protocol_message(&mut cursor).expect("framed request should parse");
+            assert_eq!(parsed, body.as_bytes());
+            assert_eq!(output_mode(), TransportMode::Framed);
+        });
     }
 
     #[test]
@@ -1381,6 +1393,7 @@ mod tests {
                 extracted_data: vec![json!({"title": "Example"})],
                 steps_executed: 3,
                 messages: Vec::new(),
+                model: Some("anthropic/claude-sonnet-4-6".to_string()),
             }),
         };
 
@@ -1450,6 +1463,7 @@ mod tests {
             extracted_data: vec![json!({"title": "Example"})],
             steps_executed: 3,
             messages: Vec::new(),
+            model: Some("anthropic/claude-sonnet-4-6".to_string()),
         };
 
         let response = build_run_goal_success_response(&request, &result);
