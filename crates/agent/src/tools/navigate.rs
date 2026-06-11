@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
-use crate::prune::prune_html;
+use crate::prune::{prune_html_with_profile, select_profile, CleaningProfile};
 use crate::state::CrawlState;
 use crate::tools::html_diff::HtmlDiffTracker;
 use crate::tools::page_map::{annotate_refs, apply_page_map_caps, normalize_url};
@@ -215,6 +215,7 @@ fn resolve_content(
     markdown: &str,
     format: &str,
     depth: &ContentDepth,
+    profile: CleaningProfile,
 ) -> (String, bool) {
     if *depth == ContentDepth::None {
         return (String::new(), false);
@@ -234,7 +235,7 @@ fn resolve_content(
             "text" => cap_content(text, max_chars),
             "html" => cap_content(html, max_chars),
             "fit_markdown" => {
-                let pruned = prune_html(html);
+                let pruned = prune_html_with_profile(html, profile);
                 let md = html_to_markdown(&pruned);
                 if md.trim().is_empty() && !text.trim().is_empty() {
                     cap_content(text, max_chars)
@@ -264,7 +265,7 @@ fn resolve_content(
                     }
                 }
                 "fit_markdown" => {
-                    let pruned = prune_html(&main_html);
+                    let pruned = prune_html_with_profile(&main_html, profile);
                     let md = html_to_markdown(&pruned);
                     if md.trim().is_empty() && !text.trim().is_empty() {
                         cap_content(text, max_chars)
@@ -363,56 +364,41 @@ fn content_depth_label(depth: &ContentDepth) -> &'static str {
     }
 }
 
-pub async fn execute(
-    input: &Value,
-    browser: &mut BrowserContext,
-    crawl_state: &mut CrawlState,
-) -> Result<ToolEffect, ToolExecutionError> {
-    let params = parse_input(input)?;
-
-    let router = FetchRouter::new().map_err(|e| ToolExecutionError::new(e.to_string()))?;
-    let page = router
-        .fetch(&params.url, Some(browser))
-        .await
-        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
-
-    let title = page.title.clone().unwrap_or_default();
-
-    let (content, truncated) = resolve_content(
-        &page.html,
-        &page.text,
-        &page.markdown,
-        &params.format,
-        &params.content_depth,
-    );
-
-    let mut content =
-        if params.strip_images && matches!(params.format.as_str(), "markdown" | "fit_markdown") {
-            strip_markdown_images(&content)
-        } else {
-            content
-        };
-
-    apply_html_diff(crawl_state, &page.url, &mut content);
-
-    browser.set_navigated_url(&page.url, page.fetched_via_browser);
-    crawl_state.current_url = Some(page.url.clone());
-    browser.ref_map_mut().clear();
-
-    if params.page_map_depth == PageMapDepth::None {
-        let content_length = content.chars().count();
-        return Ok(ToolEffect::reply_json(&json!({
-            "url": page.url,
-            "title": title,
-            "content": content,
-            "format": params.format,
-            "content_depth": content_depth_label(&params.content_depth),
-            "truncated": truncated,
-            "content_length": content_length,
-        })));
+fn content_profile(html_len: usize) -> CleaningProfile {
+    let nav_settings = runtime::load_settings();
+    if runtime::settings_get_content_aware_profiles(&nav_settings) {
+        select_profile(None, html_len)
+    } else {
+        CleaningProfile::Default
     }
+}
 
-    let mut page_map = if page.fetched_via_browser {
+fn reply_without_page_map(
+    page: &browser::FetchedPage,
+    title: &str,
+    content: &str,
+    format: &str,
+    content_depth: &ContentDepth,
+    truncated: bool,
+) -> ToolEffect {
+    let content_length = content.chars().count();
+    ToolEffect::reply_json(&json!({
+        "url": page.url,
+        "title": title,
+        "content": content,
+        "format": format,
+        "content_depth": content_depth_label(content_depth),
+        "truncated": truncated,
+        "content_length": content_length,
+    }))
+}
+
+async fn build_page_map(
+    browser: &mut BrowserContext,
+    page: &browser::FetchedPage,
+    title: &str,
+) -> Value {
+    if page.fetched_via_browser {
         let nav_settings = runtime::load_settings();
         let compound_enrichment = runtime::settings_get_compound_enrichment(&nav_settings);
         match browser.acquire_bridge().await {
@@ -441,20 +427,86 @@ pub async fn execute(
         let mut value = extract_headings_from_markdown(&page.markdown);
         if let Some(meta) = value.get_mut("meta").and_then(Value::as_object_mut) {
             meta.insert("url".to_string(), json!(page.url.clone()));
-            meta.insert("title".to_string(), json!(title.clone()));
+            meta.insert("title".to_string(), json!(title));
         }
         value
-    };
+    }
+}
 
-    annotate_refs(&mut page_map, browser);
-
+fn cache_page_map_snapshot(
+    browser: &mut BrowserContext,
+    crawl_state: &mut CrawlState,
+    page_url: &str,
+    page_map: &Value,
+) {
     let pm_url = page_map
         .get("meta")
-        .and_then(|m| m.get("url"))
+        .and_then(|meta| meta.get("url"))
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let cache_key = normalize_url(pm_url).to_string();
     browser.set_page_snapshot(cache_key, page_map.clone());
+
+    let fp_settings = runtime::load_settings();
+    if runtime::settings_get_page_fingerprinting(&fp_settings) {
+        let fp = crate::page_fingerprint::PageFingerprint::compute(page_url, page_map);
+        crawl_state.page_fingerprints.push(fp);
+    }
+}
+
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+    crawl_state: &mut CrawlState,
+) -> Result<ToolEffect, ToolExecutionError> {
+    let params = parse_input(input)?;
+
+    let router = FetchRouter::new().map_err(|e| ToolExecutionError::new(e.to_string()))?;
+    let page = router
+        .fetch(&params.url, Some(browser))
+        .await
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+
+    let title = page.title.clone().unwrap_or_default();
+    let profile = content_profile(page.html.len());
+
+    let (content, truncated) = resolve_content(
+        &page.html,
+        &page.text,
+        &page.markdown,
+        &params.format,
+        &params.content_depth,
+        profile,
+    );
+
+    let mut content =
+        if params.strip_images && matches!(params.format.as_str(), "markdown" | "fit_markdown") {
+            strip_markdown_images(&content)
+        } else {
+            content
+        };
+
+    apply_html_diff(crawl_state, &page.url, &mut content);
+
+    browser.set_navigated_url(&page.url, page.fetched_via_browser);
+    crawl_state.current_url = Some(page.url.clone());
+    browser.ref_map_mut().clear();
+
+    if params.page_map_depth == PageMapDepth::None {
+        return Ok(reply_without_page_map(
+            &page,
+            &title,
+            &content,
+            &params.format,
+            &params.content_depth,
+            truncated,
+        ));
+    }
+
+    let mut page_map = build_page_map(browser, &page, &title).await;
+
+    annotate_refs(&mut page_map, browser);
+    cache_page_map_snapshot(browser, crawl_state, &page.url, &page_map);
 
     if params.page_map_depth == PageMapDepth::Slim {
         slim_page_map(&mut page_map);
@@ -567,6 +619,7 @@ mod tests {
             "hello",
             "markdown",
             &ContentDepth::None,
+            CleaningProfile::Default,
         );
         assert!(content.is_empty());
         assert!(!truncated);
@@ -577,7 +630,14 @@ mod tests {
         let html =
             r"<nav>Menu</nav><main><h1>Title</h1><p>Body text</p></main><footer>Footer</footer>";
         let md = html_to_markdown(html);
-        let (content, _) = resolve_content(html, "text", &md, "markdown", &ContentDepth::Main);
+        let (content, _) = resolve_content(
+            html,
+            "text",
+            &md,
+            "markdown",
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        );
         assert!(content.contains("Title"));
         assert!(content.contains("Body text"));
         assert!(!content.contains("Menu"));
@@ -588,7 +648,14 @@ mod tests {
     fn resolve_content_full_includes_everything() {
         let html = r"<header><p>Header</p></header><main><p>Body</p></main>";
         let md = html_to_markdown(html);
-        let (content, _) = resolve_content(html, "text", &md, "markdown", &ContentDepth::Full);
+        let (content, _) = resolve_content(
+            html,
+            "text",
+            &md,
+            "markdown",
+            &ContentDepth::Full,
+            CleaningProfile::Default,
+        );
         assert!(content.contains("Header"));
         assert!(content.contains("Body"));
     }
@@ -598,8 +665,14 @@ mod tests {
         let body = "a".repeat(5000);
         let html = format!("<main><p>{body}</p></main>");
         let md = html_to_markdown(&html);
-        let (content, truncated) =
-            resolve_content(&html, "text", &md, "markdown", &ContentDepth::Slim);
+        let (content, truncated) = resolve_content(
+            &html,
+            "text",
+            &md,
+            "markdown",
+            &ContentDepth::Slim,
+            CleaningProfile::Default,
+        );
         assert!(truncated);
         assert!(content.chars().count() <= SLIM_MAX_CHARS);
     }
@@ -700,8 +773,14 @@ mod tests {
         let html = r#"<html><body><article><p>Main content here</p></article><div class="sidebar-ads"><span>Buy now!</span></div><nav>menu</nav></body></html>"#;
         let text = "Main content here Buy now! menu";
         let markdown = html_to_markdown(html);
-        let (content, _) =
-            resolve_content(html, text, &markdown, "fit_markdown", &ContentDepth::Main);
+        let (content, _) = resolve_content(
+            html,
+            text,
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        );
         assert!(
             content.contains("Main content"),
             "main content should survive pruning"
@@ -714,8 +793,14 @@ mod tests {
         let html = r"<html><body><article><h1>Title</h1><p>Quality paragraph content.</p></article></body></html>";
         let text = "Title Quality paragraph content.";
         let markdown = html_to_markdown(html);
-        let (content, truncated) =
-            resolve_content(html, text, &markdown, "fit_markdown", &ContentDepth::Full);
+        let (content, truncated) = resolve_content(
+            html,
+            text,
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Full,
+            CleaningProfile::Default,
+        );
         assert!(
             !content.is_empty(),
             "full depth fit_markdown should return content"
@@ -729,8 +814,14 @@ mod tests {
         let html = r#"<html><body><div class="ads"><span class="ads">advertisement</span></div></body></html>"#;
         let text = "advertisement fallback text";
         let markdown = html_to_markdown(html);
-        let (content, _) =
-            resolve_content(html, text, &markdown, "fit_markdown", &ContentDepth::Main);
+        let (content, _) = resolve_content(
+            html,
+            text,
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        );
         // Pruning removes all content (ads class) → must fall back to text
         assert!(
             content.contains("fallback text"),

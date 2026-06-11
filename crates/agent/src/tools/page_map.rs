@@ -81,6 +81,7 @@ fn truncate_array_field(value: &mut Value, key: &str, max_len: usize) -> bool {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &mut crate::state::CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let scope = input.get("scope").and_then(Value::as_str);
 
@@ -116,6 +117,17 @@ pub async fn execute(
         browser.set_page_snapshot(cache_key, result.clone());
     } else {
         annotate_refs(&mut result, browser);
+    }
+
+    let fp_settings = runtime::load_settings();
+    if runtime::settings_get_page_fingerprinting(&fp_settings) {
+        let url = result
+            .get("meta")
+            .and_then(|meta| meta.get("url"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let fingerprint = crate::page_fingerprint::PageFingerprint::compute(url, &result);
+        crawl_state.page_fingerprints.push(fingerprint);
     }
 
     Ok(ToolEffect::reply_json(&result))
