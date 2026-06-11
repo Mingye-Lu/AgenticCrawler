@@ -131,7 +131,7 @@ impl ToolRegistry {
             "click" => crate::tools::click::execute(input, browser).await,
             "click_at" => crate::tools::click_at::execute(input, browser).await,
             "fill_form" => crate::tools::fill_form::execute(input, browser).await,
-            "page_map" => crate::tools::page_map::execute(input, browser).await,
+            "page_map" => crate::tools::page_map::execute(input, browser, crawl_state).await,
             "read_content" => {
                 crate::tools::read_content::execute(input, browser, crawl_state).await
             }
