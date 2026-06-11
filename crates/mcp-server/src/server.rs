@@ -247,11 +247,11 @@ fn execute_browser_tool(
     registry: &ToolRegistry,
     browser: &mut BrowserContext,
     rt: &tokio::runtime::Runtime,
+    crawl_state: &mut agent::state::CrawlState,
 ) -> Result<String, String> {
     rt.block_on(async {
-        let mut crawl_state = agent::state::CrawlState::default();
         match registry
-            .execute_async(name, input, browser, &mut crawl_state)
+            .execute_async(name, input, browser, crawl_state)
             .await
         {
             Ok(ToolEffect::Reply(output)) => Ok(output),
@@ -912,6 +912,7 @@ fn handle_tools_call(
     browser: &mut Option<BrowserContext>,
     script_manager: &mut ScriptManager,
     rt: &tokio::runtime::Runtime,
+    crawl_state: &mut agent::state::CrawlState,
 ) {
     let Some(params) = params else {
         send_error(id, -32602, "missing params".to_string());
@@ -1003,7 +1004,7 @@ fn handle_tools_call(
         }
     }
 
-    match execute_browser_tool(name, &arguments, registry, browser.as_mut().unwrap(), rt) {
+    match execute_browser_tool(name, &arguments, registry, browser.as_mut().unwrap(), rt, crawl_state) {
         Ok(output) => {
             let result = json!({
                 "content": [{ "type": "text", "text": output }],
@@ -1040,6 +1041,7 @@ pub fn run_mcp_server() {
         .expect("failed to create tokio runtime");
 
     let mut browser: Option<BrowserContext> = None;
+    let mut crawl_state = agent::state::CrawlState::default();
     let registry = ToolRegistry::new_with_core_tools();
     let settings = runtime::load_settings();
     let script_settings = settings.script.unwrap_or_default();
@@ -1089,6 +1091,7 @@ pub fn run_mcp_server() {
                     &mut browser,
                     &mut script_manager,
                     &rt,
+                    &mut crawl_state,
                 );
             }
             method => {
