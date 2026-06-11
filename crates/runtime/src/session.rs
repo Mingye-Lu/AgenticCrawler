@@ -11,6 +11,7 @@ pub use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole, T
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChildSession {
     pub id: String,
+    pub model: Option<String>,
     pub goal: String,
     pub messages: Vec<ConversationMessage>,
 }
@@ -375,6 +376,9 @@ fn required_u32(object: &BTreeMap<String, JsonValue>, key: &str) -> Result<u32, 
 fn child_session_to_json(child: &ChildSession) -> JsonValue {
     let mut object = BTreeMap::new();
     object.insert("id".to_string(), JsonValue::String(child.id.clone()));
+    if let Some(model) = &child.model {
+        object.insert("model".to_string(), JsonValue::String(model.clone()));
+    }
     object.insert("goal".to_string(), JsonValue::String(child.goal.clone()));
     object.insert(
         "messages".to_string(),
@@ -394,6 +398,10 @@ fn child_session_from_json(value: &JsonValue) -> Result<ChildSession, SessionErr
         .as_object()
         .ok_or_else(|| SessionError::Format("child_session must be an object".to_string()))?;
     let id = required_string(object, "id")?;
+    let model = object
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .map(ToOwned::to_owned);
     let goal = required_string(object, "goal")?;
     let messages = object
         .get("messages")
@@ -402,7 +410,12 @@ fn child_session_from_json(value: &JsonValue) -> Result<ChildSession, SessionErr
         .iter()
         .map(conversation_message_from_json)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(ChildSession { id, goal, messages })
+    Ok(ChildSession {
+        id,
+        model,
+        goal,
+        messages,
+    })
 }
 
 #[cfg(test)]
@@ -511,6 +524,7 @@ mod tests {
 
         let child = ChildSession {
             id: "child-1".to_string(),
+            model: Some("anthropic/claude-sonnet-4-6".to_string()),
             goal: "scrape titles".to_string(),
             messages: vec![ConversationMessage::user_text("child goal")],
         };
