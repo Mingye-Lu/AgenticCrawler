@@ -399,7 +399,7 @@ mod tests {
         // child-b: 1 user message with no usage → 0 turns, 0 cost
         assert_eq!(breakdown[1].agent_id, "child-b");
         assert_eq!(breakdown[1].turn_count, 0);
-        assert_eq!(breakdown[1].direct_cost_usd, 0.0);
+        assert!(breakdown[1].direct_cost_usd.abs() < f64::EPSILON);
     }
 
     #[test]

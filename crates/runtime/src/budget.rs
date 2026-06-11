@@ -142,6 +142,6 @@ mod tests {
     fn converts_between_usd_and_millicents() {
         let usd = 1.2345;
         assert_eq!(usd_to_millicents(usd), 123_450);
-        assert_eq!(millicents_to_usd(123_450), usd);
+        assert!((millicents_to_usd(123_450) - usd).abs() < 1e-6);
     }
 }
