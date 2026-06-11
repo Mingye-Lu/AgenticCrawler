@@ -202,6 +202,7 @@ impl CrawlerAgent {
         child_agent.shared_bridge = Some(shared_bridge);
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
+        child_agent.cumulative_cost_slot = self.cumulative_cost_slot.clone();
 
         let child_objective = task.objective.clone();
         let join_handle = tokio::spawn(async move {

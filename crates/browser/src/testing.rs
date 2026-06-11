@@ -20,7 +20,11 @@ impl BrowserBackend for NopBridge {
     async fn scroll(&mut self, _direction: &str, _pixels: i64) -> Result<(), BridgeError> {
         Err(BridgeError::Protocol("NopBridge".into()))
     }
-    async fn page_map(&mut self, _scope: Option<&str>) -> Result<Value, BridgeError> {
+    async fn page_map(
+        &mut self,
+        _scope: Option<&str>,
+        _compound_enrichment: bool,
+    ) -> Result<Value, BridgeError> {
         Err(BridgeError::Protocol("NopBridge".into()))
     }
     async fn read_content(

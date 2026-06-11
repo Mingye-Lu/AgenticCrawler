@@ -107,7 +107,11 @@ impl BrowserBackend for MockBridge {
         Ok(())
     }
 
-    async fn page_map(&mut self, scope: Option<&str>) -> Result<Value, BridgeError> {
+    async fn page_map(
+        &mut self,
+        scope: Option<&str>,
+        _compound_enrichment: bool,
+    ) -> Result<Value, BridgeError> {
         self.log("page_map", json!({"scope": scope}));
         Ok(Self::default_page_map())
     }

@@ -249,7 +249,11 @@ fn execute_browser_tool(
     rt: &tokio::runtime::Runtime,
 ) -> Result<String, String> {
     rt.block_on(async {
-        match registry.execute_async(name, input, browser).await {
+        let mut crawl_state = agent::state::CrawlState::default();
+        match registry
+            .execute_async(name, input, browser, &mut crawl_state)
+            .await
+        {
             Ok(ToolEffect::Reply(output)) => Ok(output),
             Ok(_) => Err(format!("tool `{name}` returned unsupported effect")),
             Err(e) => Err(e.to_string()),

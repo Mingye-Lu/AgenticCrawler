@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::{Display, Formatter};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -120,6 +121,7 @@ pub struct CrawlerAgent {
     pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     prompt_override_slot: Arc<Mutex<Option<Vec<String>>>>,
     last_assistant_text_slot: Arc<Mutex<Option<String>>>,
+    cumulative_cost_slot: runtime::SharedCostCounter,
     step_count: usize,
     confidence_tracker: Option<crate::confidence::ConfidenceTracker>,
     #[cfg(test)]
@@ -159,6 +161,7 @@ impl CrawlerAgent {
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             prompt_override_slot,
             last_assistant_text_slot,
+            cumulative_cost_slot: runtime::new_cost_counter(),
             step_count: 0,
             confidence_tracker: None,
             #[cfg(test)]
@@ -339,6 +342,7 @@ impl CrawlerAgent {
             last_assistant_text_slot,
         )
         .with_max_iterations(max_steps);
+        runtime.tool_executor_mut().cumulative_cost_slot = runtime.cumulative_cost_counter();
 
         // Attach child event observer for streaming child output to TUI and
         // mirroring lifecycle/heartbeat data into the shared snapshot registry.
@@ -478,6 +482,8 @@ impl ToolExecutor for CrawlerAgent {
                 self.apply_confidence_tracking();
             }
 
+            self.enforce_budget(&settings)?;
+
             Ok(if let Some(effect) = observed_effect {
                 ToolOutcome::with_effect(text, effect)
             } else {
@@ -488,6 +494,40 @@ impl ToolExecutor for CrawlerAgent {
 }
 
 impl CrawlerAgent {
+    fn enforce_budget(&self, settings: &runtime::Settings) -> Result<(), ToolError> {
+        let Some(max_usd) = runtime::settings_get_budget_max_session_cost_usd(settings) else {
+            return Ok(());
+        };
+
+        let mode = runtime::settings_get_budget_enforcement(settings)
+            .as_deref()
+            .and_then(runtime::BudgetMode::parse)
+            .unwrap_or(runtime::BudgetMode::Block);
+        let enforcer = runtime::BudgetEnforcer::new(
+            max_usd,
+            mode,
+            runtime::settings_get_budget_warn_threshold_pct(settings),
+        );
+        let current_usd =
+            runtime::millicents_to_usd(self.cumulative_cost_slot.load(Ordering::Relaxed));
+
+        match enforcer.check(current_usd) {
+            runtime::BudgetDecision::Allow => Ok(()),
+            runtime::BudgetDecision::Warn { remaining_usd } => {
+                self.write_prompt_override(&DynamicPromptContext {
+                    budget_warning: Some(format!(
+                        "Budget warning: ${remaining_usd:.4} remaining (limit: ${max_usd:.4})"
+                    )),
+                    ..DynamicPromptContext::default()
+                });
+                Ok(())
+            }
+            runtime::BudgetDecision::Block => Err(ToolError::new(
+                "Budget exceeded: session cost limit reached",
+            )),
+        }
+    }
+
     async fn execute_tool_once(
         &mut self,
         tool_name: &str,
@@ -571,7 +611,7 @@ impl CrawlerAgent {
             .acquire_bridge()
             .await
             .map_err(|error| ToolError::new(error.to_string()))?
-            .page_map(None)
+            .page_map(None, false)
             .await
             .map_err(|error| ToolError::new(error.to_string()))?;
 
@@ -1147,7 +1187,11 @@ mod tests {
             Err(BridgeError::Protocol("unused".into()))
         }
 
-        async fn page_map(&mut self, _scope: Option<&str>) -> Result<Value, BridgeError> {
+        async fn page_map(
+            &mut self,
+            _scope: Option<&str>,
+            _compound_enrichment: bool,
+        ) -> Result<Value, BridgeError> {
             let mut state = self
                 .state
                 .lock()

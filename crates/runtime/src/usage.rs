@@ -139,6 +139,41 @@ fn cost_for_tokens(tokens: u32, usd_per_million_tokens: f64) -> f64 {
     f64::from(tokens) / 1_000_000.0 * usd_per_million_tokens
 }
 
+/// Per-child cost attribution for `/cost` breakdown.
+#[derive(Debug, Clone)]
+pub struct AgentCostReport {
+    pub agent_id: String,
+    pub direct_cost_usd: f64,
+    pub turn_count: u32,
+}
+
+/// Build a flat per-child cost breakdown from a session's `child_sessions`.
+///
+/// Walks `child_sessions` (flat list) and computes cost via
+/// `UsageTracker::from_session` on a temporary session constructed from each
+/// child's messages.
+#[must_use]
+pub fn build_cost_breakdown(session: &crate::session::Session) -> Vec<AgentCostReport> {
+    session
+        .child_sessions
+        .iter()
+        .map(|child| {
+            let mut tracker = UsageTracker::new();
+            for message in &child.messages {
+                if let Some(usage) = message.usage {
+                    tracker.record(usage);
+                }
+            }
+            let cost = estimate_cost_usd(tracker.cumulative_usage()).total_cost_usd();
+            AgentCostReport {
+                agent_id: child.id.clone(),
+                direct_cost_usd: cost,
+                turn_count: tracker.turns(),
+            }
+        })
+        .collect()
+}
+
 #[must_use]
 pub fn format_usd(amount: f64) -> String {
     format!("${amount:.4}")
@@ -296,5 +331,101 @@ mod tests {
         let tracker = UsageTracker::from_session(&session);
         assert_eq!(tracker.turns(), 1);
         assert_eq!(tracker.cumulative_usage().total_tokens(), 8);
+    }
+
+    #[test]
+    fn build_cost_breakdown_computes_per_child_costs() {
+        use super::build_cost_breakdown;
+        use crate::session::ChildSession;
+
+        let session = Session {
+            version: 2,
+            model: None,
+            title: None,
+            messages: Vec::new(),
+            child_sessions: vec![
+                ChildSession {
+                    id: "child-a".to_string(),
+                    goal: "scrape page A".to_string(),
+                    messages: vec![
+                        ConversationMessage {
+                            role: MessageRole::Assistant,
+                            blocks: vec![ContentBlock::Text {
+                                text: "working".to_string(),
+                            }],
+                            usage: Some(TokenUsage {
+                                input_tokens: 1_000_000,
+                                output_tokens: 100_000,
+                                cache_creation_input_tokens: 0,
+                                cache_read_input_tokens: 0,
+                            }),
+                        },
+                        ConversationMessage {
+                            role: MessageRole::Assistant,
+                            blocks: vec![ContentBlock::Text {
+                                text: "done".to_string(),
+                            }],
+                            usage: Some(TokenUsage {
+                                input_tokens: 500_000,
+                                output_tokens: 50_000,
+                                cache_creation_input_tokens: 0,
+                                cache_read_input_tokens: 0,
+                            }),
+                        },
+                    ],
+                },
+                ChildSession {
+                    id: "child-b".to_string(),
+                    goal: "scrape page B".to_string(),
+                    messages: vec![ConversationMessage {
+                        role: MessageRole::User,
+                        blocks: vec![ContentBlock::Text {
+                            text: "go".to_string(),
+                        }],
+                        usage: None,
+                    }],
+                },
+            ],
+        };
+
+        let breakdown = build_cost_breakdown(&session);
+        assert_eq!(breakdown.len(), 2);
+
+        // child-a: 2 assistant messages with usage
+        assert_eq!(breakdown[0].agent_id, "child-a");
+        assert_eq!(breakdown[0].turn_count, 2);
+        assert!(breakdown[0].direct_cost_usd > 0.0);
+
+        // child-b: 1 user message with no usage → 0 turns, 0 cost
+        assert_eq!(breakdown[1].agent_id, "child-b");
+        assert_eq!(breakdown[1].turn_count, 0);
+        assert_eq!(breakdown[1].direct_cost_usd, 0.0);
+    }
+
+    #[test]
+    fn build_cost_breakdown_empty_when_no_children() {
+        use super::build_cost_breakdown;
+
+        let session = Session {
+            version: 2,
+            model: None,
+            title: None,
+            messages: vec![ConversationMessage {
+                role: MessageRole::Assistant,
+                blocks: vec![ContentBlock::Text {
+                    text: "hello".to_string(),
+                }],
+                usage: Some(TokenUsage {
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                }),
+            }],
+            child_sessions: Vec::new(),
+        };
+
+        let breakdown = build_cost_breakdown(&session);
+        assert!(breakdown.is_empty());
     }
 }

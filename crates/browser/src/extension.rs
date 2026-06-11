@@ -145,10 +145,17 @@ impl BrowserBackend for ExtensionBridge {
         .await
     }
 
-    async fn page_map(&mut self, scope: Option<&str>) -> Result<Value, BridgeError> {
+    async fn page_map(
+        &mut self,
+        scope: Option<&str>,
+        compound_enrichment: bool,
+    ) -> Result<Value, BridgeError> {
         let mut payload = json!({});
         if let Some(s) = scope {
             payload["scope"] = json!(s);
+        }
+        if compound_enrichment {
+            payload["compoundEnrichment"] = json!(true);
         }
         let response = self.send_command("page_map", payload).await?;
         Self::require_result(response, "page_map")

@@ -356,7 +356,8 @@ async function bootstrap() {
     if (command.action === 'page_map') {
       try {
         const scope = command.scope || null;
-        const result = await page.evaluate((scope) => {
+        const compoundEnrichment = command.compoundEnrichment || false;
+        const result = await page.evaluate(({scope, compoundEnrichment}) => {
           let root = document;
           if (scope) {
             const scoped = document.querySelector(scope);
@@ -457,6 +458,58 @@ async function bootstrap() {
 
           const MAX_INTERACTIVE = 30;
           const interactiveEls = [];
+
+          function getEnrichment(el, tag, elType) {
+            if (!compoundEnrichment) return null;
+            let enrichment = null;
+            if (tag === 'input') {
+              const inputType = elType || el.type || '';
+              if (inputType === 'date') enrichment = { format: 'YYYY-MM-DD' };
+              else if (inputType === 'time') enrichment = { format: 'HH:MM' };
+              else if (inputType === 'datetime-local') enrichment = { format: 'YYYY-MM-DDTHH:MM' };
+              else if (inputType === 'range') {
+                enrichment = {
+                  min: el.min !== '' ? Number(el.min) : 0,
+                  max: el.max !== '' ? Number(el.max) : 100,
+                  step: el.step !== '' ? Number(el.step) : 1,
+                  value: el.value !== '' ? Number(el.value) : 50
+                };
+              } else if (inputType === 'number') {
+                enrichment = {};
+                if (el.min !== '') enrichment.min = Number(el.min);
+                if (el.max !== '') enrichment.max = Number(el.max);
+                if (el.step !== '') enrichment.step = Number(el.step);
+                if (Object.keys(enrichment).length === 0) enrichment = null;
+              } else if (inputType === 'color') {
+                enrichment = { value: el.value || '#000000' };
+              } else if (inputType === 'file') {
+                enrichment = { accept: el.accept || '*' };
+              }
+            } else if (tag === 'select') {
+              const opts = Array.from(el.options || []);
+              const total = opts.length;
+              const visible = opts.slice(0, 20).map(o => o.text.trim()).filter(t => t.length > 0);
+              if (total > 20) visible.push('...and ' + (total - 20) + ' more');
+              enrichment = { options: visible, total_options: total };
+            } else if (tag === 'textarea') {
+              const ml = el.getAttribute('maxlength');
+              if (ml) enrichment = { maxlength: Number(ml) };
+            }
+            if (enrichment) {
+              const json = JSON.stringify(enrichment);
+              if (json.length > 200) {
+                if (enrichment.options && Array.isArray(enrichment.options)) {
+                  while (JSON.stringify(enrichment).length > 190 && enrichment.options.length > 1) {
+                    enrichment.options.pop();
+                  }
+                } else {
+                  return null;
+                }
+              }
+            }
+            return enrichment;
+          }
+
           const selectors = [
             ['button', 'button'],
             ['input', 'input:not([type="hidden"])'],
@@ -544,6 +597,8 @@ async function bootstrap() {
                 if (!elName && el.title) elName = el.title.slice(0, 60);
                 if (!elName && el.name) elName = el.name.slice(0, 60);
                 if (elName) entry.name = elName;
+                const enrichment = getEnrichment(el, entry.tag, entry.type);
+                if (enrichment !== null) entry.enrichment = enrichment;
                 interactiveEls.push(entry);
               }
             }
@@ -557,7 +612,7 @@ async function bootstrap() {
           };
 
           return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, total_landmarks, total_forms, total_links };
-        }, scope);
+        }, {scope, compoundEnrichment});
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'page_map_error', message: String(error) } }) + '\n');

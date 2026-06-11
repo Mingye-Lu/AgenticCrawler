@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use crate::budget::{new_cost_counter, usd_to_millicents, SharedCostCounter};
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
@@ -8,7 +10,7 @@ use crate::config::RuntimeFeatureConfig;
 use crate::control::ControlState;
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
-use crate::usage::{TokenUsage, UsageTracker};
+use crate::usage::{estimate_cost_usd, TokenUsage, UsageTracker};
 
 pub use acrawl_core::error::{RuntimeError, ToolError};
 pub use acrawl_core::event::AssistantEvent;
@@ -44,6 +46,7 @@ pub struct ConversationRuntime<C, T> {
     control_state: Arc<ControlState>,
     prompt_override: Arc<Mutex<Option<Vec<String>>>>,
     last_assistant_text: Arc<Mutex<Option<String>>>,
+    cumulative_cost: SharedCostCounter,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -82,6 +85,11 @@ where
         _feature_config: &RuntimeFeatureConfig,
     ) -> Self {
         let usage_tracker = UsageTracker::from_session(&session);
+        let cumulative_cost = new_cost_counter();
+        cumulative_cost.store(
+            usd_to_millicents(estimate_cost_usd(usage_tracker.cumulative_usage()).total_cost_usd()),
+            Ordering::Relaxed,
+        );
         Self {
             session,
             api_client,
@@ -94,6 +102,7 @@ where
             control_state: Arc::new(ControlState::default()),
             prompt_override,
             last_assistant_text,
+            cumulative_cost,
         }
     }
 
@@ -229,6 +238,11 @@ where
         &mut self.tool_executor
     }
 
+    #[must_use]
+    pub fn cumulative_cost_counter(&self) -> SharedCostCounter {
+        Arc::clone(&self.cumulative_cost)
+    }
+
     fn push_user_message(&mut self, user_input: String) {
         self.session
             .messages
@@ -278,6 +292,10 @@ where
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(assistant_text);
         if let Some(usage) = usage {
             self.usage_tracker.record(usage);
+            let cumulative_cost_usd =
+                estimate_cost_usd(self.usage_tracker.cumulative_usage()).total_cost_usd();
+            self.cumulative_cost
+                .store(usd_to_millicents(cumulative_cost_usd), Ordering::Relaxed);
         }
 
         Ok(assistant_message)

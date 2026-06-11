@@ -3,10 +3,11 @@ use super::{
     ConversationRuntime, RuntimeError, StaticToolExecutor, ToolOutcome,
     DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
 };
+use crate::budget::usd_to_millicents;
 use crate::compact::CompactionConfig;
 use crate::prompt::SystemPromptBuilder;
 use crate::session::{ContentBlock, MessageRole, Session};
-use crate::usage::TokenUsage;
+use crate::usage::{estimate_cost_usd, TokenUsage};
 use std::sync::{Arc, Mutex};
 
 fn runtime_slots() -> (Arc<Mutex<Option<Vec<String>>>>, Arc<Mutex<Option<String>>>) {
@@ -126,6 +127,12 @@ async fn runs_user_to_tool_to_result_loop_end_to_end_and_tracks_usage() {
             ..
         }
     ));
+    assert_eq!(
+        runtime
+            .cumulative_cost_counter()
+            .load(std::sync::atomic::Ordering::Relaxed),
+        usd_to_millicents(estimate_cost_usd(summary.usage).total_cost_usd())
+    );
 }
 
 #[test]

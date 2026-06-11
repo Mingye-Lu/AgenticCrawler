@@ -230,10 +230,14 @@ impl PlaywrightBridge {
     pub async fn page_map(
         &mut self,
         scope: Option<&str>,
+        compound_enrichment: bool,
     ) -> Result<serde_json::Value, BridgeError> {
         let mut cmd = serde_json::json!({ "action": "page_map" });
         if let Some(s) = scope {
             cmd["scope"] = serde_json::Value::String(s.to_string());
+        }
+        if compound_enrichment {
+            cmd["compoundEnrichment"] = serde_json::Value::Bool(true);
         }
         self.send_raw_command(&cmd).await
     }
