@@ -1004,7 +1004,14 @@ fn handle_tools_call(
         }
     }
 
-    match execute_browser_tool(name, &arguments, registry, browser.as_mut().unwrap(), rt, crawl_state) {
+    match execute_browser_tool(
+        name,
+        &arguments,
+        registry,
+        browser.as_mut().unwrap(),
+        rt,
+        crawl_state,
+    ) {
         Ok(output) => {
             let result = json!({
                 "content": [{ "type": "text", "text": output }],
