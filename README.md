@@ -722,6 +722,29 @@ Created with defaults on first run.
 | `browser_backend` | `null` | Active browser backend: `"extension"` or `null` (CloakBrowser) |
 | `extension_bridge_port` | `19876` | Port for Chrome extension bridge WebSocket server |
 
+All fields are optional; omitting a field uses the default. The `optimization` block accepts a nested object with the following fields (all default to `false`/`0`/`null`, safe to omit entirely):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `html_diff_mode` | `false` | On repeated visits to the same URL, returns only changed content sections with `[unchanged: N sections]` markers. 50 to 70% token reduction on multi-turn sessions. No behavior change on first visit. |
+| `content_aware_profiles` | `false` | Auto-selects a cleaning profile based on the task keyword: ReadingMode for extraction tasks, Minimal for interaction tasks, Aggressive for content > 50KB. |
+| `loop_detection` | `false` | Detects repeated identical actions and injects escalating nudges (soft, medium, strong). Also detects page stagnation. |
+| `loop_detection_window` | `20` | Rolling window size for action hash comparison. |
+| `loop_nudge_threshold` | `5` | Number of repeated actions before first nudge fires. |
+| `page_fingerprinting` | `false` | Enables lightweight page fingerprints used by loop detection and action caching. |
+| `failure_classification` | `false` | Classifies errors into 16 categories (SelectorNotFound, CaptchaDetected, RateLimited, etc.) using keyword matching. Zero LLM cost. |
+| `self_healing` | `false` | On SelectorNotFound/SelectorAmbiguous, fetches a fresh page_map and text-matches to a replacement element ref. Logs `[healed: @eOLD -> @eNEW]`. Zero LLM calls. |
+| `self_healing_max_retries` | `2` | Max healing attempts per failed action. |
+| `action_caching` | `false` | Caches results of read-only tools (`page_map`, `read_content`, `list_resources`, `execute_js`) keyed by tool + input + page fingerprint. Cache is invalidated when the page changes. |
+| `action_cache_ttl_secs` | `30` | Cache entry TTL in seconds. |
+| `planning_interval` | `0` | Every N steps, injects a planning checkpoint into the system prompt. 0 = disabled. |
+| `confidence_tracking` | `false` | Asks the LLM to self-report confidence after each action (`[confidence: HIGH/MEDIUM/LOW]`). Two consecutive LOWs trigger a stagnation alert. |
+| `compound_enrichment` | `false` | Adds `enrichment` metadata to complex form controls in page_map: date format hints, range min/max/value, select option lists (max 20 + overflow count), file accept types, textarea maxlength. Max 200 bytes per element. |
+| `budget_max_session_cost_usd` | `null` | Session cost limit in USD. Null = no limit. |
+| `budget_enforcement` | `null` | How to enforce the budget: `warn` injects a warning into the prompt; `block` terminates the session when the limit is reached. |
+| `budget_warn_threshold_pct` | `80` | Percentage of budget at which warnings start. |
+| `per_agent_cost_tracking` | `false` | When ON, `/cost` shows a per-child-agent cost breakdown. |
+
 ### Environment Variables
 
 | Variable | Description |
@@ -729,6 +752,43 @@ Created with defaults on first run.
 | `ACRAWL_CONFIG_HOME` | Override config directory (default: `~/.acrawl/`) |
 
 Provider-specific env vars (see [provider table](#24-llm-providers) above) are read as fallbacks when no `credentials.json` entry exists.
+
+### Performance Optimizations
+
+acrawl ships 14 vendor-derived optimizations (sourced from browser-use, Stagehand, crawl4ai, Skyvern, Spider, nanobrowser, and ZeroClaw). All are **disabled by default**, enable selectively via `settings.json`.
+
+Example `settings.json` with a cost-optimized profile:
+
+```json
+{
+  "optimization": {
+    "html_diff_mode": true,
+    "action_caching": true,
+    "page_fingerprinting": true,
+    "loop_detection": true,
+    "self_healing": true,
+    "budget_max_session_cost_usd": 0.50,
+    "budget_enforcement": "warn"
+  }
+}
+```
+
+| Optimization | Flag | Benefit |
+|--------------|------|---------|
+| **HTML Diff Mode** | `html_diff_mode` | Reduces tokens by 50 to 70% on repeated visits by returning only changed content. |
+| **Content-Aware Profiles** | `content_aware_profiles` | Auto-selects cleaning profiles (ReadingMode, Minimal, Aggressive) based on task. |
+| **Loop Detection** | `loop_detection` | Prevents infinite loops by detecting repeated actions and injecting nudges. |
+| **Page Fingerprinting** | `page_fingerprinting` | Generates lightweight page fingerprints for loop detection and action caching. |
+| **Failure Classification** | `failure_classification` | Classifies errors into 16 categories using keyword matching with zero LLM cost. |
+| **Self-Healing** | `self_healing` | Automatically heals broken selectors using text-matching with zero LLM calls. |
+| **Action Caching** | `action_caching` | Caches read-only tool results to avoid redundant LLM calls. |
+| **Planning Interval** | `planning_interval` | Injects periodic planning checkpoints to keep the agent focused. |
+| **Confidence Tracking** | `confidence_tracking` | Tracks LLM self-reported confidence to alert on stagnation. |
+| **Compound Enrichment** | `compound_enrichment` | Enriches complex form controls in the page map with metadata. |
+| **Budget Limit** | `budget_max_session_cost_usd` | Sets a hard session cost limit in USD to prevent runaway costs. |
+| **Budget Enforcement** | `budget_enforcement` | Controls whether to warn or block when the session budget is reached. |
+| **Budget Warning** | `budget_warn_threshold_pct` | Triggers warnings when a percentage of the budget is consumed. |
+| **Per-Agent Cost Tracking** | `per_agent_cost_tracking` | Breaks down costs per child agent in the `/cost` command. |
 
 ## Known Limitations
 

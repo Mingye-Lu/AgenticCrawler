@@ -8,7 +8,7 @@
 
 ```bash
 cargo build --release                                        # produce ./target/release/acrawl
-cargo test --workspace                                       # run full test suite (~770 tests)
+cargo test --workspace                                       # run full test suite (~1,100 tests)
 cargo test -p <crate> <test_name>                            # run a single test (e.g. -p agent mvp_tool_specs_contains_expected_21_tools)
 cargo clippy --workspace --all-targets -- -D warnings        # lints must be clean (workspace lints set pedantic = warn)
 cargo fmt --check                                            # format check
@@ -77,6 +77,48 @@ Default model comes from the `default_model` field in the active provider's `Sto
 ## Tool surface
 
 `agent::mvp_tool_specs()` returns the canonical 21-tool list with JSON schemas and required permission. When you add or rename a tool, update `mvp_tool_specs`, add a handler in `tools/mod.rs`, and adjust the count assertion in `crates/agent/src/lib.rs` tests.
+
+## Optimization layer
+
+14 vendor-derived optimizations live in `crates/agent/src/` and `crates/runtime/src/`. All are gated by `settings.optimization.*` fields (all default OFF). The pattern every optimization follows:
+
+### Shared infrastructure (must understand before touching any optimization)
+
+**`DynamicPromptContext`** (`crates/agent/src/prompt.rs`) — four optional string fields (`stagnation_alert`, `planning_guidance`, `budget_warning`, `loop_nudge`). `build_system_prompt(specs, Some(&ctx))` appends the context as section 9 of the system prompt.
+
+**Arc slot pattern** — `CrawlerAgent` and `ConversationRuntime` share two Arc slots created in `run_with_system_prompt()`:
+- `prompt_override: Arc<Mutex<Option<Vec<String>>>>` — agent writes a new full system prompt here after any tool execution; runtime applies it before the next API call in `prepare_iteration()`.
+- `last_assistant_text: Arc<Mutex<Option<String>>>` — runtime writes the latest assistant response text here; agent reads it for confidence parsing.
+- `cumulative_cost: Arc<AtomicU64>` (millicents) — runtime updates it after each usage record; agent reads it for budget enforcement.
+
+All three slots are internal to `ConversationRuntime` (not constructor parameters) but accessible via getters. The agent gets the cost counter via `runtime.cumulative_cost_counter()` after construction.
+
+### Per-optimization modules
+
+| Module | Location | What it adds to `CrawlState` / `CrawlerAgent` |
+|--------|----------|-----------------------------------------------|
+| `page_fingerprint` | `crates/agent/src/page_fingerprint.rs` | `CrawlState.page_fingerprints: Vec<PageFingerprint>` |
+| `tools/html_diff` | `crates/agent/src/tools/html_diff.rs` | `CrawlState.html_diff_tracker: Option<HtmlDiffTracker>` |
+| `loop_detector` | `crates/agent/src/loop_detector.rs` | `CrawlState.loop_detector: Option<LoopDetector>` |
+| `failure_classifier` | `crates/agent/src/failure_classifier.rs` | (pure function — no state) |
+| `self_healing` | `crates/agent/src/self_healing.rs` | (pure function — no state) |
+| `action_cache` | `crates/agent/src/action_cache.rs` | `CrawlState.action_cache: Option<ActionCache>` |
+| `confidence` | `crates/agent/src/confidence.rs` | `CrawlerAgent.confidence_tracker: Option<ConfidenceTracker>` |
+| `budget` | `crates/runtime/src/budget.rs` | `CrawlerAgent.cumulative_cost_slot: SharedCostCounter` |
+
+### Where optimizations run
+
+All optimization logic runs inside `CrawlerAgent::execute()` in `crates/agent/src/implementation/mod.rs`. The execution order (each guarded by its settings flag):
+1. **Action cache lookup** — before the tool runs (returns cached result if hit)
+2. **Tool execution** — normal handler dispatch
+3. **Self-healing retry** — on SelectorNotFound/SelectorAmbiguous
+4. **Loop detection** — records action + fingerprint, writes nudge to prompt_override_slot
+5. **Planning interval** — injects planning/execution guidance at step N
+6. **Confidence tracking** — reads last_assistant_text slot, parses `[confidence: ...]`
+7. **Budget enforcement** — reads cumulative_cost_slot, warns or blocks
+8. **Action cache store** — stores result after successful read-only tool call
+
+`CrawlState` fields are ephemeral (never persisted to session files). Adding a new field requires no serde changes.
 
 ## Conventions specific to this repo
 
