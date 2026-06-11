@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **HTML Diff Mode** (`optimization.html_diff_mode`) — on repeated visits to the same URL, only changed content sections are returned with `[unchanged: N sections]` markers, reducing token usage 50–70% on multi-turn sessions.
+- **Action Loop Detection** (`optimization.loop_detection`) — rolling-window action hash detects repeated identical actions with escalating nudges (soft at 5, medium at 8, strong at 12 repeats); page stagnation detection after 5 consecutive identical page fingerprints.
+- **Page Fingerprinting** (`optimization.page_fingerprinting`) — lightweight FNV-1a fingerprint (url + element_count + first-1000-char text hash) stored in CrawlState; used by loop detection and action caching for cache invalidation.
+- **Planning Interval** (`optimization.planning_interval`) — every N steps injects planning-checkpoint or execution-mode guidance into the dynamic prompt; disabled by default (interval=0).
+- **Failure Classification** (`optimization.failure_classification`) — 16-category keyword-based error taxonomy (zero LLM cost); `classify()` maps error messages to SelectorNotFound, CaptchaDetected, RateLimited, etc.; `retry_strategy()` returns RetryWithHealing, RetryWithDelay, NoRetry, or ResetAndRetry per category.
+- **Self-Healing Selectors** (`optimization.self_healing`) — on SelectorNotFound/SelectorAmbiguous, fetches a fresh page_map and text-matches to the correct element ref; logs `[healed: @eOLD → @eNEW]`; zero LLM calls; max retries configurable (default 2).
+- **Action Caching** (`optimization.action_caching`) — in-memory FNV-1a keyed cache for read-only tools (`page_map`, `read_content`, `list_resources`, `execute_js`); invalidated on page fingerprint change; TTL-based expiry (default 30s); interaction tools never cached.
+- **Confidence Tracking** (`optimization.confidence_tracking`) — parses `[confidence: HIGH/MEDIUM/LOW]` from assistant responses; 2+ consecutive LOWs triggers stagnation alert via DynamicPromptContext; advisory only, never blocks.
+- **Compound Component Enrichment** (`optimization.compound_enrichment`) — extends interactive element JSON with an `enrichment` field for complex form controls: date format hints, range min/max/step/value, number bounds, select option lists (max 20 + overflow count), file accept types, textarea maxlength. Max 200 bytes/element.
+- **Content-Aware Cleaning Profiles** (`optimization.content_aware_profiles`) — `CleaningProfile` enum (Default/Minimal/Aggressive/ReadingMode) auto-selected by task keyword and content size; `select_profile()` picks ReadingMode for extraction tasks, Minimal for interaction tasks, Aggressive for content > 50KB.
+- **Budget Enforcement** (`optimization.budget_max_session_cost_usd`, `optimization.budget_enforcement`) — `BudgetEnforcer` with Warn/Block modes; Warn injects budget warning into the dynamic prompt at configurable threshold (default 80%); Block terminates the agent loop cleanly when the cost limit is reached.
+- **Per-Agent Cost Attribution** (`optimization.per_agent_cost_tracking`) — `build_cost_breakdown()` walks flat child sessions and reconstructs per-child cost via UsageTracker; `/cost` command shows per-agent breakdown when flag is ON.
+- **Dynamic System Prompt Infrastructure** — `DynamicPromptContext` struct with four optional fields (stagnation_alert, planning_guidance, budget_warning, loop_nudge); injected as section 9 of the system prompt via a shared `Arc<Mutex<>>` slot; all optimizations write to this slot, runtime picks up on the next iteration.
+- **Optimization Settings Schema** — nested `OptimizationSettings` struct in `Settings` with 18 fields, all `Option<T>` and defaulting to OFF for backward compatibility; 18 `settings_get_*` getter functions.
+
 ## [0.9.1] - 2026-06-10
 
 ### Changed
