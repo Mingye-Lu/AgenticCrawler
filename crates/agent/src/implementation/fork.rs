@@ -306,6 +306,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: crawl_result.model,
                             goal: sub_goal,
                             messages: crawl_result.messages,
                         });
@@ -341,6 +342,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: None,
                             goal: sub_goal,
                             messages: Vec::new(),
                         });
@@ -369,6 +371,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: None,
                             goal: sub_goal,
                             messages: Vec::new(),
                         });
@@ -450,6 +453,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: None,
                             goal: sub_goal.clone(),
                             messages: Vec::new(),
                         });
@@ -1169,6 +1173,7 @@ mod tests {
             extracted_data: vec![serde_json::json!({"key": "value"})],
             steps_executed: 1,
             messages: child_messages.clone(),
+            model: Some("anthropic/claude-sonnet-4-6".to_string()),
         };
         let handle: tokio::task::JoinHandle<Option<CrawlResult>> =
             tokio::spawn(async move { Some(child_result) });
