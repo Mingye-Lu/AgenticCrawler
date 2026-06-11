@@ -7,15 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-11
+
 ### Added
 
-- **HTML Diff Mode** (`optimization.html_diff_mode`) — on repeated visits to the same URL, only changed content sections are returned with `[unchanged: N sections]` markers, reducing token usage 50–70% on multi-turn sessions.
+- **HTML Diff Mode** (`optimization.html_diff_mode`) — on repeated visits to the same URL, only changed content sections are returned with `[unchanged: N sections]` markers, reducing token usage 50–70% on multi-turn sessions. Also active in MCP direct-tool mode (the server now maintains a persistent `CrawlState` across calls).
 - **Action Loop Detection** (`optimization.loop_detection`) — rolling-window action hash detects repeated identical actions with escalating nudges (soft at 5, medium at 8, strong at 12 repeats); page stagnation detection after 5 consecutive identical page fingerprints.
 - **Page Fingerprinting** (`optimization.page_fingerprinting`) — lightweight FNV-1a fingerprint (url + element_count + first-1000-char text hash) stored in CrawlState; used by loop detection and action caching for cache invalidation.
 - **Planning Interval** (`optimization.planning_interval`) — every N steps injects planning-checkpoint or execution-mode guidance into the dynamic prompt; disabled by default (interval=0).
 - **Failure Classification** (`optimization.failure_classification`) — 16-category keyword-based error taxonomy (zero LLM cost); `classify()` maps error messages to SelectorNotFound, CaptchaDetected, RateLimited, etc.; `retry_strategy()` returns RetryWithHealing, RetryWithDelay, NoRetry, or ResetAndRetry per category.
 - **Self-Healing Selectors** (`optimization.self_healing`) — on SelectorNotFound/SelectorAmbiguous, fetches a fresh page_map and text-matches to the correct element ref; logs `[healed: @eOLD → @eNEW]`; zero LLM calls; max retries configurable (default 2).
-- **Action Caching** (`optimization.action_caching`) — in-memory FNV-1a keyed cache for read-only tools (`page_map`, `read_content`, `list_resources`, `execute_js`); invalidated on page fingerprint change; TTL-based expiry (default 30s); interaction tools never cached.
+- **Action Caching** (`optimization.action_caching`) — in-memory SHA-256 keyed cache for read-only tools (`page_map`, `read_content`, `list_resources`); invalidated on page fingerprint change; TTL-based expiry (default 30s). `execute_js` is intentionally excluded as it may have side effects.
 - **Confidence Tracking** (`optimization.confidence_tracking`) — parses `[confidence: HIGH/MEDIUM/LOW]` from assistant responses; 2+ consecutive LOWs triggers stagnation alert via DynamicPromptContext; advisory only, never blocks.
 - **Compound Component Enrichment** (`optimization.compound_enrichment`) — extends interactive element JSON with an `enrichment` field for complex form controls: date format hints, range min/max/step/value, number bounds, select option lists (max 20 + overflow count), file accept types, textarea maxlength. Max 200 bytes/element.
 - **Content-Aware Cleaning Profiles** (`optimization.content_aware_profiles`) — `CleaningProfile` enum (Default/Minimal/Aggressive/ReadingMode) auto-selected by task keyword and content size; `select_profile()` picks ReadingMode for extraction tasks, Minimal for interaction tasks, Aggressive for content > 50KB.
@@ -718,6 +720,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.10.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.0
 [0.9.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.0
 [0.8.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.7
