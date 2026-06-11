@@ -192,6 +192,7 @@ mod tests {
         async fn page_map(
             &mut self,
             _scope: Option<&str>,
+            _compound_enrichment: bool,
         ) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!({}))
         }

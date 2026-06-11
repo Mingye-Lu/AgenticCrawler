@@ -413,8 +413,10 @@ pub async fn execute(
     }
 
     let mut page_map = if page.fetched_via_browser {
+        let nav_settings = runtime::load_settings();
+        let compound_enrichment = runtime::settings_get_compound_enrichment(&nav_settings);
         match browser.acquire_bridge().await {
-            Ok(mut bridge) => match bridge.page_map(None).await {
+            Ok(mut bridge) => match bridge.page_map(None, compound_enrichment).await {
                 Ok(mut value) => {
                     apply_page_map_caps(&mut value);
                     value

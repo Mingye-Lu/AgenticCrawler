@@ -21,8 +21,12 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::scroll(self, direction, pixels).await
     }
 
-    async fn page_map(&mut self, scope: Option<&str>) -> Result<serde_json::Value, BridgeError> {
-        PlaywrightBridge::page_map(self, scope).await
+    async fn page_map(
+        &mut self,
+        scope: Option<&str>,
+        compound_enrichment: bool,
+    ) -> Result<serde_json::Value, BridgeError> {
+        PlaywrightBridge::page_map(self, scope, compound_enrichment).await
     }
 
     async fn read_content(

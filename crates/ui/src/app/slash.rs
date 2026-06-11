@@ -348,7 +348,34 @@ impl LiveCli {
     }
 
     pub fn cost_report(&self) -> String {
-        format_cost_report(self.runtime.usage().cumulative_usage())
+        let mut report = format_cost_report(self.runtime.usage().cumulative_usage());
+        let settings = runtime::load_settings();
+        if runtime::settings_get_per_agent_cost_tracking(&settings) {
+            let session = self.runtime.session();
+            if !session.child_sessions.is_empty() {
+                let breakdown = runtime::build_cost_breakdown(session);
+                let parent_usage = self.runtime.usage().cumulative_usage();
+                let parent_cost = runtime::estimate_cost_usd(parent_usage).total_cost_usd();
+                let mut parts = vec![format!(
+                    "\n  Per-agent        Parent: {}",
+                    runtime::format_usd(parent_cost)
+                )];
+                for entry in &breakdown {
+                    parts.push(format!(
+                        "                    {} ({}): {} ({} turns)",
+                        entry.agent_id,
+                        "child",
+                        runtime::format_usd(entry.direct_cost_usd),
+                        entry.turn_count
+                    ));
+                }
+                let total: f64 =
+                    parent_cost + breakdown.iter().map(|e| e.direct_cost_usd).sum::<f64>();
+                parts.push(format!("  Total (all)     {}", runtime::format_usd(total)));
+                report.push_str(&parts.join("\n"));
+            }
+        }
+        report
     }
 
     pub fn config_report(section: Option<&str>) -> Result<String, CliError> {

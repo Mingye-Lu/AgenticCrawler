@@ -84,11 +84,14 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let scope = input.get("scope").and_then(Value::as_str);
 
+    let settings = runtime::load_settings();
+    let compound_enrichment = runtime::settings_get_compound_enrichment(&settings);
+
     let mut result = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .page_map(scope)
+        .page_map(scope, compound_enrichment)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 

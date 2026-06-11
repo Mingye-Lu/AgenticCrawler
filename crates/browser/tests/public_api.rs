@@ -46,7 +46,11 @@ impl BrowserBackend for MockBrowserBackend {
         Ok(())
     }
 
-    async fn page_map(&mut self, _scope: Option<&str>) -> Result<serde_json::Value, BridgeError> {
+    async fn page_map(
+        &mut self,
+        _scope: Option<&str>,
+        _compound_enrichment: bool,
+    ) -> Result<serde_json::Value, BridgeError> {
         Ok(serde_json::json!({"headings": []}))
     }
 
