@@ -43,6 +43,7 @@ pub struct CrawlResult {
     pub extracted_data: Vec<Value>,
     pub steps_executed: usize,
     pub messages: Vec<ConversationMessage>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +122,7 @@ pub struct CrawlerAgent {
     pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     prompt_override_slot: Arc<Mutex<Option<Vec<String>>>>,
     last_assistant_text_slot: Arc<Mutex<Option<String>>>,
+    accumulated_turn_ctx: Mutex<DynamicPromptContext>,
     cumulative_cost_slot: runtime::SharedCostCounter,
     step_count: usize,
     confidence_tracker: Option<crate::confidence::ConfidenceTracker>,
@@ -161,6 +163,7 @@ impl CrawlerAgent {
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             prompt_override_slot,
             last_assistant_text_slot,
+            accumulated_turn_ctx: Mutex::new(DynamicPromptContext::default()),
             cumulative_cost_slot: runtime::new_cost_counter(),
             step_count: 0,
             confidence_tracker: None,
@@ -368,8 +371,10 @@ impl CrawlerAgent {
         let summary = result.map_err(|error| CrawlError::new(error.to_string()))?;
         let crawl_state = runtime.tool_executor_mut().crawl_state.clone();
         let messages = runtime.session().messages.clone();
+        let model = runtime.session().model.clone();
         let mut crawl_result = build_crawl_result(&summary, &crawl_state);
         crawl_result.messages = messages;
+        crawl_result.model = model;
         Ok(crawl_result)
     }
 
@@ -398,14 +403,13 @@ impl ToolExecutor for CrawlerAgent {
         input: &str,
     ) -> impl std::future::Future<Output = Result<ToolOutcome, ToolError>> + Send {
         async move {
-            // Load settings and apply planning interval guidance
             let settings = runtime::load_settings();
-            let interval = runtime::settings_get_planning_interval(&settings);
             self.step_count += 1;
-
-            if interval > 0 {
-                self.apply_planning_guidance(interval);
-            }
+            *self
+                .accumulated_turn_ctx
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                DynamicPromptContext::default();
 
             if self
                 .allowed_tools
@@ -461,7 +465,17 @@ impl ToolExecutor for CrawlerAgent {
                             heal_log = current_heal_log;
                             attempts += 1;
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => {
+                            let enriched = if runtime::settings_get_failure_classification(&settings)
+                            {
+                                let category =
+                                    crate::failure_classifier::classify(tool_name, &error.to_string());
+                                ToolError::new(format!("[{category}] {error}"))
+                            } else {
+                                error
+                            };
+                            return Err(enriched);
+                        }
                     }
                 }
             };
@@ -476,6 +490,11 @@ impl ToolExecutor for CrawlerAgent {
 
             if runtime::settings_get_loop_detection(&settings) {
                 self.apply_loop_detection(&settings, tool_name, &input_value);
+            }
+
+            let interval = runtime::settings_get_planning_interval(&settings);
+            if interval > 0 {
+                self.apply_planning_guidance(interval);
             }
 
             if runtime::settings_get_confidence_tracking(&settings) {
@@ -752,8 +771,28 @@ impl CrawlerAgent {
     }
 
     fn write_prompt_override(&self, ctx: &DynamicPromptContext) {
+        let mut accumulated = self
+            .accumulated_turn_ctx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if ctx.stagnation_alert.is_some() {
+            accumulated
+                .stagnation_alert
+                .clone_from(&ctx.stagnation_alert);
+        }
+        if ctx.planning_guidance.is_some() {
+            accumulated
+                .planning_guidance
+                .clone_from(&ctx.planning_guidance);
+        }
+        if ctx.budget_warning.is_some() {
+            accumulated.budget_warning.clone_from(&ctx.budget_warning);
+        }
+        if ctx.loop_nudge.is_some() {
+            accumulated.loop_nudge.clone_from(&ctx.loop_nudge);
+        }
         let specs = crate::mvp_tool_specs();
-        let new_prompt = build_system_prompt(&specs, Some(ctx));
+        let new_prompt = build_system_prompt(&specs, Some(&*accumulated));
         *self
             .prompt_override_slot
             .lock()
@@ -977,6 +1016,7 @@ fn build_crawl_result(summary: &TurnSummary, crawl_state: &CrawlState) -> CrawlR
         extracted_data,
         steps_executed: summary.iterations,
         messages: Vec::new(),
+        model: None,
     }
 }
 
@@ -1869,6 +1909,7 @@ mod tests {
         let result = build_crawl_result(&summary, &CrawlState::default());
         assert_eq!(result.summary, "final answer");
         assert_eq!(result.steps_executed, 2);
+        assert_eq!(result.model, None);
     }
 
     #[test]
