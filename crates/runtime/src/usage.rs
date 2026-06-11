@@ -149,9 +149,9 @@ pub struct AgentCostReport {
 
 /// Build a flat per-child cost breakdown from a session's `child_sessions`.
 ///
-/// Walks `child_sessions` (flat list) and computes cost via
-/// `UsageTracker::from_session` on a temporary session constructed from each
-/// child's messages.
+/// Walks `child_sessions` (flat list) and computes cost via each child's
+/// recorded usage. When a child session records its model, use model-specific
+/// pricing; otherwise fall back to the default estimate.
 #[must_use]
 pub fn build_cost_breakdown(session: &crate::session::Session) -> Vec<AgentCostReport> {
     session
@@ -164,10 +164,17 @@ pub fn build_cost_breakdown(session: &crate::session::Session) -> Vec<AgentCostR
                     tracker.record(usage);
                 }
             }
-            let cost = estimate_cost_usd(tracker.cumulative_usage()).total_cost_usd();
+            let cost = child
+                .model
+                .as_deref()
+                .and_then(pricing_for_model)
+                .map_or_else(
+                    || estimate_cost_usd(tracker.cumulative_usage()),
+                    |pricing| estimate_cost_usd_with_pricing(tracker.cumulative_usage(), pricing),
+                );
             AgentCostReport {
                 agent_id: child.id.clone(),
-                direct_cost_usd: cost,
+                direct_cost_usd: cost.total_cost_usd(),
                 turn_count: tracker.turns(),
             }
         })
@@ -346,6 +353,7 @@ mod tests {
             child_sessions: vec![
                 ChildSession {
                     id: "child-a".to_string(),
+                    model: Some("claude-haiku-4-5-20251001".to_string()),
                     goal: "scrape page A".to_string(),
                     messages: vec![
                         ConversationMessage {
@@ -376,6 +384,7 @@ mod tests {
                 },
                 ChildSession {
                     id: "child-b".to_string(),
+                    model: None,
                     goal: "scrape page B".to_string(),
                     messages: vec![ConversationMessage {
                         role: MessageRole::User,
@@ -394,7 +403,7 @@ mod tests {
         // child-a: 2 assistant messages with usage
         assert_eq!(breakdown[0].agent_id, "child-a");
         assert_eq!(breakdown[0].turn_count, 2);
-        assert!(breakdown[0].direct_cost_usd > 0.0);
+        assert_eq!(format_usd(breakdown[0].direct_cost_usd), "$2.2500");
 
         // child-b: 1 user message with no usage → 0 turns, 0 cost
         assert_eq!(breakdown[1].agent_id, "child-b");
