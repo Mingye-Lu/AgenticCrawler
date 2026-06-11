@@ -10,7 +10,9 @@ use crate::config::RuntimeFeatureConfig;
 use crate::control::ControlState;
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
-use crate::usage::{estimate_cost_usd, TokenUsage, UsageTracker};
+use crate::usage::{
+    estimate_cost_usd_with_pricing, pricing_for_model, ModelPricing, TokenUsage, UsageTracker,
+};
 
 pub use acrawl_core::error::{RuntimeError, ToolError};
 pub use acrawl_core::event::AssistantEvent;
@@ -86,8 +88,16 @@ where
     ) -> Self {
         let usage_tracker = UsageTracker::from_session(&session);
         let cumulative_cost = new_cost_counter();
+        let pricing = session
+            .model
+            .as_deref()
+            .and_then(pricing_for_model)
+            .unwrap_or_else(ModelPricing::default_sonnet_tier);
         cumulative_cost.store(
-            usd_to_millicents(estimate_cost_usd(usage_tracker.cumulative_usage()).total_cost_usd()),
+            usd_to_millicents(
+                estimate_cost_usd_with_pricing(usage_tracker.cumulative_usage(), pricing)
+                    .total_cost_usd(),
+            ),
             Ordering::Relaxed,
         );
         Self {
@@ -292,8 +302,15 @@ where
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(assistant_text);
         if let Some(usage) = usage {
             self.usage_tracker.record(usage);
+            let pricing = self
+                .session
+                .model
+                .as_deref()
+                .and_then(pricing_for_model)
+                .unwrap_or_else(ModelPricing::default_sonnet_tier);
             let cumulative_cost_usd =
-                estimate_cost_usd(self.usage_tracker.cumulative_usage()).total_cost_usd();
+                estimate_cost_usd_with_pricing(self.usage_tracker.cumulative_usage(), pricing)
+                    .total_cost_usd();
             self.cumulative_cost
                 .store(usd_to_millicents(cumulative_cost_usd), Ordering::Relaxed);
         }
