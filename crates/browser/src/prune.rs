@@ -444,11 +444,11 @@ mod tests {
 
     #[test]
     fn aggressive_produces_smaller_output() {
-        let html = r#"<html><body>
+        let html = "<html><body>
             <article><p>This is a substantial paragraph of real content that should survive most profiles.</p></article>
             <div><p>Some extra content here with moderate text density value.</p></div>
             <section><p>Another section with enough text to potentially survive default.</p></section>
-        </body></html>"#;
+        </body></html>";
         let default_out = prune_html_with_profile(html, CleaningProfile::Default);
         let aggressive_out = prune_html_with_profile(html, CleaningProfile::Aggressive);
         assert!(
@@ -461,10 +461,10 @@ mod tests {
 
     #[test]
     fn minimal_preserves_more_than_default() {
-        let html = r#"<html><body>
+        let html = "<html><body>
             <div><span>x</span></div>
             <article><p>Content that default keeps.</p></article>
-        </body></html>"#;
+        </body></html>";
         let default_out = prune_html_with_profile(html, CleaningProfile::Default);
         let minimal_out = prune_html_with_profile(html, CleaningProfile::Minimal);
         assert!(

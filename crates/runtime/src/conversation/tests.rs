@@ -10,7 +10,9 @@ use crate::session::{ContentBlock, MessageRole, Session};
 use crate::usage::{estimate_cost_usd, TokenUsage};
 use std::sync::{Arc, Mutex};
 
-fn runtime_slots() -> (Arc<Mutex<Option<Vec<String>>>>, Arc<Mutex<Option<String>>>) {
+type RuntimeSlots = (Arc<Mutex<Option<Vec<String>>>>, Arc<Mutex<Option<String>>>);
+
+fn runtime_slots() -> RuntimeSlots {
     (Arc::new(Mutex::new(None)), Arc::new(Mutex::new(None)))
 }
 
