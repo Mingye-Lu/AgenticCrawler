@@ -9,7 +9,7 @@ use crate::page_fingerprint::PageFingerprint;
 const DEFAULT_TTL_SECS: u64 = 30;
 
 /// Read-only tools that are safe to cache.
-pub const CACHEABLE_TOOLS: &[&str] = &["page_map", "read_content", "list_resources", "execute_js"];
+pub const CACHEABLE_TOOLS: &[&str] = &["page_map", "read_content", "list_resources"];
 
 #[must_use]
 pub fn is_cacheable(tool_name: &str) -> bool {
@@ -191,7 +191,27 @@ mod tests {
         assert!(is_cacheable("page_map"));
         assert!(is_cacheable("read_content"));
         assert!(is_cacheable("list_resources"));
-        assert!(is_cacheable("execute_js"));
+    }
+
+    #[test]
+    fn execute_js_not_cacheable() {
+        assert!(!is_cacheable("execute_js"));
+    }
+
+    #[test]
+    fn action_cache_lookup_requires_fingerprint_in_state() {
+        use crate::state::CrawlState;
+
+        let fingerprint = PageFingerprint {
+            url: "https://example.com".to_string(),
+            element_count: 5,
+            text_hash: 42,
+        };
+        let mut state = CrawlState::default();
+
+        assert!(state.page_fingerprints.is_empty());
+        state.page_fingerprints.push(fingerprint.clone());
+        assert_eq!(state.page_fingerprints.last(), Some(&fingerprint));
     }
 
     #[test]

@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 /// 16-category failure taxonomy (Skyvern-derived, keyword matching only — zero LLM cost).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailureCategory {
@@ -33,6 +35,30 @@ pub enum FailureCategory {
     BudgetExceeded,
     /// Unclassifiable
     Unknown,
+}
+
+impl Display for FailureCategory {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::SelectorNotFound => "SelectorNotFound",
+            Self::SelectorAmbiguous => "SelectorAmbiguous",
+            Self::ElementNotVisible => "ElementNotVisible",
+            Self::ElementDisabled => "ElementDisabled",
+            Self::NavigationTimeout => "NavigationTimeout",
+            Self::NavigationBlocked => "NavigationBlocked",
+            Self::BrowserCrash => "BrowserCrash",
+            Self::JavaScriptError => "JavaScriptError",
+            Self::FormValidation => "FormValidation",
+            Self::AuthRequired => "AuthRequired",
+            Self::CaptchaDetected => "CaptchaDetected",
+            Self::RateLimited => "RateLimited",
+            Self::NetworkError => "NetworkError",
+            Self::ContentMismatch => "ContentMismatch",
+            Self::BudgetExceeded => "BudgetExceeded",
+            Self::Unknown => "Unknown",
+        };
+        write!(f, "{name}")
+    }
 }
 
 /// Retry strategy associated with a failure category.
