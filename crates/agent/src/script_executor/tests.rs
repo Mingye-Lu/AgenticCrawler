@@ -232,7 +232,10 @@ impl BrowserBackend for MockBridge {
         Ok("https://mock.test/previous".to_string())
     }
 
-    async fn set_device(&mut self, options: &serde_json::Value) -> Result<serde_json::Value, BridgeError> {
+    async fn set_device(
+        &mut self,
+        options: &serde_json::Value,
+    ) -> Result<serde_json::Value, BridgeError> {
         self.log("set_device", json!({"options": options}));
         Ok(json!({"success": true}))
     }

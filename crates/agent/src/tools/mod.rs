@@ -30,5 +30,5 @@ pub mod read_script;
 pub mod run_script;
 pub mod save_script;
 pub mod script_status;
-pub mod wait_for_scripts;
 pub mod set_device;
+pub mod wait_for_scripts;

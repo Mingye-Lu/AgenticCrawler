@@ -118,11 +118,14 @@ fn section_operating_procedure() -> String {
      4. Prefer the simplest reliable action:\n\
       \x20\x20 - Direct navigate over clicking links when the URL is known.\n\
       \x20\x20 - click, fill_form, and scroll before execute_js.\n\
-      \x20\x20 - page_map + read_content + execute_js over screenshot. Screenshot is the \
-      LAST RESORT tool \u{2014} use it only after page_map, read_content, list_resources, \
-      AND execute_js have all failed to provide the information you need. Valid uses: \
-      verifying purely visual layout or debugging CSS rendering. Invalid uses: reading \
-      text, finding elements, identifying click coordinates.\n\
+       \x20\x20 - page_map + read_content + execute_js over screenshot. Screenshot is the \
+       LAST RESORT tool \u{2014} use it only after page_map, read_content, list_resources, \
+       AND execute_js have all failed to provide the information you need. Valid uses: \
+       verifying purely visual layout or debugging CSS rendering. Invalid uses: reading \
+       text, finding elements, identifying click coordinates.\n\
+       \x20\x20 - Use `set_device` to switch between mobile and desktop browser \
+       emulation when a site behaves differently on mobile or when the goal \
+       requires mobile-specific content. Use 'desktop' to reset back to default.\n\
       5. When extracting information from a page:\n\
       \x20\x20 a. Call page_map to see the heading structure and section sizes.\n\
       \x20\x20 b. Call read_content with the heading name or CSS selector for the section you need.\n\

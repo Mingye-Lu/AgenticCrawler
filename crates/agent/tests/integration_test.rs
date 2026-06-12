@@ -254,3 +254,217 @@ fn http_fetch_path_has_markdown() {
     assert!(page.markdown.contains('#'));
     assert!(page.markdown.contains("Some content"));
 }
+
+#[cfg(test)]
+mod set_device_integration {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use tokio::sync::Mutex;
+
+    use agent::tools::set_device::resolve_device;
+    use agent::{
+        BridgeError, BrowserBackend, BrowserContext, BrowserState, CrawlState, PageInfo,
+        ScreenshotOptions, SharedBridge, ToolEffect,
+    };
+
+    /// Minimal no-op backend — tests return before calling the bridge.
+    #[derive(Debug)]
+    struct NopBackend;
+
+    #[async_trait]
+    impl BrowserBackend for NopBackend {
+        async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
+            unreachable!()
+        }
+        async fn new_page(&mut self, _url: Option<&str>) -> Result<usize, BridgeError> {
+            unreachable!()
+        }
+        async fn close_page(&mut self, _page_index: usize) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn scroll(&mut self, _direction: &str, _pixels: i64) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn page_map(
+            &mut self,
+            _scope: Option<&str>,
+            _compound_enrichment: bool,
+        ) -> Result<serde_json::Value, BridgeError> {
+            unreachable!()
+        }
+        async fn read_content(
+            &mut self,
+            _heading: Option<&str>,
+            _selector: Option<&str>,
+            _offset: usize,
+            _max_chars: usize,
+        ) -> Result<serde_json::Value, BridgeError> {
+            unreachable!()
+        }
+        async fn wait_for_selector(
+            &mut self,
+            _selector: &str,
+            _timeout_ms: u64,
+            _state: Option<&str>,
+        ) -> Result<bool, BridgeError> {
+            unreachable!()
+        }
+        async fn select_option(
+            &mut self,
+            _selector: &str,
+            _value: &str,
+        ) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn evaluate(&mut self, _script: &str) -> Result<serde_json::Value, BridgeError> {
+            unreachable!()
+        }
+        async fn hover(&mut self, _selector: &str) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn press_key(
+            &mut self,
+            _key: &str,
+            _selector: Option<&str>,
+        ) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn switch_tab(&mut self, _index: i64) -> Result<serde_json::Value, BridgeError> {
+            unreachable!()
+        }
+        async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
+            unreachable!()
+        }
+        async fn import_cookies(&mut self, _state: &BrowserState) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn import_cookies_only(&mut self, _state: &BrowserState) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn import_local_storage(&mut self, _state: &BrowserState) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
+            unreachable!()
+        }
+        async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+            unreachable!()
+        }
+        async fn click(&mut self, _selector: &str) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn click_at(&mut self, _x: f64, _y: f64) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn fill(&mut self, _selector: &str, _value: &str) -> Result<(), BridgeError> {
+            unreachable!()
+        }
+        async fn screenshot(
+            &mut self,
+            _options: &ScreenshotOptions<'_>,
+        ) -> Result<(String, usize), BridgeError> {
+            unreachable!()
+        }
+        async fn go_back(&mut self) -> Result<String, BridgeError> {
+            unreachable!()
+        }
+        async fn set_device(
+            &mut self,
+            _options: &serde_json::Value,
+        ) -> Result<serde_json::Value, BridgeError> {
+            unreachable!()
+        }
+    }
+
+    fn make_browser() -> BrowserContext {
+        let backend: Box<dyn BrowserBackend + Send> = Box::new(NopBackend);
+        let bridge: SharedBridge = Arc::new(Mutex::new(backend));
+        BrowserContext::new(bridge)
+    }
+
+    #[test]
+    fn resolve_iphone_15_returns_correct_viewport() {
+        let preset = resolve_device("iphone_15").unwrap();
+        let options = preset.to_json();
+        assert_eq!(options["viewport"]["width"], 393);
+        assert_eq!(options["viewport"]["height"], 659);
+        assert_eq!(options["isMobile"], true);
+        assert_eq!(options["hasTouch"], true);
+    }
+
+    #[test]
+    fn resolve_desktop_returns_desktop_defaults() {
+        let preset = resolve_device("desktop").unwrap();
+        let options = preset.to_json();
+        assert_eq!(options["viewport"]["width"], 1920);
+        assert_eq!(options["viewport"]["height"], 1080);
+        assert_eq!(options["isMobile"], false);
+        assert_eq!(options["hasTouch"], false);
+    }
+
+    #[test]
+    fn unknown_device_preset_resolve_fails() {
+        assert!(resolve_device("nonexistent").is_none());
+    }
+
+    #[test]
+    fn crawl_state_current_device_initializes_to_none() {
+        let state = CrawlState::default();
+        assert!(state.current_device.is_none());
+    }
+
+    #[test]
+    fn crawl_state_has_active_subagents_initializes_to_false() {
+        let state = CrawlState::default();
+        assert!(!state.has_active_subagents);
+    }
+
+    #[tokio::test]
+    async fn set_device_handler_blocks_when_subagents_active() {
+        use agent::tools::set_device::execute;
+
+        let mut state = CrawlState {
+            has_active_subagents: true,
+            ..CrawlState::default()
+        };
+
+        let mut browser = make_browser();
+
+        let result = execute(&json!({"device": "iphone_15"}), &mut browser, &mut state).await;
+
+        assert!(result.is_err());
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("sub-agent") || err_str.contains("sub-agents"),
+            "Expected sub-agent error, got: {err_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn set_device_no_op_when_already_in_mode() {
+        use agent::tools::set_device::execute;
+
+        let mut state = CrawlState {
+            current_device: Some("iphone_15".to_string()),
+            has_active_subagents: false,
+            ..CrawlState::default()
+        };
+
+        let mut browser = make_browser();
+
+        let result = execute(&json!({"device": "iphone_15"}), &mut browser, &mut state).await;
+
+        assert!(result.is_ok(), "Expected Ok, got: {result:?}");
+        match result.unwrap() {
+            ToolEffect::Reply(text) => {
+                assert!(
+                    text.contains("Already") || text.contains("already"),
+                    "Expected 'already in mode' message, got: {text}"
+                );
+            }
+            other => panic!("Expected ToolEffect::Reply, got: {other:?}"),
+        }
+    }
+}
