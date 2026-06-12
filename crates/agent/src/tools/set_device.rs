@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use crate::state::CrawlState;
@@ -160,10 +162,16 @@ fn parse_input(input: &Value) -> Result<DeviceInput, CrawlError> {
             .get("width")
             .and_then(Value::as_u64)
             .ok_or_else(|| CrawlError::new("viewport.width must be a positive integer"))?;
+        if width == 0 {
+            return Err(CrawlError::new("viewport.width must be greater than zero"));
+        }
         let height = vp
             .get("height")
             .and_then(Value::as_u64)
             .ok_or_else(|| CrawlError::new("viewport.height must be a positive integer"))?;
+        if height == 0 {
+            return Err(CrawlError::new("viewport.height must be greater than zero"));
+        }
         Some((
             u32::try_from(width).map_err(|_| CrawlError::new("viewport.width out of range"))?,
             u32::try_from(height).map_err(|_| CrawlError::new("viewport.height out of range"))?,
@@ -177,6 +185,13 @@ fn parse_input(input: &Value) -> Result<DeviceInput, CrawlError> {
         .and_then(Value::as_str)
         .map(str::to_string);
     let device_scale_factor = input.get("deviceScaleFactor").and_then(Value::as_f64);
+    if let Some(device_scale_factor) = device_scale_factor {
+        if device_scale_factor <= 0.0 {
+            return Err(CrawlError::new(
+                "deviceScaleFactor must be a positive number greater than zero",
+            ));
+        }
+    }
     let is_mobile = input.get("isMobile").and_then(Value::as_bool);
     let has_touch = input.get("hasTouch").and_then(Value::as_bool);
 
@@ -187,6 +202,18 @@ fn parse_input(input: &Value) -> Result<DeviceInput, CrawlError> {
         is_mobile,
         has_touch,
     })
+}
+
+fn custom_device_fingerprint(options: &Value) -> String {
+    let sorted: BTreeMap<String, Value> = options
+        .as_object()
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::to_string(&sorted).unwrap_or_else(|_| "custom".to_string())
 }
 
 /// Resolve a `DeviceInput` to a device name and JSON options for the bridge.
@@ -223,7 +250,8 @@ fn resolve_to_options(input: DeviceInput) -> Result<(String, Value), CrawlError>
             if let Some(has_touch) = has_touch {
                 options["hasTouch"] = serde_json::json!(has_touch);
             }
-            Ok(("custom".to_string(), options))
+            let fingerprint = custom_device_fingerprint(&options);
+            Ok((format!("custom:{fingerprint}"), options))
         }
     }
 }
@@ -235,11 +263,16 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let device_input = parse_input(input)?;
     let (device_name, options) = resolve_to_options(device_input)?;
+    let display_name = if device_name.starts_with("custom:") {
+        "custom".to_string()
+    } else {
+        device_name.clone()
+    };
 
     if crawl_state.current_device.as_deref() == Some(device_name.as_str()) {
         return Ok(ToolEffect::reply_json(&serde_json::json!({
             "success": true,
-            "message": format!("Already in '{}' mode — no change needed", device_name),
+            "message": format!("Already in '{}' mode — no change needed", display_name),
             "current_device": device_name,
         })));
     }
@@ -266,7 +299,7 @@ pub async fn execute(
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "success": true,
-        "message": format!("Switched to '{}' device mode", device_name),
+        "message": format!("Switched to '{}' device mode", display_name),
         "current_device": device_name,
         "page_state": page_state,
     })))
