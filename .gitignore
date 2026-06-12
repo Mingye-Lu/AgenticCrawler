@@ -45,3 +45,5 @@ docs/superpowers/
 .code-review-graph/
 .mcp.json
 .opencode.json
+vendor-analysis/
+crates/agent/bridge.cjs
