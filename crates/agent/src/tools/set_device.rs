@@ -1,5 +1,9 @@
 use serde_json::Value;
 
+use crate::state::CrawlState;
+use crate::BrowserContext;
+use crate::{CrawlError, ToolEffect, ToolExecutionError};
+
 /// Device preset for browser emulation.
 #[derive(Debug, Clone)]
 pub struct DevicePreset {
@@ -134,6 +138,140 @@ pub fn resolve_device(name: &str) -> Option<DevicePreset> {
     }
 }
 
+#[derive(Debug)]
+enum DeviceInput {
+    Preset(String),
+    Custom {
+        viewport: Option<(u32, u32)>,
+        user_agent: Option<String>,
+        device_scale_factor: Option<f64>,
+        is_mobile: Option<bool>,
+        has_touch: Option<bool>,
+    },
+}
+
+fn parse_input(input: &Value) -> Result<DeviceInput, CrawlError> {
+    if let Some(device) = input.get("device").and_then(Value::as_str) {
+        return Ok(DeviceInput::Preset(device.to_string()));
+    }
+
+    let viewport = if let Some(vp) = input.get("viewport") {
+        let width = vp
+            .get("width")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| CrawlError::new("viewport.width must be a positive integer"))?;
+        let height = vp
+            .get("height")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| CrawlError::new("viewport.height must be a positive integer"))?;
+        Some((
+            u32::try_from(width).map_err(|_| CrawlError::new("viewport.width out of range"))?,
+            u32::try_from(height).map_err(|_| CrawlError::new("viewport.height out of range"))?,
+        ))
+    } else {
+        None
+    };
+
+    let user_agent = input
+        .get("userAgent")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let device_scale_factor = input.get("deviceScaleFactor").and_then(Value::as_f64);
+    let is_mobile = input.get("isMobile").and_then(Value::as_bool);
+    let has_touch = input.get("hasTouch").and_then(Value::as_bool);
+
+    Ok(DeviceInput::Custom {
+        viewport,
+        user_agent,
+        device_scale_factor,
+        is_mobile,
+        has_touch,
+    })
+}
+
+/// Resolve a `DeviceInput` to a device name and JSON options for the bridge.
+fn resolve_to_options(input: DeviceInput) -> Result<(String, Value), CrawlError> {
+    match input {
+        DeviceInput::Preset(name) => {
+            let preset = resolve_device(&name).ok_or_else(|| {
+                CrawlError::new(format!(
+                    "unknown device preset '{name}'. Valid presets: iphone_15, iphone_se, iphone_15_pro_max, pixel_7, galaxy_s24, ipad_pro, ipad, galaxy_tab_s9, desktop, desktop_hd"
+                ))
+            })?;
+            Ok((name, preset.to_json()))
+        }
+        DeviceInput::Custom {
+            viewport,
+            user_agent,
+            device_scale_factor,
+            is_mobile,
+            has_touch,
+        } => {
+            let mut options = serde_json::json!({});
+            if let Some((width, height)) = viewport {
+                options["viewport"] = serde_json::json!({"width": width, "height": height});
+            }
+            if let Some(user_agent) = user_agent {
+                options["userAgent"] = Value::String(user_agent);
+            }
+            if let Some(device_scale_factor) = device_scale_factor {
+                options["deviceScaleFactor"] = serde_json::json!(device_scale_factor);
+            }
+            if let Some(is_mobile) = is_mobile {
+                options["isMobile"] = serde_json::json!(is_mobile);
+            }
+            if let Some(has_touch) = has_touch {
+                options["hasTouch"] = serde_json::json!(has_touch);
+            }
+            Ok(("custom".to_string(), options))
+        }
+    }
+}
+
+pub async fn execute(
+    input: &Value,
+    browser: &mut BrowserContext,
+    crawl_state: &mut CrawlState,
+) -> Result<ToolEffect, ToolExecutionError> {
+    let device_input = parse_input(input)?;
+    let (device_name, options) = resolve_to_options(device_input)?;
+
+    if crawl_state.current_device.as_deref() == Some(device_name.as_str()) {
+        return Ok(ToolEffect::reply_json(&serde_json::json!({
+            "success": true,
+            "message": format!("Already in '{}' mode — no change needed", device_name),
+            "current_device": device_name,
+        })));
+    }
+
+    if crawl_state.has_active_subagents {
+        return Err(ToolExecutionError::new(
+            "Cannot switch device while sub-agents are running. Wait for sub-agents to complete first.",
+        ));
+    }
+
+    browser
+        .acquire_bridge()
+        .await
+        .map_err(|error| ToolExecutionError::new(error.to_string()))?
+        .set_device(&options)
+        .await
+        .map_err(|error| ToolExecutionError::new(error.to_string()))?;
+
+    crawl_state.action_cache = None;
+    browser.clear_page_snapshot();
+    crawl_state.current_device = Some(device_name.clone());
+
+    let page_state = super::feedback::post_action_page_state(browser).await;
+
+    Ok(ToolEffect::reply_json(&serde_json::json!({
+        "success": true,
+        "message": format!("Switched to '{}' device mode", device_name),
+        "current_device": device_name,
+        "page_state": page_state,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,15 +300,22 @@ mod tests {
     fn resolve_unknown_returns_none() {
         assert!(resolve_device("nonexistent").is_none());
         assert!(resolve_device("").is_none());
-        assert!(resolve_device("iPhone 15").is_none());  // must be snake_case
+        assert!(resolve_device("iPhone 15").is_none()); // must be snake_case
     }
 
     #[test]
     fn resolve_all_presets_exist() {
         let names = [
-            "iphone_15", "iphone_se", "iphone_15_pro_max", "pixel_7",
-            "galaxy_s24", "ipad_pro", "ipad", "galaxy_tab_s9",
-            "desktop", "desktop_hd",
+            "iphone_15",
+            "iphone_se",
+            "iphone_15_pro_max",
+            "pixel_7",
+            "galaxy_s24",
+            "ipad_pro",
+            "ipad",
+            "galaxy_tab_s9",
+            "desktop",
+            "desktop_hd",
         ];
         for name in &names {
             assert!(resolve_device(name).is_some(), "preset missing: {name}");
@@ -187,5 +332,54 @@ mod tests {
         assert!(json["deviceScaleFactor"].as_f64().is_some());
         assert!(json["isMobile"].as_bool().is_some());
         assert!(json["hasTouch"].as_bool().is_some());
+    }
+
+    #[test]
+    fn parse_device_preset_input() {
+        let input = serde_json::json!({"device": "iphone_15"});
+        let result = parse_input(&input).unwrap();
+        assert!(matches!(result, DeviceInput::Preset(name) if name == "iphone_15"));
+    }
+
+    #[test]
+    fn parse_custom_input() {
+        let input = serde_json::json!({
+            "viewport": {"width": 375, "height": 812},
+            "userAgent": "Test UA",
+            "deviceScaleFactor": 2.0,
+            "isMobile": true,
+            "hasTouch": true
+        });
+        let result = parse_input(&input).unwrap();
+        assert!(matches!(result, DeviceInput::Custom { .. }));
+    }
+
+    #[test]
+    fn parse_no_input_returns_custom_empty() {
+        let input = serde_json::json!({});
+        let result = parse_input(&input).unwrap();
+        assert!(matches!(result, DeviceInput::Custom { viewport: None, .. }));
+    }
+
+    #[test]
+    fn resolve_unknown_preset_returns_error() {
+        let input = serde_json::json!({"device": "nonexistent_device"});
+        let parsed = parse_input(&input).unwrap();
+        let result = resolve_to_options(parsed);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("unknown device preset"));
+    }
+
+    #[test]
+    fn resolve_iphone_15_preset_to_options() {
+        let input = serde_json::json!({"device": "iphone_15"});
+        let parsed = parse_input(&input).unwrap();
+        let (name, options) = resolve_to_options(parsed).unwrap();
+        assert_eq!(name, "iphone_15");
+        assert_eq!(options["viewport"]["width"], 393);
+        assert_eq!(options["isMobile"], true);
     }
 }

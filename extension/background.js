@@ -18,7 +18,8 @@ try {
     'commands/select_option.js',
     'commands/save_file.js',
     'commands/click_at.js',
-    'commands/cookies.js'
+    'commands/cookies.js',
+    'commands/set_device.js'
   );
 } catch (e) {
   console.error('Failed to import command scripts:', e);
@@ -319,6 +320,9 @@ async function handleCommand(cmd) {
             break;
           case 'import_local_storage':
             result = await handleImportLocalStorage(tabId, cmd.payload || {});
+            break;
+          case 'set_device':
+            result = await handleSetDevice(tabId, cmd.payload || {});
             break;
           default:
             sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
