@@ -114,4 +114,8 @@ impl BrowserBackend for PlaywrightBridge {
     async fn go_back(&mut self) -> Result<String, BridgeError> {
         PlaywrightBridge::go_back(self).await
     }
+
+    async fn set_device(&mut self, options: &serde_json::Value) -> Result<serde_json::Value, BridgeError> {
+        PlaywrightBridge::set_device(self, options).await
+    }
 }

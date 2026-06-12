@@ -231,6 +231,11 @@ impl BrowserBackend for MockBridge {
         self.log("go_back", json!({}));
         Ok("https://mock.test/previous".to_string())
     }
+
+    async fn set_device(&mut self, options: &serde_json::Value) -> Result<serde_json::Value, BridgeError> {
+        self.log("set_device", json!({"options": options}));
+        Ok(json!({"success": true}))
+    }
 }
 
 fn default_limits() -> ScriptLimits {

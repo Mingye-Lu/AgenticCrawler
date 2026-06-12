@@ -1344,6 +1344,10 @@ mod tests {
         async fn go_back(&mut self) -> Result<String, BridgeError> {
             Err(BridgeError::Protocol("unused".into()))
         }
+
+        async fn set_device(&mut self, _: &serde_json::Value) -> Result<serde_json::Value, BridgeError> {
+            Err(BridgeError::Protocol("unused".into()))
+        }
     }
 
     fn healing_page_map() -> Value {

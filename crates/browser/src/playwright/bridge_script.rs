@@ -102,7 +102,7 @@ async function bootstrap() {
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
-  const context = await browser.newContext();
+  let context = await browser.newContext();
   let page = await context.newPage();
   const pages = [page];
   context.on('page', (p) => {
@@ -841,6 +841,97 @@ async function bootstrap() {
           event: 'bridge_response',
           ok: false,
           error: { kind: 'import_cookies_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'set_device') {
+      try {
+        // 1. Export state before destroying context
+        const cookies = await context.cookies();
+        let localStorage = {};
+        try {
+          localStorage = await page.evaluate(() => {
+            const result = {};
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const key = window.localStorage.key(i);
+              if (key !== null) result[key] = window.localStorage.getItem(key) || '';
+            }
+            return result;
+          });
+        } catch (_) { /* localStorage may be unavailable */ }
+        const currentUrl = page.url();
+
+        // 2. Close old context
+        await context.close();
+
+        // 3. Create new context with device options
+        const ctxOpts = {};
+        if (command.viewport) ctxOpts.viewport = command.viewport;
+        if (command.userAgent) ctxOpts.userAgent = command.userAgent;
+        if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
+        if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;
+        if (command.hasTouch !== undefined) ctxOpts.hasTouch = command.hasTouch;
+        context = await browser.newContext(ctxOpts);
+        page = await context.newPage();
+
+        // 4. Reset pages array and re-register listener
+        pages.length = 0;
+        pages.push(page);
+        context.on('page', (p) => {
+          if (!pages.includes(p)) {
+            pages.push(p);
+          }
+        });
+
+        // 5. Restore cookies
+        if (cookies.length > 0) {
+          try { await context.addCookies(cookies); } catch (_) { /* proceed without cookies on error */ }
+        }
+
+        // 6. Navigate back to previous URL
+        if (currentUrl && currentUrl !== 'about:blank') {
+          try {
+            await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          } catch (navErr) {
+            // Navigation failed — report but don't crash
+            process.stdout.write(JSON.stringify({
+              event: 'bridge_response',
+              ok: false,
+              error: { kind: 'set_device_navigate_failed', message: String(navErr) }
+            }) + '\n');
+            continue;
+          }
+          // 7. Restore localStorage
+          if (Object.keys(localStorage).length > 0) {
+            try {
+              await page.evaluate((ls) => {
+                for (const [k, v] of Object.entries(ls)) {
+                  try { window.localStorage.setItem(k, v); } catch (_) {}
+                }
+              }, localStorage);
+            } catch (_) { /* proceed if localStorage restore fails */ }
+          }
+        }
+
+        const title = await page.title().catch(() => '');
+        const url = page.url();
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: {
+            viewport: command.viewport || null,
+            userAgent: command.userAgent || null,
+            url,
+            title
+          }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'set_device_failed', message: String(error) }
         }) + '\n');
       }
       continue;
