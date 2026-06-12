@@ -866,13 +866,26 @@ async function bootstrap() {
         // 2. Close old context
         await context.close();
 
-        // 3. Create new context with device options
+        // 3. Create new context with device options + pre-populated storage
         const ctxOpts = {};
         if (command.viewport) ctxOpts.viewport = command.viewport;
         if (command.userAgent) ctxOpts.userAgent = command.userAgent;
         if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
         if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;
         if (command.hasTouch !== undefined) ctxOpts.hasTouch = command.hasTouch;
+
+        let storageOrigin = null;
+        if (currentUrl && currentUrl !== 'about:blank') {
+          try { storageOrigin = new URL(currentUrl).origin; } catch (_) {}
+        }
+        const lsEntries = Object.entries(localStorage);
+        if (cookies.length > 0 || lsEntries.length > 0) {
+          const origins = (lsEntries.length > 0 && storageOrigin && storageOrigin !== 'null')
+            ? [{ origin: storageOrigin, localStorage: lsEntries.map(([name, value]) => ({ name, value })) }]
+            : [];
+          ctxOpts.storageState = { cookies, origins };
+        }
+
         context = await browser.newContext(ctxOpts);
         page = await context.newPage();
 
@@ -885,12 +898,7 @@ async function bootstrap() {
           }
         });
 
-        // 5. Restore cookies
-        if (cookies.length > 0) {
-          try { await context.addCookies(cookies); } catch (_) { /* proceed without cookies on error */ }
-        }
-
-        // 6. Navigate back to previous URL
+        // 5. Navigate back to previous URL
         if (currentUrl && currentUrl !== 'about:blank') {
           try {
             await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -902,16 +910,6 @@ async function bootstrap() {
               error: { kind: 'set_device_navigate_failed', message: String(navErr) }
             }) + '\n');
             continue;
-          }
-          // 7. Restore localStorage
-          if (Object.keys(localStorage).length > 0) {
-            try {
-              await page.evaluate((ls) => {
-                for (const [k, v] of Object.entries(ls)) {
-                  try { window.localStorage.setItem(k, v); } catch (_) {}
-                }
-              }, localStorage);
-            } catch (_) { /* proceed if localStorage restore fails */ }
           }
         }
 

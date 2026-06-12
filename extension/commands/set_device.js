@@ -10,6 +10,7 @@ async function handleSetDevice(tabId, payload) {
     payload.deviceScaleFactor === 1)) {
     // Reset to desktop defaults
     await cdp(tabId, 'Emulation.clearDeviceMetricsOverride', {});
+    await cdp(tabId, 'Emulation.setTouchEmulationEnabled', { enabled: false });
     await cdp(tabId, 'Network.setUserAgentOverride', { userAgent: '' });
   } else {
     // Apply mobile/custom device emulation
@@ -20,6 +21,9 @@ async function handleSetDevice(tabId, payload) {
       mobile: payload.isMobile ?? true,
     };
     await cdp(tabId, 'Emulation.setDeviceMetricsOverride', metrics);
+    await cdp(tabId, 'Emulation.setTouchEmulationEnabled', {
+      enabled: payload.hasTouch ?? payload.isMobile ?? true,
+    });
 
     if (payload.userAgent) {
       await cdp(tabId, 'Network.setUserAgentOverride', { userAgent: payload.userAgent });
