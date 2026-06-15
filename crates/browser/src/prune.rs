@@ -132,7 +132,7 @@ fn prune_node(element: ElementRef<'_>, profile: CleaningProfile) -> Option<Strin
     }
 
     if is_void_element(element.value().name()) {
-        return Some(element.html());
+        return Some(serialize_void_element(element));
     }
 
     let tag_name = element.value().name();
@@ -152,7 +152,7 @@ fn prune_node(element: ElementRef<'_>, profile: CleaningProfile) -> Option<Strin
 fn score_element(element: ElementRef<'_>, profile: CleaningProfile) -> f64 {
     let text: String = element.text().collect();
     let text_len = text.trim().len();
-    let tag_len = element.inner_html().len();
+    let tag_len = element_inner_html_len(element);
     let link_text_len = descendant_link_text_len(element);
     let text_density = if tag_len > 0 {
         usize_to_f64(text_len) / usize_to_f64(tag_len)
@@ -252,6 +252,47 @@ fn build_attributes(element: ElementRef<'_>) -> String {
     attrs
 }
 
+fn serialize_void_element(element: ElementRef<'_>) -> String {
+    let tag_name = element.value().name();
+    let attrs = build_attributes(element);
+    format!("<{tag_name}{attrs}>")
+}
+
+fn element_inner_html_len(element: ElementRef<'_>) -> usize {
+    element
+        .children()
+        .map(|node| match node.value() {
+            Node::Text(text) => escape_text(text.as_ref()),
+            Node::Element(_) => ElementRef::wrap(node)
+                .map(serialize_element)
+                .unwrap_or_default(),
+            _ => String::new(),
+        })
+        .collect::<String>()
+        .len()
+}
+
+fn serialize_element(element: ElementRef<'_>) -> String {
+    let tag_name = element.value().name();
+    let attrs = build_attributes(element);
+
+    if is_void_element(tag_name) {
+        return format!("<{tag_name}{attrs}>");
+    }
+
+    let inner = element
+        .children()
+        .map(|node| match node.value() {
+            Node::Text(text) => escape_text(text.as_ref()),
+            Node::Element(_) => ElementRef::wrap(node)
+                .map(serialize_element)
+                .unwrap_or_default(),
+            _ => String::new(),
+        })
+        .collect::<String>();
+    format!("<{tag_name}{attrs}>{inner}</{tag_name}>")
+}
+
 fn usize_to_f64(value: usize) -> f64 {
     f64::from(u32::try_from(value).unwrap_or(u32::MAX))
 }
@@ -342,6 +383,25 @@ mod tests {
             ),
             ""
         );
+    }
+
+    #[test]
+    fn void_element_serialization_does_not_panic() {
+        let html = r#"<html><body><img src="x"></body></html>"#;
+        let document = Html::parse_document(html);
+        let body_selector = Selector::parse("body").expect("body selector should parse");
+        let body = document
+            .select(&body_selector)
+            .next()
+            .expect("body should exist in test html");
+        let img_selector = Selector::parse("img").expect("img selector should parse");
+        let image = body
+            .select(&img_selector)
+            .next()
+            .expect("img should exist in test html");
+
+        let result = serialize_void_element(image);
+        assert_eq!(result, r#"<img src="x">"#);
     }
 
     #[test]
