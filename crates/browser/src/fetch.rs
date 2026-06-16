@@ -88,13 +88,15 @@ const AUTH_REDIRECT_PATTERNS: &[&str] = &[
 
 const MIN_BODY_LENGTH: usize = 500;
 
-/// When an HTTP response body is this large but extract_text() yields very
+/// When an HTTP response body is this large but `extract_text()` yields very
 /// little visible text, the page is likely a JS-rendered SSR shell.
 const MIN_HTML_BYTES_FOR_SPARSE_CHECK: usize = 500;
 const MIN_VISIBLE_CHARS_FOR_SHELL: usize = 200;
 
 fn looks_like_empty_ssr_shell(body: &str) -> bool {
-    if body.len() < MIN_HTML_BYTES_FOR_SPARSE_CHECK { return false; }
+    if body.len() < MIN_HTML_BYTES_FOR_SPARSE_CHECK {
+        return false;
+    }
     extract_text(body).trim().len() < MIN_VISIBLE_CHARS_FOR_SHELL
 }
 
@@ -860,7 +862,9 @@ mod tests {
     #[test]
     fn empty_ssr_shell_detected_on_large_html_with_no_text() {
         let mut body = String::from("<html><body><div id=\"app\"></div>");
-        for _ in 0..300 { body.push_str("<script>var x=1;</script>"); }
+        for _ in 0..300 {
+            body.push_str("<script>var x=1;</script>");
+        }
         body.push_str("</body></html>");
         assert!(body.len() > MIN_HTML_BYTES_FOR_SPARSE_CHECK);
         assert!(looks_like_empty_ssr_shell(&body));
@@ -868,7 +872,9 @@ mod tests {
     #[test]
     fn empty_ssr_shell_not_triggered_on_contentful_page() {
         let mut body = String::from("<html><body>");
-        for _ in 0..200 { body.push_str("<p>Some meaningful content here.</p>"); }
+        for _ in 0..200 {
+            body.push_str("<p>Some meaningful content here.</p>");
+        }
         body.push_str("</body></html>");
         assert!(!looks_like_empty_ssr_shell(&body));
     }
