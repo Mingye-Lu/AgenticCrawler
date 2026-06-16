@@ -88,6 +88,23 @@ const AUTH_REDIRECT_PATTERNS: &[&str] = &[
 
 const MIN_BODY_LENGTH: usize = 500;
 
+/// When an HTTP response body is this large but extract_text() yields very
+/// little visible text, the page is almost certainly a JS-rendered shell whose
+/// content hasn't been hydrated yet. Escalate to browser in this case.
+const MIN_HTML_BYTES_FOR_SPARSE_CHECK: usize = 2000;
+const MIN_VISIBLE_CHARS_FOR_SHELL: usize = 200;
+
+/// Quick heuristic: if the raw HTML body is substantial but `extract_text()`
+/// yields almost nothing, the page is an empty SSR shell that needs JS
+/// execution in a headless browser (e.g. Gitee search, SPA doc portals).
+fn looks_like_empty_ssr_shell(body: &str) -> bool {
+    if body.len() < MIN_HTML_BYTES_FOR_SPARSE_CHECK {
+        return false;
+    }
+    let visible = extract_text(body);
+    visible.trim().len() < MIN_VISIBLE_CHARS_FOR_SHELL
+}
+
 /// Hard cap on a single HTTP response body. A page that is much larger than
 /// this is almost never useful to the agent (and is almost certainly a binary
 /// dump, generated content, or an attack) — and without a cap, reqwest's
@@ -423,6 +440,14 @@ impl FetchRouter {
         match http_result {
             Ok(resp) => {
                 if needs_escalation(resp.status, &resp.body) {
+                    if let Some(ctx) = browser {
+                        return Self::fetch_via_browser(ctx, url).await;
+                    }
+                }
+                // Catch JS-rendered pages that produce empty SSR shells:
+                // the raw HTML is large but visible text is almost nonexistent
+                // (e.g. Gitee search returns "Gitee Search" with no results).
+                if looks_like_empty_ssr_shell(&resp.body) {
                     if let Some(ctx) = browser {
                         return Self::fetch_via_browser(ctx, url).await;
                     }
@@ -840,5 +865,45 @@ mod tests {
         };
         // Compile-time check: the markdown field exists and is a String
         let _: &String = &page.markdown;
+    }
+
+    // ── looks_like_empty_ssr_shell ──────────────────────────────
+
+    #[test]
+    fn empty_ssr_shell_detected_on_large_html_with_no_text() {
+        // Simulates a JS-rendered page where the HTML body is large
+        // but all content is in <script> tags — extract_text yields nothing.
+        let mut body = String::from(
+            "<html><head><title>S</title></head><body><div id=\"app\"></div>",
+        );
+        // Pad past MIN_HTML_BYTES_FOR_SPARSE_CHECK with material that
+        // extract_text strips (script blocks + inline styles).
+        for _ in 0..300 {
+            body.push_str("<script>var x=1;</script>");
+        }
+        body.push_str("</body></html>");
+        assert!(body.len() > MIN_HTML_BYTES_FOR_SPARSE_CHECK);
+        assert!(looks_like_empty_ssr_shell(&body));
+    }
+
+    #[test]
+    fn empty_ssr_shell_not_triggered_on_contentful_page() {
+        let mut body = String::from("<html><body>");
+        // Generate plenty of visible text
+        for _ in 0..200 {
+            body.push_str("<p>Some meaningful content that should be visible.</p>");
+        }
+        body.push_str("</body></html>");
+        assert!(!looks_like_empty_ssr_shell(&body));
+    }
+
+    #[test]
+    fn empty_ssr_shell_skips_small_pages() {
+        // Pages under MIN_HTML_BYTES_FOR_SPARSE_CHECK are never flagged
+        // even if they have very little text — this avoids false positives
+        // on short API responses, error pages, etc.
+        let body = "<html><body>OK</body></html>";
+        assert!(body.len() < MIN_HTML_BYTES_FOR_SPARSE_CHECK);
+        assert!(!looks_like_empty_ssr_shell(&body));
     }
 }
