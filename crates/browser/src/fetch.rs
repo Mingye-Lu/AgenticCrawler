@@ -882,6 +882,6 @@ mod tests {
     fn empty_ssr_shell_skips_small_pages() {
         let body = "<html><body>OK</body></html>";
         assert!(body.len() < MIN_HTML_BYTES_FOR_SPARSE_CHECK);
-        assert!(!looks_like_empty_ssr_shell(&body));
+        assert!(!looks_like_empty_ssr_shell(body));
     }
 }
