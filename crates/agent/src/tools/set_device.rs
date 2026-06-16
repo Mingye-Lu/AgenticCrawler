@@ -124,7 +124,7 @@ const GALAXY_TAB_S9: DevicePreset = DevicePreset {
 
 const DESKTOP: DevicePreset = DevicePreset {
     viewport_width: 1920,
-    viewport_height: 1080,
+    viewport_height: 955,
     screen_width: 1920,
     screen_height: 1080,
     user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -134,10 +134,10 @@ const DESKTOP: DevicePreset = DevicePreset {
 };
 
 const DESKTOP_HD: DevicePreset = DevicePreset {
-    viewport_width: 1280,
-    viewport_height: 720,
-    screen_width: 1920,
-    screen_height: 1080,
+    viewport_width: 1366,
+    viewport_height: 643,
+    screen_width: 1366,
+    screen_height: 768,
     user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     device_scale_factor: 1.0,
     is_mobile: false,
@@ -372,7 +372,7 @@ mod tests {
     fn resolve_desktop_returns_desktop_defaults() {
         let preset = resolve_device("desktop").unwrap();
         assert_eq!(preset.viewport_width, 1920);
-        assert_eq!(preset.viewport_height, 1080);
+        assert_eq!(preset.viewport_height, 955);
         assert!((preset.device_scale_factor - 1.0).abs() < f64::EPSILON);
         assert!(!preset.is_mobile);
         assert!(!preset.has_touch);

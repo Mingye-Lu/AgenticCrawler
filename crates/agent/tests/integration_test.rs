@@ -541,7 +541,7 @@ mod set_device_integration {
         let preset = resolve_device("desktop").unwrap();
         let options = preset.to_json();
         assert_eq!(options["viewport"]["width"], 1920);
-        assert_eq!(options["viewport"]["height"], 1080);
+        assert_eq!(options["viewport"]["height"], 955);
         assert_eq!(options["isMobile"], false);
         assert_eq!(options["hasTouch"], false);
     }

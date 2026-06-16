@@ -102,7 +102,7 @@ async function bootstrap() {
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
-  let context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, screen: { width: 1920, height: 1080 } });
+  let context = await browser.newContext({ viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } });
   let page = await context.newPage();
   const pages = [page];
   context.on('page', (p) => {
