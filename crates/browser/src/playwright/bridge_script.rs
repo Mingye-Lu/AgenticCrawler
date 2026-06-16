@@ -102,7 +102,7 @@ async function bootstrap() {
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
-  let context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  let context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, screen: { width: 1920, height: 1080 } });
   let page = await context.newPage();
   const pages = [page];
   context.on('page', (p) => {
@@ -864,6 +864,7 @@ async function bootstrap() {
 
         const ctxOpts = {};
         if (command.viewport) ctxOpts.viewport = command.viewport;
+        if (command.screen) ctxOpts.screen = command.screen;
         if (command.userAgent) ctxOpts.userAgent = command.userAgent;
         if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
         if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;

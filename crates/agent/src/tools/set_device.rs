@@ -11,6 +11,8 @@ use crate::{CrawlError, ToolEffect, ToolExecutionError};
 pub struct DevicePreset {
     pub viewport_width: u32,
     pub viewport_height: u32,
+    pub screen_width: u32,
+    pub screen_height: u32,
     pub user_agent: &'static str,
     pub device_scale_factor: f64,
     pub is_mobile: bool,
@@ -18,11 +20,11 @@ pub struct DevicePreset {
 }
 
 impl DevicePreset {
-    /// Convert to a JSON object suitable for the bridge `set_device` command.
     #[must_use]
     pub fn to_json(&self) -> Value {
         serde_json::json!({
             "viewport": { "width": self.viewport_width, "height": self.viewport_height },
+            "screen": { "width": self.screen_width, "height": self.screen_height },
             "userAgent": self.user_agent,
             "deviceScaleFactor": self.device_scale_factor,
             "isMobile": self.is_mobile,
@@ -35,7 +37,9 @@ impl DevicePreset {
 const IPHONE_15: DevicePreset = DevicePreset {
     viewport_width: 393,
     viewport_height: 659,
-    user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    screen_width: 393,
+    screen_height: 852,
+    user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
     device_scale_factor: 3.0,
     is_mobile: true,
     has_touch: true,
@@ -43,8 +47,10 @@ const IPHONE_15: DevicePreset = DevicePreset {
 
 const IPHONE_SE: DevicePreset = DevicePreset {
     viewport_width: 375,
-    viewport_height: 667,
-    user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    viewport_height: 548,
+    screen_width: 375,
+    screen_height: 667,
+    user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
     device_scale_factor: 2.0,
     is_mobile: true,
     has_touch: true,
@@ -53,7 +59,9 @@ const IPHONE_SE: DevicePreset = DevicePreset {
 const IPHONE_15_PRO_MAX: DevicePreset = DevicePreset {
     viewport_width: 430,
     viewport_height: 740,
-    user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    screen_width: 430,
+    screen_height: 932,
+    user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
     device_scale_factor: 3.0,
     is_mobile: true,
     has_touch: true,
@@ -61,18 +69,22 @@ const IPHONE_15_PRO_MAX: DevicePreset = DevicePreset {
 
 const PIXEL_7: DevicePreset = DevicePreset {
     viewport_width: 412,
-    viewport_height: 915,
-    user_agent: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
+    viewport_height: 785,
+    screen_width: 412,
+    screen_height: 915,
+    user_agent: "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
     device_scale_factor: 2.625,
     is_mobile: true,
     has_touch: true,
 };
 
 const GALAXY_S24: DevicePreset = DevicePreset {
-    viewport_width: 384,
-    viewport_height: 832,
-    user_agent: "Mozilla/5.0 (Linux; Android 14; Samsung Galaxy S24) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
-    device_scale_factor: 2.625,
+    viewport_width: 360,
+    viewport_height: 780,
+    screen_width: 360,
+    screen_height: 780,
+    user_agent: "Mozilla/5.0 (Linux; Android 14; SM-S921B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    device_scale_factor: 3.0,
     is_mobile: true,
     has_touch: true,
 };
@@ -80,7 +92,9 @@ const GALAXY_S24: DevicePreset = DevicePreset {
 const IPAD_PRO: DevicePreset = DevicePreset {
     viewport_width: 1024,
     viewport_height: 1366,
-    user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    screen_width: 1024,
+    screen_height: 1366,
+    user_agent: "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
     device_scale_factor: 2.0,
     is_mobile: true,
     has_touch: true,
@@ -89,7 +103,9 @@ const IPAD_PRO: DevicePreset = DevicePreset {
 const IPAD: DevicePreset = DevicePreset {
     viewport_width: 768,
     viewport_height: 1024,
-    user_agent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    screen_width: 768,
+    screen_height: 1024,
+    user_agent: "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
     device_scale_factor: 2.0,
     is_mobile: true,
     has_touch: true,
@@ -98,7 +114,9 @@ const IPAD: DevicePreset = DevicePreset {
 const GALAXY_TAB_S9: DevicePreset = DevicePreset {
     viewport_width: 800,
     viewport_height: 1280,
-    user_agent: "Mozilla/5.0 (Linux; Android 13; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+    screen_width: 800,
+    screen_height: 1280,
+    user_agent: "Mozilla/5.0 (Linux; Android 14; SM-X710) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     device_scale_factor: 2.0,
     is_mobile: true,
     has_touch: true,
@@ -107,6 +125,8 @@ const GALAXY_TAB_S9: DevicePreset = DevicePreset {
 const DESKTOP: DevicePreset = DevicePreset {
     viewport_width: 1920,
     viewport_height: 1080,
+    screen_width: 1920,
+    screen_height: 1080,
     user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     device_scale_factor: 1.0,
     is_mobile: false,
@@ -116,6 +136,8 @@ const DESKTOP: DevicePreset = DevicePreset {
 const DESKTOP_HD: DevicePreset = DevicePreset {
     viewport_width: 1280,
     viewport_height: 720,
+    screen_width: 1920,
+    screen_height: 1080,
     user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     device_scale_factor: 1.0,
     is_mobile: false,
