@@ -760,4 +760,102 @@ mod set_device_integration {
             .to_string()
             .contains("deviceScaleFactor must be a positive number greater than zero"));
     }
+
+    #[tokio::test]
+    async fn desktop_preset_is_noop_on_fresh_state() {
+        use agent::tools::set_device::execute;
+
+        let mut state = CrawlState::default();
+        assert!(state.current_device.is_none());
+
+        let mut browser = make_browser();
+
+        let result = execute(&json!({"device": "desktop"}), &mut browser, &mut state).await;
+
+        assert!(result.is_ok());
+        match result.unwrap() {
+            ToolEffect::Reply(text) => {
+                assert!(
+                    text.contains("Already") || text.contains("already"),
+                    "fresh state + desktop preset should be a no-op, got: {text}"
+                );
+            }
+            other => panic!("Expected ToolEffect::Reply, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_input_is_rejected() {
+        use agent::tools::set_device::execute;
+
+        let mut state = CrawlState::default();
+        let mut browser = make_browser();
+
+        let result = execute(&json!({}), &mut browser, &mut state).await;
+
+        let err = result.expect_err("empty input should be rejected");
+        assert!(err.to_string().contains("must provide either"));
+    }
+
+    #[tokio::test]
+    async fn mixed_preset_and_custom_is_rejected() {
+        use agent::tools::set_device::execute;
+
+        let mut state = CrawlState::default();
+        let mut browser = make_browser();
+
+        let result = execute(
+            &json!({"device": "iphone_15", "viewport": {"width": 400, "height": 800}}),
+            &mut browser,
+            &mut state,
+        )
+        .await;
+
+        let err = result.expect_err("mixed preset+custom should be rejected");
+        assert!(err.to_string().contains("cannot mix"));
+    }
+
+    #[tokio::test]
+    async fn desktop_preset_sends_correct_options_to_bridge() {
+        use agent::tools::set_device::execute;
+
+        let mut state = CrawlState {
+            current_device: Some("iphone_15".to_string()),
+            ..CrawlState::default()
+        };
+        let mut browser = make_recording_browser();
+
+        let result = execute(&json!({"device": "desktop"}), &mut browser, &mut state).await;
+        assert!(result.is_ok(), "desktop switch should succeed: {result:?}");
+
+        assert_eq!(state.current_device.as_deref(), Some("desktop"));
+        match result.unwrap() {
+            ToolEffect::Reply(text) => {
+                assert!(
+                    text.contains("Switched to 'desktop'"),
+                    "Expected switch confirmation, got: {text}"
+                );
+            }
+            other => panic!("Expected ToolEffect::Reply, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn desktop_hd_preset_sends_correct_viewport() {
+        use agent::tools::set_device::execute;
+
+        let mut state = CrawlState {
+            current_device: Some("iphone_15".to_string()),
+            ..CrawlState::default()
+        };
+        let mut browser = make_recording_browser();
+
+        let result = execute(&json!({"device": "desktop_hd"}), &mut browser, &mut state).await;
+        assert!(
+            result.is_ok(),
+            "desktop_hd switch should succeed: {result:?}"
+        );
+
+        assert_eq!(state.current_device.as_deref(), Some("desktop_hd"));
+    }
 }

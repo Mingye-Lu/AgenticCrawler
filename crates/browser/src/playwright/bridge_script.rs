@@ -102,7 +102,7 @@ async function bootstrap() {
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
-  let context = await browser.newContext();
+  let context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   let page = await context.newPage();
   const pages = [page];
   context.on('page', (p) => {
@@ -848,7 +848,6 @@ async function bootstrap() {
 
     if (command.action === 'set_device') {
       try {
-        // 1. Export state before destroying context
         const cookies = await context.cookies();
         let localStorage = {};
         try {
@@ -863,10 +862,6 @@ async function bootstrap() {
         } catch (_) { /* localStorage may be unavailable */ }
         const currentUrl = page.url();
 
-        // 2. Close old context
-        await context.close();
-
-        // 3. Create new context with device options + pre-populated storage
         const ctxOpts = {};
         if (command.viewport) ctxOpts.viewport = command.viewport;
         if (command.userAgent) ctxOpts.userAgent = command.userAgent;
@@ -886,24 +881,26 @@ async function bootstrap() {
           ctxOpts.storageState = { cookies, origins };
         }
 
-        context = await browser.newContext(ctxOpts);
-        page = await context.newPage();
+        // Build new context BEFORE closing old — rollback-safe
+        const newContext = await browser.newContext(ctxOpts);
+        const newPage = await newContext.newPage();
 
-        // 4. Reset pages array and re-register listener
-        pages.length = 0;
-        pages.push(page);
-        context.on('page', (p) => {
-          if (!pages.includes(p)) {
-            pages.push(p);
-          }
-        });
+        // Restore localStorage manually (storageState only seeds on first navigation)
+        if (lsEntries.length > 0 && storageOrigin && storageOrigin !== 'null') {
+          try {
+            await newPage.goto(storageOrigin, { waitUntil: 'commit', timeout: 10000 });
+            await newPage.evaluate((entries) => {
+              for (const [k, v] of entries) window.localStorage.setItem(k, v);
+            }, lsEntries);
+          } catch (_) { /* best-effort localStorage restore */ }
+        }
 
-        // 5. Navigate back to previous URL
         if (currentUrl && currentUrl !== 'about:blank') {
           try {
-            await page.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await newPage.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
           } catch (navErr) {
-            // Navigation failed — report but don't crash
+            // Navigation failed — tear down new context and keep old one intact
+            await newContext.close().catch(() => {});
             process.stdout.write(JSON.stringify({
               event: 'bridge_response',
               ok: false,
@@ -912,6 +909,18 @@ async function bootstrap() {
             continue;
           }
         }
+
+        const oldContext = context;
+        context = newContext;
+        page = newPage;
+        pages.length = 0;
+        pages.push(page);
+        context.on('page', (p) => {
+          if (!pages.includes(p)) {
+            pages.push(p);
+          }
+        });
+        await oldContext.close().catch(() => {});
 
         const title = await page.title().catch(() => '');
         const url = page.url();

@@ -629,36 +629,38 @@ fn script_management_tools() -> Vec<ToolSpec> {
                 "properties": {
                     "device": {
                         "type": "string",
-                        "description": "Device preset name: 'iphone_15', 'iphone_se', 'iphone_15_pro_max', 'pixel_7', 'galaxy_s24', 'ipad_pro', 'ipad', 'galaxy_tab_s9', 'desktop', 'desktop_hd'. Use 'desktop' to reset to default mode."
+                        "description": "Device preset name: 'iphone_15', 'iphone_se', 'iphone_15_pro_max', 'pixel_7', 'galaxy_s24', 'ipad_pro', 'ipad', 'galaxy_tab_s9', 'desktop', 'desktop_hd'. Use 'desktop' to reset to default mode. Cannot be combined with custom fields."
                     },
                     "viewport": {
                         "type": "object",
                         "properties": {
-                            "width": { "type": "integer" },
-                            "height": { "type": "integer" }
+                            "width": { "type": "integer", "minimum": 1 },
+                            "height": { "type": "integer", "minimum": 1 }
                         },
-                        "description": "Custom viewport dimensions. Used when 'device' is not provided."
+                        "required": ["width", "height"],
+                        "description": "Custom viewport dimensions. Cannot be used with 'device'."
                     },
                     "userAgent": {
                         "type": "string",
-                        "description": "Custom user agent string. Used with custom viewport."
+                        "description": "Custom user agent string. Cannot be used with 'device'."
                     },
                     "deviceScaleFactor": {
                         "type": "number",
-                        "description": "Device pixel ratio (e.g., 2 for retina, 3 for iPhone). Default: 1."
+                        "exclusiveMinimum": 0,
+                        "description": "Device pixel ratio (e.g., 2 for retina, 3 for iPhone). Cannot be used with 'device'."
                     },
                     "isMobile": {
                         "type": "boolean",
-                        "description": "Enable mobile viewport behavior (<meta viewport> respected). Default: false."
+                        "description": "Enable mobile viewport behavior. Cannot be used with 'device'."
                     },
                     "hasTouch": {
                         "type": "boolean",
-                        "description": "Enable touch event support. Default: false."
+                        "description": "Enable touch event support. Cannot be used with 'device'."
                     }
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use preset names (iphone_15, pixel_7, ipad_pro, desktop, etc.) for common devices. For custom setup, provide viewport + userAgent + deviceScaleFactor + isMobile + hasTouch. Use 'desktop' to reset back to default. Cannot switch device while sub-agents are active. Returns page_state with the page as the new device sees it."),
+            instructions: Some("Provide EITHER a preset name via 'device' (iphone_15, pixel_7, ipad_pro, desktop, etc.) OR one or more custom fields (viewport, userAgent, deviceScaleFactor, isMobile, hasTouch). Do not mix both. Use 'desktop' to reset. Cannot switch device while sub-agents are active."),
         },
     ]
 }

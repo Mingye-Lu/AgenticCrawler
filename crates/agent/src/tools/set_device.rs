@@ -154,6 +154,16 @@ enum DeviceInput {
 
 fn parse_input(input: &Value) -> Result<DeviceInput, CrawlError> {
     if let Some(device) = input.get("device").and_then(Value::as_str) {
+        let has_custom_fields = input.get("viewport").is_some()
+            || input.get("userAgent").is_some()
+            || input.get("deviceScaleFactor").is_some()
+            || input.get("isMobile").is_some()
+            || input.get("hasTouch").is_some();
+        if has_custom_fields {
+            return Err(CrawlError::new(
+                "cannot mix 'device' preset with custom fields (viewport, userAgent, deviceScaleFactor, isMobile, hasTouch). Use either a preset name OR custom parameters.",
+            ));
+        }
         return Ok(DeviceInput::Preset(device.to_string()));
     }
 
@@ -194,6 +204,17 @@ fn parse_input(input: &Value) -> Result<DeviceInput, CrawlError> {
     }
     let is_mobile = input.get("isMobile").and_then(Value::as_bool);
     let has_touch = input.get("hasTouch").and_then(Value::as_bool);
+
+    if viewport.is_none()
+        && user_agent.is_none()
+        && device_scale_factor.is_none()
+        && is_mobile.is_none()
+        && has_touch.is_none()
+    {
+        return Err(CrawlError::new(
+            "must provide either 'device' (preset name) or at least one custom field (viewport, userAgent, deviceScaleFactor, isMobile, hasTouch)",
+        ));
+    }
 
     Ok(DeviceInput::Custom {
         viewport,
@@ -269,7 +290,13 @@ pub async fn execute(
         device_name.clone()
     };
 
-    if crawl_state.current_device.as_deref() == Some(device_name.as_str()) {
+    // Treat None (fresh browser default) as equivalent to "desktop" for no-op detection
+    let is_noop = match crawl_state.current_device.as_deref() {
+        Some(current) => current == device_name,
+        None => device_name == "desktop",
+    };
+
+    if is_noop {
         return Ok(ToolEffect::reply_json(&serde_json::json!({
             "success": true,
             "message": format!("Already in '{}' mode — no change needed", display_name),
@@ -388,10 +415,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_no_input_returns_custom_empty() {
+    fn parse_empty_input_returns_error() {
         let input = serde_json::json!({});
-        let result = parse_input(&input).unwrap();
-        assert!(matches!(result, DeviceInput::Custom { viewport: None, .. }));
+        let result = parse_input(&input);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("must provide either"));
     }
 
     #[test]
@@ -414,5 +445,14 @@ mod tests {
         assert_eq!(name, "iphone_15");
         assert_eq!(options["viewport"]["width"], 393);
         assert_eq!(options["isMobile"], true);
+    }
+
+    #[test]
+    fn mixed_preset_and_custom_returns_error() {
+        let input =
+            serde_json::json!({"device": "iphone_15", "viewport": {"width": 400, "height": 800}});
+        let result = parse_input(&input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot mix"));
     }
 }
