@@ -103,6 +103,16 @@ async function bootstrap() {
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
   let context = await browser.newContext({ viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } });
+  await context.addInitScript(`
+    Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
+      width: { value: 1920, enumerable: true },
+      height: { value: 1080, enumerable: true },
+      availWidth: { value: 1920, enumerable: true },
+      availHeight: { value: 1040, enumerable: true },
+      colorDepth: { value: 24, enumerable: true },
+      pixelDepth: { value: 24, enumerable: true },
+    }), configurable: true });
+  `);
   let page = await context.newPage();
   const pages = [page];
   context.on('page', (p) => {
@@ -885,6 +895,19 @@ async function bootstrap() {
         // Build new context BEFORE closing old — rollback-safe
         const newContext = await browser.newContext(ctxOpts);
         const newPage = await newContext.newPage();
+
+        if (command.screen) {
+          await newContext.addInitScript(`
+            Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
+              width: { value: ${command.screen.width}, enumerable: true },
+              height: { value: ${command.screen.height}, enumerable: true },
+              availWidth: { value: ${command.screen.width}, enumerable: true },
+              availHeight: { value: ${command.screen.height}, enumerable: true },
+              colorDepth: { value: 24, enumerable: true },
+              pixelDepth: { value: 24, enumerable: true },
+            }), configurable: true });
+          `);
+        }
 
         // Restore localStorage manually (storageState only seeds on first navigation)
         if (lsEntries.length > 0 && storageOrigin && storageOrigin !== 'null') {
