@@ -146,11 +146,23 @@ async function bootstrap() {
     if (command.action === 'navigate') {
       try {
         await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        // Wait for SPA API calls to complete. Cap at 3s so pages with
+        // Wait for SPA API calls to complete. Cap at 5s so pages with
         // persistent connections (WebSocket, SSE, polling) don't hang.
         try {
-          await page.waitForLoadState('networkidle', { timeout: 3000 });
+          await page.waitForLoadState('networkidle', { timeout: 5000 });
         } catch (_) { /* networkidle timed out — proceed with current state */ }
+        // For SPAs that render content asynchronously after XHR (e.g. Gitee
+        // search), poll for visible text content to appear before capturing.
+        // If the page already has content we break immediately; otherwise we
+        // wait up to 3 s in 300 ms increments so we don't over-delay fast pages.
+        try {
+          const pollDeadline = Date.now() + 3000;
+          while (Date.now() < pollDeadline) {
+            const textLen = await page.evaluate(() => (document.body?.innerText?.trim()?.length ?? 0));
+            if (textLen >= 200) break;
+            await new Promise(r => setTimeout(r, 300));
+          }
+        } catch (_) {}
         // `bypassTurnstileIfPresent` already calls `page.content()` after
         // any nudge it performs, so reuse that html instead of fetching
         // again — the earlier `html = await page.content()` overwrite was
