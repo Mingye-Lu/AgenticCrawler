@@ -153,13 +153,13 @@ async function bootstrap() {
         } catch (_) { /* networkidle timed out — proceed with current state */ }
         // For SPAs that render content asynchronously after XHR (e.g. Gitee
         // search), poll for visible text content to appear before capturing.
-        // If the page already has content we break immediately; otherwise we
-        // wait up to 3 s in 300 ms increments so we don't over-delay fast pages.
+        // Threshold matches MIN_VISIBLE_CHARS_THRESHOLD in fetch.rs.
         try {
+          const MIN_VISIBLE_CHARS = 200;
           const pollDeadline = Date.now() + 3000;
           while (Date.now() < pollDeadline) {
             const textLen = await page.evaluate(() => (document.body?.innerText?.trim()?.length ?? 0));
-            if (textLen >= 200) break;
+            if (textLen >= MIN_VISIBLE_CHARS) break;
             await new Promise(r => setTimeout(r, 300));
           }
         } catch (_) {}
