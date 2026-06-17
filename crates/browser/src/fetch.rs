@@ -232,7 +232,8 @@ fn has_hash_segment(path: &str) -> bool {
             let seg_len = j - start;
             // 8+ alphanumeric chars with at least 2 digits distinguishes
             // hashes (e.g. "d9lvttp6") from English words (e.g. "loader")
-            if seg_len >= 8 && digit_count >= 2 && j < len && (bytes[j] == b'.' || bytes[j] == b'/') {
+            if seg_len >= 8 && digit_count >= 2 && j < len && (bytes[j] == b'.' || bytes[j] == b'/')
+            {
                 return true;
             }
             i = j;
@@ -242,7 +243,6 @@ fn has_hash_segment(path: &str) -> bool {
     }
     false
 }
-
 
 /// Hard cap on a single HTTP response body. A page that is much larger than
 /// this is almost never useful to the agent (and is almost certainly a binary
