@@ -10,7 +10,10 @@ pub mod ref_map;
 pub mod testing;
 pub mod ws_server;
 
-pub use browser_backend::{BrowserBackend, ScreenshotOptions};
+pub use browser_backend::{
+    BrowserBackend, CookieInfo, CoverageData, FileCoverage, InterceptAction, InterceptRule,
+    MockResponse, ScreenshotOptions, StorageEntry, StorageType,
+};
 pub use context::BrowserContext;
 pub use extension::ExtensionBridge;
 pub use fetch::{FetchError, FetchRouter, FetchedPage};
