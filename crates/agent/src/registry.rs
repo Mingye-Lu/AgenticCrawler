@@ -7,7 +7,7 @@ use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: [&str; 27] = [
+const ASYNC_TOOLS: [&str; 30] = [
     "navigate",
     "click",
     "click_at",
@@ -16,6 +16,8 @@ const ASYNC_TOOLS: [&str; 27] = [
     "read_content",
     "list_network_activity",
     "inspect_request",
+    "list_websocket_activity",
+    "inspect_websocket",
     "screenshot",
     "go_back",
     "refresh",
@@ -34,6 +36,7 @@ const ASYNC_TOOLS: [&str; 27] = [
     "get_page_performance",
     "inspect_cookies",
     "inspect_storage",
+    "measure_coverage",
     "audit_accessibility",
 ];
 
@@ -152,6 +155,18 @@ impl ToolRegistry {
             "inspect_request" => {
                 crate::tools::network_activity::inspect_request(input, browser, crawl_state).await
             }
+            "list_websocket_activity" => {
+                crate::tools::websocket_activity::list_websocket_activity(
+                    input,
+                    browser,
+                    crawl_state,
+                )
+                .await
+            }
+            "inspect_websocket" => {
+                crate::tools::websocket_activity::inspect_websocket(input, browser, crawl_state)
+                    .await
+            }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
             "refresh" => crate::tools::refresh::execute(input, browser).await,
@@ -178,6 +193,7 @@ impl ToolRegistry {
             "inspect_storage" => {
                 crate::tools::storage_inspect::inspect_storage(input, browser).await
             }
+            "measure_coverage" => crate::tools::coverage::execute(input, browser).await,
             "audit_accessibility" => crate::tools::accessibility::execute(input, browser).await,
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
@@ -212,7 +228,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 38);
+        assert_eq!(registry.len(), 41);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -225,7 +241,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 38);
+        assert_eq!(registry.len(), 41);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

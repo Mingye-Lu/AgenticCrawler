@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use browser::ConsoleMessageEvent;
 use browser::NetworkRequestEvent;
+use browser::WebSocketFrameEvent;
 use runtime::ChildSession;
 use serde_json::Value;
 
@@ -10,6 +11,7 @@ use crate::action_cache::ActionCache;
 use crate::loop_detector::LoopDetector;
 use crate::page_fingerprint::PageFingerprint;
 use crate::tools::html_diff::HtmlDiffTracker;
+use crate::tools::websocket_activity::WebSocketConnectionRef;
 
 #[derive(Debug, Clone)]
 pub struct ChildBlock {
@@ -36,6 +38,8 @@ pub struct CrawlState {
     pub last_page_log_seq: Option<u64>,
     pub network_request_events: Vec<NetworkRequestEvent>,
     pub network_request_refs: HashMap<String, NetworkRequestEvent>,
+    pub websocket_frame_events: Vec<WebSocketFrameEvent>,
+    pub websocket_connection_refs: HashMap<String, WebSocketConnectionRef>,
     /// Current device emulation mode. None = desktop default.
     pub current_device: Option<String>,
     /// Whether any sub-agents are currently running. Updated before each tool call.
@@ -65,6 +69,8 @@ impl CrawlState {
             last_page_log_seq: None,
             network_request_events: Vec::new(),
             network_request_refs: HashMap::new(),
+            websocket_frame_events: Vec::new(),
+            websocket_connection_refs: HashMap::new(),
             current_device: None,
             has_active_subagents: false,
             seq_counter: Arc::clone(&self.seq_counter),

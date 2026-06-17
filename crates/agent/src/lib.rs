@@ -164,11 +164,14 @@ fn extraction_tools() -> Vec<ToolSpec> {
         inspect_request_tool(),
         list_page_logs_tool(),
         inspect_log_tool(),
+        list_websocket_activity_tool(),
+        inspect_websocket_tool(),
         screenshot_tool(),
         save_file_tool(),
         page_performance_tool(),
         inspect_cookies_tool(),
         inspect_storage_tool(),
+        measure_coverage_tool(),
         audit_accessibility_tool(),
     ]
 }
@@ -596,6 +599,23 @@ fn inspect_storage_tool() -> ToolSpec {
     }
 }
 
+fn measure_coverage_tool() -> ToolSpec {
+    ToolSpec {
+        name: "measure_coverage",
+        description: "Measure JavaScript and CSS code coverage on the current page. Returns per-file byte usage showing how much code was actually executed/applied versus total loaded. Useful for identifying unused bundles, oversized dependencies, and performance optimization opportunities.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "type": { "type": "string", "enum": ["js", "css", "all"], "default": "all", "description": "Which coverage to measure: 'js' for JavaScript only, 'css' for CSS only, 'all' for both" },
+                "reset": { "type": "boolean", "default": false, "description": "Stop any in-progress coverage, clear data, and restart fresh" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Measures code coverage by stopping the current coverage session and reporting results. On first call, returns empty data (coverage not yet started) then starts tracking. Subsequent calls return coverage accumulated since last call. Use reset=true to clear previous data and start fresh. After each call, coverage automatically restarts for the next measurement window."),
+    }
+}
+
 fn audit_accessibility_tool() -> ToolSpec {
     ToolSpec {
         name: "audit_accessibility",
@@ -611,6 +631,66 @@ fn audit_accessibility_tool() -> ToolSpec {
             "additionalProperties": false
         }),
         instructions: Some("Injects axe-core and runs a WCAG audit. Default standard is wcag2aa. Use 'scope' to audit only a subtree (e.g. '#main-content'). Use 'impact' to filter results (critical/serious/moderate/minor/all). Returns violations with rule_id, impact, description, help_url, and affected elements (selector + HTML snippet), plus a summary with counts per impact level and total passes."),
+    }
+}
+
+fn list_websocket_activity_tool() -> ToolSpec {
+    ToolSpec {
+        name: "list_websocket_activity",
+        description: "Overview of WebSocket connections and message counts. Returns connections with @wsN IDs. Use inspect_websocket to see actual message content.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": ["string", "number"],
+                    "description": "'all', 'last' (default), or seq number"
+                },
+                "until": {
+                    "type": ["string", "number"],
+                    "description": "'now' (default) or seq number (exclusive)"
+                }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Lists WebSocket connections observed during this browser session. Each connection gets a @wsN ID for use with inspect_websocket. Default window is since the last action. Use since='all' for the whole session buffer, numeric since/until for half-open [since, until) filtering."),
+    }
+}
+
+fn inspect_websocket_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_websocket",
+        description: "Inspect actual WebSocket messages for a connection. Provide @wsN ID from list_websocket_activity. Supports direction filter, pattern search, and sort_by (newest/oldest).",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "@wsN ID from list_websocket_activity"
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["sent", "received", "all"],
+                    "default": "all"
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["newest", "oldest"],
+                    "default": "newest"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 30
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Substring match on message data"
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Pass a @wsN id from the most recent list_websocket_activity call. Use direction to filter sent/received, pattern for substring matching on message data, sort_by for ordering (newest first by default), and limit to cap results."),
     }
 }
 
@@ -894,10 +974,10 @@ mod tests {
     #[test]
     fn mvp_tool_specs_contains_expected_38_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 38);
+        assert_eq!(specs.len(), 41);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 38, "tool names should be unique");
+        assert_eq!(names.len(), 41, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
@@ -906,9 +986,12 @@ mod tests {
         assert!(names.contains("inspect_request"));
         assert!(names.contains("list_page_logs"));
         assert!(names.contains("inspect_log"));
+        assert!(names.contains("list_websocket_activity"));
+        assert!(names.contains("inspect_websocket"));
         assert!(names.contains("get_page_performance"));
         assert!(names.contains("inspect_cookies"));
         assert!(names.contains("inspect_storage"));
+        assert!(names.contains("measure_coverage"));
         assert!(names.contains("audit_accessibility"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));

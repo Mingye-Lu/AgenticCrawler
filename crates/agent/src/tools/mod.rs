@@ -2,6 +2,7 @@ pub mod accessibility;
 pub mod cancel_subagent;
 pub mod click;
 pub mod click_at;
+pub mod coverage;
 pub mod feedback;
 pub mod fill_form;
 pub mod fork;
@@ -30,6 +31,7 @@ pub mod subagent_status;
 pub mod switch_tab;
 pub mod wait;
 pub mod wait_for_subagents;
+pub mod websocket_activity;
 
 pub mod cancel_script;
 pub mod list_scripts;
