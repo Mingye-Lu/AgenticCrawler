@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
@@ -26,6 +27,7 @@ fn parse_input(input: &Value) -> Result<ClickAtInput, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
     browser
@@ -36,9 +38,11 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
+    let seq = super::seq::increment_seq(crawl_state, browser).await;
     let page_state = super::feedback::post_action_page_state(browser).await;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
+        "seq": seq,
         "success": true,
         "message": format!("Clicked at coordinates ({}, {})", params.x, params.y),
         "page_state": page_state

@@ -7,7 +7,7 @@ use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: &[&str] = &[
+const ASYNC_TOOLS: [&str; 27] = [
     "navigate",
     "click",
     "click_at",
@@ -51,7 +51,7 @@ impl ToolRegistry {
     #[must_use]
     pub fn new_with_core_tools() -> Self {
         let mut registry = Self::new();
-        for &name in ASYNC_TOOLS {
+        for name in ASYNC_TOOLS {
             let tool_name = name.to_string();
             registry.register(
                 name,

@@ -15,6 +15,7 @@ pub struct FetchedPage {
     pub text: String,
     pub markdown: String,
     pub fetched_via_browser: bool,
+    pub redirect_chain: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -635,6 +636,7 @@ impl FetchRouter {
             text,
             markdown,
             fetched_via_browser: true,
+            redirect_chain: None,
         })
     }
 }
@@ -650,6 +652,7 @@ fn http_response_to_page(resp: HttpResponse) -> FetchedPage {
         text,
         markdown,
         fetched_via_browser: false,
+        redirect_chain: None,
     }
 }
 
@@ -998,6 +1001,7 @@ mod tests {
             text: String::new(),
             markdown: String::new(),
             fetched_via_browser: false,
+            redirect_chain: None,
         };
         // Compile-time check: the markdown field exists and is a String
         let _: &String = &page.markdown;

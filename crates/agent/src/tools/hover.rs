@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
@@ -14,6 +15,7 @@ pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let selector = parse_input(input)?;
     let resolved = super::ref_resolve::resolve_selector(&selector, browser.ref_map())
@@ -27,9 +29,11 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
+    let seq = super::seq::increment_seq(crawl_state, browser).await;
     let page_state = super::feedback::post_action_page_state(browser).await;
 
     Ok(ToolEffect::reply_json(&json!({
+        "seq": seq,
         "success": true,
         "message": format!("Hovered over: {selector}"),
         "page_state": page_state

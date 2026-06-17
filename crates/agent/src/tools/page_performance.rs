@@ -57,7 +57,10 @@ JSON.stringify(performance.getEntriesByType('resource').map(function(e) {
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    let resources = res_result.get("value").cloned().unwrap_or(Value::Array(vec![]));
+    let resources = res_result
+        .get("value")
+        .cloned()
+        .unwrap_or(Value::Array(vec![]));
 
     // Build summary
     let mut total_requests = 0;

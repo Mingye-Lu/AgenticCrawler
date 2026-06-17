@@ -373,6 +373,7 @@ fn content_profile(html_len: usize) -> CleaningProfile {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reply_without_page_map(
     page: &browser::FetchedPage,
     title: &str,
@@ -380,9 +381,12 @@ fn reply_without_page_map(
     format: &str,
     content_depth: &ContentDepth,
     truncated: bool,
+    seq: u64,
+    redirect_chain: &Value,
 ) -> ToolEffect {
     let content_length = content.chars().count();
     ToolEffect::reply_json(&json!({
+        "seq": seq,
         "url": page.url,
         "title": title,
         "content": content,
@@ -390,6 +394,7 @@ fn reply_without_page_map(
         "content_depth": content_depth_label(content_depth),
         "truncated": truncated,
         "content_length": content_length,
+        "redirect_chain": redirect_chain,
     }))
 }
 
@@ -492,6 +497,12 @@ pub async fn execute(
     crawl_state.current_url = Some(page.url.clone());
     browser.ref_map_mut().clear();
 
+    let seq = super::seq::increment_seq(crawl_state, browser).await;
+    let redirect_chain = page
+        .redirect_chain
+        .as_ref()
+        .map_or_else(|| json!([]), |chain| json!(chain));
+
     if params.page_map_depth == PageMapDepth::None {
         return Ok(reply_without_page_map(
             &page,
@@ -500,6 +511,8 @@ pub async fn execute(
             &params.format,
             &params.content_depth,
             truncated,
+            seq,
+            &redirect_chain,
         ));
     }
 
@@ -515,6 +528,7 @@ pub async fn execute(
     let content_length = content.chars().count();
 
     Ok(ToolEffect::reply_json(&json!({
+        "seq": seq,
         "url": page.url,
         "title": title,
         "content": content,
@@ -522,6 +536,7 @@ pub async fn execute(
         "content_depth": content_depth_label(&params.content_depth),
         "truncated": truncated,
         "content_length": content_length,
+        "redirect_chain": redirect_chain,
         "page_map": page_map
     })))
 }

@@ -84,6 +84,11 @@ impl BrowserContext {
         self.page_index
     }
 
+    #[must_use]
+    pub fn current_url(&self) -> Option<&str> {
+        self.current_url.as_deref()
+    }
+
     pub fn set_page_index(&mut self, page_index: usize) {
         self.page_index = page_index;
     }

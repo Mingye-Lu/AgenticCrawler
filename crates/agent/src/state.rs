@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use browser::ConsoleMessageEvent;
+use browser::NetworkRequestEvent;
 use runtime::ChildSession;
 use serde_json::Value;
 
@@ -26,10 +31,18 @@ pub struct CrawlState {
     pub action_cache: Option<ActionCache>,
     pub html_diff_tracker: Option<HtmlDiffTracker>,
     pub loop_detector: Option<LoopDetector>,
+    pub page_log_events: Vec<ConsoleMessageEvent>,
+    pub page_log_groups: HashMap<String, Vec<ConsoleMessageEvent>>,
+    pub last_page_log_seq: Option<u64>,
+    pub network_request_events: Vec<NetworkRequestEvent>,
+    pub network_request_refs: HashMap<String, NetworkRequestEvent>,
     /// Current device emulation mode. None = desktop default.
     pub current_device: Option<String>,
     /// Whether any sub-agents are currently running. Updated before each tool call.
     pub has_active_subagents: bool,
+    /// Global monotonic sequence counter shared across forked agents.
+    /// Used by action tools to tag responses for temporal observation filtering.
+    pub seq_counter: Arc<browser::SeqCounter>,
 }
 
 impl CrawlState {
@@ -47,8 +60,14 @@ impl CrawlState {
             action_cache: None,
             html_diff_tracker: None,
             loop_detector: None,
+            page_log_events: Vec::new(),
+            page_log_groups: HashMap::new(),
+            last_page_log_seq: None,
+            network_request_events: Vec::new(),
+            network_request_refs: HashMap::new(),
             current_device: None,
             has_active_subagents: false,
+            seq_counter: Arc::clone(&self.seq_counter),
         }
     }
 

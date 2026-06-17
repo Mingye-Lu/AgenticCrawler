@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
@@ -14,6 +15,7 @@ pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let script = parse_input(input)?;
 
@@ -25,9 +27,11 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
+    let seq = super::seq::increment_seq(crawl_state, browser).await;
     let value = result.get("value").cloned().unwrap_or(Value::Null);
 
     Ok(ToolEffect::reply_json(&json!({
+        "seq": seq,
         "success": true,
         "result": value
     })))

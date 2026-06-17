@@ -1,7 +1,9 @@
 use serde_json::{json, Value};
 
+use browser::StorageType;
+
 use crate::BrowserContext;
-use crate::{StorageType, ToolEffect, ToolExecutionError};
+use crate::{ToolEffect, ToolExecutionError};
 
 pub async fn inspect_cookies(
     input: &Value,
