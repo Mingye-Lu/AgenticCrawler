@@ -157,11 +157,12 @@ fn looks_like_empty_spa_shell(body: &str) -> bool {
         score += 0.55;
     }
 
-    // ── Medium: empty mount-point divs (framework root with no children) ──
-    if lower.contains("id=\"root\"></div>")
-        || lower.contains("id=\"app\"></div>")
-        || lower.contains("id=\"__next\"></div>")
-        || lower.contains("id=\"__nuxt\"></div>")
+    // ── Medium: empty mount-point elements (framework root with no children) ──
+    // Match any element type: <div id="root"></div>, <section id="root"></section>, etc.
+    if lower.contains("id=\"root\"></")
+        || lower.contains("id=\"app\"></")
+        || lower.contains("id=\"__next\"></")
+        || lower.contains("id=\"__nuxt\"></")
         || lower.contains("<app-root></app-root>")
         || lower.contains("<app-root />")
     {
@@ -169,26 +170,27 @@ fn looks_like_empty_spa_shell(body: &str) -> bool {
     }
 
     // ── Medium: bundler hash patterns (Vite/CRA output) ──
-    // Match patterns like: src="/assets/index-D9LVtTP6.js" or
-    // src="/static/js/main.abc123.chunk.js"
     if has_bundler_hash_pattern(&lower) {
         score += 0.30;
     }
 
-    // ── Low: structural signals (modifiers, not sufficient alone) ──
-    if body.len() > 2000 {
-        let visible_len = extract_text(body).trim().len();
-        if visible_len < MIN_VISIBLE_CHARS_THRESHOLD {
-            score += 0.35;
-        }
+    // ── Low-medium: "bundle" keyword in script src (Webpack/Parcel without hash) ──
+    if lower.contains("src=\"") && lower.contains("bundle") && lower.contains(".js") {
+        score += 0.20;
+    }
 
-        let has_semantic = lower.contains("<h1")
-            || lower.contains("<article")
-            || lower.contains("<main>")
-            || lower.contains("<p>");
-        if !has_semantic {
-            score += 0.20;
-        }
+    // ── Low: structural signals (modifiers, not sufficient alone) ──
+    let visible_len = extract_text(body).trim().len();
+    if visible_len < MIN_VISIBLE_CHARS_THRESHOLD {
+        score += 0.35;
+    }
+
+    let has_semantic = lower.contains("<h1")
+        || lower.contains("<article")
+        || lower.contains("<main>")
+        || lower.contains("<p>");
+    if !has_semantic {
+        score += 0.20;
     }
 
     score >= SPA_SHELL_SCORE_THRESHOLD
@@ -1128,5 +1130,39 @@ mod tests {
         assert!(!has_hash_segment("/js/app.js"));
         assert!(!has_hash_segment("/main.js"));
         assert!(!has_hash_segment("/assets/short-abc.js"));
+    }
+
+    #[test]
+    fn spa_shell_detected_gitee_vite_empty_body() {
+        // Gitee search: Vite SPA with bundler hash + completely empty body
+        let body = r#"<!DOCTYPE html><html><head>
+            <title>Gitee Search</title>
+            <link rel="stylesheet" href="/assets/index-abc12345.css">
+        </head><body data-bs-theme="light">
+            <script type="module" crossorigin src="/assets/index-8b837856.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_todomvc_section_mount() {
+        // TodoMVC React: <section> mount-point (not <div>) + bundle.js
+        let body = r#"<!DOCTYPE html><html><head>
+            <title>TodoMVC</title>
+        </head><body>
+            <section class="todoapp" id="root"></section>
+            <script defer="defer" src="app.bundle.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_small_content_page_with_paragraphs() {
+        // Small page with real content — has <p> tags, should NOT trigger
+        let body = "<html><body>\n\
+            <h1>404 Not Found</h1>\n\
+            <p>The page you requested could not be found.</p>\n\
+        </body></html>";
+        assert!(!looks_like_empty_spa_shell(body));
     }
 }
