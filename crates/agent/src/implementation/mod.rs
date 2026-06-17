@@ -565,6 +565,12 @@ impl CrawlerAgent {
                         .browser
                         .as_mut()
                         .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+                    self.crawl_state.has_active_subagents = !self
+                        .agent_manager
+                        .lock()
+                        .await
+                        .get_active_children(&self.agent_id)
+                        .is_empty();
                     self.registry
                         .execute_async(tool_name, input_value, browser, &mut self.crawl_state)
                         .await
@@ -578,6 +584,12 @@ impl CrawlerAgent {
                 .browser
                 .as_mut()
                 .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+            self.crawl_state.has_active_subagents = !self
+                .agent_manager
+                .lock()
+                .await
+                .get_active_children(&self.agent_id)
+                .is_empty();
             self.registry
                 .execute_async(tool_name, input_value, browser, &mut self.crawl_state)
                 .await
@@ -1342,6 +1354,13 @@ mod tests {
         }
 
         async fn go_back(&mut self) -> Result<String, BridgeError> {
+            Err(BridgeError::Protocol("unused".into()))
+        }
+
+        async fn set_device(
+            &mut self,
+            _: &serde_json::Value,
+        ) -> Result<serde_json::Value, BridgeError> {
             Err(BridgeError::Protocol("unused".into()))
         }
     }

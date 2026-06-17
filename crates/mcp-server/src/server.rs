@@ -1194,12 +1194,12 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_24_nonexcluded_tools_plus_run_goal() {
+    fn tools_list_has_25_nonexcluded_tools_plus_run_goal() {
         let browser_specs: Vec<_> = mvp_tool_specs()
             .into_iter()
             .filter(|spec| !EXCLUDED_TOOLS.contains(&spec.name))
             .collect();
-        assert_eq!(browser_specs.len(), 24);
+        assert_eq!(browser_specs.len(), 25);
         let names: BTreeSet<&str> = browser_specs.iter().map(|s| s.name).collect();
         assert!(names.contains("navigate"));
         assert!(names.contains("click"));
@@ -1211,6 +1211,7 @@ mod tests {
         assert!(names.contains("save_script"));
         assert!(names.contains("list_scripts"));
         assert!(names.contains("read_script"));
+        assert!(names.contains("set_device"));
         assert!(!names.contains("fork"));
         assert!(!names.contains("wait_for_subagents"));
     }

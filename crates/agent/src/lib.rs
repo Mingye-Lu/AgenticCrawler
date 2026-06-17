@@ -621,6 +621,47 @@ fn script_management_tools() -> Vec<ToolSpec> {
             }),
             instructions: Some("Returns the full script definition (JSON) for a saved script. Use this to inspect or modify a script before running it, or to understand what a saved script does."),
         },
+        ToolSpec {
+            name: "set_device",
+            description: "Switch browser device emulation between mobile and desktop modes. Recreates the browser context with new viewport, user agent, and touch settings. Cookies and localStorage are preserved. Use preset device names for convenience or provide custom parameters. Returns page_state showing the page as rendered in the new device mode. Cannot be used while sub-agents are running.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "device": {
+                        "type": "string",
+                        "description": "Device preset name: 'iphone_15', 'iphone_se', 'iphone_15_pro_max', 'pixel_7', 'galaxy_s24', 'ipad_pro', 'ipad', 'galaxy_tab_s9', 'desktop', 'desktop_hd'. Use 'desktop' to reset to default mode. Cannot be combined with custom fields."
+                    },
+                    "viewport": {
+                        "type": "object",
+                        "properties": {
+                            "width": { "type": "integer", "minimum": 1 },
+                            "height": { "type": "integer", "minimum": 1 }
+                        },
+                        "required": ["width", "height"],
+                        "description": "Custom viewport dimensions. Cannot be used with 'device'."
+                    },
+                    "userAgent": {
+                        "type": "string",
+                        "description": "Custom user agent string. Cannot be used with 'device'."
+                    },
+                    "deviceScaleFactor": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "description": "Device pixel ratio (e.g., 2 for retina, 3 for iPhone). Cannot be used with 'device'."
+                    },
+                    "isMobile": {
+                        "type": "boolean",
+                        "description": "Enable mobile viewport behavior. Cannot be used with 'device'."
+                    },
+                    "hasTouch": {
+                        "type": "boolean",
+                        "description": "Enable touch event support. Cannot be used with 'device'."
+                    }
+                },
+                "additionalProperties": false
+            }),
+            instructions: Some("Provide EITHER a preset name via 'device' (iphone_15, pixel_7, ipad_pro, desktop, etc.) OR one or more custom fields (viewport, userAgent, deviceScaleFactor, isMobile, hasTouch). Do not mix both. Use 'desktop' to reset. Cannot switch device while sub-agents are active."),
+        },
     ]
 }
 
@@ -642,12 +683,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_28_tools() {
+    fn mvp_tool_specs_contains_expected_29_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 28);
+        assert_eq!(specs.len(), 29);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 28, "tool names should be unique");
+        assert_eq!(names.len(), 29, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
@@ -662,6 +703,7 @@ mod tests {
         assert!(names.contains("save_script"));
         assert!(names.contains("list_scripts"));
         assert!(names.contains("read_script"));
+        assert!(names.contains("set_device"));
     }
 
     #[test]

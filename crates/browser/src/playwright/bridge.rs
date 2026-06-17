@@ -367,6 +367,19 @@ impl PlaywrightBridge {
         Ok(())
     }
 
+    pub async fn set_device(
+        &mut self,
+        options: &serde_json::Value,
+    ) -> Result<serde_json::Value, BridgeError> {
+        let mut cmd = serde_json::json!({ "action": "set_device" });
+        if let serde_json::Value::Object(map) = options {
+            for (k, v) in map {
+                cmd[k] = v.clone();
+            }
+        }
+        self.send_raw_command(&cmd).await
+    }
+
     pub async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({ "action": "list_resources" });
         self.send_raw_command(&cmd).await

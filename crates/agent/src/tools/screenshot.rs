@@ -267,6 +267,12 @@ mod tests {
         async fn go_back(&mut self) -> Result<String, BridgeError> {
             Ok(String::new())
         }
+        async fn set_device(
+            &mut self,
+            _: &serde_json::Value,
+        ) -> Result<serde_json::Value, BridgeError> {
+            Ok(serde_json::json!({}))
+        }
     }
 
     fn make_browser(backend: MockBackend) -> BrowserContext {

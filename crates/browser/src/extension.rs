@@ -380,6 +380,11 @@ impl BrowserBackend for ExtensionBridge {
             .map(ToString::to_string)
             .ok_or_else(|| BridgeError::Protocol("go_back missing url".to_string()))
     }
+
+    async fn set_device(&mut self, options: &Value) -> Result<Value, BridgeError> {
+        let response = self.send_command("set_device", options.clone()).await?;
+        Self::require_result(response, "set_device")
+    }
 }
 
 #[cfg(test)]

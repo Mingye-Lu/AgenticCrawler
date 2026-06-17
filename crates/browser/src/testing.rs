@@ -95,4 +95,7 @@ impl BrowserBackend for NopBridge {
     async fn go_back(&mut self) -> Result<String, BridgeError> {
         Err(BridgeError::Protocol("NopBridge".into()))
     }
+    async fn set_device(&mut self, _options: &Value) -> Result<Value, BridgeError> {
+        Err(BridgeError::Protocol("NopBridge".into()))
+    }
 }

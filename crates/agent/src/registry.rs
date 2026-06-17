@@ -25,6 +25,7 @@ const ASYNC_TOOLS: &[&str] = &[
     "switch_tab",
     "list_resources",
     "save_file",
+    "set_device",
 ];
 
 #[derive(Default)]
@@ -146,6 +147,7 @@ impl ToolRegistry {
             "switch_tab" => crate::tools::switch_tab::execute(input, browser).await,
             "list_resources" => crate::tools::list_resources::execute(input, browser).await,
             "save_file" => crate::tools::save_file::execute(input, browser).await,
+            "set_device" => crate::tools::set_device::execute(input, browser, crawl_state).await,
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -162,7 +164,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_twenty_eight() {
+    fn new_with_core_tools_registers_all_twenty_nine() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -179,7 +181,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 28);
+        assert_eq!(registry.len(), 29);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -192,7 +194,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 28);
+        assert_eq!(registry.len(), 29);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

@@ -144,6 +144,13 @@ impl BrowserBackend for MockBrowserBackend {
     async fn go_back(&mut self) -> Result<String, BridgeError> {
         Ok("about:blank".to_string())
     }
+
+    async fn set_device(
+        &mut self,
+        _options: &serde_json::Value,
+    ) -> Result<serde_json::Value, BridgeError> {
+        Ok(serde_json::json!({"success": true}))
+    }
 }
 
 fn make_shared_bridge() -> SharedBridge {

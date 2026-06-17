@@ -26,6 +26,10 @@ pub struct CrawlState {
     pub action_cache: Option<ActionCache>,
     pub html_diff_tracker: Option<HtmlDiffTracker>,
     pub loop_detector: Option<LoopDetector>,
+    /// Current device emulation mode. None = desktop default.
+    pub current_device: Option<String>,
+    /// Whether any sub-agents are currently running. Updated before each tool call.
+    pub has_active_subagents: bool,
 }
 
 impl CrawlState {
@@ -43,6 +47,8 @@ impl CrawlState {
             action_cache: None,
             html_diff_tracker: None,
             loop_detector: None,
+            current_device: None,
+            has_active_subagents: false,
         }
     }
 

@@ -102,7 +102,17 @@ async function bootstrap() {
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
   const browser = await launch({ headless: parseHeadless(), humanize: true });
-  const context = await browser.newContext();
+  let context = await browser.newContext({ viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } });
+  await context.addInitScript(`
+    Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
+      width: { value: 1920, enumerable: true },
+      height: { value: 1080, enumerable: true },
+      availWidth: { value: 1920, enumerable: true },
+      availHeight: { value: 1040, enumerable: true },
+      colorDepth: { value: 24, enumerable: true },
+      pixelDepth: { value: 24, enumerable: true },
+    }), configurable: true });
+  `);
   let page = await context.newPage();
   const pages = [page];
   context.on('page', (p) => {
@@ -841,6 +851,118 @@ async function bootstrap() {
           event: 'bridge_response',
           ok: false,
           error: { kind: 'import_cookies_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'set_device') {
+      try {
+        const cookies = await context.cookies();
+        let localStorage = {};
+        try {
+          localStorage = await page.evaluate(() => {
+            const result = {};
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const key = window.localStorage.key(i);
+              if (key !== null) result[key] = window.localStorage.getItem(key) || '';
+            }
+            return result;
+          });
+        } catch (_) { /* localStorage may be unavailable */ }
+        const currentUrl = page.url();
+
+        const ctxOpts = {};
+        if (command.viewport) ctxOpts.viewport = command.viewport;
+        if (command.screen) ctxOpts.screen = command.screen;
+        if (command.userAgent) ctxOpts.userAgent = command.userAgent;
+        if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
+        if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;
+        if (command.hasTouch !== undefined) ctxOpts.hasTouch = command.hasTouch;
+
+        let storageOrigin = null;
+        if (currentUrl && currentUrl !== 'about:blank') {
+          try { storageOrigin = new URL(currentUrl).origin; } catch (_) {}
+        }
+        const lsEntries = Object.entries(localStorage);
+        if (cookies.length > 0 || lsEntries.length > 0) {
+          const origins = (lsEntries.length > 0 && storageOrigin && storageOrigin !== 'null')
+            ? [{ origin: storageOrigin, localStorage: lsEntries.map(([name, value]) => ({ name, value })) }]
+            : [];
+          ctxOpts.storageState = { cookies, origins };
+        }
+
+        // Build new context BEFORE closing old — rollback-safe
+        const newContext = await browser.newContext(ctxOpts);
+        const newPage = await newContext.newPage();
+
+        if (command.screen) {
+          await newContext.addInitScript(`
+            Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
+              width: { value: ${command.screen.width}, enumerable: true },
+              height: { value: ${command.screen.height}, enumerable: true },
+              availWidth: { value: ${command.screen.width}, enumerable: true },
+              availHeight: { value: ${command.screen.height}, enumerable: true },
+              colorDepth: { value: 24, enumerable: true },
+              pixelDepth: { value: 24, enumerable: true },
+            }), configurable: true });
+          `);
+        }
+
+        // Restore localStorage manually (storageState only seeds on first navigation)
+        if (lsEntries.length > 0 && storageOrigin && storageOrigin !== 'null') {
+          try {
+            await newPage.goto(storageOrigin, { waitUntil: 'commit', timeout: 10000 });
+            await newPage.evaluate((entries) => {
+              for (const [k, v] of entries) window.localStorage.setItem(k, v);
+            }, lsEntries);
+          } catch (_) { /* best-effort localStorage restore */ }
+        }
+
+        if (currentUrl && currentUrl !== 'about:blank') {
+          try {
+            await newPage.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          } catch (navErr) {
+            // Navigation failed — tear down new context and keep old one intact
+            await newContext.close().catch(() => {});
+            process.stdout.write(JSON.stringify({
+              event: 'bridge_response',
+              ok: false,
+              error: { kind: 'set_device_navigate_failed', message: String(navErr) }
+            }) + '\n');
+            continue;
+          }
+        }
+
+        const oldContext = context;
+        context = newContext;
+        page = newPage;
+        pages.length = 0;
+        pages.push(page);
+        context.on('page', (p) => {
+          if (!pages.includes(p)) {
+            pages.push(p);
+          }
+        });
+        await oldContext.close().catch(() => {});
+
+        const title = await page.title().catch(() => '');
+        const url = page.url();
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: {
+            viewport: command.viewport || null,
+            userAgent: command.userAgent || null,
+            url,
+            title
+          }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'set_device_failed', message: String(error) }
         }) + '\n');
       }
       continue;
