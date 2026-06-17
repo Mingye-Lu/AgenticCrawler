@@ -325,6 +325,17 @@ fn looks_like_cdn_block_page(body: &str) -> bool {
         return false;
     }
 
+    // Normalize common HTML entities so pattern matching works regardless of
+    // how the server encodes characters (e.g. "you&#39;ve been blocked").
+    let body = body
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&#x27;", "'")
+        .replace("&quot;", "\"")
+        .replace("&#34;", "\"")
+        .replace("&nbsp;", " ");
+    let body = body.as_str();
+
     // ── Tier 0: CSS-dominated body (any size) ──
     // Pages that are >60% <style> content with <300 chars of visible text are
     // walled-garden responses (e.g. Reddit returning 32 KB of CSS variables).
@@ -1365,6 +1376,17 @@ mod tests {
         let body = "<html><head></head><body>\
             <div>Access Denied</div>\
             <div>Akamai Reference #18.abc123</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_html_entity_encoded_apostrophe() {
+        // Reddit-style block page uses &#39; for apostrophes in "You've been blocked".
+        // Entity normalization must happen before pattern matching.
+        let body = "<html><head><title>Blocked</title></head><body>\
+            <div>You&#39;ve been blocked by network security.</div>\
+            <div>Reference ID: xyz789</div>\
         </body></html>";
         assert!(looks_like_cdn_block_page(body));
     }
