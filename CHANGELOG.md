@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-17
+
 ### Added
 
 - **Device Emulation** (`set_device` tool) — switch between mobile and desktop browser emulation mid-session. 10 built-in presets (iphone_15, iphone_se, iphone_15_pro_max, pixel_7, galaxy_s24, ipad_pro, ipad, galaxy_tab_s9, desktop, desktop_hd) or custom viewport/UA/touch/scale parameters. Cookies and localStorage are preserved across switches. Returns a differential `page_state` showing responsive layout changes (collapsed navs, hidden elements, breakpoint shifts) rather than the full page_map. Cannot be used while sub-agents are running.
@@ -731,6 +733,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.11.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.0
 [0.10.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.1
 [0.10.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.0
 [0.9.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.1
