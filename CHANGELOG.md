@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-17
+
 ### Fixed
 
 - **Empty SPA shell detection** — replaced the naive "large HTML + sparse text" heuristic with a multi-signal scoring function that accumulates confidence from framework asset paths (`/_next/static/`, `/_nuxt/`, `ng-version=`), empty mount-point divs, noscript "enable JavaScript" messages, and bundler hash patterns. Pages with embedded data blobs (`__NEXT_DATA__`, `window.__NUXT__`, `data-reactroot`) now correctly skip browser escalation since their content is already server-rendered. Eliminates false positives on legitimate sparse pages (login forms, image-heavy landing pages).
@@ -725,6 +727,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.10.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.1
 [0.10.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.0
 [0.9.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.1
 [0.9.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.0
