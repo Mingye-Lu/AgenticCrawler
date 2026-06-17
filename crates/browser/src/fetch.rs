@@ -284,18 +284,56 @@ fn needs_escalation(status: StatusCode, body: &str) -> bool {
     false
 }
 
+/// Sum the byte lengths of all content inside `<style>...</style>` blocks.
+fn style_blocks_length(html: &str) -> usize {
+    let lower = html.to_ascii_lowercase();
+    let mut total = 0;
+    let mut cursor = 0;
+
+    while cursor < html.len() {
+        let Some(rel_start) = lower[cursor..].find("<style") else {
+            break;
+        };
+        let abs_start = cursor + rel_start;
+        let Some(rel_gt) = lower[abs_start..].find('>') else {
+            break;
+        };
+        let content_start = abs_start + rel_gt + 1;
+        let Some(rel_end) = lower[content_start..].find("</style>") else {
+            break;
+        };
+        total += rel_end;
+        cursor = content_start + rel_end + "</style>".len();
+    }
+
+    total
+}
+
 /// Detect CDN/security block pages (Cloudflare challenges, Akamai blocks,
 /// Reddit "You have been blocked by network security", etc.).
 ///
-/// Uses a two-tier approach to avoid false positives:
+/// Uses a multi-tier approach to avoid false positives:
+/// - **CSS-dominated** (tier 0): any-size pages that are >60% `<style>` content
+///   with <300 chars of visible text → walled-garden/CSS-only response.
 /// - **CDN signatures** (tier 1): strong single signals → return true immediately.
 /// - **Text + structural** (tier 2): text pattern hit AND sparse HTML structure
 ///   must both be present, preventing legitimate pages that mention "security"
 ///   from triggering escalation.
 fn looks_like_cdn_block_page(body: &str) -> bool {
     let len = body.len();
-    if len < 50 || len > 5000 {
+    if len < 50 {
         return false;
+    }
+
+    // ── Tier 0: CSS-dominated body (any size) ──
+    // Pages that are >60% <style> content with <300 chars of visible text are
+    // walled-garden responses (e.g. Reddit returning 32 KB of CSS variables).
+    let css_len = style_blocks_length(body);
+    if css_len > 0 {
+        let css_ratio = css_len as f64 / len as f64;
+        if css_ratio > 0.6 && extract_text(body).trim().len() < 300 {
+            return true;
+        }
     }
 
     let lower = body.to_ascii_lowercase();
@@ -1266,14 +1304,51 @@ mod tests {
     }
 
     #[test]
-    fn cdn_block_not_triggered_too_large() {
+    fn cdn_block_large_body_still_detected() {
+        // The 5000-char upper bound is removed: large pages with block patterns
+        // should still be detected.
         let mut body = String::from("<html><body><div>You have been blocked by network security. ");
         while body.len() <= 5000 {
             body.push_str("padding ");
         }
         body.push_str("</div></body></html>");
         assert!(body.len() > 5000);
-        assert!(!looks_like_cdn_block_page(body.as_str()));
+        assert!(looks_like_cdn_block_page(body.as_str()));
+    }
+
+    #[test]
+    fn cdn_block_css_dominated_walled_garden() {
+        // Large page that is >60% <style> content with no real text — Reddit-style
+        // CSS-variable dump returned instead of actual page content.
+        let css_vars: String = (0..500)
+            .map(|i| format!("--color-{i}: #aabbcc; --spacing-{i}: {i}px; "))
+            .collect();
+        let body = format!(
+            "<html><head><style>{css_vars}</style></head>\
+             <body><div>Loading…</div></body></html>"
+        );
+        assert!(
+            body.len() > 5000,
+            "body must be large to test the any-size path"
+        );
+        assert!(looks_like_cdn_block_page(&body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_css_with_real_content() {
+        // A page with significant CSS but also substantial visible text should
+        // NOT be flagged — the css_ratio check requires <300 chars of visible text.
+        let css_vars: String = (0..200)
+            .map(|i| format!("--color-{i}: #aabbcc; "))
+            .collect();
+        let paragraphs: String = (0..20)
+            .map(|i| format!("<p>This is real paragraph number {i} with meaningful content for users browsing the site.</p>"))
+            .collect();
+        let body = format!(
+            "<html><head><style>{css_vars}</style></head>\
+             <body><h1>Welcome</h1>{paragraphs}</body></html>"
+        );
+        assert!(!looks_like_cdn_block_page(&body));
     }
 
     #[test]
