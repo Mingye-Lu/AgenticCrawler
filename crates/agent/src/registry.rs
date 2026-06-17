@@ -28,6 +28,8 @@ const ASYNC_TOOLS: &[&str] = &[
     "save_file",
     "set_device",
     "get_page_performance",
+    "inspect_cookies",
+    "inspect_storage",
     "audit_accessibility",
 ];
 
@@ -153,6 +155,8 @@ impl ToolRegistry {
             "save_file" => crate::tools::save_file::execute(input, browser).await,
             "set_device" => crate::tools::set_device::execute(input, browser, crawl_state).await,
             "get_page_performance" => crate::tools::page_performance::execute(input, browser).await,
+            "inspect_cookies" => crate::tools::storage_inspect::inspect_cookies(input, browser).await,
+            "inspect_storage" => crate::tools::storage_inspect::inspect_storage(input, browser).await,
             "audit_accessibility" => {
                 crate::tools::accessibility::execute(input, browser).await
             }
@@ -189,7 +193,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 30);
+        assert_eq!(registry.len(), 32);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -202,7 +206,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 30);
+        assert_eq!(registry.len(), 32);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

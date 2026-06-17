@@ -467,6 +467,24 @@ fn inspect_storage_tool() -> ToolSpec {
     }
 }
 
+fn audit_accessibility_tool() -> ToolSpec {
+    ToolSpec {
+        name: "audit_accessibility",
+        description: "Run axe-core WCAG accessibility audit on the current page. Returns violations grouped by impact level with selectors and descriptions. Use scope to limit to a specific DOM subtree.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "scope": { "type": "string", "description": "CSS selector to limit audit (e.g. '#main-content')" },
+                "standard": { "type": "string", "enum": ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"], "default": "wcag2aa" },
+                "impact": { "type": "string", "enum": ["critical", "serious", "moderate", "minor", "all"], "default": "all" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Injects axe-core and runs a WCAG audit. Default standard is wcag2aa. Use 'scope' to audit only a subtree (e.g. '#main-content'). Use 'impact' to filter results (critical/serious/moderate/minor/all). Returns violations with rule_id, impact, description, help_url, and affected elements (selector + HTML snippet), plus a summary with counts per impact level and total passes."),
+    }
+}
+
 fn agent_control_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -747,10 +765,10 @@ mod tests {
     #[test]
     fn mvp_tool_specs_contains_expected_30_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 33);
+        assert_eq!(specs.len(), 34);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 33, "tool names should be unique");
+        assert_eq!(names.len(), 34, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
@@ -758,6 +776,7 @@ mod tests {
         assert!(names.contains("get_page_performance"));
         assert!(names.contains("inspect_cookies"));
         assert!(names.contains("inspect_storage"));
+        assert!(names.contains("audit_accessibility"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));
         assert!(names.contains("cancel_subagent"));

@@ -174,10 +174,25 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::go_back(self).await
     }
 
+    async fn reload(&mut self) -> Result<PageInfo, BridgeError> {
+        PlaywrightBridge::reload(self).await
+    }
+
     async fn set_device(
         &mut self,
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, BridgeError> {
         PlaywrightBridge::set_device(self, options).await
+    }
+
+    async fn get_cookies(&mut self) -> Result<Vec<crate::CookieInfo>, BridgeError> {
+        PlaywrightBridge::get_cookies(self).await
+    }
+
+    async fn get_storage(
+        &mut self,
+        storage_type: crate::StorageType,
+    ) -> Result<(Vec<crate::StorageEntry>, Vec<crate::StorageEntry>), BridgeError> {
+        PlaywrightBridge::get_storage(self, storage_type).await
     }
 }

@@ -392,6 +392,31 @@ async function bootstrap() {
       continue;
     }
 
+    if (command.action === 'reload') {
+      try {
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+        // Wait for SPA API calls to complete. Cap at 5s so pages with
+        // persistent connections (WebSocket, SSE, polling) don't hang.
+        try {
+          await page.waitForLoadState('networkidle', { timeout: 5000 });
+        } catch (_) { /* networkidle timed out — proceed with current state */ }
+        const html = await bypassTurnstileIfPresent(page);
+        const title = await page.title();
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { title, html }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'reload_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
     if (command.action === 'close') {
       await page.close().catch(() => {});
       await browser.close().catch(() => {});
@@ -1202,6 +1227,56 @@ async function bootstrap() {
         event: 'bridge_response',
         ok: true,
         result: {}
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'get_cookies') {
+      const context = browser.contexts()[0];
+      const cookies = await context.cookies();
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: { cookies }
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'get_storage') {
+      const storageType = command.storage_type || 'all';
+      const page = pages[currentPageIndex];
+      
+      let localStorage = [];
+      let sessionStorage = [];
+      
+      if (storageType === 'local' || storageType === 'all') {
+        localStorage = await page.evaluate(() => {
+          const items = [];
+          for (let i = 0; i < window.localStorage.length; i++) {
+            const key = window.localStorage.key(i);
+            const value = window.localStorage.getItem(key);
+            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+          }
+          return items;
+        });
+      }
+      
+      if (storageType === 'session' || storageType === 'all') {
+        sessionStorage = await page.evaluate(() => {
+          const items = [];
+          for (let i = 0; i < window.sessionStorage.length; i++) {
+            const key = window.sessionStorage.key(i);
+            const value = window.sessionStorage.getItem(key);
+            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+          }
+          return items;
+        });
+      }
+      
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: { local_storage: localStorage, session_storage: sessionStorage }
       }) + '\n');
       continue;
     }

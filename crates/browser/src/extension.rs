@@ -435,9 +435,86 @@ impl BrowserBackend for ExtensionBridge {
             .ok_or_else(|| BridgeError::Protocol("go_back missing url".to_string()))
     }
 
+    async fn reload(&mut self) -> Result<PageInfo, BridgeError> {
+        let response = self.send_command("reload", json!({})).await?;
+        let result = Self::require_result(response, "reload")?;
+        let title = result
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let html = result
+            .get("html")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        Ok(PageInfo { title, html })
+    }
+
     async fn set_device(&mut self, options: &Value) -> Result<Value, BridgeError> {
         let response = self.send_command("set_device", options.clone()).await?;
         Self::require_result(response, "set_device")
+    }
+
+    async fn get_cookies(&mut self) -> Result<Vec<crate::CookieInfo>, BridgeError> {
+        let response = self.send_command("get_cookies", json!({})).await?;
+        let result = Self::require_result(response, "get_cookies")?;
+        let cookies = result
+            .get("cookies")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        cookies
+            .into_iter()
+            .map(|cookie| {
+                serde_json::from_value::<crate::CookieInfo>(cookie)
+                    .map_err(|e| BridgeError::Protocol(format!("failed to parse cookie: {e}")))
+            })
+            .collect()
+    }
+
+    async fn get_storage(
+        &mut self,
+        storage_type: crate::StorageType,
+    ) -> Result<(Vec<crate::StorageEntry>, Vec<crate::StorageEntry>), BridgeError> {
+        let storage_type_str = match storage_type {
+            crate::StorageType::Local => "local",
+            crate::StorageType::Session => "session",
+            crate::StorageType::All => "all",
+        };
+        let response = self
+            .send_command("get_storage", json!({ "storage_type": storage_type_str }))
+            .await?;
+        let result = Self::require_result(response, "get_storage")?;
+
+        let local_storage = result
+            .get("local_storage")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let session_storage = result
+            .get("session_storage")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let local_entries: Result<Vec<_>, _> = local_storage
+            .into_iter()
+            .map(|entry| {
+                serde_json::from_value::<crate::StorageEntry>(entry)
+                    .map_err(|e| BridgeError::Protocol(format!("failed to parse storage entry: {e}")))
+            })
+            .collect();
+
+        let session_entries: Result<Vec<_>, _> = session_storage
+            .into_iter()
+            .map(|entry| {
+                serde_json::from_value::<crate::StorageEntry>(entry)
+                    .map_err(|e| BridgeError::Protocol(format!("failed to parse storage entry: {e}")))
+            })
+            .collect();
+
+        Ok((local_entries?, session_entries?))
     }
 }
 
