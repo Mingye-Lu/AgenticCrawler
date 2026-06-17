@@ -64,7 +64,7 @@ The extension communicates with acrawl over a local WebSocket connection:
 3. acrawl sends `{id, action, payload}` commands (navigate, click, screenshot, etc.)
 4. The extension executes them via Chrome DevTools Protocol (CDP) and returns `{id, ok, result}`
 
-All 17 browser tools work through this bridge — the same tool surface as CloakBrowser.
+All 18 browser tools work through this bridge — the same tool surface as CloakBrowser.
 
 ## Troubleshooting
 
