@@ -277,7 +277,70 @@ fn needs_escalation(status: StatusCode, body: &str) -> bool {
         }
     }
 
+    if looks_like_cdn_block_page(body) {
+        return true;
+    }
+
     false
+}
+
+/// Detect CDN/security block pages (Cloudflare challenges, Akamai blocks,
+/// Reddit "You have been blocked by network security", etc.).
+///
+/// Uses a two-tier approach to avoid false positives:
+/// - **CDN signatures** (tier 1): strong single signals → return true immediately.
+/// - **Text + structural** (tier 2): text pattern hit AND sparse HTML structure
+///   must both be present, preventing legitimate pages that mention "security"
+///   from triggering escalation.
+fn looks_like_cdn_block_page(body: &str) -> bool {
+    let len = body.len();
+    if len < 50 || len > 5000 {
+        return false;
+    }
+
+    let lower = body.to_ascii_lowercase();
+
+    // ── Tier 1: CDN HTML signatures — escalate immediately ──
+    if lower.contains("__cf_chl_")
+        || lower.contains("cf-browser-verification")
+        || lower.contains("cf-challenge")
+    {
+        return true;
+    }
+    if lower.contains("akamai") && (lower.contains("blocked") || lower.contains("access denied")) {
+        return true;
+    }
+
+    // ── Tier 2: text pattern + structural sparseness (both required) ──
+    let has_text_pattern = lower.contains("you've been blocked")
+        || lower.contains("you have been blocked")
+        || (lower.contains("blocked")
+            && (lower.contains("network security") || lower.contains("access denied")))
+        || lower.contains("captcha")
+        || lower.contains("recaptcha")
+        || lower.contains("hcaptcha")
+        || lower.contains("verify you are human")
+        || lower.contains("are you a robot")
+        || lower.contains("checking your browser")
+        || lower.contains("ddos protection")
+        || lower.contains("ddos attack")
+        || lower.contains("rate limited")
+        || lower.contains("too many requests");
+
+    if !has_text_pattern {
+        return false;
+    }
+
+    // Sparse structure: no semantic elements present
+    let has_semantic = lower.contains("<p ")
+        || lower.contains("<h1")
+        || lower.contains("<h2")
+        || lower.contains("<h3")
+        || lower.contains("<a href")
+        || lower.contains("<main>")
+        || lower.contains("<article");
+
+    !has_semantic
 }
 
 fn extract_charset(content_type: &str) -> Option<&str> {
@@ -1164,5 +1227,70 @@ mod tests {
             <p>The page you requested could not be found.</p>\n\
         </body></html>";
         assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn cdn_block_reddit_style() {
+        let body = "<html><head><title>Blocked</title></head><body>\
+            <div>You have been blocked by network security.</div>\
+            <div>Reference ID: abc123</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_cloudflare_challenge() {
+        let body = "<html><head></head><body>\
+            <form id=\"cf-challenge-form\" action=\"/cdn-cgi/l/chk_jschl\">\
+            <input name=\"__cf_chl_jschl_tk__\" value=\"abc\"/>\
+            </form></body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_legitimate_security_page() {
+        // Legitimate page mentioning "security" with real semantic content
+        let body = "<html><head><title>Security Policy</title></head><body>\
+            <h1>Our Security Practices</h1>\
+            <p>We take security seriously at our company.</p>\
+            <a href=\"/contact\">Contact us</a>\
+        </body></html>";
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_too_small() {
+        let body = "<html><body>Blocked</body></html>";
+        assert!(body.len() < 50);
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_too_large() {
+        let mut body = String::from("<html><body><div>You have been blocked by network security. ");
+        while body.len() <= 5000 {
+            body.push_str("padding ");
+        }
+        body.push_str("</div></body></html>");
+        assert!(body.len() > 5000);
+        assert!(!looks_like_cdn_block_page(body.as_str()));
+    }
+
+    #[test]
+    fn cdn_block_captcha_sparse_page() {
+        let body = "<html><head><title>Security Check</title></head><body>\
+            <div>Please complete the captcha to continue.</div>\
+            <div id=\"recaptcha-container\"></div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_akamai_access_denied() {
+        let body = "<html><head></head><body>\
+            <div>Access Denied</div>\
+            <div>Akamai Reference #18.abc123</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
     }
 }
