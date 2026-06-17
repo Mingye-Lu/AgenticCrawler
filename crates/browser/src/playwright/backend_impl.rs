@@ -195,4 +195,12 @@ impl BrowserBackend for PlaywrightBridge {
     ) -> Result<(Vec<crate::StorageEntry>, Vec<crate::StorageEntry>), BridgeError> {
         PlaywrightBridge::get_storage(self, storage_type).await
     }
+
+    async fn start_coverage(&mut self, js: bool, css: bool) -> Result<(), BridgeError> {
+        PlaywrightBridge::start_coverage(self, js, css).await
+    }
+
+    async fn stop_coverage(&mut self) -> Result<crate::CoverageData, BridgeError> {
+        PlaywrightBridge::stop_coverage(self).await
+    }
 }

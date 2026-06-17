@@ -1231,6 +1231,48 @@ async function bootstrap() {
       continue;
     }
 
+    if (command.action === 'start_coverage') {
+      const doJs = command.js !== false;
+      const doCss = command.css !== false;
+      if (doJs) await pages[currentPageIndex].coverage.startJSCoverage();
+      if (doCss) await pages[currentPageIndex].coverage.startCSSCoverage();
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: {}
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'stop_coverage') {
+      let js_coverage = [];
+      let css_coverage = [];
+      try { js_coverage = await pages[currentPageIndex].coverage.stopJSCoverage(); } catch(e) {}
+      try { css_coverage = await pages[currentPageIndex].coverage.stopCSSCoverage(); } catch(e) {}
+
+      const formatEntry = (entry) => {
+        const usedBytes = entry.ranges ? entry.ranges.reduce((sum, r) => sum + r.end - r.start, 0) : (entry.usedBytes || 0);
+        const totalBytes = entry.text ? entry.text.length : (entry.source ? entry.source.length : 0);
+        return {
+          url: entry.url,
+          total_bytes: totalBytes,
+          used_bytes: usedBytes,
+          unused_bytes: totalBytes - usedBytes,
+          unused_pct: totalBytes > 0 ? Math.round((totalBytes - usedBytes) / totalBytes * 1000) / 10 : 0
+        };
+      };
+
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: {
+          js_coverage: js_coverage.map(formatEntry),
+          css_coverage: css_coverage.map(formatEntry)
+        }
+      }) + '\n');
+      continue;
+    }
+
     if (command.action === 'get_cookies') {
       const context = browser.contexts()[0];
       const cookies = await context.cookies();

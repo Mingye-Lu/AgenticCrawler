@@ -91,7 +91,9 @@ pub async fn execute(
         }));
     }
 
+    #[allow(clippy::cast_precision_loss)]
     let total_unused_js_kb = (total_unused_js as f64 / 1024.0 * 10.0).round() / 10.0;
+    #[allow(clippy::cast_precision_loss)]
     let total_unused_css_kb = (total_unused_css as f64 / 1024.0 * 10.0).round() / 10.0;
 
     let result = json!({

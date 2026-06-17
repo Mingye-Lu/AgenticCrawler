@@ -470,6 +470,59 @@ impl PlaywrightBridge {
         Ok((local_entries?, session_entries?))
     }
 
+    pub async fn start_coverage(&mut self, js: bool, css: bool) -> Result<(), BridgeError> {
+        let cmd = serde_json::json!({
+            "action": "start_coverage",
+            "js": js,
+            "css": css,
+        });
+        self.send_raw_command(&cmd).await?;
+        Ok(())
+    }
+
+    pub async fn stop_coverage(&mut self) -> Result<crate::CoverageData, BridgeError> {
+        let cmd = serde_json::json!({ "action": "stop_coverage" });
+        let result = self.send_raw_command(&cmd).await?;
+
+        let js_entries = result
+            .get("js_coverage")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let css_entries = result
+            .get("css_coverage")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let js_coverage = js_entries
+            .into_iter()
+            .filter_map(|entry| {
+                Some(crate::FileCoverage {
+                    url: entry.get("url")?.as_str()?.to_string(),
+                    total_bytes: usize::try_from(entry.get("total_bytes")?.as_u64()?).ok()?,
+                    used_bytes: usize::try_from(entry.get("used_bytes")?.as_u64()?).ok()?,
+                })
+            })
+            .collect();
+
+        let css_coverage = css_entries
+            .into_iter()
+            .filter_map(|entry| {
+                Some(crate::FileCoverage {
+                    url: entry.get("url")?.as_str()?.to_string(),
+                    total_bytes: usize::try_from(entry.get("total_bytes")?.as_u64()?).ok()?,
+                    used_bytes: usize::try_from(entry.get("used_bytes")?.as_u64()?).ok()?,
+                })
+            })
+            .collect();
+
+        Ok(crate::CoverageData {
+            js_coverage,
+            css_coverage,
+        })
+    }
+
     pub async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({ "action": "list_resources" });
         self.send_raw_command(&cmd).await

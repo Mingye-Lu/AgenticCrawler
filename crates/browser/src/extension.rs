@@ -518,6 +518,57 @@ impl BrowserBackend for ExtensionBridge {
 
         Ok((local_entries?, session_entries?))
     }
+
+    async fn start_coverage(&mut self, js: bool, css: bool) -> Result<(), BridgeError> {
+        let response = self
+            .send_command("start_coverage", json!({ "js": js, "css": css }))
+            .await?;
+        Self::require_ok(response)?;
+        Ok(())
+    }
+
+    async fn stop_coverage(&mut self) -> Result<crate::CoverageData, BridgeError> {
+        let response = self.send_command("stop_coverage", json!({})).await?;
+        let result = Self::require_result(response, "stop_coverage")?;
+
+        let js_entries = result
+            .get("js_coverage")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let css_entries = result
+            .get("css_coverage")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let js_coverage = js_entries
+            .into_iter()
+            .filter_map(|entry| {
+                Some(crate::FileCoverage {
+                    url: entry.get("url")?.as_str()?.to_string(),
+                    total_bytes: usize::try_from(entry.get("total_bytes")?.as_u64()?).ok()?,
+                    used_bytes: usize::try_from(entry.get("used_bytes")?.as_u64()?).ok()?,
+                })
+            })
+            .collect();
+
+        let css_coverage = css_entries
+            .into_iter()
+            .filter_map(|entry| {
+                Some(crate::FileCoverage {
+                    url: entry.get("url")?.as_str()?.to_string(),
+                    total_bytes: usize::try_from(entry.get("total_bytes")?.as_u64()?).ok()?,
+                    used_bytes: usize::try_from(entry.get("used_bytes")?.as_u64()?).ok()?,
+                })
+            })
+            .collect();
+
+        Ok(crate::CoverageData {
+            js_coverage,
+            css_coverage,
+        })
+    }
 }
 
 #[cfg(test)]
