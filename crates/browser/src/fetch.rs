@@ -341,8 +341,10 @@ fn looks_like_cdn_block_page(body: &str) -> bool {
     // walled-garden responses (e.g. Reddit returning 32 KB of CSS variables).
     let css_len = style_blocks_length(body);
     if css_len > 0 {
-        let css_ratio = css_len as f64 / len as f64;
-        if css_ratio > 0.6 && extract_text(body).trim().len() < 300 {
+        // css_len / len > 0.6  ⇔  css_len * 10 > len * 6  (no float cast)
+        if css_len.saturating_mul(10) > len.saturating_mul(6)
+            && extract_text(body).trim().len() < 300
+        {
             return true;
         }
     }
@@ -1331,9 +1333,11 @@ mod tests {
     fn cdn_block_css_dominated_walled_garden() {
         // Large page that is >60% <style> content with no real text — Reddit-style
         // CSS-variable dump returned instead of actual page content.
-        let css_vars: String = (0..500)
-            .map(|i| format!("--color-{i}: #aabbcc; --spacing-{i}: {i}px; "))
-            .collect();
+        let mut css_vars = String::new();
+        for i in 0..500 {
+            use std::fmt::Write;
+            let _ = write!(css_vars, "--color-{i}: #aabbcc; --spacing-{i}: {i}px; ");
+        }
         let body = format!(
             "<html><head><style>{css_vars}</style></head>\
              <body><div>Loading…</div></body></html>"
@@ -1349,12 +1353,19 @@ mod tests {
     fn cdn_block_not_triggered_css_with_real_content() {
         // A page with significant CSS but also substantial visible text should
         // NOT be flagged — the css_ratio check requires <300 chars of visible text.
-        let css_vars: String = (0..200)
-            .map(|i| format!("--color-{i}: #aabbcc; "))
-            .collect();
-        let paragraphs: String = (0..20)
-            .map(|i| format!("<p>This is real paragraph number {i} with meaningful content for users browsing the site.</p>"))
-            .collect();
+        let mut css_vars = String::new();
+        for i in 0..200 {
+            use std::fmt::Write;
+            let _ = write!(css_vars, "--color-{i}: #aabbcc; ");
+        }
+        let mut paragraphs = String::new();
+        for i in 0..20 {
+            use std::fmt::Write;
+            let _ = write!(
+                paragraphs,
+                "<p>This is real paragraph number {i} with meaningful content for users browsing the site.</p>"
+            );
+        }
         let body = format!(
             "<html><head><style>{css_vars}</style></head>\
              <body><h1>Welcome</h1>{paragraphs}</body></html>"
