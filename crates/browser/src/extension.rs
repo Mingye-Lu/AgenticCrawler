@@ -9,6 +9,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot, watch};
 
+use crate::observation::{
+    ConsoleMessageEvent, NetworkRequestEvent, ObservationEvent, WebSocketFrameEvent,
+};
 use crate::ws_server::{BridgeCommand, BridgeResponse};
 use crate::{BridgeError, BrowserBackend, BrowserState, PageInfo};
 
@@ -97,6 +100,57 @@ impl ExtensionBridge {
         let response = self.send_command(action, payload).await?;
         Self::require_ok(response)?;
         Ok(())
+    }
+
+    pub async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
+        let result = self
+            .send_command("poll_observations", serde_json::json!({}))
+            .await?;
+        let events_json = result
+            .result
+            .and_then(|value| value.get("events").and_then(Value::as_array).cloned())
+            .unwrap_or_default();
+        let mut events = Vec::new();
+        for event_json in events_json {
+            if let Ok(event) = parse_observation_event(event_json) {
+                events.push(event);
+            }
+        }
+        Ok(events)
+    }
+
+    pub async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError> {
+        self.send_command("set_seq", serde_json::json!({ "seq": seq }))
+            .await?;
+        Ok(())
+    }
+}
+
+fn parse_observation_event(json: serde_json::Value) -> Result<ObservationEvent, BridgeError> {
+    let event_type = json
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| BridgeError::Protocol("observation event missing type".to_string()))?;
+
+    match event_type {
+        "NetworkRequest" => serde_json::from_value::<NetworkRequestEvent>(json)
+            .map(ObservationEvent::NetworkRequest)
+            .map_err(|error| {
+                BridgeError::Protocol(format!("observation NetworkRequest parse error: {error}"))
+            }),
+        "ConsoleMessage" => serde_json::from_value::<ConsoleMessageEvent>(json)
+            .map(ObservationEvent::ConsoleMessage)
+            .map_err(|error| {
+                BridgeError::Protocol(format!("observation ConsoleMessage parse error: {error}"))
+            }),
+        "WebSocketFrame" => serde_json::from_value::<WebSocketFrameEvent>(json)
+            .map(ObservationEvent::WebSocketFrame)
+            .map_err(|error| {
+                BridgeError::Protocol(format!("observation WebSocketFrame parse error: {error}"))
+            }),
+        other => Err(BridgeError::Protocol(format!(
+            "unknown observation event type: {other}"
+        ))),
     }
 }
 
@@ -587,5 +641,104 @@ mod tests {
 
         let result = bridge.navigate("https://example.com").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn poll_observations_parses_supported_event_types() {
+        let (mut bridge, mut command_rx) = bridge();
+
+        let task = tokio::spawn(async move { bridge.poll_observations().await });
+
+        let (command, resp_tx) = command_rx.recv().await.expect("command should be sent");
+        assert_eq!(command.action, "poll_observations");
+        assert_eq!(command.payload, json!({}));
+
+        resp_tx
+            .send(BridgeResponse {
+                id: command.id,
+                ok: true,
+                result: Some(json!({
+                    "events": [
+                        {
+                            "type": "NetworkRequest",
+                            "timestamp_ms": 1,
+                            "tab_index": 0,
+                            "seq_at_initiation": 7,
+                            "request_id": "req-1",
+                            "url": "https://example.com/api",
+                            "method": "GET",
+                            "status": 200,
+                            "state": "Completed",
+                            "size_bytes": 42,
+                            "duration_ms": 12,
+                            "request_type": "Fetch",
+                            "from_service_worker": false,
+                            "initiator_type": "script",
+                            "reason": null
+                        },
+                        {
+                            "type": "ConsoleMessage",
+                            "timestamp_ms": 2,
+                            "tab_index": 0,
+                            "seq_at_initiation": 7,
+                            "level": "log",
+                            "message_type": "Console",
+                            "text": "hello",
+                            "source_url": null,
+                            "source_line": null,
+                            "source_column": null,
+                            "stack": null
+                        },
+                        {
+                            "type": "WebSocketFrame",
+                            "timestamp_ms": 3,
+                            "tab_index": 0,
+                            "seq_at_initiation": 7,
+                            "connection_id": "socket-1",
+                            "url": "wss://example.com/socket",
+                            "direction": "received",
+                            "data": "payload",
+                            "size_bytes": 7,
+                            "connection_status": "open"
+                        }
+                    ]
+                })),
+                error: None,
+            })
+            .expect("response should be delivered");
+
+        let events = task
+            .await
+            .expect("task should complete")
+            .expect("poll_observations should succeed");
+
+        assert_eq!(events.len(), 3);
+        assert!(matches!(events[0], ObservationEvent::NetworkRequest(_)));
+        assert!(matches!(events[1], ObservationEvent::ConsoleMessage(_)));
+        assert!(matches!(events[2], ObservationEvent::WebSocketFrame(_)));
+    }
+
+    #[tokio::test]
+    async fn set_seq_serializes_expected_bridge_command() {
+        let (mut bridge, mut command_rx) = bridge();
+
+        let task = tokio::spawn(async move { bridge.set_seq(99).await });
+
+        let (command, resp_tx) = command_rx.recv().await.expect("command should be sent");
+        assert_eq!(command.action, "set_seq");
+        assert_eq!(command.payload, json!({ "seq": 99 }));
+
+        resp_tx
+            .send(BridgeResponse {
+                id: command.id,
+                ok: true,
+                result: Some(json!({})),
+                error: None,
+            })
+            .expect("response should be delivered");
+
+        task.await
+            .expect("task should complete")
+            .expect("set_seq should succeed");
     }
 }
