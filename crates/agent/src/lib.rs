@@ -88,6 +88,16 @@ fn navigation_tools() -> Vec<ToolSpec> {
             instructions: Some("Returns the URL navigated to and a `page_state` object with headings, landmarks, and links of the resulting page. Use page_state to understand what you landed on after going back."),
         },
         ToolSpec {
+            name: "refresh",
+            description: "Reload the current page. Returns page_state after reload. Use after setting intercept rules to replay the page with rules active. Seq increments for temporal observation queries.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            instructions: Some("Reloads the current page and returns a `page_state` object with the updated page structure. Use after setting intercept rules to replay the page with rules active. The seq field increments for temporal observation queries."),
+        },
+        ToolSpec {
             name: "scroll",
             description: "Scroll the current page up or down by a specified pixel amount to reveal content beyond the visible viewport. Returns updated page_state after scrolling, reflecting any newly loaded lazy content. Use to reveal below-the-fold content, trigger infinite scroll loading, or navigate long pages section by section.",
             input_schema: json!({
@@ -152,6 +162,10 @@ fn extraction_tools() -> Vec<ToolSpec> {
         list_resources_tool(),
         screenshot_tool(),
         save_file_tool(),
+        page_performance_tool(),
+        inspect_cookies_tool(),
+        inspect_storage_tool(),
+        audit_accessibility_tool(),
     ]
 }
 
@@ -402,6 +416,54 @@ fn save_file_tool() -> ToolSpec {
             "additionalProperties": false
         }),
         instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename`, `subdir`, and `output_dir`."),
+    }
+}
+
+fn page_performance_tool() -> ToolSpec {
+    ToolSpec {
+        name: "get_page_performance",
+        description: "Get page performance metrics using Navigation Timing and Resource Timing APIs. Returns TTFB, DOM timings, and a breakdown of the top 20 resources by transfer size. Works on both browsers and SPAs.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Captures performance metrics from the current page using the Navigation Timing and Resource Timing APIs. Returns navigation timings (TTFB, DOM interactive/complete, load event), the top 20 resources sorted by transfer size, and a summary with totals and largest/slowest resources. No parameters required."),
+    }
+}
+
+fn inspect_cookies_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_cookies",
+        description: "Inspect cookies on the current page with security analysis. Returns all cookies with domain, path, expiry, secure/httponly flags, and detected security issues (missing_secure, missing_httponly, sameSite_none_without_secure, excessive_lifetime, overly_broad_domain). Includes third-party detection and filtering options.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "domain": { "type": "string", "description": "Filter by domain substring" },
+                "issues_only": { "type": "boolean", "default": false, "description": "If true, return only cookies with detected security issues" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Returns all cookies with security analysis. Each cookie includes: name, value, domain, path, expires, secure, http_only, same_site, size_bytes, issues (array of detected problems), and third_party flag. Summary includes total count, count with issues, third-party count, session vs persistent breakdown. Use domain filter to narrow results, issues_only to focus on security concerns."),
+    }
+}
+
+fn inspect_storage_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_storage",
+        description: "Inspect browser storage (localStorage and sessionStorage) on the current page. Returns all key-value pairs with size information. Supports filtering by storage type and key pattern.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "enum": ["local", "session", "all"], "default": "all", "description": "Which storage to inspect: 'local' for localStorage, 'session' for sessionStorage, 'all' for both" },
+                "pattern": { "type": "string", "description": "Filter by key name substring" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Returns localStorage and/or sessionStorage entries with their values and sizes. Each entry includes: key, value, size_bytes. Summary includes entry counts and total size in KB. Use target to narrow to specific storage type, pattern to filter by key name substring."),
     }
 }
 
@@ -683,15 +745,19 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_29_tools() {
+    fn mvp_tool_specs_contains_expected_30_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 29);
+        assert_eq!(specs.len(), 33);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 29, "tool names should be unique");
+        assert_eq!(names.len(), 33, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
+        assert!(names.contains("refresh"));
+        assert!(names.contains("get_page_performance"));
+        assert!(names.contains("inspect_cookies"));
+        assert!(names.contains("inspect_storage"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));
         assert!(names.contains("cancel_subagent"));

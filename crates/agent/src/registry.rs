@@ -16,6 +16,7 @@ const ASYNC_TOOLS: &[&str] = &[
     "read_content",
     "screenshot",
     "go_back",
+    "refresh",
     "scroll",
     "wait",
     "select_option",
@@ -26,6 +27,8 @@ const ASYNC_TOOLS: &[&str] = &[
     "list_resources",
     "save_file",
     "set_device",
+    "get_page_performance",
+    "audit_accessibility",
 ];
 
 #[derive(Default)]
@@ -138,6 +141,7 @@ impl ToolRegistry {
             }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser).await,
+            "refresh" => crate::tools::refresh::execute(input, browser).await,
             "scroll" => crate::tools::scroll::execute(input, browser).await,
             "wait" => crate::tools::wait::execute(input, browser).await,
             "select_option" => crate::tools::select_option::execute(input, browser).await,
@@ -148,6 +152,10 @@ impl ToolRegistry {
             "list_resources" => crate::tools::list_resources::execute(input, browser).await,
             "save_file" => crate::tools::save_file::execute(input, browser).await,
             "set_device" => crate::tools::set_device::execute(input, browser, crawl_state).await,
+            "get_page_performance" => crate::tools::page_performance::execute(input, browser).await,
+            "audit_accessibility" => {
+                crate::tools::accessibility::execute(input, browser).await
+            }
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -164,7 +172,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_twenty_nine() {
+    fn new_with_core_tools_registers_all_thirty() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -181,7 +189,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 29);
+        assert_eq!(registry.len(), 30);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -194,7 +202,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 29);
+        assert_eq!(registry.len(), 30);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

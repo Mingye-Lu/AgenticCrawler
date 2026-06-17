@@ -1,3 +1,4 @@
+pub mod accessibility;
 pub mod cancel_subagent;
 pub mod click;
 pub mod click_at;
@@ -10,11 +11,14 @@ pub mod navigate;
 pub mod page_map;
 pub mod read_content;
 pub mod ref_resolve;
+pub mod refresh;
 pub mod screenshot;
+pub mod seq;
 
 pub mod execute_js;
 pub mod hover;
 pub mod list_resources;
+pub mod page_performance;
 pub mod press_key;
 pub mod save_file;
 pub mod scroll;
