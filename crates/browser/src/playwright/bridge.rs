@@ -452,16 +452,18 @@ impl PlaywrightBridge {
         let local_entries: Result<Vec<_>, _> = local_storage
             .into_iter()
             .map(|entry| {
-                serde_json::from_value::<crate::StorageEntry>(entry)
-                    .map_err(|e| BridgeError::Protocol(format!("failed to parse storage entry: {e}")))
+                serde_json::from_value::<crate::StorageEntry>(entry).map_err(|e| {
+                    BridgeError::Protocol(format!("failed to parse storage entry: {e}"))
+                })
             })
             .collect();
 
         let session_entries: Result<Vec<_>, _> = session_storage
             .into_iter()
             .map(|entry| {
-                serde_json::from_value::<crate::StorageEntry>(entry)
-                    .map_err(|e| BridgeError::Protocol(format!("failed to parse storage entry: {e}")))
+                serde_json::from_value::<crate::StorageEntry>(entry).map_err(|e| {
+                    BridgeError::Protocol(format!("failed to parse storage entry: {e}"))
+                })
             })
             .collect();
 

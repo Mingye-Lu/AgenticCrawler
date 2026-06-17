@@ -155,7 +155,7 @@ pub trait BrowserBackend: Debug {
     async fn get_storage(
         &mut self,
         _storage_type: StorageType,
-    ) -> Result<Vec<StorageEntry>, BridgeError> {
+    ) -> Result<(Vec<StorageEntry>, Vec<StorageEntry>), BridgeError> {
         Err(BridgeError::Unsupported(
             "get_storage not implemented for this backend".into(),
         ))

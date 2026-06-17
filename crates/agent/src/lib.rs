@@ -32,9 +32,9 @@ pub use acrawl_core::error::ToolExecutionError;
 pub use acrawl_core::ToolSpec;
 pub use browser::{
     generate_bridge_token, markdown, prune, ws_server, BridgeCommand, BridgeError, BridgeResponse,
-    BrowserBackend, BrowserContext, BrowserState, ExtensionBridge, FetchError, FetchRouter,
-    FetchedPage, PageInfo, PlaywrightBridge, ScreenshotOptions, SharedBridge, WsBridgeError,
-    WsBridgeServer,
+    BrowserBackend, BrowserContext, BrowserState, CookieInfo, ExtensionBridge, FetchError,
+    FetchRouter, FetchedPage, PageInfo, PlaywrightBridge, ScreenshotOptions, SharedBridge,
+    StorageEntry, StorageType, WsBridgeError, WsBridgeServer,
 };
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
@@ -160,6 +160,10 @@ fn extraction_tools() -> Vec<ToolSpec> {
         page_map_tool(),
         read_content_tool(),
         list_resources_tool(),
+        list_network_activity_tool(),
+        inspect_request_tool(),
+        list_page_logs_tool(),
+        inspect_log_tool(),
         screenshot_tool(),
         save_file_tool(),
         page_performance_tool(),
@@ -416,6 +420,131 @@ fn save_file_tool() -> ToolSpec {
             "additionalProperties": false
         }),
         instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename`, `subdir`, and `output_dir`."),
+    }
+}
+
+fn list_page_logs_tool() -> ToolSpec {
+    ToolSpec {
+        name: "list_page_logs",
+        description: "List buffered console logs for the current page with optional level filtering and seq-based temporal filtering. Group by exact message text (default, deduplicated with @logN IDs), source, or level.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "enum": ["all", "error", "warning", "info", "debug"],
+                    "default": "all",
+                    "description": "Log level filter. Use 'all' (default) to include every console message, or narrow to error, warning, info, or debug."
+                },
+                "since": {
+                    "type": ["string", "number"],
+                    "description": "Temporal lower bound: 'all', 'last' (default), or a seq number. Uses half-open interval filtering on seq_at_initiation."
+                },
+                "until": {
+                    "type": ["string", "number"],
+                    "description": "Temporal upper bound: 'now' (default) or a seq number. Uses half-open interval filtering on seq_at_initiation."
+                },
+                "group_by": {
+                    "type": "string",
+                    "enum": ["message", "source", "level"],
+                    "default": "message",
+                    "description": "Grouping dimension. 'message' (default) deduplicates exact text and assigns @logN IDs for inspect_log; 'source' groups by file/source; 'level' groups by severity."
+                }
+            },
+            "additionalProperties": false
+        }),
+        instructions: Some("Call after interactions or refresh to inspect console output captured by the browser. Default group_by='message' deduplicates exact text matches, sorts the most frequent groups first, and assigns @logN IDs that inspect_log accepts. Use level to narrow to errors/warnings, and since/until to scope by seq range using half-open interval semantics on seq_at_initiation."),
+    }
+}
+
+fn list_network_activity_tool() -> ToolSpec {
+    ToolSpec {
+        name: "list_network_activity",
+        description: "List observed network requests buffered during this browser session. Supports temporal filtering by seq window, request-state filters, URL substring filtering, and adjective-based sorting such as slowest/fastest or newest/oldest. Returns stable @rN refs for follow-up inspection with inspect_request.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": ["string", "number"],
+                    "description": "Start of time window. 'all' = entire session, 'last' = since last action (default), or a seq number from a previous action response."
+                },
+                "until": {
+                    "type": ["string", "number"],
+                    "description": "'now' = up to present (default), or a seq number (exclusive upper bound)."
+                },
+                "filter": {
+                    "type": "string",
+                    "enum": ["all", "xhr", "failed", "pending", "aborted"],
+                    "default": "all"
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "URL substring filter"
+                },
+                "sort_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["slowest", "fastest", "largest", "smallest", "newest", "oldest"]
+                    },
+                    "description": "Sort order. First element = primary, rest = tiebreakers. Default: ['oldest']"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20
+                }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request."),
+    }
+}
+
+fn inspect_request_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_request",
+        description: "Inspect a previously listed network request by its @rN id from list_network_activity. Returns the captured request metadata, coarse timing summary, initiator type, and notes about unavailable headers/bodies.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "@rN ID from list_network_activity"
+                },
+                "include_body": {
+                    "type": "boolean",
+                    "default": false
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Pass an @rN id from the most recent list_network_activity call. Headers and bodies are currently unavailable in the observation buffer, so those fields will be null even when include_body=true."),
+    }
+}
+
+fn inspect_log_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_log",
+        description: "Inspect a deduplicated console log group from list_page_logs and return concrete instances with timestamps, stack traces, and source locations.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "@logN ID from list_page_logs when group_by='message'."
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Maximum number of individual log instances to return. Default: 5."
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Use only with @logN IDs returned by list_page_logs when group_by='message'. Returns the shared message plus concrete instances including timestamp_ms, stack, and source file/line/column so you can inspect repeated console errors without dumping every duplicate up front."),
     }
 }
 
@@ -763,16 +892,20 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_30_tools() {
+    fn mvp_tool_specs_contains_expected_38_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 34);
+        assert_eq!(specs.len(), 38);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 34, "tool names should be unique");
+        assert_eq!(names.len(), 38, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
         assert!(names.contains("refresh"));
+        assert!(names.contains("list_network_activity"));
+        assert!(names.contains("inspect_request"));
+        assert!(names.contains("list_page_logs"));
+        assert!(names.contains("inspect_log"));
         assert!(names.contains("get_page_performance"));
         assert!(names.contains("inspect_cookies"));
         assert!(names.contains("inspect_storage"));

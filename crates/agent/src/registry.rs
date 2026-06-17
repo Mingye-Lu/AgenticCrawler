@@ -14,6 +14,8 @@ const ASYNC_TOOLS: &[&str] = &[
     "fill_form",
     "page_map",
     "read_content",
+    "list_network_activity",
+    "inspect_request",
     "screenshot",
     "go_back",
     "refresh",
@@ -25,6 +27,8 @@ const ASYNC_TOOLS: &[&str] = &[
     "press_key",
     "switch_tab",
     "list_resources",
+    "list_page_logs",
+    "inspect_log",
     "save_file",
     "set_device",
     "get_page_performance",
@@ -134,32 +138,47 @@ impl ToolRegistry {
     ) -> Result<ToolEffect, ToolExecutionError> {
         match name {
             "navigate" => crate::tools::navigate::execute(input, browser, crawl_state).await,
-            "click" => crate::tools::click::execute(input, browser).await,
-            "click_at" => crate::tools::click_at::execute(input, browser).await,
-            "fill_form" => crate::tools::fill_form::execute(input, browser).await,
+            "click" => crate::tools::click::execute(input, browser, crawl_state).await,
+            "click_at" => crate::tools::click_at::execute(input, browser, crawl_state).await,
+            "fill_form" => crate::tools::fill_form::execute(input, browser, crawl_state).await,
             "page_map" => crate::tools::page_map::execute(input, browser, crawl_state).await,
             "read_content" => {
                 crate::tools::read_content::execute(input, browser, crawl_state).await
             }
+            "list_network_activity" => {
+                crate::tools::network_activity::list_network_activity(input, browser, crawl_state)
+                    .await
+            }
+            "inspect_request" => {
+                crate::tools::network_activity::inspect_request(input, browser, crawl_state).await
+            }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
-            "go_back" => crate::tools::go_back::execute(input, browser).await,
+            "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
             "refresh" => crate::tools::refresh::execute(input, browser).await,
-            "scroll" => crate::tools::scroll::execute(input, browser).await,
+            "scroll" => crate::tools::scroll::execute(input, browser, crawl_state).await,
             "wait" => crate::tools::wait::execute(input, browser).await,
-            "select_option" => crate::tools::select_option::execute(input, browser).await,
-            "execute_js" => crate::tools::execute_js::execute(input, browser).await,
-            "hover" => crate::tools::hover::execute(input, browser).await,
-            "press_key" => crate::tools::press_key::execute(input, browser).await,
+            "select_option" => {
+                crate::tools::select_option::execute(input, browser, crawl_state).await
+            }
+            "execute_js" => crate::tools::execute_js::execute(input, browser, crawl_state).await,
+            "hover" => crate::tools::hover::execute(input, browser, crawl_state).await,
+            "press_key" => crate::tools::press_key::execute(input, browser, crawl_state).await,
             "switch_tab" => crate::tools::switch_tab::execute(input, browser).await,
             "list_resources" => crate::tools::list_resources::execute(input, browser).await,
+            "list_page_logs" => {
+                crate::tools::page_logs::execute_list_page_logs(input, browser, crawl_state).await
+            }
+            "inspect_log" => crate::tools::page_logs::execute_inspect_log(input, crawl_state).await,
             "save_file" => crate::tools::save_file::execute(input, browser).await,
             "set_device" => crate::tools::set_device::execute(input, browser, crawl_state).await,
             "get_page_performance" => crate::tools::page_performance::execute(input, browser).await,
-            "inspect_cookies" => crate::tools::storage_inspect::inspect_cookies(input, browser).await,
-            "inspect_storage" => crate::tools::storage_inspect::inspect_storage(input, browser).await,
-            "audit_accessibility" => {
-                crate::tools::accessibility::execute(input, browser).await
+            "inspect_cookies" => {
+                crate::tools::storage_inspect::inspect_cookies(input, browser).await
             }
+            "inspect_storage" => {
+                crate::tools::storage_inspect::inspect_storage(input, browser).await
+            }
+            "audit_accessibility" => crate::tools::accessibility::execute(input, browser).await,
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -176,7 +195,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_thirty() {
+    fn new_with_core_tools_registers_all_thirty_eight() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -193,7 +212,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 32);
+        assert_eq!(registry.len(), 38);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -206,7 +225,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 32);
+        assert_eq!(registry.len(), 38);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));
