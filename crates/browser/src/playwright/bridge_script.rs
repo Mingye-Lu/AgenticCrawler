@@ -65,6 +65,202 @@ async function resolveFillSelector(pg, raw) {
   return raw;
 }
 
+const observationBuffers = new Map();
+const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
+let currentSeq = 0;
+let nextRequestId = 0;
+let nextWebSocketId = 0;
+
+function estimateEventBytes(event) {
+  try {
+    return Buffer.byteLength(JSON.stringify(event), 'utf8');
+  } catch (_) {
+    return 0;
+  }
+}
+
+function bufferEvent(pageIndex, event, seqAtInitiation = currentSeq) {
+  event.seq_at_initiation = seqAtInitiation;
+
+  if (!observationBuffers.has(pageIndex)) {
+    observationBuffers.set(pageIndex, { events: [], currentBytes: 0 });
+  }
+  const buf = observationBuffers.get(pageIndex);
+  const eventBytes = estimateEventBytes(event);
+
+  buf.events.push(event);
+  buf.currentBytes += eventBytes;
+
+  while (buf.currentBytes > MAX_OBSERVATION_BYTES && buf.events.length > 0) {
+    const removed = buf.events.shift();
+    buf.currentBytes -= estimateEventBytes(removed);
+  }
+}
+
+function attachObservationListeners(page, pageIndex) {
+  if (page.__acrawlObservationAttached) {
+    return;
+  }
+  page.__acrawlObservationAttached = true;
+
+  const pendingRequests = new WeakMap();
+
+  page.on('request', (req) => {
+    if (req.url().includes('__acrawl_poll')) return;
+
+    const requestId = `req_${pageIndex}_${++nextRequestId}`;
+    const startTime = Date.now();
+    const seqAtInitiation = currentSeq;
+    pendingRequests.set(req, { requestId, startTime, seqAtInitiation });
+
+    const serviceWorker = typeof req.serviceWorker === 'function' ? req.serviceWorker() : null;
+    const initiator = typeof req.initiator === 'function' ? req.initiator() : null;
+
+    bufferEvent(pageIndex, {
+      type: 'NetworkRequest',
+      timestamp_ms: startTime,
+      tab_index: pageIndex,
+      request_id: requestId,
+      url: req.url(),
+      method: req.method(),
+      status: null,
+      state: 'Pending',
+      size_bytes: null,
+      duration_ms: null,
+      request_type: req.resourceType(),
+      from_service_worker: Boolean(serviceWorker),
+      initiator_type: initiator?.type ?? null,
+      reason: null,
+    }, seqAtInitiation);
+  });
+
+  page.on('requestfinished', async (req) => {
+    if (req.url().includes('__acrawl_poll')) return;
+
+    const tracked = pendingRequests.get(req);
+    const response = await req.response().catch(() => null);
+    let sizeBytes = null;
+    if (response) {
+      try {
+        const contentLength = await response.headerValue('content-length');
+        if (contentLength !== null) {
+          const parsed = Number.parseInt(contentLength, 10);
+          sizeBytes = Number.isNaN(parsed) ? null : parsed;
+        }
+      } catch (_) {}
+    }
+
+    bufferEvent(pageIndex, {
+      type: 'NetworkRequest',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      request_id: tracked?.requestId ?? `req_${pageIndex}_${++nextRequestId}`,
+      url: req.url(),
+      method: req.method(),
+      status: response?.status() ?? null,
+      state: 'Completed',
+      size_bytes: sizeBytes,
+      duration_ms: tracked ? Math.max(0, Date.now() - tracked.startTime) : null,
+      request_type: req.resourceType(),
+      from_service_worker: false,
+      initiator_type: null,
+      reason: null,
+    }, tracked?.seqAtInitiation ?? currentSeq);
+
+    pendingRequests.delete(req);
+  });
+
+  page.on('requestfailed', (req) => {
+    if (req.url().includes('__acrawl_poll')) return;
+
+    const tracked = pendingRequests.get(req);
+
+    bufferEvent(pageIndex, {
+      type: 'NetworkRequest',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      request_id: tracked?.requestId ?? `req_${pageIndex}_${++nextRequestId}`,
+      url: req.url(),
+      method: req.method(),
+      status: null,
+      state: 'Failed',
+      size_bytes: null,
+      duration_ms: tracked ? Math.max(0, Date.now() - tracked.startTime) : null,
+      request_type: req.resourceType(),
+      from_service_worker: false,
+      initiator_type: null,
+      reason: req.failure()?.errorText || 'Unknown',
+    }, tracked?.seqAtInitiation ?? currentSeq);
+
+    pendingRequests.delete(req);
+  });
+
+  page.on('console', (msg) => {
+    const location = typeof msg.location === 'function' ? msg.location() : null;
+    bufferEvent(pageIndex, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      level: msg.type(),
+      message_type: 'Console',
+      text: msg.text(),
+      source_url: location?.url || null,
+      source_line: location?.lineNumber ?? null,
+      source_column: location?.columnNumber ?? null,
+      stack: null,
+    });
+  });
+
+  page.on('pageerror', (err) => {
+    bufferEvent(pageIndex, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      level: 'error',
+      message_type: 'Exception',
+      text: err.message,
+      source_url: null,
+      source_line: null,
+      source_column: null,
+      stack: err.stack || null,
+    });
+  });
+
+  page.on('websocket', (ws) => {
+    const wsId = `ws_${pageIndex}_${++nextWebSocketId}`;
+
+    ws.on('framesent', (frame) => {
+      const payload = frame.payload?.toString() || '';
+      bufferEvent(pageIndex, {
+        type: 'WebSocketFrame',
+        timestamp_ms: Date.now(),
+        tab_index: pageIndex,
+        connection_id: wsId,
+        url: ws.url(),
+        direction: 'sent',
+        data: payload,
+        size_bytes: payload.length,
+        connection_status: 'open',
+      });
+    });
+
+    ws.on('framereceived', (frame) => {
+      const payload = frame.payload?.toString() || '';
+      bufferEvent(pageIndex, {
+        type: 'WebSocketFrame',
+        timestamp_ms: Date.now(),
+        tab_index: pageIndex,
+        connection_id: wsId,
+        url: ws.url(),
+        direction: 'received',
+        data: payload,
+        size_bytes: payload.length,
+        connection_status: 'open',
+      });
+    });
+  });
+}
+
 async function bootstrap() {
   let launch;
   try {
@@ -115,9 +311,11 @@ async function bootstrap() {
   `);
   let page = await context.newPage();
   const pages = [page];
+  attachObservationListeners(page, 0);
   context.on('page', (p) => {
     if (!pages.includes(p)) {
       pages.push(p);
+      attachObservationListeners(p, pages.length - 1);
     }
   });
   process.stdout.write(JSON.stringify({ event: 'bridge_bootstrap', ok: true }) + '\n');
@@ -208,6 +406,7 @@ async function bootstrap() {
           pages.push(newPage);
         }
         const pageIndex = pages.indexOf(newPage);
+        attachObservationListeners(newPage, pageIndex);
         page = newPage;
         let currentUrl = newPage.url();
         if (command.url) {
@@ -245,6 +444,7 @@ async function bootstrap() {
         const targetPage = pages[pageIndex];
         await targetPage.close();
         pages[pageIndex] = null;
+        observationBuffers.delete(pageIndex);
         if (page === targetPage) {
           const fallbackPage = pages.find((entry) => entry);
           if (fallbackPage) {
@@ -937,11 +1137,14 @@ async function bootstrap() {
         const oldContext = context;
         context = newContext;
         page = newPage;
+        observationBuffers.clear();
         pages.length = 0;
         pages.push(page);
+        attachObservationListeners(page, 0);
         context.on('page', (p) => {
           if (!pages.includes(p)) {
             pages.push(p);
+            attachObservationListeners(p, pages.length - 1);
           }
         });
         await oldContext.close().catch(() => {});
@@ -965,6 +1168,41 @@ async function bootstrap() {
           error: { kind: 'set_device_failed', message: String(error) }
         }) + '\n');
       }
+      continue;
+    }
+
+    if (command.action === 'poll_observations') {
+      try {
+        const fallbackIndex = pages.indexOf(page);
+        const tabIndex = typeof command.tab_index === 'number' ? command.tab_index : fallbackIndex;
+        const buf = observationBuffers.get(tabIndex);
+        const events = buf ? [...buf.events] : [];
+        if (buf) {
+          buf.events = [];
+          buf.currentBytes = 0;
+        }
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { events }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'poll_observations_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'set_seq') {
+      currentSeq = typeof command.seq === 'number' ? command.seq : 0;
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: {}
+      }) + '\n');
       continue;
     }
 

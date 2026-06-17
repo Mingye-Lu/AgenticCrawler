@@ -1,7 +1,66 @@
 use crate::browser_backend::{BrowserBackend, ScreenshotOptions};
+use crate::{ConsoleMessageEvent, NetworkRequestEvent, ObservationEvent, WebSocketFrameEvent};
 
 use super::bridge::PlaywrightBridge;
 use super::types::{BridgeError, BrowserState, PageInfo};
+
+impl PlaywrightBridge {
+    pub async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
+        let result = self
+            .send_raw_command(&serde_json::json!({
+                "action": "poll_observations",
+            }))
+            .await?;
+        let events = result
+            .get("events")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        events
+            .into_iter()
+            .map(|event| {
+                let event_type = event
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        BridgeError::Protocol("observation event missing type".to_string())
+                    })?;
+
+                match event_type {
+                    "NetworkRequest" => serde_json::from_value::<NetworkRequestEvent>(event)
+                        .map(ObservationEvent::NetworkRequest)
+                        .map_err(|error| {
+                            BridgeError::Protocol(format!(
+                                "failed to parse network observation event: {error}"
+                            ))
+                        }),
+                    "ConsoleMessage" => serde_json::from_value::<ConsoleMessageEvent>(event)
+                        .map(ObservationEvent::ConsoleMessage)
+                        .map_err(|error| {
+                            BridgeError::Protocol(format!(
+                                "failed to parse console observation event: {error}"
+                            ))
+                        }),
+                    "WebSocketFrame" => serde_json::from_value::<WebSocketFrameEvent>(event)
+                        .map(ObservationEvent::WebSocketFrame)
+                        .map_err(|error| {
+                            BridgeError::Protocol(format!(
+                                "failed to parse websocket observation event: {error}"
+                            ))
+                        }),
+                    other => Err(BridgeError::Protocol(format!(
+                        "unsupported observation event type: {other}"
+                    ))),
+                }
+            })
+            .collect()
+    }
+
+    pub async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError> {
+        self.set_seq_raw(seq).await
+    }
+}
 
 #[async_trait::async_trait]
 impl BrowserBackend for PlaywrightBridge {

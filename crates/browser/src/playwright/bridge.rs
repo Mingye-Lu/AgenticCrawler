@@ -380,6 +380,32 @@ impl PlaywrightBridge {
         self.send_raw_command(&cmd).await
     }
 
+    pub async fn poll_observations_raw(
+        &mut self,
+        tab_index: usize,
+    ) -> Result<Vec<serde_json::Value>, BridgeError> {
+        let result = self
+            .send_raw_command(&serde_json::json!({
+                "action": "poll_observations",
+                "tab_index": tab_index,
+            }))
+            .await?;
+        Ok(result
+            .get("events")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    pub async fn set_seq_raw(&mut self, seq: u64) -> Result<(), BridgeError> {
+        self.send_raw_command(&serde_json::json!({
+            "action": "set_seq",
+            "seq": seq,
+        }))
+        .await?;
+        Ok(())
+    }
+
     pub async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
         let cmd = serde_json::json!({ "action": "list_resources" });
         self.send_raw_command(&cmd).await
