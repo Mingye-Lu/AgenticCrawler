@@ -357,6 +357,7 @@ Every `navigate` call goes through a two-tier fetch router:
    - JS framework markers: `__next_data__`, `__nuxt`, `__vue`, `ng-app`, `_react`, `data-reactroot`
    - Auth redirects: URLs containing `/login`, `/signin`, `/auth`, `/oauth`, `accounts.google.com`
    - Short response body (< 500 chars) with a `<noscript>` tag
+   - Empty SPA shell detection (multi-signal scoring): framework asset paths without embedded data (`/_next/static/`, `/_nuxt/`, `ng-version=`), empty mount-point divs, noscript "enable JavaScript" messages, bundler hash patterns, and structural signals (sparse visible text with no semantic elements). Pages with embedded data blobs (`__NEXT_DATA__`, `window.__NUXT__`, `data-reactroot`) are explicitly excluded — their content is already server-rendered.
 
 When `--no-headless` / `--headed` is set, all fetches go directly through the browser.
 

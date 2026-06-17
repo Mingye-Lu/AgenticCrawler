@@ -88,6 +88,162 @@ const AUTH_REDIRECT_PATTERNS: &[&str] = &[
 
 const MIN_BODY_LENGTH: usize = 500;
 
+/// Minimum HTML size before we bother running structural analysis.
+const MIN_HTML_FOR_SPA_CHECK: usize = 100;
+
+/// Minimum visible text length — pages below this threshold get a structural
+/// score boost. Also used by the Playwright bridge script's hydration wait.
+const MIN_VISIBLE_CHARS_THRESHOLD: usize = 200;
+
+/// Score threshold for SPA shell detection. Signals are accumulated and
+/// compared against this value.
+const SPA_SHELL_SCORE_THRESHOLD: f32 = 0.60;
+
+/// Detect whether an HTTP response body looks like an empty SPA/CSR shell that
+/// needs browser rendering to produce meaningful content.
+///
+/// Uses multi-signal scoring rather than a single binary check:
+/// - **Negative signals** (data already present → return false immediately):
+///   `__NEXT_DATA__`, `window.__NUXT__`, `data-server-rendered`, `data-reactroot`
+/// - **High-weight signals**: framework asset paths without embedded data,
+///   Angular empty root, noscript "enable JavaScript" messages
+/// - **Medium-weight signals**: empty mount-point divs, Vite/CRA bundle hashes
+/// - **Low-weight structural signals**: sparse visible text, absence of semantic
+///   HTML elements (`<h1>`, `<article>`, `<main>`, `<p>`)
+///
+/// Escalates to browser only when accumulated score ≥ 0.60, which requires
+/// at least one framework/structural signal beyond just "low text content".
+fn looks_like_empty_spa_shell(body: &str) -> bool {
+    if body.len() < MIN_HTML_FOR_SPA_CHECK {
+        return false;
+    }
+
+    let lower = body.to_ascii_lowercase();
+
+    // ── Negative signals: data already embedded, no browser needed ──
+    // These indicate SSR/SSG worked — content is in the HTML already.
+    if lower.contains("__next_data__")
+        || lower.contains("window.__nuxt__")
+        || lower.contains("window.__nuxt_data__")
+        || lower.contains("window.__remixcontext")
+        || lower.contains("data-server-rendered=\"true\"")
+        || lower.contains("data-reactroot")
+        || lower.contains("data-reactid")
+    {
+        return false;
+    }
+
+    let mut score: f32 = 0.0;
+
+    // ── High: framework asset paths WITHOUT embedded data (already excluded above) ──
+    if lower.contains("/_next/static/") {
+        score += 0.70;
+    }
+    if lower.contains("/_nuxt/") {
+        score += 0.65;
+    }
+    if lower.contains("ng-version=") {
+        score += 0.80;
+    }
+    if lower.contains("data-sveltekit") || lower.contains("__sveltekit") {
+        score += 0.55;
+    }
+
+    // ── High: noscript "enable JavaScript" messages (Vue CLI / CRA template) ──
+    if lower.contains("enable javascript")
+        || lower.contains("doesn't work properly without javascript")
+        || lower.contains("requires javascript")
+    {
+        score += 0.55;
+    }
+
+    // ── Medium: empty mount-point elements (framework root with no children) ──
+    // Match any element type: <div id="root"></div>, <section id="root"></section>, etc.
+    if lower.contains("id=\"root\"></")
+        || lower.contains("id=\"app\"></")
+        || lower.contains("id=\"__next\"></")
+        || lower.contains("id=\"__nuxt\"></")
+        || lower.contains("<app-root></app-root>")
+        || lower.contains("<app-root />")
+    {
+        score += 0.45;
+    }
+
+    // ── Medium: bundler hash patterns (Vite/CRA output) ──
+    if has_bundler_hash_pattern(&lower) {
+        score += 0.30;
+    }
+
+    // ── Low-medium: "bundle" keyword in script src (Webpack/Parcel without hash) ──
+    if lower.contains("src=\"") && lower.contains("bundle") && lower.contains(".js") {
+        score += 0.20;
+    }
+
+    // ── Low: structural signals (modifiers, not sufficient alone) ──
+    let visible_len = extract_text(body).trim().len();
+    if visible_len < MIN_VISIBLE_CHARS_THRESHOLD {
+        score += 0.35;
+    }
+
+    let has_semantic = lower.contains("<h1")
+        || lower.contains("<article")
+        || lower.contains("<main>")
+        || lower.contains("<p>");
+    if !has_semantic {
+        score += 0.20;
+    }
+
+    score >= SPA_SHELL_SCORE_THRESHOLD
+}
+
+/// Check for Vite/Rollup/Webpack hash patterns in script src attributes.
+/// These patterns (`index-XXXXXXXX.js`, `main.XXXXXXXX.chunk.js`) are
+/// characteristic of bundled SPA builds.
+#[allow(clippy::case_sensitive_file_extension_comparisons)] // input is pre-lowercased
+fn has_bundler_hash_pattern(lower_html: &str) -> bool {
+    for segment in lower_html.split("src=\"") {
+        if let Some(path) = segment.split('"').next() {
+            if (path.ends_with(".js") || path.ends_with(".mjs")) && has_hash_segment(path) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Returns true if the path contains a segment of 8+ alphanumeric characters
+/// (with at least 2 digits) immediately preceded by `-` or `.`.
+/// Matches Vite (base62), Webpack/CRA (hex) hash patterns.
+fn has_hash_segment(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == b'-' || bytes[i] == b'.' {
+            let start = i + 1;
+            let mut j = start;
+            let mut digit_count = 0u32;
+            while j < len && bytes[j].is_ascii_alphanumeric() {
+                if bytes[j].is_ascii_digit() {
+                    digit_count += 1;
+                }
+                j += 1;
+            }
+            let seg_len = j - start;
+            // 8+ alphanumeric chars with at least 2 digits distinguishes
+            // hashes (e.g. "d9lvttp6") from English words (e.g. "loader")
+            if seg_len >= 8 && digit_count >= 2 && j < len && (bytes[j] == b'.' || bytes[j] == b'/')
+            {
+                return true;
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// Hard cap on a single HTTP response body. A page that is much larger than
 /// this is almost never useful to the agent (and is almost certainly a binary
 /// dump, generated content, or an attack) — and without a cap, reqwest's
@@ -423,6 +579,11 @@ impl FetchRouter {
         match http_result {
             Ok(resp) => {
                 if needs_escalation(resp.status, &resp.body) {
+                    if let Some(ctx) = browser {
+                        return Self::fetch_via_browser(ctx, url).await;
+                    }
+                }
+                if looks_like_empty_spa_shell(&resp.body) {
                     if let Some(ctx) = browser {
                         return Self::fetch_via_browser(ctx, url).await;
                     }
@@ -840,5 +1001,168 @@ mod tests {
         };
         // Compile-time check: the markdown field exists and is a String
         let _: &String = &page.markdown;
+    }
+
+    #[test]
+    fn spa_shell_detected_next_js_csr() {
+        // Next.js CSR: has /_next/static/ assets but no __NEXT_DATA__ blob
+        let body = r#"<html><head></head><body>
+            <div id="__next"></div>
+            <script src="/_next/static/chunks/main-a1b2c3d4.js"></script>
+            <script src="/_next/static/chunks/pages/_app-e5f6a7b8.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_next_js_ssr() {
+        // Next.js SSR: has __NEXT_DATA__ → data is embedded, no browser needed
+        let body = r#"<html><head></head><body>
+            <div id="__next"><h1>Server Rendered Page</h1><p>Content here</p></div>
+            <script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>
+            <script src="/_next/static/chunks/main-a1b2c3d4.js"></script>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_angular_empty_root() {
+        let body = r#"<html><head></head><body>
+            <app-root ng-version="17.3.0"></app-root>
+            <script src="/main.a1b2c3d4e5f6.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_vue_cli_noscript() {
+        let body = r#"<html><head></head><body>
+            <noscript><strong>We're sorry but this app doesn't work properly without JavaScript enabled.</strong></noscript>
+            <div id="app"></div>
+            <script src="/js/app.a1b2c3d4.js"></script>
+            <script src="/js/chunk-vendors.e5f6a7b8.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_empty_root_with_vite_bundle() {
+        // Generic Vite SPA: empty #root + hashed bundle
+        let body = r#"<html><head></head><body>
+            <div id="root"></div>
+            <script type="module" src="/assets/index-D9LVtTP6.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_contentful_page() {
+        let mut body = String::from("<html><body><main>");
+        for _ in 0..50 {
+            body.push_str("<p>This is a paragraph with meaningful content for users.</p>");
+        }
+        body.push_str("</main></body></html>");
+        assert!(!looks_like_empty_spa_shell(&body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_nuxt_ssr() {
+        // Nuxt SSR: has window.__NUXT__ → data present
+        let body = r#"<html><head></head><body>
+            <div id="__nuxt"><div id="__layout"><h1>Hello</h1></div></div>
+            <script>window.__NUXT__={data:{},state:{}}</script>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_react_ssr() {
+        // React SSR: has data-reactroot → content was server-rendered
+        let body = r#"<html><head></head><body>
+            <div id="root" data-reactroot=""><h1>Hello</h1><p>Content</p></div>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_skips_small_pages() {
+        let body = "<html><body>OK</body></html>";
+        assert!(body.len() < MIN_HTML_FOR_SPA_CHECK);
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_sparse_but_legitimate_page() {
+        // A sparse login page: has <p> and <h1>, no framework signals
+        let body = r#"<html><head><title>Login</title></head><body>
+            <h1>Sign In</h1>
+            <form action="/login" method="post">
+                <input type="email" name="email" />
+                <input type="password" name="pass" />
+                <button type="submit">Log in</button>
+            </form>
+            <p>Forgot your password?</p>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_low_text_alone_not_sufficient() {
+        // Large HTML with scripts but no framework signals — should NOT trigger
+        // because low text alone (score 0.35) is below the 0.60 threshold
+        let mut body = String::from("<html><body><div>");
+        for _ in 0..200 {
+            body.push_str("<script>var x = 1;</script>");
+        }
+        body.push_str("<p>tiny</p></div></body></html>");
+        assert!(body.len() > MIN_HTML_FOR_SPA_CHECK);
+        assert!(!looks_like_empty_spa_shell(&body));
+    }
+
+    #[test]
+    fn bundler_hash_detection_vite() {
+        assert!(has_hash_segment("/assets/index-a1b2c3d4.js"));
+        assert!(has_hash_segment("/assets/vendor-e5f6a7b8c9d0.js"));
+    }
+
+    #[test]
+    fn bundler_hash_detection_no_false_positive() {
+        assert!(!has_hash_segment("/js/app.js"));
+        assert!(!has_hash_segment("/main.js"));
+        assert!(!has_hash_segment("/assets/short-abc.js"));
+    }
+
+    #[test]
+    fn spa_shell_detected_gitee_vite_empty_body() {
+        // Gitee search: Vite SPA with bundler hash + completely empty body
+        let body = r#"<!DOCTYPE html><html><head>
+            <title>Gitee Search</title>
+            <link rel="stylesheet" href="/assets/index-abc12345.css">
+        </head><body data-bs-theme="light">
+            <script type="module" crossorigin src="/assets/index-8b837856.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_todomvc_section_mount() {
+        // TodoMVC React: <section> mount-point (not <div>) + bundle.js
+        let body = r#"<!DOCTYPE html><html><head>
+            <title>TodoMVC</title>
+        </head><body>
+            <section class="todoapp" id="root"></section>
+            <script defer="defer" src="app.bundle.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_small_content_page_with_paragraphs() {
+        // Small page with real content — has <p> tags, should NOT trigger
+        let body = "<html><body>\n\
+            <h1>404 Not Found</h1>\n\
+            <p>The page you requested could not be found.</p>\n\
+        </body></html>";
+        assert!(!looks_like_empty_spa_shell(body));
     }
 }

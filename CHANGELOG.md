@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Empty SPA shell detection** — replaced the naive "large HTML + sparse text" heuristic with a multi-signal scoring function that accumulates confidence from framework asset paths (`/_next/static/`, `/_nuxt/`, `ng-version=`), empty mount-point divs, noscript "enable JavaScript" messages, and bundler hash patterns. Pages with embedded data blobs (`__NEXT_DATA__`, `window.__NUXT__`, `data-reactroot`) now correctly skip browser escalation since their content is already server-rendered. Eliminates false positives on legitimate sparse pages (login forms, image-heavy landing pages).
+- **SPA hydration wait** — after browser navigation, polls for visible text content (up to 3s in 300ms intervals) before capturing, so async-rendered SPAs like Gitee search have time to hydrate.
+
 ## [0.10.0] - 2026-06-11
 
 ### Added
