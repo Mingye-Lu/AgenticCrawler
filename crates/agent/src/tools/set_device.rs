@@ -341,7 +341,6 @@ pub async fn execute(
         .map_err(|error| ToolExecutionError::new(error.to_string()))?;
 
     crawl_state.action_cache = None;
-    browser.clear_page_snapshot();
     crawl_state.current_device = Some(device_name.clone());
 
     let page_state = super::feedback::post_action_page_state(browser).await;
