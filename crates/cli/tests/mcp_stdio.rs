@@ -160,7 +160,7 @@ fn stdio_server_handles_initialize_list_and_tool_call() {
     assert!(names.contains(&"run_goal"));
     assert!(!names.contains(&"fork"));
     assert!(!names.contains(&"list_builtin_tools"));
-    assert_eq!(names.len(), 35);
+    assert_eq!(names.len(), 38);
 
     server.send(&json!({
         "jsonrpc": "2.0",
@@ -354,7 +354,7 @@ fn stdio_server_supports_line_delimited_jsonrpc() {
     assert_eq!(response["id"], 21);
     assert!(names.contains(&"navigate"));
     assert!(names.contains(&"run_goal"));
-    assert_eq!(names.len(), 35);
+    assert_eq!(names.len(), 38);
 
     server.shutdown();
 }
