@@ -173,6 +173,7 @@ fn extraction_tools() -> Vec<ToolSpec> {
         inspect_storage_tool(),
         measure_coverage_tool(),
         audit_accessibility_tool(),
+        intercept_network_tool(),
     ]
 }
 
@@ -965,6 +966,44 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
     specs
 }
 
+fn intercept_network_tool() -> ToolSpec {
+    ToolSpec {
+        name: "intercept_network",
+        description: "Manage network interception rules. Block or mock requests matching URL glob patterns. Rules are additive — each call adds a rule. Use refresh() after adding rules to replay the page load with rules active.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["block", "mock_response", "remove_rule", "clear_all"],
+                    "description": "block: abort matching requests. mock_response: return synthetic response. remove_rule: remove by rule_id. clear_all: remove all rules."
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "URL glob pattern (e.g. '*.ads.com/*', '*api/v2*'). Required for block/mock_response."
+                },
+                "mock": {
+                    "type": "object",
+                    "description": "Synthetic response for mock_response action.",
+                    "properties": {
+                        "status": { "type": "integer", "default": 200 },
+                        "headers": { "type": "object" },
+                        "body": { "type": "string" },
+                        "content_type": { "type": "string", "default": "application/json" }
+                    }
+                },
+                "rule_id": {
+                    "type": "string",
+                    "description": "Rule ID to remove (for remove_rule action)."
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Add network interception rules before navigating, or set rules and use refresh() to replay. Rules accumulate — use clear_all to remove all. Blocked requests appear in list_network_activity with state 'aborted'."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -972,12 +1011,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_38_tools() {
+    fn mvp_tool_specs_contains_expected_42_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 41);
+        assert_eq!(specs.len(), 42);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 41, "tool names should be unique");
+        assert_eq!(names.len(), 42, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));

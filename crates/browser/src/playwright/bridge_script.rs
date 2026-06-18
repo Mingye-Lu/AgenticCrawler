@@ -70,6 +70,7 @@ const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
 let currentSeq = 0;
 let nextRequestId = 0;
 let nextWebSocketId = 0;
+let interceptRulesMap = {};
 
 function estimateEventBytes(event) {
   try {
@@ -1320,6 +1321,43 @@ async function bootstrap() {
         ok: true,
         result: { local_storage: localStorage, session_storage: sessionStorage }
       }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'add_intercept_rule') {
+      const { rule_id, pattern, action_type, mock } = command;
+      const page = pages[currentPageIndex];
+      interceptRulesMap[rule_id] = { pattern, action_type, mock, hits: 0 };
+      await page.route(pattern, async (route) => {
+        if (!interceptRulesMap[rule_id]) { await route.continue(); return; }
+        interceptRulesMap[rule_id].hits++;
+        if (action_type === 'Block') {
+          await route.abort();
+        } else if (action_type === 'MockResponse' && mock) {
+          await route.fulfill({
+            status: mock.status || 200,
+            contentType: mock.content_type || 'application/json',
+            headers: mock.headers || {},
+            body: mock.body || '',
+          });
+        } else {
+          await route.continue();
+        }
+      });
+      process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: {} }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'remove_intercept_rule') {
+      delete interceptRulesMap[command.rule_id];
+      process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: {} }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'clear_intercept_rules') {
+      interceptRulesMap = {};
+      await pages[currentPageIndex].unrouteAll();
+      process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: {} }) + '\n');
       continue;
     }
 

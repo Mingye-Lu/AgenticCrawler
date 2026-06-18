@@ -8,6 +8,7 @@ pub mod fill_form;
 pub mod fork;
 pub mod go_back;
 pub mod html_diff;
+pub mod intercept_network;
 pub mod navigate;
 pub mod network_activity;
 pub mod page_map;

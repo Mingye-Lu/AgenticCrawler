@@ -7,7 +7,7 @@ use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: [&str; 30] = [
+const ASYNC_TOOLS: [&str; 31] = [
     "navigate",
     "click",
     "click_at",
@@ -38,6 +38,7 @@ const ASYNC_TOOLS: [&str; 30] = [
     "inspect_storage",
     "measure_coverage",
     "audit_accessibility",
+    "intercept_network",
 ];
 
 #[derive(Default)]
@@ -195,6 +196,9 @@ impl ToolRegistry {
             }
             "measure_coverage" => crate::tools::coverage::execute(input, browser).await,
             "audit_accessibility" => crate::tools::accessibility::execute(input, browser).await,
+            "intercept_network" => {
+                crate::tools::intercept_network::execute(input, browser, crawl_state).await
+            }
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -211,7 +215,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_thirty_eight() {
+    fn new_with_core_tools_registers_all_thirty_nine() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -228,7 +232,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 41);
+        assert_eq!(registry.len(), 42);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -241,7 +245,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 41);
+        assert_eq!(registry.len(), 42);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

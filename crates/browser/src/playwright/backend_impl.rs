@@ -203,4 +203,16 @@ impl BrowserBackend for PlaywrightBridge {
     async fn stop_coverage(&mut self) -> Result<crate::CoverageData, BridgeError> {
         PlaywrightBridge::stop_coverage(self).await
     }
+
+    async fn add_intercept_rule(&mut self, rule: crate::InterceptRule) -> Result<String, BridgeError> {
+        PlaywrightBridge::add_intercept_rule(self, rule).await
+    }
+
+    async fn remove_intercept_rule(&mut self, rule_id: &str) -> Result<(), BridgeError> {
+        PlaywrightBridge::remove_intercept_rule(self, rule_id).await
+    }
+
+    async fn clear_intercept_rules(&mut self) -> Result<(), BridgeError> {
+        PlaywrightBridge::clear_intercept_rules(self).await
+    }
 }

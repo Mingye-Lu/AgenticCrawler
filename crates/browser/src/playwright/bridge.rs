@@ -693,6 +693,44 @@ impl PlaywrightBridge {
         Ok(response)
     }
 
+    pub async fn add_intercept_rule(
+        &mut self,
+        rule: crate::InterceptRule,
+    ) -> Result<String, BridgeError> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let rule_id = format!(
+            "rule_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos()
+        );
+        self.send_raw_command(&serde_json::json!({
+            "action": "add_intercept_rule",
+            "rule_id": rule_id,
+            "pattern": rule.pattern,
+            "action_type": format!("{:?}", rule.action),
+            "mock": rule.mock,
+        }))
+        .await?;
+        Ok(rule_id)
+    }
+
+    pub async fn remove_intercept_rule(&mut self, rule_id: &str) -> Result<(), BridgeError> {
+        self.send_raw_command(&serde_json::json!({
+            "action": "remove_intercept_rule",
+            "rule_id": rule_id,
+        }))
+        .await?;
+        Ok(())
+    }
+
+    pub async fn clear_intercept_rules(&mut self) -> Result<(), BridgeError> {
+        self.send_raw_command(&serde_json::json!({"action": "clear_intercept_rules"}))
+            .await?;
+        Ok(())
+    }
+
     async fn read_bridge_line(&mut self) -> Result<String, BridgeError> {
         let mut line = String::new();
         let bytes_read = self.stdout.read_line(&mut line).await?;

@@ -47,6 +47,8 @@ pub struct CrawlState {
     /// Global monotonic sequence counter shared across forked agents.
     /// Used by action tools to tag responses for temporal observation filtering.
     pub seq_counter: Arc<browser::SeqCounter>,
+    /// Active network interception rules: (rule_id, pattern, action_name)
+    pub intercept_rules: Vec<(String, String, String)>,
 }
 
 impl CrawlState {
@@ -74,6 +76,7 @@ impl CrawlState {
             current_device: None,
             has_active_subagents: false,
             seq_counter: Arc::clone(&self.seq_counter),
+            intercept_rules: Vec::new(),
         }
     }
 
