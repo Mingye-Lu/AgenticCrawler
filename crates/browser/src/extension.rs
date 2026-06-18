@@ -570,7 +570,10 @@ impl BrowserBackend for ExtensionBridge {
         })
     }
 
-    async fn add_intercept_rule(&mut self, rule: crate::InterceptRule) -> Result<String, BridgeError> {
+    async fn add_intercept_rule(
+        &mut self,
+        rule: crate::InterceptRule,
+    ) -> Result<String, BridgeError> {
         use std::time::{SystemTime, UNIX_EPOCH};
         let rule_id = format!(
             "rule_{}",

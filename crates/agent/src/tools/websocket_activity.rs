@@ -157,7 +157,7 @@ pub async fn list_websocket_activity(
             _ => entry.received_count += 1,
         }
         entry.total_bytes = entry.total_bytes.saturating_add(event.size_bytes);
-        entry.status = event.connection_status.clone();
+        entry.status.clone_from(&event.connection_status);
         if event.timestamp_ms < entry.first_timestamp_ms {
             entry.first_timestamp_ms = event.timestamp_ms;
         }
@@ -225,7 +225,7 @@ pub async fn list_websocket_activity(
     })))
 }
 
-pub async fn inspect_websocket(
+pub fn inspect_websocket(
     input: &Value,
     _browser: &mut BrowserContext,
     crawl_state: &mut CrawlState,
@@ -294,8 +294,8 @@ pub async fn inspect_websocket(
     let total_matching = filtered.len();
 
     match sort_by {
-        SortKey::Newest => filtered.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms)),
-        SortKey::Oldest => filtered.sort_by(|a, b| a.timestamp_ms.cmp(&b.timestamp_ms)),
+        SortKey::Newest => filtered.sort_by_key(|b| std::cmp::Reverse(b.timestamp_ms)),
+        SortKey::Oldest => filtered.sort_by_key(|a| a.timestamp_ms),
     }
 
     let truncated = filtered.len() > limit;
@@ -346,6 +346,7 @@ pub struct WebSocketConnectionRef {
 mod tests {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     fn ws_event(
         connection_id: &str,
         url: &str,

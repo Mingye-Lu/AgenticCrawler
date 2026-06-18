@@ -178,6 +178,7 @@ pub async fn inspect_storage(
         }));
     }
 
+    #[allow(clippy::cast_precision_loss)]
     let total_size_kb = total_size_bytes as f64 / 1024.0;
 
     let result = json!({

@@ -142,7 +142,11 @@ fn parse_list_input(input: &Value) -> Result<ListInput, CrawlError> {
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_millis() as u64)
+        .map_or(0, |duration| {
+            #[allow(clippy::cast_possible_truncation)]
+            let ms = duration.as_millis() as u64;
+            ms
+        })
 }
 
 fn normalize_request_type(request_type: &str) -> String {
@@ -270,7 +274,11 @@ fn build_request_row(event: &NetworkRequestEvent, id: &str, now_ms: u64) -> Valu
         "url": event.url,
         "method": event.method,
         "status": event.status,
-        "size_kb": event.size_bytes.map(|value| ((value as f64) / 1024.0).round() as u64),
+        "size_kb": event.size_bytes.map(|value| {
+            #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let kb = ((value as f64) / 1024.0).round() as u64;
+            kb
+        }),
         "duration_ms": event.duration_ms,
         "type": normalize_request_type(&event.request_type),
         "state": state_name(event.state),
@@ -334,6 +342,13 @@ pub async fn list_network_activity(
         }
     }
 
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let total_transfer_kb = ((total_transfer_bytes as f64) / 1024.0).round() as u64;
+
     Ok(ToolEffect::reply_json(&json!({
         "summary": {
             "total": all_matching.len(),
@@ -341,7 +356,7 @@ pub async fn list_network_activity(
             "failed": failed,
             "pending": pending,
             "aborted": aborted,
-            "total_transfer_kb": ((total_transfer_bytes as f64) / 1024.0).round() as u64,
+            "total_transfer_kb": total_transfer_kb,
         },
         "by_type": build_by_type(&all_matching),
         "requests": requests,
@@ -349,7 +364,7 @@ pub async fn list_network_activity(
     })))
 }
 
-pub async fn inspect_request(
+pub fn inspect_request(
     input: &Value,
     _browser: &mut BrowserContext,
     crawl_state: &mut CrawlState,
@@ -368,16 +383,9 @@ pub async fn inspect_request(
         .get(id)
         .ok_or_else(|| ToolExecutionError::new(format!("unknown request id: `{id}`")))?;
 
-    let request_body = if include_body {
-        Value::Null
-    } else {
-        Value::Null
-    };
-    let response_body = if include_body {
-        Value::Null
-    } else {
-        Value::Null
-    };
+    let request_body = Value::Null;
+    let response_body = Value::Null;
+    let _ = include_body; // Bodies not yet captured in observation buffer
 
     Ok(ToolEffect::reply_json(&json!({
         "url": event.url,

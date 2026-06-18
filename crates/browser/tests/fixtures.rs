@@ -46,6 +46,7 @@ impl TestServer {
         }
     }
 
+    #[must_use]
     pub fn url(&self, path: &str) -> String {
         format!("{}{path}", self.base_url)
     }
@@ -61,7 +62,7 @@ impl Drop for TestServer {
 
 async fn network_basic_handler() -> Html<String> {
     Html(
-        r#"<!DOCTYPE html>
+        r"<!DOCTYPE html>
 <html><body>
 <script>
 // Makes 3 known fetch calls: /api/a (200), /api/b (200), /api/404 (404)
@@ -71,14 +72,14 @@ Promise.all([
   fetch('/api/404')
 ]).catch(() => {});
 </script>
-</body></html>"#
+</body></html>"
             .to_string(),
     )
 }
 
 async fn console_basic_handler() -> Html<String> {
     Html(
-        r#"<!DOCTYPE html>
+        r"<!DOCTYPE html>
 <html><body>
 <script>
 console.log('hello from fixture');
@@ -87,7 +88,7 @@ console.error('error from fixture');
 // Also throw an error
 setTimeout(() => { throw new Error('fixture exception'); }, 100);
 </script>
-</body></html>"#
+</body></html>"
             .to_string(),
     )
 }
@@ -112,14 +113,14 @@ async fn cookies_basic_handler() -> (HeaderMap, Html<String>) {
 
 async fn storage_basic_handler() -> Html<String> {
     Html(
-        r#"<!DOCTYPE html>
+        r"<!DOCTYPE html>
 <html><body>
 <script>
 localStorage.setItem('fixture_key_1', 'fixture_value_1');
 localStorage.setItem('fixture_key_2', 'fixture_value_2');
 sessionStorage.setItem('session_key_1', 'session_value_1');
 </script>
-</body></html>"#
+</body></html>"
             .to_string(),
     )
 }

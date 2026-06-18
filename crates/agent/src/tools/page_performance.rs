@@ -13,7 +13,7 @@ pub async fn execute(
     browser: &mut BrowserContext,
 ) -> Result<ToolEffect, ToolExecutionError> {
     // Get navigation timing
-    let nav_script = r#"
+    let nav_script = r"
 JSON.stringify(performance.getEntriesByType('navigation').map(function(e) {
   return {
     ttfb_ms: Math.round(e.responseStart - e.requestStart),
@@ -24,7 +24,7 @@ JSON.stringify(performance.getEntriesByType('navigation').map(function(e) {
     decoded_size_bytes: e.decodedBodySize || 0
   };
 })[0] || null)
-"#;
+";
 
     let nav_result = browser
         .acquire_bridge()
@@ -37,7 +37,7 @@ JSON.stringify(performance.getEntriesByType('navigation').map(function(e) {
     let navigation = nav_result.get("value").cloned().unwrap_or(Value::Null);
 
     // Get resource timing
-    let res_script = r#"
+    let res_script = r"
 JSON.stringify(performance.getEntriesByType('resource').map(function(e) {
   return {
     url: e.name,
@@ -47,7 +47,7 @@ JSON.stringify(performance.getEntriesByType('resource').map(function(e) {
     duration_ms: Math.round(e.duration)
   };
 }).sort(function(a, b) { return b.transfer_size_kb - a.transfer_size_kb; }).slice(0, 20))
-"#;
+";
 
     let res_result = browser
         .acquire_bridge()
@@ -72,7 +72,7 @@ JSON.stringify(performance.getEntriesByType('resource').map(function(e) {
         total_requests = res_array.len();
 
         for res in res_array {
-            if let Some(size_kb) = res.get("transfer_size_kb").and_then(|v| v.as_f64()) {
+            if let Some(size_kb) = res.get("transfer_size_kb").and_then(Value::as_f64) {
                 total_transfer_kb += size_kb;
 
                 if largest.is_none() || size_kb > largest.as_ref().unwrap().1 {
@@ -82,7 +82,7 @@ JSON.stringify(performance.getEntriesByType('resource').map(function(e) {
                 }
             }
 
-            if let Some(duration_ms) = res.get("duration_ms").and_then(|v| v.as_i64()) {
+            if let Some(duration_ms) = res.get("duration_ms").and_then(Value::as_i64) {
                 if slowest.is_none() || duration_ms > slowest.as_ref().unwrap().1 {
                     if let Some(url) = res.get("url").and_then(|v| v.as_str()) {
                         slowest = Some((url.to_string(), duration_ms));

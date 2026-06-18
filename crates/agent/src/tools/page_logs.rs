@@ -215,18 +215,16 @@ fn source_label(event: &ConsoleMessageEvent) -> Option<String> {
 
 fn resolve_since(bound: SeqBound, state: &CrawlState) -> u64 {
     match bound {
-        SeqBound::All => 0,
+        SeqBound::All | SeqBound::Now => 0,
         SeqBound::Last => state.seq_counter.current().saturating_sub(1),
         SeqBound::Seq(seq) => seq,
-        SeqBound::Now => 0,
     }
 }
 
 fn resolve_until(bound: SeqBound) -> Option<u64> {
     match bound {
-        SeqBound::Now => None,
         SeqBound::Seq(seq) => Some(seq),
-        SeqBound::All | SeqBound::Last => None,
+        SeqBound::Now | SeqBound::All | SeqBound::Last => None,
     }
 }
 
@@ -247,12 +245,12 @@ fn matching_logs(state: &CrawlState, input: &ListPageLogsInput) -> Vec<ConsoleMe
     state
         .page_log_events
         .iter()
-        .cloned()
         .filter(|event| {
             event.seq_at_initiation >= since
                 && until.is_none_or(|upper_bound| event.seq_at_initiation < upper_bound)
                 && level_matches(input.level, event)
         })
+        .cloned()
         .collect()
 }
 
@@ -534,7 +532,7 @@ pub async fn execute_list_page_logs(
     Ok(ToolEffect::reply_json(&response))
 }
 
-pub async fn execute_inspect_log(
+pub fn execute_inspect_log(
     input: &Value,
     crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
@@ -836,9 +834,8 @@ mod tests {
             ],
         );
 
-        let effect = execute_inspect_log(&json!({ "id": "@log1", "limit": 1 }), &mut state)
-            .await
-            .unwrap();
+        let effect =
+            execute_inspect_log(&json!({ "id": "@log1", "limit": 1 }), &mut state).unwrap();
         let rendered = format!("{effect:?}");
 
         assert!(rendered.contains("total_occurrences"));

@@ -12,9 +12,9 @@ pub async fn execute(
 
     match action {
         "block" | "mock_response" => {
-            let pattern = input["pattern"]
-                .as_str()
-                .ok_or_else(|| ToolExecutionError::new("pattern is required for block/mock_response"))?;
+            let pattern = input["pattern"].as_str().ok_or_else(|| {
+                ToolExecutionError::new("pattern is required for block/mock_response")
+            })?;
 
             let intercept_action = if action == "block" {
                 InterceptAction::Block
@@ -25,7 +25,8 @@ pub async fn execute(
             let mock = if action == "mock_response" {
                 let mock_val = &input["mock"];
                 Some(MockResponse {
-                    status: mock_val["status"].as_u64().map(|s| s as u16).unwrap_or(200),
+                    #[allow(clippy::cast_possible_truncation)]
+                    status: mock_val["status"].as_u64().map_or(200, |s| s as u16),
                     headers: mock_val["headers"].as_object().map(|m| {
                         m.iter()
                             .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))

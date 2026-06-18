@@ -154,7 +154,7 @@ impl ToolRegistry {
                     .await
             }
             "inspect_request" => {
-                crate::tools::network_activity::inspect_request(input, browser, crawl_state).await
+                crate::tools::network_activity::inspect_request(input, browser, crawl_state)
             }
             "list_websocket_activity" => {
                 crate::tools::websocket_activity::list_websocket_activity(
@@ -166,7 +166,6 @@ impl ToolRegistry {
             }
             "inspect_websocket" => {
                 crate::tools::websocket_activity::inspect_websocket(input, browser, crawl_state)
-                    .await
             }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
@@ -184,7 +183,7 @@ impl ToolRegistry {
             "list_page_logs" => {
                 crate::tools::page_logs::execute_list_page_logs(input, browser, crawl_state).await
             }
-            "inspect_log" => crate::tools::page_logs::execute_inspect_log(input, crawl_state).await,
+            "inspect_log" => crate::tools::page_logs::execute_inspect_log(input, crawl_state),
             "save_file" => crate::tools::save_file::execute(input, browser).await,
             "set_device" => crate::tools::set_device::execute(input, browser, crawl_state).await,
             "get_page_performance" => crate::tools::page_performance::execute(input, browser).await,
