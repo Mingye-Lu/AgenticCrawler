@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-19
+
+### Added
+
+- **CDN block page detection** — the smart-fetch router now recognizes CDN/security block pages served over HTTP (Cloudflare challenges, Akamai access-denied pages, "you have been blocked by network security" interstitials, captcha gates) and auto-escalates them to the headless browser. A three-tier heuristic keeps false positives low: CSS-dominated walled-garden responses (>60% `<style>` content with <300 chars of visible text, e.g. Reddit's 32 KB CSS-variable dump), strong CDN HTML signatures (`__cf_chl_`, `cf-challenge`, Akamai markers), and a text-pattern-plus-structural-sparseness check gated behind an HTML-document shell so tag-less JSON/text error bodies are never escalated. HTML entities are normalized before matching, and normalization only allocates when an entity is actually present so the per-fetch hot path stays cheap. The escalation heuristics are also skipped entirely when no browser is available to escalate to.
+
 ## [0.11.0] - 2026-06-17
 
 ### Added
@@ -733,6 +739,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.11.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.1
 [0.11.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.0
 [0.10.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.1
 [0.10.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.0
