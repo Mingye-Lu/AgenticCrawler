@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::time::Duration;
 
@@ -320,21 +321,32 @@ fn style_blocks_length(html: &str) -> usize {
 ///   must both be present, preventing legitimate pages that mention "security"
 ///   from triggering escalation.
 fn looks_like_cdn_block_page(body: &str) -> bool {
-    let len = body.len();
-    if len < 50 {
+    if body.len() < 50 {
         return false;
     }
 
     // Normalize common HTML entities so pattern matching works regardless of
     // how the server encodes characters (e.g. "you&#39;ve been blocked").
-    let body = body
-        .replace("&#39;", "'")
-        .replace("&apos;", "'")
-        .replace("&#x27;", "'")
-        .replace("&quot;", "\"")
-        .replace("&#34;", "\"")
-        .replace("&nbsp;", " ");
-    let body = body.as_str();
+    // `str::replace` allocates a fresh String even on zero matches, and this
+    // runs on every successful HTTP fetch — so only pay that cost when an
+    // entity is actually present.
+    let normalized: Cow<'_, str> = if body.contains('&') {
+        Cow::Owned(
+            body.replace("&#39;", "'")
+                .replace("&apos;", "'")
+                .replace("&#x27;", "'")
+                .replace("&quot;", "\"")
+                .replace("&#34;", "\"")
+                .replace("&nbsp;", " "),
+        )
+    } else {
+        Cow::Borrowed(body)
+    };
+    let body = normalized.as_ref();
+
+    // Measured *after* normalization so the CSS ratio below compares
+    // like-for-like against `style_blocks_length`, which also runs on `body`.
+    let len = body.len();
 
     // ── Tier 0: CSS-dominated body (any size) ──
     // Pages that are >60% <style> content with <300 chars of visible text are
@@ -362,7 +374,15 @@ fn looks_like_cdn_block_page(body: &str) -> bool {
         return true;
     }
 
-    // ── Tier 2: text pattern + structural sparseness (both required) ──
+    // ── Tier 2: HTML block page with block text but no real content ──
+    // Require an HTML document shell first: a tag-less JSON/plain-text body
+    // (e.g. an API returning `{"error":"too many requests"}`) is not a block
+    // page and gains nothing from a browser re-fetch. Signature-based blocks
+    // are already handled by tier 1 regardless of structure.
+    if !lower.contains("<html") && !lower.contains("<body") {
+        return false;
+    }
+
     let has_text_pattern = lower.contains("you've been blocked")
         || lower.contains("you have been blocked")
         || (lower.contains("blocked")
@@ -382,8 +402,11 @@ fn looks_like_cdn_block_page(body: &str) -> bool {
         return false;
     }
 
-    // Sparse structure: no semantic elements present
-    let has_semantic = lower.contains("<p ")
+    // Sparse structure: no semantic content elements present. Both `<p>` and
+    // `<p ` are checked — an attribute-less paragraph is still real content
+    // and must not be mistaken for a sparse block page.
+    let has_semantic = lower.contains("<p>")
+        || lower.contains("<p ")
         || lower.contains("<h1")
         || lower.contains("<h2")
         || lower.contains("<h3")
@@ -692,19 +715,18 @@ impl FetchRouter {
 
         match http_result {
             Ok(resp) => {
-                if needs_escalation(resp.status, &resp.body) {
-                    if let Some(ctx) = browser {
+                // Only run the escalation heuristics when a browser is actually
+                // available to escalate to — otherwise they are pure waste, and
+                // `needs_escalation` now scans the body several times.
+                if let Some(ctx) = browser {
+                    if needs_escalation(resp.status, &resp.body)
+                        || looks_like_empty_spa_shell(&resp.body)
+                    {
                         return Self::fetch_via_browser(ctx, url).await;
                     }
+                    return Ok(http_response_to_page(resp));
                 }
-                if looks_like_empty_spa_shell(&resp.body) {
-                    if let Some(ctx) = browser {
-                        return Self::fetch_via_browser(ctx, url).await;
-                    }
-                }
-                if (resp.status.is_server_error() || resp.status.is_client_error())
-                    && browser.is_none()
-                {
+                if resp.status.is_server_error() || resp.status.is_client_error() {
                     return Err(FetchError::StatusError {
                         status: resp.status.as_u16(),
                         url: url.to_string(),
@@ -1400,5 +1422,36 @@ mod tests {
             <div>Reference ID: xyz789</div>\
         </body></html>";
         assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_plain_paragraph() {
+        // An attribute-less <p> is still real content: a legit page that
+        // mentions a trigger phrase must not be escalated just because the
+        // paragraph has no attributes ("<p>" vs "<p ").
+        let body = "<html><body><p>Our API returns HTTP 429 when you send \
+            too many requests in a short window.</p></body></html>";
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_json_error_body() {
+        // A tag-less JSON error body is not an HTML block page; a browser
+        // re-fetch would just render the same JSON.
+        let body = "{\"error\":\"too many requests\",\"message\":\"please slow \
+            down and retry after a short delay has elapsed\"}";
+        assert!(body.len() >= 50);
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn style_blocks_length_sums_multiple_blocks() {
+        assert_eq!(style_blocks_length("no style tags here at all"), 0);
+        assert_eq!(style_blocks_length("<style>abcde</style>"), 5);
+        // "abc" (3) + "de" (2) across two separate blocks = 5
+        assert_eq!(
+            style_blocks_length("<style>abc</style>middle<style>de</style>"),
+            5
+        );
     }
 }
