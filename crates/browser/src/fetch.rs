@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::time::Duration;
 
@@ -277,7 +278,143 @@ fn needs_escalation(status: StatusCode, body: &str) -> bool {
         }
     }
 
+    if looks_like_cdn_block_page(body) {
+        return true;
+    }
+
     false
+}
+
+/// Sum the byte lengths of all content inside `<style>...</style>` blocks.
+fn style_blocks_length(html: &str) -> usize {
+    let lower = html.to_ascii_lowercase();
+    let mut total = 0;
+    let mut cursor = 0;
+
+    while cursor < html.len() {
+        let Some(rel_start) = lower[cursor..].find("<style") else {
+            break;
+        };
+        let abs_start = cursor + rel_start;
+        let Some(rel_gt) = lower[abs_start..].find('>') else {
+            break;
+        };
+        let content_start = abs_start + rel_gt + 1;
+        let Some(rel_end) = lower[content_start..].find("</style>") else {
+            break;
+        };
+        total += rel_end;
+        cursor = content_start + rel_end + "</style>".len();
+    }
+
+    total
+}
+
+/// Detect CDN/security block pages (Cloudflare challenges, Akamai blocks,
+/// Reddit "You have been blocked by network security", etc.).
+///
+/// Uses a multi-tier approach to avoid false positives:
+/// - **CSS-dominated** (tier 0): any-size pages that are >60% `<style>` content
+///   with <300 chars of visible text → walled-garden/CSS-only response.
+/// - **CDN signatures** (tier 1): strong single signals → return true immediately.
+/// - **Text + structural** (tier 2): text pattern hit AND sparse HTML structure
+///   must both be present, preventing legitimate pages that mention "security"
+///   from triggering escalation.
+fn looks_like_cdn_block_page(body: &str) -> bool {
+    if body.len() < 50 {
+        return false;
+    }
+
+    // Normalize common HTML entities so pattern matching works regardless of
+    // how the server encodes characters (e.g. "you&#39;ve been blocked").
+    // `str::replace` allocates a fresh String even on zero matches, and this
+    // runs on every successful HTTP fetch — so only pay that cost when an
+    // entity is actually present.
+    let normalized: Cow<'_, str> = if body.contains('&') {
+        Cow::Owned(
+            body.replace("&#39;", "'")
+                .replace("&apos;", "'")
+                .replace("&#x27;", "'")
+                .replace("&quot;", "\"")
+                .replace("&#34;", "\"")
+                .replace("&nbsp;", " "),
+        )
+    } else {
+        Cow::Borrowed(body)
+    };
+    let body = normalized.as_ref();
+
+    // Measured *after* normalization so the CSS ratio below compares
+    // like-for-like against `style_blocks_length`, which also runs on `body`.
+    let len = body.len();
+
+    // ── Tier 0: CSS-dominated body (any size) ──
+    // Pages that are >60% <style> content with <300 chars of visible text are
+    // walled-garden responses (e.g. Reddit returning 32 KB of CSS variables).
+    let css_len = style_blocks_length(body);
+    if css_len > 0 {
+        // css_len / len > 0.6  ⇔  css_len * 10 > len * 6  (no float cast)
+        if css_len.saturating_mul(10) > len.saturating_mul(6)
+            && extract_text(body).trim().len() < 300
+        {
+            return true;
+        }
+    }
+
+    let lower = body.to_ascii_lowercase();
+
+    // ── Tier 1: CDN HTML signatures — escalate immediately ──
+    if lower.contains("__cf_chl_")
+        || lower.contains("cf-browser-verification")
+        || lower.contains("cf-challenge")
+    {
+        return true;
+    }
+    if lower.contains("akamai") && (lower.contains("blocked") || lower.contains("access denied")) {
+        return true;
+    }
+
+    // ── Tier 2: HTML block page with block text but no real content ──
+    // Require an HTML document shell first: a tag-less JSON/plain-text body
+    // (e.g. an API returning `{"error":"too many requests"}`) is not a block
+    // page and gains nothing from a browser re-fetch. Signature-based blocks
+    // are already handled by tier 1 regardless of structure.
+    if !lower.contains("<html") && !lower.contains("<body") {
+        return false;
+    }
+
+    let has_text_pattern = lower.contains("you've been blocked")
+        || lower.contains("you have been blocked")
+        || (lower.contains("blocked")
+            && (lower.contains("network security") || lower.contains("access denied")))
+        || lower.contains("captcha")
+        || lower.contains("recaptcha")
+        || lower.contains("hcaptcha")
+        || lower.contains("verify you are human")
+        || lower.contains("are you a robot")
+        || lower.contains("checking your browser")
+        || lower.contains("ddos protection")
+        || lower.contains("ddos attack")
+        || lower.contains("rate limited")
+        || lower.contains("too many requests");
+
+    if !has_text_pattern {
+        return false;
+    }
+
+    // Sparse structure: no semantic content elements present. Both `<p>` and
+    // `<p ` are checked — an attribute-less paragraph is still real content
+    // and must not be mistaken for a sparse block page.
+    let has_semantic = lower.contains("<p>")
+        || lower.contains("<p ")
+        || lower.contains("<h1")
+        || lower.contains("<h2")
+        || lower.contains("<h3")
+        || lower.contains("<a href")
+        || lower.contains("<main>")
+        || lower.contains("<article");
+
+    !has_semantic
 }
 
 fn extract_charset(content_type: &str) -> Option<&str> {
@@ -578,19 +715,18 @@ impl FetchRouter {
 
         match http_result {
             Ok(resp) => {
-                if needs_escalation(resp.status, &resp.body) {
-                    if let Some(ctx) = browser {
+                // Only run the escalation heuristics when a browser is actually
+                // available to escalate to — otherwise they are pure waste, and
+                // `needs_escalation` now scans the body several times.
+                if let Some(ctx) = browser {
+                    if needs_escalation(resp.status, &resp.body)
+                        || looks_like_empty_spa_shell(&resp.body)
+                    {
                         return Self::fetch_via_browser(ctx, url).await;
                     }
+                    return Ok(http_response_to_page(resp));
                 }
-                if looks_like_empty_spa_shell(&resp.body) {
-                    if let Some(ctx) = browser {
-                        return Self::fetch_via_browser(ctx, url).await;
-                    }
-                }
-                if (resp.status.is_server_error() || resp.status.is_client_error())
-                    && browser.is_none()
-                {
+                if resp.status.is_server_error() || resp.status.is_client_error() {
                     return Err(FetchError::StatusError {
                         status: resp.status.as_u16(),
                         url: url.to_string(),
@@ -1164,5 +1300,158 @@ mod tests {
             <p>The page you requested could not be found.</p>\n\
         </body></html>";
         assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn cdn_block_reddit_style() {
+        let body = "<html><head><title>Blocked</title></head><body>\
+            <div>You have been blocked by network security.</div>\
+            <div>Reference ID: abc123</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_cloudflare_challenge() {
+        let body = "<html><head></head><body>\
+            <form id=\"cf-challenge-form\" action=\"/cdn-cgi/l/chk_jschl\">\
+            <input name=\"__cf_chl_jschl_tk__\" value=\"abc\"/>\
+            </form></body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_legitimate_security_page() {
+        // Legitimate page mentioning "security" with real semantic content
+        let body = "<html><head><title>Security Policy</title></head><body>\
+            <h1>Our Security Practices</h1>\
+            <p>We take security seriously at our company.</p>\
+            <a href=\"/contact\">Contact us</a>\
+        </body></html>";
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_too_small() {
+        let body = "<html><body>Blocked</body></html>";
+        assert!(body.len() < 50);
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_large_body_still_detected() {
+        // The 5000-char upper bound is removed: large pages with block patterns
+        // should still be detected.
+        let mut body = String::from("<html><body><div>You have been blocked by network security. ");
+        while body.len() <= 5000 {
+            body.push_str("padding ");
+        }
+        body.push_str("</div></body></html>");
+        assert!(body.len() > 5000);
+        assert!(looks_like_cdn_block_page(body.as_str()));
+    }
+
+    #[test]
+    fn cdn_block_css_dominated_walled_garden() {
+        // Large page that is >60% <style> content with no real text — Reddit-style
+        // CSS-variable dump returned instead of actual page content.
+        let mut css_vars = String::new();
+        for i in 0..500 {
+            use std::fmt::Write;
+            let _ = write!(css_vars, "--color-{i}: #aabbcc; --spacing-{i}: {i}px; ");
+        }
+        let body = format!(
+            "<html><head><style>{css_vars}</style></head>\
+             <body><div>Loading…</div></body></html>"
+        );
+        assert!(
+            body.len() > 5000,
+            "body must be large to test the any-size path"
+        );
+        assert!(looks_like_cdn_block_page(&body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_css_with_real_content() {
+        // A page with significant CSS but also substantial visible text should
+        // NOT be flagged — the css_ratio check requires <300 chars of visible text.
+        let mut css_vars = String::new();
+        for i in 0..200 {
+            use std::fmt::Write;
+            let _ = write!(css_vars, "--color-{i}: #aabbcc; ");
+        }
+        let mut paragraphs = String::new();
+        for i in 0..20 {
+            use std::fmt::Write;
+            let _ = write!(
+                paragraphs,
+                "<p>This is real paragraph number {i} with meaningful content for users browsing the site.</p>"
+            );
+        }
+        let body = format!(
+            "<html><head><style>{css_vars}</style></head>\
+             <body><h1>Welcome</h1>{paragraphs}</body></html>"
+        );
+        assert!(!looks_like_cdn_block_page(&body));
+    }
+
+    #[test]
+    fn cdn_block_captcha_sparse_page() {
+        let body = "<html><head><title>Security Check</title></head><body>\
+            <div>Please complete the captcha to continue.</div>\
+            <div id=\"recaptcha-container\"></div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_akamai_access_denied() {
+        let body = "<html><head></head><body>\
+            <div>Access Denied</div>\
+            <div>Akamai Reference #18.abc123</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_html_entity_encoded_apostrophe() {
+        // Reddit-style block page uses &#39; for apostrophes in "You've been blocked".
+        // Entity normalization must happen before pattern matching.
+        let body = "<html><head><title>Blocked</title></head><body>\
+            <div>You&#39;ve been blocked by network security.</div>\
+            <div>Reference ID: xyz789</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_plain_paragraph() {
+        // An attribute-less <p> is still real content: a legit page that
+        // mentions a trigger phrase must not be escalated just because the
+        // paragraph has no attributes ("<p>" vs "<p ").
+        let body = "<html><body><p>Our API returns HTTP 429 when you send \
+            too many requests in a short window.</p></body></html>";
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_json_error_body() {
+        // A tag-less JSON error body is not an HTML block page; a browser
+        // re-fetch would just render the same JSON.
+        let body = "{\"error\":\"too many requests\",\"message\":\"please slow \
+            down and retry after a short delay has elapsed\"}";
+        assert!(body.len() >= 50);
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn style_blocks_length_sums_multiple_blocks() {
+        assert_eq!(style_blocks_length("no style tags here at all"), 0);
+        assert_eq!(style_blocks_length("<style>abcde</style>"), 5);
+        // "abc" (3) + "de" (2) across two separate blocks = 5
+        assert_eq!(
+            style_blocks_length("<style>abc</style>middle<style>de</style>"),
+            5
+        );
     }
 }
