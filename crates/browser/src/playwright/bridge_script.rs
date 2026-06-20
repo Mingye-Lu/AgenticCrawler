@@ -1341,10 +1341,19 @@ async function bootstrap() {
     }
 
     if (command.action === 'add_intercept_rule') {
-      const { rule_id, pattern, action_type, mock } = command;
+      const { rule_id, pattern, action_type, mock, is_regex } = command;
       const page = pages[activePageIndex()];
+      let matcher = pattern;
+      if (is_regex) {
+        try {
+          matcher = new RegExp(pattern);
+        } catch (error) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'invalid_regex', message: String(error) } }) + '\n');
+          continue;
+        }
+      }
       interceptRulesMap[rule_id] = { pattern, action_type, mock, hits: 0 };
-      await page.route(pattern, async (route) => {
+      await page.route(matcher, async (route) => {
         if (!interceptRulesMap[rule_id]) { await route.continue(); return; }
         interceptRulesMap[rule_id].hits++;
         if (action_type === 'Block') {

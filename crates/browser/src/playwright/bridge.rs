@@ -44,6 +44,29 @@ fn classify_io_error(err: std::io::Error) -> BridgeError {
     }
 }
 
+// Playwright globs treat bare `*` as `[^/]*` (it does not cross `/`), so common
+// block patterns like `*.ads.com/*` silently match nothing. Collapse `*` runs to
+// `**` so wildcards span path separators; a `re:` prefix opts into a raw regex.
+fn normalize_intercept_pattern(pattern: &str) -> (String, bool) {
+    if let Some(rest) = pattern.strip_prefix("re:") {
+        return (rest.to_string(), true);
+    }
+    let mut out = String::with_capacity(pattern.len() + 2);
+    let mut in_star_run = false;
+    for c in pattern.chars() {
+        if c == '*' {
+            if !in_star_run {
+                out.push_str("**");
+                in_star_run = true;
+            }
+        } else {
+            out.push(c);
+            in_star_run = false;
+        }
+    }
+    (out, false)
+}
+
 impl PlaywrightBridge {
     pub async fn new() -> Result<Self, BridgeError> {
         let args = if cfg!(windows) {
@@ -727,10 +750,12 @@ impl PlaywrightBridge {
                 .unwrap_or_default()
                 .subsec_nanos()
         );
+        let (pattern, is_regex) = normalize_intercept_pattern(&rule.pattern);
         self.send_raw_command(&serde_json::json!({
             "action": "add_intercept_rule",
             "rule_id": rule_id,
-            "pattern": rule.pattern,
+            "pattern": pattern,
+            "is_regex": is_regex,
             "action_type": format!("{:?}", rule.action),
             "mock": rule.mock,
         }))

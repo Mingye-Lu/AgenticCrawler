@@ -980,7 +980,7 @@ fn intercept_network_tool() -> ToolSpec {
                 },
                 "pattern": {
                     "type": "string",
-                    "description": "URL glob pattern (e.g. '*.ads.com/*', '*api/v2*'). Required for block/mock_response."
+                    "description": "URL glob matched against the full request URL. '*' matches across path separators (e.g. '*ads.com*' blocks any URL containing ads.com; '*/api/v2/*' matches that path on any host). Prefix with 're:' for a regular expression (e.g. 're:api/v[0-9]+'). Required for block/mock_response."
                 },
                 "mock": {
                     "type": "object",
