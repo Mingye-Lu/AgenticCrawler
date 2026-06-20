@@ -29,7 +29,7 @@ impl PlaywrightBridge {
 
                 match event_type {
                     "NetworkRequest" => serde_json::from_value::<NetworkRequestEvent>(event)
-                        .map(ObservationEvent::NetworkRequest)
+                        .map(|parsed| ObservationEvent::NetworkRequest(Box::new(parsed)))
                         .map_err(|error| {
                             BridgeError::Protocol(format!(
                                 "failed to parse network observation event: {error}"

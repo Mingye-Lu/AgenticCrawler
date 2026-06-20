@@ -134,7 +134,7 @@ fn parse_observation_event(json: serde_json::Value) -> Result<ObservationEvent, 
 
     match event_type {
         "NetworkRequest" => serde_json::from_value::<NetworkRequestEvent>(json)
-            .map(ObservationEvent::NetworkRequest)
+            .map(|parsed| ObservationEvent::NetworkRequest(Box::new(parsed)))
             .map_err(|error| {
                 BridgeError::Protocol(format!("observation NetworkRequest parse error: {error}"))
             }),

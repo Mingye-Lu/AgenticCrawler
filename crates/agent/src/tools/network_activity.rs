@@ -365,34 +365,68 @@ pub fn inspect_request(
         .get(id)
         .ok_or_else(|| ToolExecutionError::new(format!("unknown request id: `{id}`")))?;
 
-    let request_body = Value::Null;
-    let response_body = Value::Null;
-    let _ = include_body; // Bodies not yet captured in observation buffer
+    let headers_to_json = |headers: &Option<BTreeMap<String, String>>| -> Value {
+        headers
+            .as_ref()
+            .and_then(|map| serde_json::to_value(map).ok())
+            .unwrap_or(Value::Null)
+    };
+
+    let (request_body, response_body) = if include_body {
+        (
+            event
+                .request_body
+                .clone()
+                .map_or(Value::Null, Value::String),
+            event
+                .response_body
+                .clone()
+                .map_or(Value::Null, Value::String),
+        )
+    } else {
+        (Value::Null, Value::Null)
+    };
+
+    let timing = event.timing.as_ref().map_or_else(
+        || {
+            json!({
+                "dns_ms": Value::Null,
+                "connect_ms": Value::Null,
+                "tls_ms": Value::Null,
+                "ttfb_ms": Value::Null,
+                "download_ms": Value::Null,
+                "total_duration_ms": event.duration_ms,
+            })
+        },
+        |t| {
+            json!({
+                "dns_ms": t.dns_ms,
+                "connect_ms": t.connect_ms,
+                "tls_ms": t.tls_ms,
+                "ttfb_ms": t.ttfb_ms,
+                "download_ms": t.download_ms,
+                "total_duration_ms": event.duration_ms,
+            })
+        },
+    );
 
     Ok(ToolEffect::reply_json(&json!({
         "url": event.url,
         "method": event.method,
         "status": event.status,
         "state": state_name(event.state),
-        "request_headers": Value::Null,
-        "response_headers": Value::Null,
+        "request_headers": headers_to_json(&event.request_headers),
+        "response_headers": headers_to_json(&event.response_headers),
         "request_body": request_body,
         "response_body": response_body,
-        "timing": {
-            "dns_ms": Value::Null,
-            "connect_ms": Value::Null,
-            "tls_ms": Value::Null,
-            "ttfb_ms": Value::Null,
-            "download_ms": Value::Null,
-            "total_duration_ms": event.duration_ms,
-        },
+        "timing": timing,
         "initiator": {
             "type": event.initiator_type,
             "file": Value::Null,
             "line": Value::Null,
         },
         "from_service_worker": event.from_service_worker,
-        "note": "Headers and bodies are not captured in the current observation buffer implementation.",
+        "note": "Headers and timing are captured at request completion. Bodies require include_body=true and are captured only for textual responses (truncated).",
     })))
 }
 
@@ -425,6 +459,11 @@ mod tests {
             from_service_worker: false,
             initiator_type: Some("script".to_string()),
             reason: None,
+            timing: None,
+            request_headers: None,
+            response_headers: None,
+            request_body: None,
+            response_body: None,
         }
     }
 
@@ -432,7 +471,7 @@ mod tests {
     async fn list_network_activity_surfaces_request_through_bridge() {
         use crate::tools::test_support::browser_with_observations;
 
-        let observations = vec![ObservationEvent::NetworkRequest(event(
+        let observations = vec![ObservationEvent::NetworkRequest(Box::new(event(
             "data",
             1,
             10,
@@ -440,7 +479,7 @@ mod tests {
             Some(128),
             "fetch",
             RequestState::Completed,
-        ))];
+        )))];
         let mut browser = browser_with_observations(observations);
         let mut state = CrawlState::default();
 
@@ -573,5 +612,62 @@ mod tests {
         assert_eq!(normalize_request_type("fetch"), "xhr");
         assert_eq!(normalize_request_type("xhr"), "xhr");
         assert_eq!(normalize_request_type("beacon"), "other");
+    }
+
+    #[test]
+    fn inspect_request_surfaces_timing_headers_and_gated_bodies() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut request_headers = BTreeMap::new();
+        request_headers.insert("accept".to_string(), "application/json".to_string());
+        let mut response_headers = BTreeMap::new();
+        response_headers.insert("content-type".to_string(), "application/json".to_string());
+
+        let mut req_event = event(
+            "x",
+            1,
+            10,
+            Some(20),
+            Some(128),
+            "fetch",
+            RequestState::Completed,
+        );
+        req_event.timing = Some(browser::RequestTiming {
+            dns_ms: Some(1),
+            connect_ms: Some(2),
+            tls_ms: Some(3),
+            ttfb_ms: Some(4),
+            download_ms: Some(5),
+        });
+        req_event.request_headers = Some(request_headers);
+        req_event.response_headers = Some(response_headers);
+        req_event.request_body = Some("REQ_BODY_MARKER".to_string());
+        req_event.response_body = Some("RESP_BODY_MARKER".to_string());
+
+        let mut browser = browser_with_observations(vec![]);
+        let mut state = CrawlState::default();
+        state
+            .network_request_refs
+            .insert("@r1".to_string(), req_event);
+
+        let with_body = inspect_request(
+            &json!({ "id": "@r1", "include_body": true }),
+            &mut browser,
+            &mut state,
+        )
+        .expect("inspect_request should succeed");
+        let rendered = format!("{with_body:?}");
+        assert!(rendered.contains("ttfb_ms"));
+        assert!(rendered.contains("application/json"));
+        assert!(rendered.contains("REQ_BODY_MARKER"));
+        assert!(rendered.contains("RESP_BODY_MARKER"));
+
+        let without_body = inspect_request(&json!({ "id": "@r1" }), &mut browser, &mut state)
+            .expect("inspect_request should succeed");
+        let rendered_no_body = format!("{without_body:?}");
+        assert!(rendered_no_body.contains("application/json"));
+        assert!(rendered_no_body.contains("ttfb_ms"));
+        assert!(!rendered_no_body.contains("REQ_BODY_MARKER"));
+        assert!(!rendered_no_body.contains("RESP_BODY_MARKER"));
     }
 }

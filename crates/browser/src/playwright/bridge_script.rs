@@ -108,6 +108,37 @@ function toNullableInt(value) {
   return Number.isInteger(value) ? value : null;
 }
 
+const REQUEST_BODY_CAP = 16384;
+const RESPONSE_BODY_CAP = 16384;
+
+// Playwright ResourceTiming fields are millisecond offsets from startTime, or
+// -1 when a phase did not occur (cache hit, reused connection, no TLS). span()
+// returns a duration only when both ends are present and ordered.
+function computeTimingMs(t) {
+  if (!t) return null;
+  const span = (start, end) =>
+    (typeof start === 'number' && typeof end === 'number' && start >= 0 && end >= start)
+      ? Math.round(end - start)
+      : null;
+  const hasTls = typeof t.secureConnectionStart === 'number' && t.secureConnectionStart >= 0;
+  return {
+    dns_ms: span(t.domainLookupStart, t.domainLookupEnd),
+    connect_ms: span(t.connectStart, t.connectEnd),
+    tls_ms: hasTls ? span(t.secureConnectionStart, t.connectEnd) : null,
+    ttfb_ms: span(t.requestStart, t.responseStart),
+    download_ms: span(t.responseStart, t.responseEnd),
+  };
+}
+
+function isTextualContentType(contentType) {
+  if (!contentType) return false;
+  const c = String(contentType).toLowerCase();
+  return c.includes('text/') || c.includes('json') || c.includes('xml')
+    || c.includes('javascript') || c.includes('ecmascript') || c.includes('html')
+    || c.includes('css') || c.includes('graphql') || c.includes('urlencoded')
+    || c.includes('csv');
+}
+
 // CloakBrowser (rebrowser-style stealth) suppresses CDP Runtime event *delivery*
 // (Runtime.consoleAPICalled / exceptionThrown / bindingCalled) on every CDP
 // session -- including a freshly created one -- while still ACKing Runtime.enable.
@@ -252,6 +283,36 @@ async function attachObservationListeners(page, pageIndex) {
       } catch (_) {}
     }
 
+    // inspect_request runs long after the Response object is gone, so headers,
+    // timing and bodies are pulled here at completion and buffered. Bodies are
+    // restricted to textual content types and truncated to bound buffer growth.
+    let requestHeaders = null;
+    try { requestHeaders = await req.allHeaders(); } catch (_) {}
+    let responseHeaders = null;
+    if (response) {
+      try { responseHeaders = await response.allHeaders(); } catch (_) {}
+    }
+
+    let requestBody = null;
+    try {
+      const postData = req.postData();
+      if (postData) requestBody = truncateText(postData, REQUEST_BODY_CAP);
+    } catch (_) {}
+
+    let responseBody = null;
+    if (response) {
+      const contentType = responseHeaders ? (responseHeaders['content-type'] || '') : '';
+      if (isTextualContentType(contentType)) {
+        try {
+          const body = await response.body();
+          if (body) responseBody = truncateText(body.toString('utf8'), RESPONSE_BODY_CAP);
+        } catch (_) {}
+      }
+    }
+
+    let timing = null;
+    try { timing = computeTimingMs(req.timing()); } catch (_) {}
+
     bufferEvent(pageIndex, {
       type: 'NetworkRequest',
       timestamp_ms: Date.now(),
@@ -267,6 +328,11 @@ async function attachObservationListeners(page, pageIndex) {
       from_service_worker: false,
       initiator_type: null,
       reason: null,
+      timing,
+      request_headers: requestHeaders,
+      response_headers: responseHeaders,
+      request_body: requestBody,
+      response_body: responseBody,
     }, tracked?.seqAtInitiation ?? currentSeq);
 
     pendingRequests.delete(req);

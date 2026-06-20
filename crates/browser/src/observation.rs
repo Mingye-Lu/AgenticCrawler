@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ const DEFAULT_OBSERVATION_BUFFER_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObservationEvent {
-    NetworkRequest(NetworkRequestEvent),
+    NetworkRequest(Box<NetworkRequestEvent>),
     ConsoleMessage(ConsoleMessageEvent),
     WebSocketFrame(WebSocketFrameEvent),
 }
@@ -39,6 +39,37 @@ pub struct NetworkRequestEvent {
     pub from_service_worker: bool,
     pub initiator_type: Option<String>,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub timing: Option<RequestTiming>,
+    #[serde(default)]
+    pub request_headers: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub response_headers: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub request_body: Option<String>,
+    #[serde(default)]
+    pub response_body: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RequestTiming {
+    #[serde(default)]
+    pub dns_ms: Option<u64>,
+    #[serde(default)]
+    pub connect_ms: Option<u64>,
+    #[serde(default)]
+    pub tls_ms: Option<u64>,
+    #[serde(default)]
+    pub ttfb_ms: Option<u64>,
+    #[serde(default)]
+    pub download_ms: Option<u64>,
+}
+
+fn header_bytes(headers: &BTreeMap<String, String>) -> usize {
+    headers
+        .iter()
+        .map(|(name, value)| name.len() + value.len())
+        .sum()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,6 +202,10 @@ impl ObservationBuffer {
                     + network.request_type.len()
                     + network.initiator_type.as_ref().map_or(0, String::len)
                     + network.reason.as_ref().map_or(0, String::len)
+                    + network.request_headers.as_ref().map_or(0, header_bytes)
+                    + network.response_headers.as_ref().map_or(0, header_bytes)
+                    + network.request_body.as_ref().map_or(0, String::len)
+                    + network.response_body.as_ref().map_or(0, String::len)
             }
             ObservationEvent::ConsoleMessage(console) => {
                 std::mem::size_of::<ConsoleMessageEvent>()
@@ -224,7 +259,7 @@ mod tests {
         request_id: &str,
         url_suffix: &str,
     ) -> ObservationEvent {
-        ObservationEvent::NetworkRequest(NetworkRequestEvent {
+        ObservationEvent::NetworkRequest(Box::new(NetworkRequestEvent {
             timestamp_ms: seq_at_initiation,
             tab_index: 0,
             seq_at_initiation,
@@ -239,7 +274,12 @@ mod tests {
             from_service_worker: false,
             initiator_type: Some("script".to_string()),
             reason: None,
-        })
+            timing: None,
+            request_headers: None,
+            response_headers: None,
+            request_body: None,
+            response_body: None,
+        }))
     }
 
     #[test]

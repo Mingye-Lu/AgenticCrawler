@@ -102,7 +102,7 @@ impl CrawlState {
             match event {
                 ObservationEvent::NetworkRequest(network) => {
                     if !is_internal_observation_url(&network.url) {
-                        self.network_request_events.push(network);
+                        self.network_request_events.push(*network);
                     }
                 }
                 ObservationEvent::ConsoleMessage(console) => {
@@ -253,7 +253,7 @@ mod tests {
         };
 
         let net = |url: &str| {
-            ObservationEvent::NetworkRequest(NetworkRequestEvent {
+            ObservationEvent::NetworkRequest(Box::new(NetworkRequestEvent {
                 timestamp_ms: 1,
                 tab_index: 0,
                 seq_at_initiation: 1,
@@ -268,7 +268,12 @@ mod tests {
                 from_service_worker: false,
                 initiator_type: None,
                 reason: None,
-            })
+                timing: None,
+                request_headers: None,
+                response_headers: None,
+                request_body: None,
+                response_body: None,
+            }))
         };
         let console = ObservationEvent::ConsoleMessage(ConsoleMessageEvent {
             timestamp_ms: 2,

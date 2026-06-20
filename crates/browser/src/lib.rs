@@ -19,7 +19,7 @@ pub use extension::ExtensionBridge;
 pub use fetch::{FetchError, FetchRouter, FetchedPage};
 pub use observation::{
     ConsoleMessageEvent, ConsoleMessageType, NetworkRequestEvent, ObservationBuffer,
-    ObservationEvent, RequestState, SeqCounter, WebSocketFrameEvent,
+    ObservationEvent, RequestState, RequestTiming, SeqCounter, WebSocketFrameEvent,
 };
 pub use playwright::{BridgeError, BrowserState, PageInfo, PlaywrightBridge, SharedBridge};
 pub use ref_map::{parse_ref, RefEntry, RefMap};
