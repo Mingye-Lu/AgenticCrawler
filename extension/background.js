@@ -475,7 +475,7 @@ async function handleCommand(cmd) {
         result = await handleClose();
         break;
       case 'set_seq':
-        currentObservationSeq = typeof cmd.payload?.seq === 'number' ? cmd.payload.seq : 0;
+        currentObservationSeq = Number.isFinite(cmd.payload?.seq) ? cmd.payload.seq : 0;
         result = {};
         break;
 

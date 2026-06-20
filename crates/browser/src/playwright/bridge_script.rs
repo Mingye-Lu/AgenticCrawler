@@ -94,7 +94,7 @@ function bufferEvent(pageIndex, event, seqAtInitiation = currentSeq) {
 
   while (buf.currentBytes > MAX_OBSERVATION_BYTES && buf.events.length > 0) {
     const removed = buf.events.shift();
-    buf.currentBytes -= estimateEventBytes(removed);
+    buf.currentBytes = Math.max(0, buf.currentBytes - estimateEventBytes(removed));
   }
 }
 
