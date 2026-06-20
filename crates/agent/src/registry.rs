@@ -169,7 +169,7 @@ impl ToolRegistry {
             }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
-            "refresh" => crate::tools::refresh::execute(input, browser).await,
+            "refresh" => crate::tools::refresh::execute(input, browser, crawl_state).await,
             "scroll" => crate::tools::scroll::execute(input, browser, crawl_state).await,
             "wait" => crate::tools::wait::execute(input, browser).await,
             "select_option" => {
