@@ -11,6 +11,23 @@ const VALID_STANDARDS: &[&str] = &["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"];
 /// Valid impact levels for filtering violations.
 const VALID_IMPACTS: &[&str] = &["critical", "serious", "moderate", "minor", "all"];
 
+/// Maps a WCAG conformance level to the cumulative set of axe-core tags it implies.
+///
+/// axe-core tags each rule with only the WCAG version that introduced it, and tags
+/// are NOT cumulative: auditing `wcag21aa` alone skips every `wcag2a`/`wcag2aa`/
+/// `wcag21a` rule. So each level must request all earlier levels explicitly.
+/// `wcag22a` is intentionally absent — WCAG 2.2 introduced no Level A success
+/// criteria, so axe-core defines no such tag. See dequelabs/axe-core#4579.
+fn cumulative_wcag_tags(standard: &str) -> &'static [&'static str] {
+    match standard {
+        "wcag2a" => &["wcag2a"],
+        "wcag21aa" => &["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+        "wcag22aa" => &["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"],
+        // "wcag2aa" (the default) plus any input that slipped past validation.
+        _ => &["wcag2a", "wcag2aa"],
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 pub async fn execute(
     input: &Value,
@@ -36,6 +53,9 @@ pub async fn execute(
             VALID_IMPACTS.join(", ")
         )));
     }
+
+    let tag_values = serde_json::to_string(cumulative_wcag_tags(standard))
+        .unwrap_or_else(|_| "[\"wcag2aa\"]".to_string());
 
     let mut bridge = browser
         .acquire_bridge()
@@ -69,7 +89,7 @@ pub async fn execute(
         r"(async () => {{
             try {{
                 const result = await window.axe.run({context_js}, {{
-                    runOnly: {{ type: 'tag', values: ['{standard}'] }},
+                    runOnly: {{ type: 'tag', values: {tag_values} }},
                     resultTypes: ['violations', 'passes']
                 }});
                 return JSON.stringify({{
@@ -195,5 +215,28 @@ mod tests {
         assert!(VALID_IMPACTS.contains(&"moderate"));
         assert!(VALID_IMPACTS.contains(&"minor"));
         assert!(VALID_IMPACTS.contains(&"all"));
+    }
+
+    #[test]
+    fn cumulative_wcag_tags_expand_each_level() {
+        assert_eq!(cumulative_wcag_tags("wcag2a"), &["wcag2a"][..]);
+        assert_eq!(cumulative_wcag_tags("wcag2aa"), &["wcag2a", "wcag2aa"][..]);
+        assert_eq!(
+            cumulative_wcag_tags("wcag21aa"),
+            &["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"][..]
+        );
+        assert_eq!(
+            cumulative_wcag_tags("wcag22aa"),
+            &["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"][..]
+        );
+    }
+
+    #[test]
+    fn every_valid_standard_maps_to_tags_without_phantom_wcag22a() {
+        for standard in VALID_STANDARDS {
+            let tags = cumulative_wcag_tags(standard);
+            assert!(!tags.is_empty(), "{standard} should map to tags");
+            assert!(!tags.contains(&"wcag22a"));
+        }
     }
 }
