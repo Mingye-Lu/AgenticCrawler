@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use browser::{ConsoleMessageEvent, ConsoleMessageType};
 use serde_json::{json, Value};
@@ -60,7 +60,7 @@ struct MessageGroup {
 struct SourceGroup {
     key: String,
     count: usize,
-    breakdown: HashMap<String, usize>,
+    breakdown: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,22 +166,14 @@ fn parse_seq_bound(value: Option<&Value>, is_since: bool) -> Result<SeqBound, Cr
     }
 }
 
-fn normalized_level(level: &str) -> &'static str {
-    match level.to_ascii_lowercase().as_str() {
-        "error" => "error",
-        "warn" | "warning" => "warning",
-        "debug" | "trace" => "debug",
-        _ => "info",
-    }
-}
-
 fn level_matches(filter: LogLevelFilter, event: &ConsoleMessageEvent) -> bool {
+    let level = event.level.to_ascii_lowercase();
     match filter {
         LogLevelFilter::All => true,
-        LogLevelFilter::Error => normalized_level(&event.level) == "error",
-        LogLevelFilter::Warning => normalized_level(&event.level) == "warning",
-        LogLevelFilter::Info => normalized_level(&event.level) == "info",
-        LogLevelFilter::Debug => normalized_level(&event.level) == "debug",
+        LogLevelFilter::Error => level == "error",
+        LogLevelFilter::Warning => level == "warn" || level == "warning",
+        LogLevelFilter::Info => level == "info",
+        LogLevelFilter::Debug => level == "debug" || level == "trace",
     }
 }
 
@@ -246,28 +238,17 @@ fn matching_logs(state: &CrawlState, input: &ListPageLogsInput) -> Vec<ConsoleMe
 
 fn build_summary(events: &[ConsoleMessageEvent]) -> Value {
     let mut unique_messages = HashSet::new();
-    let mut errors = 0;
-    let mut warnings = 0;
-    let mut info = 0;
-    let mut debug = 0;
+    let mut by_level: BTreeMap<String, usize> = BTreeMap::new();
 
     for event in events {
         unique_messages.insert(event.text.as_str());
-        match normalized_level(&event.level) {
-            "error" => errors += 1,
-            "warning" => warnings += 1,
-            "debug" => debug += 1,
-            _ => info += 1,
-        }
+        *by_level.entry(event.level.clone()).or_insert(0) += 1;
     }
 
     json!({
         "total": events.len(),
         "unique": unique_messages.len(),
-        "errors": errors,
-        "warnings": warnings,
-        "info": info,
-        "debug": debug,
+        "by_level": by_level,
     })
 }
 
@@ -279,7 +260,7 @@ fn group_by_message(events: &[ConsoleMessageEvent]) -> Vec<MessageGroup> {
             .entry(event.text.clone())
             .or_insert_with(|| MessageGroup {
                 key: event.text.clone(),
-                level: normalized_level(&event.level).to_string(),
+                level: event.level.clone(),
                 source: source_label(event),
                 events: Vec::new(),
                 first_at_ms: event.timestamp_ms,
@@ -306,13 +287,13 @@ fn group_by_source(events: &[ConsoleMessageEvent]) -> Vec<SourceGroup> {
 
     for event in events {
         let source = source_label(event).unwrap_or_else(|| "unknown".to_string());
-        let level = normalized_level(&event.level).to_string();
+        let level = event.level.clone();
         let entry = grouped
             .entry(source.clone())
             .or_insert_with(|| SourceGroup {
                 key: source,
                 count: 0,
-                breakdown: HashMap::new(),
+                breakdown: BTreeMap::new(),
             });
         entry.count += 1;
         *entry.breakdown.entry(level).or_insert(0) += 1;
@@ -332,7 +313,7 @@ fn group_by_level(events: &[ConsoleMessageEvent]) -> Vec<LevelGroup> {
     let mut grouped: HashMap<String, Vec<&ConsoleMessageEvent>> = HashMap::new();
     for event in events {
         grouped
-            .entry(normalized_level(&event.level).to_string())
+            .entry(event.level.clone())
             .or_default()
             .push(event);
     }
@@ -383,7 +364,7 @@ fn inspect_payload(events: &[ConsoleMessageEvent], limit: usize) -> Value {
     let Some(first) = events.first() else {
         return json!({
             "message": "",
-            "level": "info",
+            "level": "",
             "type": "console",
             "total_occurrences": 0,
             "instances": [],
@@ -408,7 +389,7 @@ fn inspect_payload(events: &[ConsoleMessageEvent], limit: usize) -> Value {
 
     json!({
         "message": first.text,
-        "level": normalized_level(&first.level),
+        "level": first.level.as_str(),
         "type": console_message_type_name(first.message_type),
         "total_occurrences": events.len(),
         "instances": instances,
@@ -477,12 +458,7 @@ pub async fn execute_list_page_logs(
                         "id": format!("@src{}", index + 1),
                         "source": group.key,
                         "count": group.count,
-                        "breakdown": {
-                            "error": group.breakdown.get("error").copied().unwrap_or(0),
-                            "warning": group.breakdown.get("warning").copied().unwrap_or(0),
-                            "info": group.breakdown.get("info").copied().unwrap_or(0),
-                            "debug": group.breakdown.get("debug").copied().unwrap_or(0),
-                        }
+                        "breakdown": group.breakdown,
                     })
                 })
                 .collect();
@@ -830,5 +806,24 @@ mod tests {
         assert!(rendered.contains("total_occurrences"));
         assert!(rendered.contains("TypeError: Cannot read properties of undefined"));
         assert!(rendered.contains("app.js"));
+    }
+
+    #[test]
+    fn raw_console_level_is_preserved_without_normalization() {
+        let log_event = console_event(1, "log", "hello", 10, None, None);
+        let trace_event = console_event(2, "trace", "tracing", 11, None, None);
+
+        assert_eq!(
+            group_by_message(std::slice::from_ref(&log_event))[0].level,
+            "log"
+        );
+        assert_eq!(
+            group_by_message(std::slice::from_ref(&trace_event))[0].level,
+            "trace"
+        );
+
+        assert!(!level_matches(LogLevelFilter::Info, &log_event));
+        assert!(level_matches(LogLevelFilter::All, &log_event));
+        assert!(level_matches(LogLevelFilter::Debug, &trace_event));
     }
 }
