@@ -26,6 +26,12 @@ impl MockBrowserBackend {
 
 #[async_trait]
 impl BrowserBackend for MockBrowserBackend {
+    async fn poll_observations(&mut self) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+        Ok(Vec::new())
+    }
+    async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+        Ok(())
+    }
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         self.navigate_count += 1;
         Ok(PageInfo {

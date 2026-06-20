@@ -64,6 +64,14 @@ impl PlaywrightBridge {
 
 #[async_trait::async_trait]
 impl BrowserBackend for PlaywrightBridge {
+    async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
+        PlaywrightBridge::poll_observations(self).await
+    }
+
+    async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError> {
+        PlaywrightBridge::set_seq(self, seq).await
+    }
+
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         PlaywrightBridge::navigate(self, url).await
     }

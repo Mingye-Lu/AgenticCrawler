@@ -661,6 +661,9 @@ mod tests {
         async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
             Ok(std::mem::take(&mut self.observations))
         }
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn get_storage(
             &mut self,
             _: StorageType,

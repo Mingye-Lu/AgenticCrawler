@@ -283,6 +283,14 @@ mod set_device_integration {
 
     #[async_trait]
     impl BrowserBackend for NopBackend {
+        async fn poll_observations(
+            &mut self,
+        ) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
             unreachable!()
         }
@@ -388,6 +396,14 @@ mod set_device_integration {
 
     #[async_trait]
     impl BrowserBackend for RecordingBackend {
+        async fn poll_observations(
+            &mut self,
+        ) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
             unreachable!()
         }

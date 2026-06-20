@@ -373,6 +373,22 @@ mod tests {
             })
             .unwrap();
 
+        // increment_seq pushes the current seq to the extension bridge so
+        // buffered observations are tagged for temporal filtering.
+        let (cmd, resp_tx) = command_rx
+            .recv()
+            .await
+            .expect("extension should receive set_seq");
+        assert_eq!(cmd.action, "set_seq");
+        resp_tx
+            .send(BridgeResponse {
+                id: cmd.id,
+                ok: true,
+                result: None,
+                error: None,
+            })
+            .unwrap();
+
         // post_action_page_state: acquire_bridge (switch_tab) + page_map
         let (cmd, resp_tx) = command_rx
             .recv()

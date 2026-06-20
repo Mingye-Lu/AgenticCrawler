@@ -162,6 +162,14 @@ impl fmt::Debug for ExtensionBridge {
 
 #[async_trait]
 impl BrowserBackend for ExtensionBridge {
+    async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
+        ExtensionBridge::poll_observations(self).await
+    }
+
+    async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError> {
+        ExtensionBridge::set_seq(self, seq).await
+    }
+
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         let response = self.send_command("navigate", json!({ "url": url })).await?;
         let result = Self::require_result(response, "navigate")?;

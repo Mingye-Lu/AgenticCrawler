@@ -128,17 +128,14 @@ pub trait BrowserBackend: Debug {
         self.page_map(None, false).await
     }
 
-    async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
-        Err(BridgeError::Unsupported(
-            "poll_observations not implemented for this backend".into(),
-        ))
-    }
+    /// Drains buffered observation events. Required for every backend — no
+    /// default impl on purpose: observation tools dispatch through
+    /// `dyn BrowserBackend`, so a missing override silently breaks the feature.
+    async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError>;
 
-    async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
-        Err(BridgeError::Unsupported(
-            "set_seq not implemented for this backend".into(),
-        ))
-    }
+    /// Pushes the current global seq so buffered observations are tagged for
+    /// temporal filtering. Required for every backend (no default; see above).
+    async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError>;
 
     async fn reload(&mut self) -> Result<PageInfo, BridgeError> {
         Err(BridgeError::Unsupported(

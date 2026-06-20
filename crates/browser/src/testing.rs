@@ -98,4 +98,10 @@ impl BrowserBackend for NopBridge {
     async fn set_device(&mut self, _options: &Value) -> Result<Value, BridgeError> {
         Err(BridgeError::Protocol("NopBridge".into()))
     }
+    async fn poll_observations(&mut self) -> Result<Vec<crate::ObservationEvent>, BridgeError> {
+        Ok(Vec::new())
+    }
+    async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+        Ok(())
+    }
 }
