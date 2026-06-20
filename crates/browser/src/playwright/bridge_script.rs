@@ -319,6 +319,11 @@ async function bootstrap() {
       attachObservationListeners(p, pages.length - 1);
     }
   });
+
+  function activePageIndex() {
+    const idx = pages.indexOf(page);
+    return idx === -1 ? 0 : idx;
+  }
   process.stdout.write(JSON.stringify({ event: 'bridge_bootstrap', ok: true }) + '\n');
 
   async function bypassTurnstileIfPresent(pg) {
@@ -1235,8 +1240,8 @@ async function bootstrap() {
     if (command.action === 'start_coverage') {
       const doJs = command.js !== false;
       const doCss = command.css !== false;
-      if (doJs) await pages[currentPageIndex].coverage.startJSCoverage();
-      if (doCss) await pages[currentPageIndex].coverage.startCSSCoverage();
+      if (doJs) await pages[activePageIndex()].coverage.startJSCoverage();
+      if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage();
       process.stdout.write(JSON.stringify({
         event: 'bridge_response',
         ok: true,
@@ -1248,8 +1253,8 @@ async function bootstrap() {
     if (command.action === 'stop_coverage') {
       let js_coverage = [];
       let css_coverage = [];
-      try { js_coverage = await pages[currentPageIndex].coverage.stopJSCoverage(); } catch(e) {}
-      try { css_coverage = await pages[currentPageIndex].coverage.stopCSSCoverage(); } catch(e) {}
+      try { js_coverage = await pages[activePageIndex()].coverage.stopJSCoverage(); } catch(e) {}
+      try { css_coverage = await pages[activePageIndex()].coverage.stopCSSCoverage(); } catch(e) {}
 
       const formatEntry = (entry) => {
         const usedBytes = entry.ranges ? entry.ranges.reduce((sum, r) => sum + r.end - r.start, 0) : (entry.usedBytes || 0);
@@ -1287,7 +1292,7 @@ async function bootstrap() {
 
     if (command.action === 'get_storage') {
       const storageType = command.storage_type || 'all';
-      const page = pages[currentPageIndex];
+      const page = pages[activePageIndex()];
       
       let localStorage = [];
       let sessionStorage = [];
@@ -1326,7 +1331,7 @@ async function bootstrap() {
 
     if (command.action === 'add_intercept_rule') {
       const { rule_id, pattern, action_type, mock } = command;
-      const page = pages[currentPageIndex];
+      const page = pages[activePageIndex()];
       interceptRulesMap[rule_id] = { pattern, action_type, mock, hits: 0 };
       await page.route(pattern, async (route) => {
         if (!interceptRulesMap[rule_id]) { await route.continue(); return; }
@@ -1356,7 +1361,7 @@ async function bootstrap() {
 
     if (command.action === 'clear_intercept_rules') {
       interceptRulesMap = {};
-      await pages[currentPageIndex].unrouteAll();
+      await pages[activePageIndex()].unrouteAll();
       process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: {} }) + '\n');
       continue;
     }
