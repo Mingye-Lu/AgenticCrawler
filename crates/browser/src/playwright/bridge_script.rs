@@ -98,9 +98,167 @@ function bufferEvent(pageIndex, event, seqAtInitiation = currentSeq) {
   }
 }
 
-function attachObservationListeners(page, pageIndex) {
+const observationCdpSessions = new WeakMap();
+
+function truncateText(value, maxChars) {
+  if (maxChars === undefined) maxChars = 8192;
+  const text = (typeof value === 'string') ? value : String(value === null || value === undefined ? '' : value);
+  return text.length > maxChars ? text.slice(0, maxChars) + '...[truncated]' : text;
+}
+
+function normalizeConsoleLevel(type) {
+  switch (String(type || '').toLowerCase()) {
+    case 'error':
+    case 'assert':
+      return 'error';
+    case 'warn':
+    case 'warning':
+      return 'warning';
+    case 'debug':
+    case 'trace':
+      return 'debug';
+    default:
+      return 'info';
+  }
+}
+
+function toNullableInt(value) {
+  return Number.isInteger(value) ? value : null;
+}
+
+function firstNonEmpty() {
+  for (let i = 0; i < arguments.length; i++) {
+    const value = arguments[i];
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return null;
+}
+
+function topCallFrame(stackTrace) {
+  const frames = (stackTrace && Array.isArray(stackTrace.callFrames)) ? stackTrace.callFrames : [];
+  return frames.length > 0 ? frames[0] : null;
+}
+
+function formatPreview(obj, preview) {
+  const props = Array.isArray(preview.properties) ? preview.properties.slice(0, 5) : [];
+  const rendered = props.map((prop) => {
+    if (prop.value !== undefined) {
+      return prop.name + ': ' + (prop.type === 'string' ? JSON.stringify(prop.value) : String(prop.value));
+    }
+    return prop.name + ': ' + (prop.subtype || prop.type || '...');
+  });
+  const overflow = (preview.overflow || (Array.isArray(preview.properties) && preview.properties.length > 5)) ? ', ...' : '';
+  if (preview.subtype === 'array') return '[' + rendered.join(', ') + overflow + ']';
+  if (rendered.length > 0) return (obj.className || 'Object') + ' { ' + rendered.join(', ') + overflow + ' }';
+  return obj.description || obj.className || 'Object';
+}
+
+function formatRemoteObject(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  if (obj.unserializableValue !== undefined) return String(obj.unserializableValue);
+  if (obj.subtype === 'null') return 'null';
+  if (obj.type === 'undefined') return 'undefined';
+  if (obj.type === 'string') return (obj.value !== undefined ? obj.value : (obj.description || ''));
+  if (obj.type === 'number' || obj.type === 'boolean' || obj.type === 'bigint') {
+    return obj.value !== undefined ? String(obj.value) : String(obj.description || '');
+  }
+  if (obj.type === 'function') return obj.description || '[Function]';
+  if (obj.preview) return formatPreview(obj, obj.preview);
+  return obj.description || obj.className || obj.type || 'Object';
+}
+
+function formatConsoleArgs(args) {
+  const parts = Array.isArray(args) ? args.map(formatRemoteObject) : [];
+  return truncateText(parts.filter((p) => p !== '').join(' '));
+}
+
+function attachLegacyConsoleListeners(page, pageIndex) {
+  page.on('console', (msg) => {
+    const location = typeof msg.location === 'function' ? msg.location() : null;
+    bufferEvent(pageIndex, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      level: msg.type(),
+      message_type: 'Console',
+      text: truncateText(msg.text()),
+      source_url: location && location.url ? location.url : null,
+      source_line: location && location.lineNumber != null ? location.lineNumber : null,
+      source_column: location && location.columnNumber != null ? location.columnNumber : null,
+      stack: null,
+    });
+  });
+  page.on('pageerror', (err) => {
+    bufferEvent(pageIndex, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      level: 'error',
+      message_type: 'Exception',
+      text: truncateText(err.message),
+      source_url: null,
+      source_line: null,
+      source_column: null,
+      stack: err.stack ? truncateText(err.stack, 16384) : null,
+    });
+  });
+}
+
+async function detachObservationSession(page) {
+  const client = observationCdpSessions.get(page);
+  observationCdpSessions.delete(page);
+  if (!client) return;
+  try { client.removeAllListeners(); } catch (_) {}
+  await client.detach().catch(() => {});
+}
+
+// CloakBrowser (rebrowser-style stealth) suppresses CDP Runtime.enable, so Playwright's
+// page.on('console')/'pageerror' never fire for page-origin JS. A dedicated CDP session
+// re-enables Runtime on a separate target to capture console calls + uncaught exceptions.
+async function initCdpObservation(page, pageIndex) {
+  const client = await page.context().newCDPSession(page);
+  observationCdpSessions.set(page, client);
+
+  client.on('Runtime.consoleAPICalled', (event) => {
+    const frame = topCallFrame(event && event.stackTrace);
+    bufferEvent(pageIndex, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      level: normalizeConsoleLevel(event && event.type),
+      message_type: 'Console',
+      text: formatConsoleArgs(event && event.args) || String((event && event.type) || 'console'),
+      source_url: frame && frame.url ? frame.url : null,
+      source_line: frame ? toNullableInt(frame.lineNumber) : null,
+      source_column: frame ? toNullableInt(frame.columnNumber) : null,
+      stack: null,
+    });
+  });
+
+  client.on('Runtime.exceptionThrown', (event) => {
+    const details = (event && event.exceptionDetails) || {};
+    const exception = details.exception || {};
+    const frame = topCallFrame(details.stackTrace);
+    bufferEvent(pageIndex, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      level: 'error',
+      message_type: 'Exception',
+      text: truncateText(firstNonEmpty(details.text, typeof exception.value === 'string' ? exception.value : null, 'Uncaught exception')),
+      source_url: (frame && frame.url) ? frame.url : (details.url || null),
+      source_line: frame ? toNullableInt(frame.lineNumber) : toNullableInt(details.lineNumber),
+      source_column: frame ? toNullableInt(frame.columnNumber) : toNullableInt(details.columnNumber),
+      stack: (typeof exception.description === 'string' && exception.description) ? truncateText(exception.description, 16384) : null,
+    });
+  });
+
+  await client.send('Runtime.enable');
+}
+
+async function attachObservationListeners(page, pageIndex) {
   if (page.__acrawlObservationAttached) {
-    return;
+    return page.__acrawlObservationAttachPromise;
   }
   page.__acrawlObservationAttached = true;
 
@@ -196,37 +354,6 @@ function attachObservationListeners(page, pageIndex) {
     pendingRequests.delete(req);
   });
 
-  page.on('console', (msg) => {
-    const location = typeof msg.location === 'function' ? msg.location() : null;
-    bufferEvent(pageIndex, {
-      type: 'ConsoleMessage',
-      timestamp_ms: Date.now(),
-      tab_index: pageIndex,
-      level: msg.type(),
-      message_type: 'Console',
-      text: msg.text(),
-      source_url: location?.url || null,
-      source_line: location?.lineNumber ?? null,
-      source_column: location?.columnNumber ?? null,
-      stack: null,
-    });
-  });
-
-  page.on('pageerror', (err) => {
-    bufferEvent(pageIndex, {
-      type: 'ConsoleMessage',
-      timestamp_ms: Date.now(),
-      tab_index: pageIndex,
-      level: 'error',
-      message_type: 'Exception',
-      text: err.message,
-      source_url: null,
-      source_line: null,
-      source_column: null,
-      stack: err.stack || null,
-    });
-  });
-
   page.on('websocket', (ws) => {
     const wsId = `ws_${pageIndex}_${++nextWebSocketId}`;
 
@@ -260,6 +387,18 @@ function attachObservationListeners(page, pageIndex) {
       });
     });
   });
+
+  page.once('close', () => { void detachObservationSession(page); });
+
+  page.__acrawlObservationAttachPromise = (async () => {
+    try {
+      await initCdpObservation(page, pageIndex);
+    } catch (error) {
+      process.stderr.write('[acrawl] CDP observation attach failed on tab ' + pageIndex + ': ' + String(error) + '\n');
+      attachLegacyConsoleListeners(page, pageIndex);
+    }
+  })();
+  return page.__acrawlObservationAttachPromise;
 }
 
 async function bootstrap() {
@@ -301,22 +440,25 @@ async function bootstrap() {
   const browser = await launch({ headless: parseHeadless(), humanize: true });
   let context = await browser.newContext({ viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } });
   await context.addInitScript(`
-    Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
-      width: { value: 1920, enumerable: true },
-      height: { value: 1080, enumerable: true },
-      availWidth: { value: 1920, enumerable: true },
-      availHeight: { value: 1040, enumerable: true },
-      colorDepth: { value: 24, enumerable: true },
-      pixelDepth: { value: 24, enumerable: true },
-    }), configurable: true });
+    (() => {
+      // Spoof screen dimensions by shadowing them on the REAL screen object.
+      // Replacing window.screen with Object.create(Screen.prototype, ...) loses
+      // the internal Screen slot, so inherited native accessors like
+      // screen.orientation throw "Illegal invocation" (which breaks axe-core).
+      const dims = { width: 1920, height: 1080, availWidth: 1920, availHeight: 1040, colorDepth: 24, pixelDepth: 24 };
+      for (const k of Object.keys(dims)) {
+        try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
+      }
+    })();
   `);
   let page = await context.newPage();
   const pages = [page];
-  attachObservationListeners(page, 0);
+  await attachObservationListeners(page, 0);
   context.on('page', (p) => {
     if (!pages.includes(p)) {
       pages.push(p);
-      attachObservationListeners(p, pages.length - 1);
+      const popupIndex = pages.length - 1;
+      void attachObservationListeners(p, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
     }
   });
 
@@ -437,7 +579,7 @@ async function bootstrap() {
           pages.push(newPage);
         }
         const pageIndex = pages.indexOf(newPage);
-        attachObservationListeners(newPage, pageIndex);
+        await attachObservationListeners(newPage, pageIndex);
         page = newPage;
         let currentUrl = newPage.url();
         if (command.url) {
@@ -1129,14 +1271,14 @@ async function bootstrap() {
 
         if (command.screen) {
           await newContext.addInitScript(`
-            Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
-              width: { value: ${command.screen.width}, enumerable: true },
-              height: { value: ${command.screen.height}, enumerable: true },
-              availWidth: { value: ${command.screen.width}, enumerable: true },
-              availHeight: { value: ${command.screen.height}, enumerable: true },
-              colorDepth: { value: 24, enumerable: true },
-              pixelDepth: { value: 24, enumerable: true },
-            }), configurable: true });
+            (() => {
+              // Shadow dims on the real screen object (preserves screen.orientation
+              // and other native accessors; see bootstrap note).
+              const dims = { width: ${command.screen.width}, height: ${command.screen.height}, availWidth: ${command.screen.width}, availHeight: ${command.screen.height}, colorDepth: 24, pixelDepth: 24 };
+              for (const k of Object.keys(dims)) {
+                try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
+              }
+            })();
           `);
         }
 
@@ -1171,11 +1313,12 @@ async function bootstrap() {
         observationBuffers.clear();
         pages.length = 0;
         pages.push(page);
-        attachObservationListeners(page, 0);
+        await attachObservationListeners(page, 0);
         context.on('page', (p) => {
           if (!pages.includes(p)) {
             pages.push(p);
-            attachObservationListeners(p, pages.length - 1);
+            const popupIndex = pages.length - 1;
+            void attachObservationListeners(p, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
           }
         });
         await oldContext.close().catch(() => {});
