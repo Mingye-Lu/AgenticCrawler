@@ -1240,8 +1240,8 @@ async function bootstrap() {
     if (command.action === 'start_coverage') {
       const doJs = command.js !== false;
       const doCss = command.css !== false;
-      if (doJs) await pages[activePageIndex()].coverage.startJSCoverage();
-      if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage();
+      if (doJs) await pages[activePageIndex()].coverage.startJSCoverage({ resetOnNavigation: false });
+      if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage({ resetOnNavigation: false });
       process.stdout.write(JSON.stringify({
         event: 'bridge_response',
         ok: true,
