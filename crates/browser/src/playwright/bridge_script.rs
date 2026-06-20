@@ -1399,8 +1399,59 @@ async function bootstrap() {
       try { js_coverage = await pages[activePageIndex()].coverage.stopJSCoverage(); } catch(e) {}
       try { css_coverage = await pages[activePageIndex()].coverage.stopCSSCoverage(); } catch(e) {}
 
+      // V8 JS coverage exposes functions[].ranges[]{startOffset,endOffset,count}
+      // with NESTED ranges (a function's outer range plus inner block ranges that
+      // override the parent's count over their sub-region). Summing every count>0
+      // range double-counts overlaps, so sweep the range boundaries with a count
+      // stack: between two boundaries the innermost (last-opened) range wins, and
+      // its bytes are "used" iff that range's count > 0. This mirrors Playwright's
+      // own convertToDisjointRanges. CSS coverage is already a flat disjoint
+      // ranges[]{start,end}, so it keeps the simple sum.
+      const jsUsedBytes = (functions) => {
+        const ranges = [];
+        for (const fn of (functions || [])) {
+          for (const r of (fn.ranges || [])) {
+            if (r.endOffset > r.startOffset) ranges.push(r);
+          }
+        }
+        if (ranges.length === 0) return 0;
+        const events = [];
+        for (const r of ranges) {
+          const len = r.endOffset - r.startOffset;
+          events.push({ offset: r.startOffset, isOpen: true, count: r.count, len });
+          events.push({ offset: r.endOffset, isOpen: false, count: r.count, len });
+        }
+        events.sort((a, b) => {
+          if (a.offset !== b.offset) return a.offset - b.offset;
+          if (a.isOpen !== b.isOpen) return a.isOpen ? 1 : -1;
+          return a.isOpen ? b.len - a.len : a.len - b.len;
+        });
+        const stack = [];
+        let lastOffset = 0;
+        let used = 0;
+        for (const ev of events) {
+          if (ev.offset > lastOffset && stack.length > 0 && stack[stack.length - 1] > 0) {
+            used += ev.offset - lastOffset;
+          }
+          lastOffset = ev.offset;
+          if (ev.isOpen) {
+            stack.push(ev.count);
+          } else {
+            stack.pop();
+          }
+        }
+        return used;
+      };
+
       const formatEntry = (entry) => {
-        const usedBytes = entry.ranges ? entry.ranges.reduce((sum, r) => sum + r.end - r.start, 0) : (entry.usedBytes || 0);
+        let usedBytes;
+        if (entry.functions) {
+          usedBytes = jsUsedBytes(entry.functions);
+        } else if (entry.ranges) {
+          usedBytes = entry.ranges.reduce((sum, r) => sum + r.end - r.start, 0);
+        } else {
+          usedBytes = entry.usedBytes || 0;
+        }
         const totalBytes = entry.text ? entry.text.length : (entry.source ? entry.source.length : 0);
         return {
           url: entry.url,
