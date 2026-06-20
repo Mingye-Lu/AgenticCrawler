@@ -272,7 +272,7 @@ fn section_observation_tools() -> String {
       - **Since/until filtering**: `since: \"last\"` (default) = since your last action; `since: N` = since seq number N; `since: \"all\"` = entire session. `until: N` = exclusive upper bound. Uses half-open interval [since, until).\n\
       - **Overview/detail pattern**: `list_*` tools give compact summaries with @rN/@logN/@wsN IDs. Use the corresponding `inspect_*` tools with those IDs for full details.\n\
       - **Temporal scoping**: Observations are buffered per browser session. Older entries are pruned to keep memory bounded. Use `since=\"all\"` to get the full retained buffer.\n\n\
-      Observation tools:\n\
+      Available observation tools:\n\
       - **`list_network_activity`** — List buffered HTTP requests with optional filtering by state (xhr, failed, pending), URL pattern, and sorting (slowest, fastest, largest, smallest, newest, oldest). Returns @rN IDs.\n\
       - **`inspect_request`** — Inspect a request by @rN ID. Returns metadata, timing, initiator type, and notes about unavailable headers/bodies.\n\
       - **`list_page_logs`** — List console logs (error, warning, info, debug) grouped by message text (default), source, or level. Returns @logN IDs for deduplicated groups.\n\
@@ -281,7 +281,7 @@ fn section_observation_tools() -> String {
       - **`inspect_websocket`** — Inspect WebSocket messages by @wsN ID. Supports direction filter (sent/received), pattern search, and sorting.\n\
       - **`get_page_performance`** — Navigation Timing and Resource Timing metrics. Returns TTFB, DOM timings, and top 20 resources by transfer size.\n\
       - **`inspect_cookies`** — All cookies on the current page with security analysis (missing_secure, missing_httponly, excessive_lifetime, etc.).\n\
-      - **`inspect_storage`** — LocalStorage, SessionStorage, and IndexedDB contents.\n\
+      - **`inspect_storage`** — LocalStorage and SessionStorage contents.\n\
       - **`measure_coverage`** — CSS and JavaScript coverage metrics.\n\
       - **`audit_accessibility`** — Accessibility audit results (WCAG violations, missing labels, etc.).\n\
       - **`intercept_network`** — Set up request/response interception rules for future requests.\n\n\

@@ -214,7 +214,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_thirty_nine() {
+    fn new_with_core_tools_registers_all_forty_two() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
