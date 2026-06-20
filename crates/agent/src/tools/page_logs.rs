@@ -312,10 +312,7 @@ fn group_by_source(events: &[ConsoleMessageEvent]) -> Vec<SourceGroup> {
 fn group_by_level(events: &[ConsoleMessageEvent]) -> Vec<LevelGroup> {
     let mut grouped: HashMap<String, Vec<&ConsoleMessageEvent>> = HashMap::new();
     for event in events {
-        grouped
-            .entry(event.level.clone())
-            .or_default()
-            .push(event);
+        grouped.entry(event.level.clone()).or_default().push(event);
     }
 
     let mut groups = Vec::new();
