@@ -1,10 +1,77 @@
 use crate::browser_backend::{BrowserBackend, ScreenshotOptions};
+use crate::{ConsoleMessageEvent, NetworkRequestEvent, ObservationEvent, WebSocketFrameEvent};
 
 use super::bridge::PlaywrightBridge;
 use super::types::{BridgeError, BrowserState, PageInfo};
 
+impl PlaywrightBridge {
+    pub async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
+        let result = self
+            .send_raw_command(&serde_json::json!({
+                "action": "poll_observations",
+            }))
+            .await?;
+        let events = result
+            .get("events")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        events
+            .into_iter()
+            .map(|event| {
+                let event_type = event
+                    .get("type")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        BridgeError::Protocol("observation event missing type".to_string())
+                    })?;
+
+                match event_type {
+                    "NetworkRequest" => serde_json::from_value::<NetworkRequestEvent>(event)
+                        .map(|parsed| ObservationEvent::NetworkRequest(Box::new(parsed)))
+                        .map_err(|error| {
+                            BridgeError::Protocol(format!(
+                                "failed to parse network observation event: {error}"
+                            ))
+                        }),
+                    "ConsoleMessage" => serde_json::from_value::<ConsoleMessageEvent>(event)
+                        .map(ObservationEvent::ConsoleMessage)
+                        .map_err(|error| {
+                            BridgeError::Protocol(format!(
+                                "failed to parse console observation event: {error}"
+                            ))
+                        }),
+                    "WebSocketFrame" => serde_json::from_value::<WebSocketFrameEvent>(event)
+                        .map(ObservationEvent::WebSocketFrame)
+                        .map_err(|error| {
+                            BridgeError::Protocol(format!(
+                                "failed to parse websocket observation event: {error}"
+                            ))
+                        }),
+                    other => Err(BridgeError::Protocol(format!(
+                        "unsupported observation event type: {other}"
+                    ))),
+                }
+            })
+            .collect()
+    }
+
+    pub async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError> {
+        self.set_seq_raw(seq).await
+    }
+}
+
 #[async_trait::async_trait]
 impl BrowserBackend for PlaywrightBridge {
+    async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
+        PlaywrightBridge::poll_observations(self).await
+    }
+
+    async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError> {
+        PlaywrightBridge::set_seq(self, seq).await
+    }
+
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         PlaywrightBridge::navigate(self, url).await
     }
@@ -115,10 +182,48 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::go_back(self).await
     }
 
+    async fn reload(&mut self) -> Result<PageInfo, BridgeError> {
+        PlaywrightBridge::reload(self).await
+    }
+
     async fn set_device(
         &mut self,
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, BridgeError> {
         PlaywrightBridge::set_device(self, options).await
+    }
+
+    async fn get_cookies(&mut self) -> Result<Vec<crate::CookieInfo>, BridgeError> {
+        PlaywrightBridge::get_cookies(self).await
+    }
+
+    async fn get_storage(
+        &mut self,
+        storage_type: crate::StorageType,
+    ) -> Result<(Vec<crate::StorageEntry>, Vec<crate::StorageEntry>), BridgeError> {
+        PlaywrightBridge::get_storage(self, storage_type).await
+    }
+
+    async fn start_coverage(&mut self, js: bool, css: bool) -> Result<(), BridgeError> {
+        PlaywrightBridge::start_coverage(self, js, css).await
+    }
+
+    async fn stop_coverage(&mut self) -> Result<crate::CoverageData, BridgeError> {
+        PlaywrightBridge::stop_coverage(self).await
+    }
+
+    async fn add_intercept_rule(
+        &mut self,
+        rule: crate::InterceptRule,
+    ) -> Result<String, BridgeError> {
+        PlaywrightBridge::add_intercept_rule(self, rule).await
+    }
+
+    async fn remove_intercept_rule(&mut self, rule_id: &str) -> Result<(), BridgeError> {
+        PlaywrightBridge::remove_intercept_rule(self, rule_id).await
+    }
+
+    async fn clear_intercept_rules(&mut self) -> Result<(), BridgeError> {
+        PlaywrightBridge::clear_intercept_rules(self).await
     }
 }

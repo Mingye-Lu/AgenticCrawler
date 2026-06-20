@@ -1,20 +1,79 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
+use crate::observation::ObservationEvent;
 use crate::{BridgeError, BrowserState, PageInfo};
 
-/// Options for the screenshot backend call.
 #[derive(Debug, Clone, Default)]
 pub struct ScreenshotOptions<'a> {
-    /// CSS selector to screenshot a specific element.
     pub selector: Option<&'a str>,
-    /// Image format: "png", "jpeg", or "webp".
     pub format: Option<&'a str>,
-    /// Quality for lossy formats (jpeg/webp), 0-100.
     pub quality: Option<u32>,
-    /// Capture the full scrollable page.
     pub full_page: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CookieInfo {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub expires: Option<f64>,
+    pub secure: bool,
+    pub http_only: bool,
+    pub same_site: Option<String>,
+    pub size_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageEntry {
+    pub key: String,
+    pub value: String,
+    pub size_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum StorageType {
+    Local,
+    Session,
+    All,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterceptRule {
+    pub pattern: String,
+    pub action: InterceptAction,
+    pub mock: Option<MockResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum InterceptAction {
+    Block,
+    MockResponse,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MockResponse {
+    pub status: u16,
+    pub headers: Option<HashMap<String, String>>,
+    pub body: Option<String>,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageData {
+    pub js_coverage: Vec<FileCoverage>,
+    pub css_coverage: Vec<FileCoverage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileCoverage {
+    pub url: String,
+    pub total_bytes: usize,
+    pub used_bytes: usize,
 }
 
 #[async_trait]
@@ -67,5 +126,65 @@ pub trait BrowserBackend: Debug {
 
     async fn page_map_feedback(&mut self) -> Result<serde_json::Value, BridgeError> {
         self.page_map(None, false).await
+    }
+
+    /// Drains buffered observation events. Required for every backend — no
+    /// default impl on purpose: observation tools dispatch through
+    /// `dyn BrowserBackend`, so a missing override silently breaks the feature.
+    async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError>;
+
+    /// Pushes the current global seq so buffered observations are tagged for
+    /// temporal filtering. Required for every backend (no default; see above).
+    async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError>;
+
+    async fn reload(&mut self) -> Result<PageInfo, BridgeError> {
+        Err(BridgeError::Unsupported(
+            "reload not implemented for this backend".into(),
+        ))
+    }
+
+    async fn get_cookies(&mut self) -> Result<Vec<CookieInfo>, BridgeError> {
+        Err(BridgeError::Unsupported(
+            "get_cookies not implemented for this backend".into(),
+        ))
+    }
+
+    async fn get_storage(
+        &mut self,
+        _storage_type: StorageType,
+    ) -> Result<(Vec<StorageEntry>, Vec<StorageEntry>), BridgeError> {
+        Err(BridgeError::Unsupported(
+            "get_storage not implemented for this backend".into(),
+        ))
+    }
+
+    async fn start_coverage(&mut self, _js: bool, _css: bool) -> Result<(), BridgeError> {
+        Err(BridgeError::Unsupported(
+            "start_coverage not implemented for this backend".into(),
+        ))
+    }
+
+    async fn stop_coverage(&mut self) -> Result<CoverageData, BridgeError> {
+        Err(BridgeError::Unsupported(
+            "stop_coverage not implemented for this backend".into(),
+        ))
+    }
+
+    async fn add_intercept_rule(&mut self, _rule: InterceptRule) -> Result<String, BridgeError> {
+        Err(BridgeError::Unsupported(
+            "add_intercept_rule not implemented for this backend".into(),
+        ))
+    }
+
+    async fn remove_intercept_rule(&mut self, _rule_id: &str) -> Result<(), BridgeError> {
+        Err(BridgeError::Unsupported(
+            "remove_intercept_rule not implemented for this backend".into(),
+        ))
+    }
+
+    async fn clear_intercept_rules(&mut self) -> Result<(), BridgeError> {
+        Err(BridgeError::Unsupported(
+            "clear_intercept_rules not implemented for this backend".into(),
+        ))
     }
 }

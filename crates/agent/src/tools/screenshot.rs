@@ -177,6 +177,14 @@ mod tests {
 
     #[async_trait]
     impl BrowserBackend for MockBackend {
+        async fn poll_observations(
+            &mut self,
+        ) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
             unimplemented!()
         }

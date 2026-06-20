@@ -54,6 +54,7 @@ pub fn build_system_prompt(
         section_completion(),
         section_parallel_exploration(),
         section_autonomous_scripts(),
+        section_observation_tools(),
     ];
 
     if let Some(dynamic_section) = dynamic_context.and_then(build_dynamic_section) {
@@ -263,6 +264,41 @@ fn section_autonomous_scripts() -> String {
         .to_string()
 }
 
+fn section_observation_tools() -> String {
+    "Observation tools:\n\
+      After you navigate, click, fill a form, or refresh a page, use observation tools to understand what happened. These tools expose browser DevTools capabilities: network requests, console logs, WebSocket messages, performance metrics, cookies, and storage.\n\n\
+      Key concepts:\n\
+      - **Seq numbers**: Every action tool (navigate, click, fill_form, etc.) returns a `seq: N` number. Use this in `since` parameters to filter observations to a specific point in time.\n\
+      - **Since/until filtering**: `since: \"last\"` (default) = since your last action; `since: N` = since seq number N; `since: \"all\"` = entire session. `until: N` = exclusive upper bound. Uses half-open interval [since, until).\n\
+      - **Overview/detail pattern**: `list_*` tools give compact summaries with @rN/@logN/@wsN IDs. Use the corresponding `inspect_*` tools with those IDs for full details.\n\
+      - **Temporal scoping**: Observations are buffered per browser session. Older entries are pruned to keep memory bounded. Use `since=\"all\"` to get the full retained buffer.\n\n\
+      Available observation tools:\n\
+      - **`list_network_activity`** — List buffered HTTP requests with optional filtering by state (xhr, failed, pending), URL pattern, and sorting (slowest, fastest, largest, smallest, newest, oldest). Returns @rN IDs.\n\
+      - **`inspect_request`** — Inspect a request by @rN ID. Returns metadata, timing, initiator type, and notes about unavailable headers/bodies.\n\
+      - **`list_page_logs`** — List console logs (error, warning, info, debug) grouped by message text (default), source, or level. Returns @logN IDs for deduplicated groups.\n\
+      - **`inspect_log`** — Inspect a log group by @logN ID. Returns concrete instances with timestamps, stack traces, and source locations.\n\
+      - **`list_websocket_activity`** — Overview of WebSocket connections with message counts. Returns @wsN IDs.\n\
+      - **`inspect_websocket`** — Inspect WebSocket messages by @wsN ID. Supports direction filter (sent/received), pattern search, and sorting.\n\
+      - **`get_page_performance`** — Navigation Timing and Resource Timing metrics. Returns TTFB, DOM timings, and top 20 resources by transfer size.\n\
+      - **`inspect_cookies`** — All cookies on the current page with security analysis (missing_secure, missing_httponly, excessive_lifetime, etc.).\n\
+      - **`inspect_storage`** — LocalStorage and SessionStorage contents.\n\
+      - **`measure_coverage`** — CSS and JavaScript coverage metrics.\n\
+      - **`audit_accessibility`** — Accessibility audit results (WCAG violations, missing labels, etc.).\n\
+      - **`intercept_network`** — Set up request/response interception rules for future requests.\n\n\
+      When to use:\n\
+      - After navigate/click/fill_form when you want to understand what happened (API calls, errors, performance).\n\
+      - When debugging a page that seems broken or unresponsive — check console logs and network requests.\n\
+      - When a form submission or API call fails — inspect network activity to see the actual request/response.\n\
+      - When performance is slow — use get_page_performance to identify bottlenecks.\n\n\
+      Example workflow:\n\
+      1. Click a button that triggers an API call.\n\
+      2. Call `list_network_activity` with `since=\"last\"` to see requests since the click.\n\
+      3. If you see a failed request, call `inspect_request` with its @rN ID to get details.\n\
+      4. If you see console errors, call `list_page_logs` with `level=\"error\"` and `since=\"last\"`.\n\
+      5. Call `inspect_log` on the @logN ID to see the full stack trace."
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -361,6 +397,7 @@ mod tests {
         assert!(joined.contains("Completion:"));
         assert!(joined.contains("Parallel exploration:"));
         assert!(joined.contains("Autonomous scripts:"));
+        assert!(joined.contains("Observation tools:"));
     }
 
     #[test]
@@ -389,7 +426,7 @@ mod tests {
             joined.contains("wait_for_subagents"),
             "should mention wait_for_subagents"
         );
-        assert_eq!(prompt.len(), 8, "should have 8 sections");
+        assert_eq!(prompt.len(), 9, "should have 9 sections");
     }
 
     #[test]
@@ -420,7 +457,7 @@ mod tests {
             "should mention list_scripts"
         );
         assert!(joined.contains("read_script"), "should mention read_script");
-        assert_eq!(prompt.len(), 8, "should have 8 sections");
+        assert_eq!(prompt.len(), 9, "should have 9 sections");
     }
 
     #[test]
@@ -439,6 +476,7 @@ mod tests {
                 section_completion(),
                 section_parallel_exploration(),
                 section_autonomous_scripts(),
+                section_observation_tools(),
             ]
         );
     }
@@ -454,7 +492,7 @@ mod tests {
             }),
         );
 
-        assert_eq!(prompt.len(), 9);
-        assert!(prompt[8].contains("You are stuck"));
+        assert_eq!(prompt.len(), 10);
+        assert!(prompt[9].contains("You are stuck"));
     }
 }

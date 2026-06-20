@@ -65,6 +65,339 @@ async function resolveFillSelector(pg, raw) {
   return raw;
 }
 
+const observationBuffers = new Map();
+const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
+let currentSeq = 0;
+let nextRequestId = 0;
+let nextWebSocketId = 0;
+let interceptRulesMap = {};
+
+function estimateEventBytes(event) {
+  try {
+    return Buffer.byteLength(JSON.stringify(event), 'utf8');
+  } catch (_) {
+    return 0;
+  }
+}
+
+function bufferEvent(pageIndex, event, seqAtInitiation = currentSeq) {
+  event.seq_at_initiation = seqAtInitiation;
+
+  if (!observationBuffers.has(pageIndex)) {
+    observationBuffers.set(pageIndex, { events: [], currentBytes: 0 });
+  }
+  const buf = observationBuffers.get(pageIndex);
+  const eventBytes = estimateEventBytes(event);
+
+  buf.events.push(event);
+  buf.currentBytes += eventBytes;
+
+  while (buf.currentBytes > MAX_OBSERVATION_BYTES && buf.events.length > 0) {
+    const removed = buf.events.shift();
+    buf.currentBytes = Math.max(0, buf.currentBytes - estimateEventBytes(removed));
+  }
+}
+
+function truncateText(value, maxChars) {
+  if (maxChars === undefined) maxChars = 8192;
+  const text = (typeof value === 'string') ? value : String(value === null || value === undefined ? '' : value);
+  return text.length > maxChars ? text.slice(0, maxChars) + '...[truncated]' : text;
+}
+
+function toNullableInt(value) {
+  return Number.isInteger(value) ? value : null;
+}
+
+const REQUEST_BODY_CAP = 16384;
+const RESPONSE_BODY_CAP = 16384;
+
+// Playwright ResourceTiming fields are millisecond offsets from startTime, or
+// -1 when a phase did not occur (cache hit, reused connection, no TLS). span()
+// returns a duration only when both ends are present and ordered.
+function computeTimingMs(t) {
+  if (!t) return null;
+  const span = (start, end) =>
+    (typeof start === 'number' && typeof end === 'number' && start >= 0 && end >= start)
+      ? Math.round(end - start)
+      : null;
+  const hasTls = typeof t.secureConnectionStart === 'number' && t.secureConnectionStart >= 0;
+  return {
+    dns_ms: span(t.domainLookupStart, t.domainLookupEnd),
+    connect_ms: span(t.connectStart, t.connectEnd),
+    tls_ms: hasTls ? span(t.secureConnectionStart, t.connectEnd) : null,
+    ttfb_ms: span(t.requestStart, t.responseStart),
+    download_ms: span(t.responseStart, t.responseEnd),
+  };
+}
+
+function isTextualContentType(contentType) {
+  if (!contentType) return false;
+  const c = String(contentType).toLowerCase();
+  return c.includes('text/') || c.includes('json') || c.includes('xml')
+    || c.includes('javascript') || c.includes('ecmascript') || c.includes('html')
+    || c.includes('css') || c.includes('graphql') || c.includes('urlencoded')
+    || c.includes('csv');
+}
+
+// CloakBrowser (rebrowser-style stealth) suppresses CDP Runtime event *delivery*
+// (Runtime.consoleAPICalled / exceptionThrown / bindingCalled) on every CDP
+// session -- including a freshly created one -- while still ACKing Runtime.enable.
+// So page.on('console')/'pageerror', a dedicated newCDPSession, and exposeBinding
+// all capture nothing from page JS. Runtime.evaluate is NOT suppressed, so we
+// install a page-context init-script that mirrors console.* and the global
+// error/unhandledrejection events into a page-global ring buffer, then pull it via
+// page.evaluate (drainConsolePage) on poll and before each navigation. Tradeoff:
+// console.* is no longer a native function (a minor fingerprint vector shared by
+// Sentry/LogRocket-style monitoring) -- accepted, since the CDP path yields zero
+// events under CloakBrowser.
+const CONSOLE_CAPTURE_SOURCE = `
+  (() => {
+    if (window.__acrawlConsoleHooked) return;
+    window.__acrawlConsoleHooked = true;
+    var BUF = [];
+    var MAX = 2000;
+    window.__acrawlConsoleBuffer = BUF;
+    function fmt(a) {
+      if (typeof a === 'string') return a;
+      if (a instanceof Error) return (a.stack || a.message || String(a));
+      try { return JSON.stringify(a); } catch (_) { return String(a); }
+    }
+    function push(entry) {
+      BUF.push(entry);
+      if (BUF.length > MAX) BUF.splice(0, BUF.length - MAX);
+    }
+    ['log', 'info', 'warn', 'error', 'debug', 'trace'].forEach(function (m) {
+      var orig = console[m];
+      console[m] = function () {
+        try {
+          push({ level: m, message_type: 'Console', text: Array.prototype.slice.call(arguments).map(fmt).join(' '), ts: Date.now() });
+        } catch (_) {}
+        if (typeof orig === 'function') return orig.apply(console, arguments);
+      };
+    });
+    window.addEventListener('error', function (e) {
+      try {
+        push({
+          level: 'error',
+          message_type: 'Exception',
+          text: (e && e.message) ? String(e.message) : 'Uncaught error',
+          source_url: (e && e.filename) ? e.filename : null,
+          source_line: (e && typeof e.lineno === 'number') ? e.lineno : null,
+          source_column: (e && typeof e.colno === 'number') ? e.colno : null,
+          stack: (e && e.error && e.error.stack) ? String(e.error.stack) : null,
+          ts: Date.now(),
+        });
+      } catch (_) {}
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      try {
+        var reason = e ? e.reason : null;
+        var text = (reason instanceof Error) ? (reason.message || String(reason)) : fmt(reason);
+        push({ level: 'error', message_type: 'PromiseRejection', text: 'Unhandled promise rejection: ' + text, stack: (reason instanceof Error && reason.stack) ? String(reason.stack) : null, ts: Date.now() });
+      } catch (_) {}
+    });
+  })();
+`;
+
+const DRAIN_CONSOLE_JS = "(() => { var b = window.__acrawlConsoleBuffer || []; window.__acrawlConsoleBuffer = []; return b; })()";
+
+// Pull page-buffered console/error/rejection entries (see CONSOLE_CAPTURE_SOURCE)
+// into the Node-side observation buffer. The page global resets on navigation, so
+// this is invoked before navigate/reload/go_back and on every poll.
+async function drainConsolePage(page, pageIndex) {
+  if (!page) return;
+  let entries;
+  try {
+    entries = await page.evaluate(DRAIN_CONSOLE_JS);
+  } catch (_) {
+    return;
+  }
+  if (!Array.isArray(entries)) return;
+  for (const entry of entries) {
+    if (!entry) continue;
+    bufferEvent(pageIndex, {
+      type: 'ConsoleMessage',
+      timestamp_ms: typeof entry.ts === 'number' ? entry.ts : Date.now(),
+      tab_index: pageIndex,
+      level: entry.level ? String(entry.level) : 'info',
+      message_type: entry.message_type || 'Console',
+      text: truncateText(entry.text !== undefined && entry.text !== null ? entry.text : ''),
+      source_url: entry.source_url ? entry.source_url : null,
+      source_line: toNullableInt(entry.source_line),
+      source_column: toNullableInt(entry.source_column),
+      stack: entry.stack ? truncateText(entry.stack, 16384) : null,
+    });
+  }
+}
+
+async function attachObservationListeners(page, pageIndex) {
+  if (page.__acrawlObservationAttached) {
+    return;
+  }
+  page.__acrawlObservationAttached = true;
+
+  const pendingRequests = new WeakMap();
+
+  page.on('request', (req) => {
+    if (req.url().includes('__acrawl_poll')) return;
+
+    const requestId = `req_${pageIndex}_${++nextRequestId}`;
+    const startTime = Date.now();
+    const seqAtInitiation = currentSeq;
+    pendingRequests.set(req, { requestId, startTime, seqAtInitiation });
+
+    const serviceWorker = typeof req.serviceWorker === 'function' ? req.serviceWorker() : null;
+    const initiator = typeof req.initiator === 'function' ? req.initiator() : null;
+
+    bufferEvent(pageIndex, {
+      type: 'NetworkRequest',
+      timestamp_ms: startTime,
+      tab_index: pageIndex,
+      request_id: requestId,
+      url: req.url(),
+      method: req.method(),
+      status: null,
+      state: 'Pending',
+      size_bytes: null,
+      duration_ms: null,
+      request_type: req.resourceType(),
+      from_service_worker: Boolean(serviceWorker),
+      initiator_type: initiator?.type ?? null,
+      reason: null,
+    }, seqAtInitiation);
+  });
+
+  page.on('requestfinished', async (req) => {
+    if (req.url().includes('__acrawl_poll')) return;
+
+    const tracked = pendingRequests.get(req);
+    const response = await req.response().catch(() => null);
+    let sizeBytes = null;
+    if (response) {
+      try {
+        const contentLength = await response.headerValue('content-length');
+        if (contentLength !== null) {
+          const parsed = Number.parseInt(contentLength, 10);
+          sizeBytes = Number.isNaN(parsed) ? null : parsed;
+        }
+      } catch (_) {}
+    }
+
+    // inspect_request runs long after the Response object is gone, so headers,
+    // timing and bodies are pulled here at completion and buffered. Bodies are
+    // restricted to textual content types and truncated to bound buffer growth.
+    let requestHeaders = null;
+    try { requestHeaders = await req.allHeaders(); } catch (_) {}
+    let responseHeaders = null;
+    if (response) {
+      try { responseHeaders = await response.allHeaders(); } catch (_) {}
+    }
+
+    let requestBody = null;
+    try {
+      const postData = req.postData();
+      if (postData) requestBody = truncateText(postData, REQUEST_BODY_CAP);
+    } catch (_) {}
+
+    let responseBody = null;
+    if (response) {
+      const contentType = responseHeaders ? (responseHeaders['content-type'] || '') : '';
+      if (isTextualContentType(contentType)) {
+        try {
+          const body = await response.body();
+          if (body) responseBody = truncateText(body.toString('utf8'), RESPONSE_BODY_CAP);
+        } catch (_) {}
+      }
+    }
+
+    let timing = null;
+    try { timing = computeTimingMs(req.timing()); } catch (_) {}
+
+    bufferEvent(pageIndex, {
+      type: 'NetworkRequest',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      request_id: tracked?.requestId ?? `req_${pageIndex}_${++nextRequestId}`,
+      url: req.url(),
+      method: req.method(),
+      status: response?.status() ?? null,
+      state: 'Completed',
+      size_bytes: sizeBytes,
+      duration_ms: tracked ? Math.max(0, Date.now() - tracked.startTime) : null,
+      request_type: req.resourceType(),
+      from_service_worker: false,
+      initiator_type: null,
+      reason: null,
+      timing,
+      request_headers: requestHeaders,
+      response_headers: responseHeaders,
+      request_body: requestBody,
+      response_body: responseBody,
+    }, tracked?.seqAtInitiation ?? currentSeq);
+
+    pendingRequests.delete(req);
+  });
+
+  page.on('requestfailed', (req) => {
+    if (req.url().includes('__acrawl_poll')) return;
+
+    const tracked = pendingRequests.get(req);
+
+    bufferEvent(pageIndex, {
+      type: 'NetworkRequest',
+      timestamp_ms: Date.now(),
+      tab_index: pageIndex,
+      request_id: tracked?.requestId ?? `req_${pageIndex}_${++nextRequestId}`,
+      url: req.url(),
+      method: req.method(),
+      status: null,
+      state: 'Failed',
+      size_bytes: null,
+      duration_ms: tracked ? Math.max(0, Date.now() - tracked.startTime) : null,
+      request_type: req.resourceType(),
+      from_service_worker: false,
+      initiator_type: null,
+      reason: req.failure()?.errorText || 'Unknown',
+    }, tracked?.seqAtInitiation ?? currentSeq);
+
+    pendingRequests.delete(req);
+  });
+
+  page.on('websocket', (ws) => {
+    const wsId = `ws_${pageIndex}_${++nextWebSocketId}`;
+
+    ws.on('framesent', (frame) => {
+      const payload = frame.payload?.toString() || '';
+      bufferEvent(pageIndex, {
+        type: 'WebSocketFrame',
+        timestamp_ms: Date.now(),
+        tab_index: pageIndex,
+        connection_id: wsId,
+        url: ws.url(),
+        direction: 'sent',
+        data: payload,
+        size_bytes: payload.length,
+        connection_status: 'open',
+      });
+    });
+
+    ws.on('framereceived', (frame) => {
+      const payload = frame.payload?.toString() || '';
+      bufferEvent(pageIndex, {
+        type: 'WebSocketFrame',
+        timestamp_ms: Date.now(),
+        tab_index: pageIndex,
+        connection_id: wsId,
+        url: ws.url(),
+        direction: 'received',
+        data: payload,
+        size_bytes: payload.length,
+        connection_status: 'open',
+      });
+    });
+  });
+}
+
 async function bootstrap() {
   let launch;
   try {
@@ -104,22 +437,33 @@ async function bootstrap() {
   const browser = await launch({ headless: parseHeadless(), humanize: true });
   let context = await browser.newContext({ viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } });
   await context.addInitScript(`
-    Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
-      width: { value: 1920, enumerable: true },
-      height: { value: 1080, enumerable: true },
-      availWidth: { value: 1920, enumerable: true },
-      availHeight: { value: 1040, enumerable: true },
-      colorDepth: { value: 24, enumerable: true },
-      pixelDepth: { value: 24, enumerable: true },
-    }), configurable: true });
+    (() => {
+      // Spoof screen dimensions by shadowing them on the REAL screen object.
+      // Replacing window.screen with Object.create(Screen.prototype, ...) loses
+      // the internal Screen slot, so inherited native accessors like
+      // screen.orientation throw "Illegal invocation" (which breaks axe-core).
+      const dims = { width: 1920, height: 1080, availWidth: 1920, availHeight: 1040, colorDepth: 24, pixelDepth: 24 };
+      for (const k of Object.keys(dims)) {
+        try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
+      }
+    })();
   `);
+  await context.addInitScript(CONSOLE_CAPTURE_SOURCE);
   let page = await context.newPage();
   const pages = [page];
+  await attachObservationListeners(page, 0);
   context.on('page', (p) => {
     if (!pages.includes(p)) {
       pages.push(p);
+      const popupIndex = pages.length - 1;
+      void attachObservationListeners(p, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
     }
   });
+
+  function activePageIndex() {
+    const idx = pages.indexOf(page);
+    return idx === -1 ? 0 : idx;
+  }
   process.stdout.write(JSON.stringify({ event: 'bridge_bootstrap', ok: true }) + '\n');
 
   async function bypassTurnstileIfPresent(pg) {
@@ -155,6 +499,7 @@ async function bootstrap() {
 
     if (command.action === 'navigate') {
       try {
+        await drainConsolePage(page, activePageIndex());
         await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         // Wait for SPA API calls to complete. Cap at 5s so pages with
         // persistent connections (WebSocket, SSE, polling) don't hang.
@@ -194,6 +539,32 @@ async function bootstrap() {
       continue;
     }
 
+    if (command.action === 'reload') {
+      try {
+        await drainConsolePage(page, activePageIndex());
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+        // Wait for SPA API calls to complete. Cap at 5s so pages with
+        // persistent connections (WebSocket, SSE, polling) don't hang.
+        try {
+          await page.waitForLoadState('networkidle', { timeout: 5000 });
+        } catch (_) { /* networkidle timed out — proceed with current state */ }
+        const html = await bypassTurnstileIfPresent(page);
+        const title = await page.title();
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { title, html }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'reload_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
     if (command.action === 'close') {
       await page.close().catch(() => {});
       await browser.close().catch(() => {});
@@ -208,6 +579,7 @@ async function bootstrap() {
           pages.push(newPage);
         }
         const pageIndex = pages.indexOf(newPage);
+        await attachObservationListeners(newPage, pageIndex);
         page = newPage;
         let currentUrl = newPage.url();
         if (command.url) {
@@ -245,6 +617,7 @@ async function bootstrap() {
         const targetPage = pages[pageIndex];
         await targetPage.close();
         pages[pageIndex] = null;
+        observationBuffers.delete(pageIndex);
         if (page === targetPage) {
           const fallbackPage = pages.find((entry) => entry);
           if (fallbackPage) {
@@ -354,6 +727,7 @@ async function bootstrap() {
 
     if (command.action === 'go_back') {
       try {
+        await drainConsolePage(page, activePageIndex());
         await page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
         const url = page.url();
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url } }) + '\n');
@@ -895,17 +1269,18 @@ async function bootstrap() {
         // Build new context BEFORE closing old — rollback-safe
         const newContext = await browser.newContext(ctxOpts);
         const newPage = await newContext.newPage();
+        await newContext.addInitScript(CONSOLE_CAPTURE_SOURCE);
 
         if (command.screen) {
           await newContext.addInitScript(`
-            Object.defineProperty(window, 'screen', { value: Object.create(Screen.prototype, {
-              width: { value: ${command.screen.width}, enumerable: true },
-              height: { value: ${command.screen.height}, enumerable: true },
-              availWidth: { value: ${command.screen.width}, enumerable: true },
-              availHeight: { value: ${command.screen.height}, enumerable: true },
-              colorDepth: { value: 24, enumerable: true },
-              pixelDepth: { value: 24, enumerable: true },
-            }), configurable: true });
+            (() => {
+              // Shadow dims on the real screen object (preserves screen.orientation
+              // and other native accessors; see bootstrap note).
+              const dims = { width: ${command.screen.width}, height: ${command.screen.height}, availWidth: ${command.screen.width}, availHeight: ${command.screen.height}, colorDepth: 24, pixelDepth: 24 };
+              for (const k of Object.keys(dims)) {
+                try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
+              }
+            })();
           `);
         }
 
@@ -937,11 +1312,15 @@ async function bootstrap() {
         const oldContext = context;
         context = newContext;
         page = newPage;
+        observationBuffers.clear();
         pages.length = 0;
         pages.push(page);
+        await attachObservationListeners(page, 0);
         context.on('page', (p) => {
           if (!pages.includes(p)) {
             pages.push(p);
+            const popupIndex = pages.length - 1;
+            void attachObservationListeners(p, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
           }
         });
         await oldContext.close().catch(() => {});
@@ -965,6 +1344,242 @@ async function bootstrap() {
           error: { kind: 'set_device_failed', message: String(error) }
         }) + '\n');
       }
+      continue;
+    }
+
+    if (command.action === 'poll_observations') {
+      try {
+        const fallbackIndex = pages.indexOf(page);
+        const tabIndex = typeof command.tab_index === 'number' ? command.tab_index : fallbackIndex;
+        await drainConsolePage(pages[tabIndex], tabIndex);
+        const buf = observationBuffers.get(tabIndex);
+        const events = buf ? [...buf.events] : [];
+        if (buf) {
+          buf.events = [];
+          buf.currentBytes = 0;
+        }
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { events }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'poll_observations_failed', message: String(error) }
+        }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'set_seq') {
+      currentSeq = typeof command.seq === 'number' ? command.seq : 0;
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: {}
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'start_coverage') {
+      const doJs = command.js !== false;
+      const doCss = command.css !== false;
+      if (doJs) await pages[activePageIndex()].coverage.startJSCoverage({ resetOnNavigation: false });
+      if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage({ resetOnNavigation: false });
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: {}
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'stop_coverage') {
+      let js_coverage = [];
+      let css_coverage = [];
+      try { js_coverage = await pages[activePageIndex()].coverage.stopJSCoverage(); } catch(e) {}
+      try { css_coverage = await pages[activePageIndex()].coverage.stopCSSCoverage(); } catch(e) {}
+
+      // V8 JS coverage exposes functions[].ranges[]{startOffset,endOffset,count}
+      // with NESTED ranges (a function's outer range plus inner block ranges that
+      // override the parent's count over their sub-region). Summing every count>0
+      // range double-counts overlaps, so sweep the range boundaries with a count
+      // stack: between two boundaries the innermost (last-opened) range wins, and
+      // its bytes are "used" iff that range's count > 0. This mirrors Playwright's
+      // own convertToDisjointRanges. CSS coverage is already a flat disjoint
+      // ranges[]{start,end}, so it keeps the simple sum.
+      const jsUsedBytes = (functions) => {
+        const ranges = [];
+        for (const fn of (functions || [])) {
+          for (const r of (fn.ranges || [])) {
+            if (r.endOffset > r.startOffset) ranges.push(r);
+          }
+        }
+        if (ranges.length === 0) return 0;
+        const events = [];
+        for (const r of ranges) {
+          const len = r.endOffset - r.startOffset;
+          events.push({ offset: r.startOffset, isOpen: true, count: r.count, len });
+          events.push({ offset: r.endOffset, isOpen: false, count: r.count, len });
+        }
+        events.sort((a, b) => {
+          if (a.offset !== b.offset) return a.offset - b.offset;
+          if (a.isOpen !== b.isOpen) return a.isOpen ? 1 : -1;
+          return a.isOpen ? b.len - a.len : a.len - b.len;
+        });
+        const stack = [];
+        let lastOffset = 0;
+        let used = 0;
+        for (const ev of events) {
+          if (ev.offset > lastOffset && stack.length > 0 && stack[stack.length - 1] > 0) {
+            used += ev.offset - lastOffset;
+          }
+          lastOffset = ev.offset;
+          if (ev.isOpen) {
+            stack.push(ev.count);
+          } else {
+            stack.pop();
+          }
+        }
+        return used;
+      };
+
+      const formatEntry = (entry) => {
+        let usedBytes;
+        if (entry.functions) {
+          usedBytes = jsUsedBytes(entry.functions);
+        } else if (entry.ranges) {
+          usedBytes = entry.ranges.reduce((sum, r) => sum + r.end - r.start, 0);
+        } else {
+          usedBytes = entry.usedBytes || 0;
+        }
+        const totalBytes = entry.text ? entry.text.length : (entry.source ? entry.source.length : 0);
+        return {
+          url: entry.url,
+          total_bytes: totalBytes,
+          used_bytes: usedBytes,
+          unused_bytes: totalBytes - usedBytes,
+          unused_pct: totalBytes > 0 ? Math.round((totalBytes - usedBytes) / totalBytes * 1000) / 10 : 0
+        };
+      };
+
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: {
+          js_coverage: js_coverage.map(formatEntry),
+          css_coverage: css_coverage.map(formatEntry)
+        }
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'get_cookies') {
+      const context = browser.contexts()[0];
+      const rawCookies = await context.cookies();
+      const cookies = rawCookies.map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        expires: (typeof c.expires === 'number' && c.expires >= 0) ? c.expires : null,
+        secure: !!c.secure,
+        http_only: !!c.httpOnly,
+        same_site: c.sameSite || null,
+        size_bytes: (c.name ? c.name.length : 0) + (c.value ? c.value.length : 0),
+      }));
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: { cookies }
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'get_storage') {
+      const storageType = command.storage_type || 'all';
+      const page = pages[activePageIndex()];
+      
+      let localStorage = [];
+      let sessionStorage = [];
+      
+      if (storageType === 'local' || storageType === 'all') {
+        localStorage = await page.evaluate(() => {
+          const items = [];
+          for (let i = 0; i < window.localStorage.length; i++) {
+            const key = window.localStorage.key(i);
+            const value = window.localStorage.getItem(key);
+            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+          }
+          return items;
+        });
+      }
+      
+      if (storageType === 'session' || storageType === 'all') {
+        sessionStorage = await page.evaluate(() => {
+          const items = [];
+          for (let i = 0; i < window.sessionStorage.length; i++) {
+            const key = window.sessionStorage.key(i);
+            const value = window.sessionStorage.getItem(key);
+            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+          }
+          return items;
+        });
+      }
+      
+      process.stdout.write(JSON.stringify({
+        event: 'bridge_response',
+        ok: true,
+        result: { local_storage: localStorage, session_storage: sessionStorage }
+      }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'add_intercept_rule') {
+      const { rule_id, pattern, action_type, mock, is_regex } = command;
+      const page = pages[activePageIndex()];
+      let matcher = pattern;
+      if (is_regex) {
+        try {
+          matcher = new RegExp(pattern);
+        } catch (error) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'invalid_regex', message: String(error) } }) + '\n');
+          continue;
+        }
+      }
+      interceptRulesMap[rule_id] = { pattern, action_type, mock, hits: 0 };
+      await page.route(matcher, async (route) => {
+        if (!interceptRulesMap[rule_id]) { await route.continue(); return; }
+        interceptRulesMap[rule_id].hits++;
+        if (action_type === 'Block') {
+          await route.abort();
+        } else if (action_type === 'MockResponse' && mock) {
+          await route.fulfill({
+            status: mock.status || 200,
+            contentType: mock.content_type || 'application/json',
+            headers: mock.headers || {},
+            body: mock.body || '',
+          });
+        } else {
+          await route.continue();
+        }
+      });
+      process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: {} }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'remove_intercept_rule') {
+      delete interceptRulesMap[command.rule_id];
+      process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: {} }) + '\n');
+      continue;
+    }
+
+    if (command.action === 'clear_intercept_rules') {
+      interceptRulesMap = {};
+      await pages[activePageIndex()].unrouteAll();
+      process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: {} }) + '\n');
       continue;
     }
 

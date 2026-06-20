@@ -1,8 +1,7 @@
 use serde_json::Value;
 
-use crate::state::CrawlState;
 use crate::BrowserContext;
-use crate::{ToolEffect, ToolExecutionError};
+use crate::{CrawlState, ToolEffect, ToolExecutionError};
 
 pub async fn execute(
     input: &Value,
@@ -13,11 +12,11 @@ pub async fn execute(
 
     browser.ref_map_mut().clear();
 
-    let url = browser
+    let _page_info = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .go_back()
+        .reload()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -27,7 +26,6 @@ pub async fn execute(
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "seq": seq,
         "success": true,
-        "url": url,
         "page_state": page_state
     })))
 }

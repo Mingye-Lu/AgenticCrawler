@@ -249,6 +249,7 @@ fn http_fetch_path_has_markdown() {
         text: "Title".to_string(),
         markdown: "# Title\n\nSome content".to_string(),
         fetched_via_browser: false,
+        redirect_chain: None,
     };
 
     assert!(page.markdown.contains('#'));
@@ -282,6 +283,14 @@ mod set_device_integration {
 
     #[async_trait]
     impl BrowserBackend for NopBackend {
+        async fn poll_observations(
+            &mut self,
+        ) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
             unreachable!()
         }
@@ -387,6 +396,14 @@ mod set_device_integration {
 
     #[async_trait]
     impl BrowserBackend for RecordingBackend {
+        async fn poll_observations(
+            &mut self,
+        ) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
             unreachable!()
         }

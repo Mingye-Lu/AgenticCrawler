@@ -26,6 +26,12 @@ impl MockBrowserBackend {
 
 #[async_trait]
 impl BrowserBackend for MockBrowserBackend {
+    async fn poll_observations(&mut self) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+        Ok(Vec::new())
+    }
+    async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+        Ok(())
+    }
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         self.navigate_count += 1;
         Ok(PageInfo {
@@ -242,6 +248,7 @@ fn fetched_page_struct_fields() {
         text: "Example text".to_string(),
         markdown: "# Example".to_string(),
         fetched_via_browser: false,
+        redirect_chain: None,
     };
     assert_eq!(page.url, "https://example.com");
     assert_eq!(page.title.as_deref(), Some("Example"));

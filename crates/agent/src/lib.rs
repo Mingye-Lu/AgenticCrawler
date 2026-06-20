@@ -32,9 +32,9 @@ pub use acrawl_core::error::ToolExecutionError;
 pub use acrawl_core::ToolSpec;
 pub use browser::{
     generate_bridge_token, markdown, prune, ws_server, BridgeCommand, BridgeError, BridgeResponse,
-    BrowserBackend, BrowserContext, BrowserState, ExtensionBridge, FetchError, FetchRouter,
-    FetchedPage, PageInfo, PlaywrightBridge, ScreenshotOptions, SharedBridge, WsBridgeError,
-    WsBridgeServer,
+    BrowserBackend, BrowserContext, BrowserState, CookieInfo, ExtensionBridge, FetchError,
+    FetchRouter, FetchedPage, PageInfo, PlaywrightBridge, ScreenshotOptions, SharedBridge,
+    StorageEntry, StorageType, WsBridgeError, WsBridgeServer,
 };
 
 pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, CrawlerAgent};
@@ -86,6 +86,16 @@ fn navigation_tools() -> Vec<ToolSpec> {
                 "additionalProperties": false
             }),
             instructions: Some("Returns the URL navigated to and a `page_state` object with headings, landmarks, and links of the resulting page. Use page_state to understand what you landed on after going back."),
+        },
+        ToolSpec {
+            name: "refresh",
+            description: "Reload the current page. Returns page_state after reload. Use after setting intercept rules to replay the page with rules active. Seq increments for temporal observation queries.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            instructions: Some("Reloads the current page and returns a `page_state` object with the updated page structure. Use after setting intercept rules to replay the page with rules active. The seq field increments for temporal observation queries."),
         },
         ToolSpec {
             name: "scroll",
@@ -150,8 +160,20 @@ fn extraction_tools() -> Vec<ToolSpec> {
         page_map_tool(),
         read_content_tool(),
         list_resources_tool(),
+        list_network_activity_tool(),
+        inspect_request_tool(),
+        list_page_logs_tool(),
+        inspect_log_tool(),
+        list_websocket_activity_tool(),
+        inspect_websocket_tool(),
         screenshot_tool(),
         save_file_tool(),
+        page_performance_tool(),
+        inspect_cookies_tool(),
+        inspect_storage_tool(),
+        measure_coverage_tool(),
+        audit_accessibility_tool(),
+        intercept_network_tool(),
     ]
 }
 
@@ -402,6 +424,274 @@ fn save_file_tool() -> ToolSpec {
             "additionalProperties": false
         }),
         instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename`, `subdir`, and `output_dir`."),
+    }
+}
+
+fn list_page_logs_tool() -> ToolSpec {
+    ToolSpec {
+        name: "list_page_logs",
+        description: "List buffered console logs for the current page with optional level filtering and seq-based temporal filtering. Group by exact message text (default, deduplicated with @logN IDs), source, or level.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "enum": ["all", "error", "warning", "info", "debug"],
+                    "default": "all",
+                    "description": "Log level filter. Use 'all' (default) to include every console message, or narrow to error, warning, info, or debug."
+                },
+                "since": {
+                    "type": ["string", "number"],
+                    "description": "Temporal lower bound: 'all', 'last' (default), or a seq number. Uses half-open interval filtering on seq_at_initiation."
+                },
+                "until": {
+                    "type": ["string", "number"],
+                    "description": "Temporal upper bound: 'now' (default) or a seq number. Uses half-open interval filtering on seq_at_initiation."
+                },
+                "group_by": {
+                    "type": "string",
+                    "enum": ["message", "source", "level"],
+                    "default": "message",
+                    "description": "Grouping dimension. 'message' (default) deduplicates exact text and assigns @logN IDs for inspect_log; 'source' groups by file/source; 'level' groups by severity."
+                }
+            },
+            "additionalProperties": false
+        }),
+        instructions: Some("Call after interactions or refresh to inspect console output captured by the browser. Default group_by='message' deduplicates exact text matches, sorts the most frequent groups first, and assigns @logN IDs that inspect_log accepts. Use level to narrow to errors/warnings, and since/until to scope by seq range using half-open interval semantics on seq_at_initiation."),
+    }
+}
+
+fn list_network_activity_tool() -> ToolSpec {
+    ToolSpec {
+        name: "list_network_activity",
+        description: "List observed network requests buffered during this browser session. Supports temporal filtering by seq window, request-state filters, URL substring filtering, and adjective-based sorting such as slowest/fastest or newest/oldest. Returns stable @rN refs for follow-up inspection with inspect_request.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": ["string", "number"],
+                    "description": "Start of time window. 'all' = entire session, 'last' = since last action (default), or a seq number from a previous action response."
+                },
+                "until": {
+                    "type": ["string", "number"],
+                    "description": "'now' = up to present (default), or a seq number (exclusive upper bound)."
+                },
+                "filter": {
+                    "type": "string",
+                    "enum": ["all", "xhr", "failed", "pending", "aborted"],
+                    "default": "all"
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "URL substring filter"
+                },
+                "sort_by": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["slowest", "fastest", "largest", "smallest", "newest", "oldest"]
+                    },
+                    "description": "Sort order. First element = primary, rest = tiebreakers. Default: ['oldest']"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 20
+                }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request."),
+    }
+}
+
+fn inspect_request_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_request",
+        description: "Inspect a previously listed network request by its @rN id from list_network_activity. Returns the captured request metadata, coarse timing summary, initiator type, and notes about unavailable headers/bodies.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "@rN ID from list_network_activity"
+                },
+                "include_body": {
+                    "type": "boolean",
+                    "default": false
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Pass an @rN id from the most recent list_network_activity call. Headers and bodies are currently unavailable in the observation buffer, so those fields will be null even when include_body=true."),
+    }
+}
+
+fn inspect_log_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_log",
+        description: "Inspect a deduplicated console log group from list_page_logs and return concrete instances with timestamps, stack traces, and source locations.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "@logN ID from list_page_logs when group_by='message'."
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Maximum number of individual log instances to return. Default: 5."
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Use only with @logN IDs returned by list_page_logs when group_by='message'. Returns the shared message plus concrete instances including timestamp_ms, stack, and source file/line/column so you can inspect repeated console errors without dumping every duplicate up front."),
+    }
+}
+
+fn page_performance_tool() -> ToolSpec {
+    ToolSpec {
+        name: "get_page_performance",
+        description: "Get page performance metrics using Navigation Timing and Resource Timing APIs. Returns TTFB, DOM timings, and a breakdown of the top 20 resources by transfer size. Works on both browsers and SPAs.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Captures performance metrics from the current page using the Navigation Timing and Resource Timing APIs. Returns navigation timings (TTFB, DOM interactive/complete, load event), the top 20 resources sorted by transfer size, and a summary with totals and largest/slowest resources. No parameters required."),
+    }
+}
+
+fn inspect_cookies_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_cookies",
+        description: "Inspect cookies on the current page with security analysis. Returns all cookies with domain, path, expiry, secure/httponly flags, and detected security issues (missing_secure, missing_httponly, sameSite_none_without_secure, excessive_lifetime, overly_broad_domain). Includes third-party detection and filtering options.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "domain": { "type": "string", "description": "Filter by domain substring" },
+                "issues_only": { "type": "boolean", "default": false, "description": "If true, return only cookies with detected security issues" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Returns all cookies with security analysis. Each cookie includes: name, value, domain, path, expires, secure, http_only, same_site, size_bytes, issues (array of detected problems), and third_party flag. Summary includes total count, count with issues, third-party count, session vs persistent breakdown. Use domain filter to narrow results, issues_only to focus on security concerns."),
+    }
+}
+
+fn inspect_storage_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_storage",
+        description: "Inspect browser storage (localStorage and sessionStorage) on the current page. Returns all key-value pairs with size information. Supports filtering by storage type and key pattern.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "enum": ["local", "session", "all"], "default": "all", "description": "Which storage to inspect: 'local' for localStorage, 'session' for sessionStorage, 'all' for both" },
+                "pattern": { "type": "string", "description": "Filter by key name substring" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Returns localStorage and/or sessionStorage entries with their values and sizes. Each entry includes: key, value, size_bytes. Summary includes entry counts and total size in KB. Use target to narrow to specific storage type, pattern to filter by key name substring."),
+    }
+}
+
+fn measure_coverage_tool() -> ToolSpec {
+    ToolSpec {
+        name: "measure_coverage",
+        description: "Measure JavaScript and CSS code coverage on the current page. Returns per-file byte usage showing how much code was actually executed/applied versus total loaded. Useful for identifying unused bundles, oversized dependencies, and performance optimization opportunities.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "type": { "type": "string", "enum": ["js", "css", "all"], "default": "all", "description": "Which coverage to measure: 'js' for JavaScript only, 'css' for CSS only, 'all' for both" },
+                "reset": { "type": "boolean", "default": false, "description": "Stop any in-progress coverage, clear data, and restart fresh" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Measures code coverage by stopping the current coverage session and reporting results. On first call, returns empty data (coverage not yet started) then starts tracking. Subsequent calls return coverage accumulated since last call. Use reset=true to clear previous data and start fresh. After each call, coverage automatically restarts for the next measurement window."),
+    }
+}
+
+fn audit_accessibility_tool() -> ToolSpec {
+    ToolSpec {
+        name: "audit_accessibility",
+        description: "Run axe-core WCAG accessibility audit on the current page. Returns violations grouped by impact level with selectors and descriptions. Use scope to limit to a specific DOM subtree.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "scope": { "type": "string", "description": "CSS selector to limit audit (e.g. '#main-content')" },
+                "standard": { "type": "string", "enum": ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"], "default": "wcag2aa" },
+                "impact": { "type": "string", "enum": ["critical", "serious", "moderate", "minor", "all"], "default": "all" }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Injects axe-core and runs a WCAG audit. Default standard is wcag2aa. Use 'scope' to audit only a subtree (e.g. '#main-content'). Use 'impact' to filter results (critical/serious/moderate/minor/all). Returns violations with rule_id, impact, description, help_url, and affected elements (selector + HTML snippet), plus a summary with counts per impact level and total passes."),
+    }
+}
+
+fn list_websocket_activity_tool() -> ToolSpec {
+    ToolSpec {
+        name: "list_websocket_activity",
+        description: "Overview of WebSocket connections and message counts. Returns connections with @wsN IDs. Use inspect_websocket to see actual message content.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": ["string", "number"],
+                    "description": "'all', 'last' (default), or seq number"
+                },
+                "until": {
+                    "type": ["string", "number"],
+                    "description": "'now' (default) or seq number (exclusive)"
+                }
+            },
+            "required": [],
+            "additionalProperties": false
+        }),
+        instructions: Some("Lists WebSocket connections observed during this browser session. Each connection gets a @wsN ID for use with inspect_websocket. Default window is since the last action. Use since='all' for the whole session buffer, numeric since/until for half-open [since, until) filtering."),
+    }
+}
+
+fn inspect_websocket_tool() -> ToolSpec {
+    ToolSpec {
+        name: "inspect_websocket",
+        description: "Inspect actual WebSocket messages for a connection. Provide @wsN ID from list_websocket_activity. Supports direction filter, pattern search, and sort_by (newest/oldest).",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "@wsN ID from list_websocket_activity"
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["sent", "received", "all"],
+                    "default": "all"
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["newest", "oldest"],
+                    "default": "newest"
+                },
+                "limit": {
+                    "type": "integer",
+                    "default": 30
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Substring match on message data"
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Pass a @wsN id from the most recent list_websocket_activity call. Use direction to filter sent/received, pattern for substring matching on message data, sort_by for ordering (newest first by default), and limit to cap results."),
     }
 }
 
@@ -676,6 +966,44 @@ pub fn mvp_tool_specs() -> Vec<acrawl_core::ToolSpec> {
     specs
 }
 
+fn intercept_network_tool() -> ToolSpec {
+    ToolSpec {
+        name: "intercept_network",
+        description: "Manage network interception rules. Block or mock requests matching URL glob patterns. Rules are additive — each call adds a rule. Use refresh() after adding rules to replay the page load with rules active.",
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["block", "mock_response", "remove_rule", "clear_all"],
+                    "description": "block: abort matching requests. mock_response: return synthetic response. remove_rule: remove by rule_id. clear_all: remove all rules."
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "URL glob matched against the full request URL. '*' matches across path separators (e.g. '*ads.com*' blocks any URL containing ads.com; '*/api/v2/*' matches that path on any host). Prefix with 're:' for a regular expression (e.g. 're:api/v[0-9]+'). Required for block/mock_response."
+                },
+                "mock": {
+                    "type": "object",
+                    "description": "Synthetic response for mock_response action.",
+                    "properties": {
+                        "status": { "type": "integer", "default": 200 },
+                        "headers": { "type": "object" },
+                        "body": { "type": "string" },
+                        "content_type": { "type": "string", "default": "application/json" }
+                    }
+                },
+                "rule_id": {
+                    "type": "string",
+                    "description": "Rule ID to remove (for remove_rule action)."
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }),
+        instructions: Some("Add network interception rules before navigating, or set rules and use refresh() to replay. Rules accumulate — use clear_all to remove all. Blocked requests appear in list_network_activity with state 'aborted'."),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -683,15 +1011,27 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_29_tools() {
+    fn mvp_tool_specs_contains_expected_42_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 29);
+        assert_eq!(specs.len(), 42);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 29, "tool names should be unique");
+        assert_eq!(names.len(), 42, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
+        assert!(names.contains("refresh"));
+        assert!(names.contains("list_network_activity"));
+        assert!(names.contains("inspect_request"));
+        assert!(names.contains("list_page_logs"));
+        assert!(names.contains("inspect_log"));
+        assert!(names.contains("list_websocket_activity"));
+        assert!(names.contains("inspect_websocket"));
+        assert!(names.contains("get_page_performance"));
+        assert!(names.contains("inspect_cookies"));
+        assert!(names.contains("inspect_storage"));
+        assert!(names.contains("measure_coverage"));
+        assert!(names.contains("audit_accessibility"));
         assert!(names.contains("fork"));
         assert!(names.contains("wait_for_subagents"));
         assert!(names.contains("cancel_subagent"));
