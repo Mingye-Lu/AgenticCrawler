@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use browser::{ConsoleMessageEvent, ConsoleMessageType, ObservationEvent};
+use browser::{ConsoleMessageEvent, ConsoleMessageType};
 use serde_json::{json, Value};
 
 use crate::BrowserContext;
@@ -228,16 +228,6 @@ fn resolve_until(bound: SeqBound) -> Option<u64> {
     }
 }
 
-fn drain_console_events(events: Vec<ObservationEvent>) -> Vec<ConsoleMessageEvent> {
-    events
-        .into_iter()
-        .filter_map(|event| match event {
-            ObservationEvent::ConsoleMessage(console) => Some(console),
-            ObservationEvent::NetworkRequest(_) | ObservationEvent::WebSocketFrame(_) => None,
-        })
-        .collect()
-}
-
 fn matching_logs(state: &CrawlState, input: &ListPageLogsInput) -> Vec<ConsoleMessageEvent> {
     let since = resolve_since(input.since, state);
     let until = resolve_until(input.until);
@@ -439,9 +429,7 @@ pub async fn execute_list_page_logs(
         .await
         .map_err(|error| ToolExecutionError::new(error.to_string()))?;
 
-    crawl_state
-        .page_log_events
-        .extend(drain_console_events(observations));
+    crawl_state.ingest_observations(observations);
 
     let logs = matching_logs(crawl_state, &params);
     crawl_state.last_page_log_seq = Some(crawl_state.seq_counter.current());
@@ -554,8 +542,8 @@ mod tests {
 
     use async_trait::async_trait;
     use browser::{
-        BridgeError, BrowserBackend, BrowserState, PageInfo, ScreenshotOptions, SharedBridge,
-        StorageEntry, StorageType,
+        BridgeError, BrowserBackend, BrowserState, ObservationEvent, PageInfo, ScreenshotOptions,
+        SharedBridge, StorageEntry, StorageType,
     };
     use tokio::sync::Mutex;
 
@@ -724,10 +712,8 @@ mod tests {
             group_by: GroupBy::Message,
         };
 
-        let state = CrawlState {
-            page_log_events: drain_console_events(events),
-            ..CrawlState::default()
-        };
+        let mut state = CrawlState::default();
+        state.ingest_observations(events);
         let filtered = matching_logs(&state, &input);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].text, "b");

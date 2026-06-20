@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use browser::ConsoleMessageEvent;
 use browser::NetworkRequestEvent;
+use browser::ObservationEvent;
 use browser::WebSocketFrameEvent;
 use runtime::ChildSession;
 use serde_json::Value;
@@ -88,6 +89,35 @@ impl CrawlState {
         }
         result
     }
+
+    /// Route a freshly polled observation batch into the per-type stores.
+    ///
+    /// `poll_observations` drains and clears the bridge's single shared buffer,
+    /// so whichever observation tool polls first receives every event type.
+    /// Routing all types here (instead of each tool keeping only its own and
+    /// discarding the rest) stops one tool's poll from silently dropping another
+    /// type's events before the matching tool reads them.
+    pub fn ingest_observations(&mut self, polled: Vec<ObservationEvent>) {
+        for event in polled {
+            match event {
+                ObservationEvent::NetworkRequest(network) => {
+                    if !is_internal_observation_url(&network.url) {
+                        self.network_request_events.push(network);
+                    }
+                }
+                ObservationEvent::ConsoleMessage(console) => {
+                    self.page_log_events.push(console);
+                }
+                ObservationEvent::WebSocketFrame(frame) => {
+                    self.websocket_frame_events.push(frame);
+                }
+            }
+        }
+    }
+}
+
+fn is_internal_observation_url(url: &str) -> bool {
+    url.contains("__acrawl_poll") || url.contains("poll_observations")
 }
 
 #[cfg(test)]
@@ -213,5 +243,73 @@ mod tests {
         let all_data = state.all_data();
 
         assert_eq!(all_data.len(), 0);
+    }
+
+    #[test]
+    fn ingest_observations_routes_each_type_and_drops_internal_requests() {
+        use browser::{
+            ConsoleMessageEvent, ConsoleMessageType, NetworkRequestEvent, ObservationEvent,
+            RequestState, WebSocketFrameEvent,
+        };
+
+        let net = |url: &str| {
+            ObservationEvent::NetworkRequest(NetworkRequestEvent {
+                timestamp_ms: 1,
+                tab_index: 0,
+                seq_at_initiation: 1,
+                request_id: "r".to_string(),
+                url: url.to_string(),
+                method: "GET".to_string(),
+                status: Some(200),
+                state: RequestState::Completed,
+                size_bytes: None,
+                duration_ms: None,
+                request_type: "fetch".to_string(),
+                from_service_worker: false,
+                initiator_type: None,
+                reason: None,
+            })
+        };
+        let console = ObservationEvent::ConsoleMessage(ConsoleMessageEvent {
+            timestamp_ms: 2,
+            tab_index: 0,
+            seq_at_initiation: 1,
+            level: "error".to_string(),
+            message_type: ConsoleMessageType::Exception,
+            text: "boom".to_string(),
+            source_url: None,
+            source_line: None,
+            source_column: None,
+            stack: None,
+        });
+        let ws = ObservationEvent::WebSocketFrame(WebSocketFrameEvent {
+            timestamp_ms: 3,
+            tab_index: 0,
+            seq_at_initiation: 1,
+            connection_id: "c1".to_string(),
+            url: "wss://ex.com".to_string(),
+            direction: "received".to_string(),
+            data: "hi".to_string(),
+            size_bytes: 2,
+            connection_status: "open".to_string(),
+        });
+
+        let mut state = CrawlState::default();
+        state.ingest_observations(vec![
+            net("https://example.com/api"),
+            net("https://example.com/__acrawl_poll"),
+            console,
+            ws,
+        ]);
+
+        assert_eq!(state.network_request_events.len(), 1);
+        assert_eq!(
+            state.network_request_events[0].url,
+            "https://example.com/api"
+        );
+        assert_eq!(state.page_log_events.len(), 1);
+        assert_eq!(state.page_log_events[0].text, "boom");
+        assert_eq!(state.websocket_frame_events.len(), 1);
+        assert_eq!(state.websocket_frame_events[0].data, "hi");
     }
 }

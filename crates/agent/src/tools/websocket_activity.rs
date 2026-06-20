@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use browser::{ObservationEvent, WebSocketFrameEvent};
+use browser::WebSocketFrameEvent;
 use serde_json::{json, Value};
 
 use crate::state::CrawlState;
@@ -62,16 +62,6 @@ fn parse_until(input: &Value) -> Result<UntilBound, CrawlError> {
     }
 }
 
-fn drain_websocket_events(polled: Vec<ObservationEvent>) -> Vec<WebSocketFrameEvent> {
-    polled
-        .into_iter()
-        .filter_map(|event| match event {
-            ObservationEvent::WebSocketFrame(ws) => Some(ws),
-            _ => None,
-        })
-        .collect()
-}
-
 fn resolve_since(since: SinceBound, crawl_state: &CrawlState) -> u64 {
     match since {
         SinceBound::All => 0,
@@ -129,9 +119,7 @@ pub async fn list_websocket_activity(
         .await
         .map_err(|error| ToolExecutionError::new(error.to_string()))?;
 
-    crawl_state
-        .websocket_frame_events
-        .extend(drain_websocket_events(polled));
+    crawl_state.ingest_observations(polled);
 
     let since_val = resolve_since(since, crawl_state);
     let until_val = resolve_until(until);
@@ -345,6 +333,7 @@ pub struct WebSocketConnectionRef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use browser::ObservationEvent;
 
     #[allow(clippy::too_many_arguments)]
     fn ws_event(
@@ -453,55 +442,5 @@ mod tests {
         let result = filter_by_window(&events, 3, None);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].data, "b");
-    }
-
-    #[test]
-    fn drain_websocket_events_filters_only_ws() {
-        use browser::{ConsoleMessageEvent, ConsoleMessageType, NetworkRequestEvent, RequestState};
-
-        let events = vec![
-            ObservationEvent::NetworkRequest(NetworkRequestEvent {
-                timestamp_ms: 100,
-                tab_index: 0,
-                seq_at_initiation: 1,
-                request_id: "r1".to_string(),
-                url: "https://example.com".to_string(),
-                method: "GET".to_string(),
-                status: Some(200),
-                state: RequestState::Completed,
-                size_bytes: Some(100),
-                duration_ms: Some(50),
-                request_type: "fetch".to_string(),
-                from_service_worker: false,
-                initiator_type: None,
-                reason: None,
-            }),
-            ObservationEvent::WebSocketFrame(ws_event(
-                "c1",
-                "wss://ex.com",
-                "received",
-                "hello",
-                5,
-                200,
-                2,
-                "open",
-            )),
-            ObservationEvent::ConsoleMessage(ConsoleMessageEvent {
-                timestamp_ms: 300,
-                tab_index: 0,
-                seq_at_initiation: 3,
-                level: "log".to_string(),
-                message_type: ConsoleMessageType::Console,
-                text: "test".to_string(),
-                source_url: None,
-                source_line: None,
-                source_column: None,
-                stack: None,
-            }),
-        ];
-
-        let ws_events = drain_websocket_events(events);
-        assert_eq!(ws_events.len(), 1);
-        assert_eq!(ws_events[0].data, "hello");
     }
 }

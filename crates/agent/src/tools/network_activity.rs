@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use browser::{NetworkRequestEvent, ObservationEvent, RequestState};
+use browser::{NetworkRequestEvent, RequestState};
 use serde_json::{json, Value};
 
 use crate::state::CrawlState;
@@ -163,10 +163,6 @@ fn normalize_request_type(request_type: &str) -> String {
     }
 }
 
-fn is_internal_observation_request(url: &str) -> bool {
-    url.contains("__acrawl_poll") || url.contains("poll_observations")
-}
-
 fn request_matches_filter(event: &NetworkRequestEvent, filter: RequestFilter) -> bool {
     match filter {
         RequestFilter::All => true,
@@ -206,20 +202,6 @@ fn compare_requests(
     }
 
     left.request_id.cmp(&right.request_id)
-}
-
-fn drain_network_events(polled: Vec<ObservationEvent>) -> Vec<NetworkRequestEvent> {
-    polled
-        .into_iter()
-        .filter_map(|event| match event {
-            ObservationEvent::NetworkRequest(network)
-                if !is_internal_observation_request(&network.url) =>
-            {
-                Some(network)
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 fn latest_requests(events: &[NetworkRequestEvent]) -> Vec<NetworkRequestEvent> {
@@ -303,9 +285,7 @@ pub async fn list_network_activity(
         .await
         .map_err(|error| ToolExecutionError::new(error.to_string()))?;
 
-    crawl_state
-        .network_request_events
-        .extend(drain_network_events(polled));
+    crawl_state.ingest_observations(polled);
 
     let all_matching = matching_requests(crawl_state, &input);
     let truncated = all_matching.len() > input.limit;
@@ -419,6 +399,7 @@ pub fn inspect_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use browser::ObservationEvent;
 
     fn event(
         request_id: &str,
