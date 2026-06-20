@@ -75,8 +75,7 @@ pub async fn inspect_cookies(
 
         let is_third_party = !current_domain.is_empty()
             && !cookie.domain.is_empty()
-            && !current_domain.contains(&cookie.domain)
-            && !cookie.domain.contains(&current_domain);
+            && !host_domain_matches(&current_domain, &cookie.domain);
 
         if is_third_party {
             third_party_count += 1;
@@ -199,5 +198,42 @@ fn extract_domain(url: &str) -> String {
         parsed.host_str().unwrap_or("").to_string()
     } else {
         String::new()
+    }
+}
+
+/// RFC 6265 domain-match: true when `host` equals the cookie domain or is a
+/// subdomain of it (a leading dot is ignored). Avoids naive substring matching,
+/// which wrongly treats `notexample.com` as first-party for an `example.com`
+/// cookie.
+fn host_domain_matches(host: &str, cookie_domain: &str) -> bool {
+    let cookie_domain = cookie_domain.trim_start_matches('.');
+    if cookie_domain.is_empty() {
+        return false;
+    }
+    if host == cookie_domain {
+        return true;
+    }
+    host.len() > cookie_domain.len()
+        && host.ends_with(cookie_domain)
+        && host.as_bytes()[host.len() - cookie_domain.len() - 1] == b'.'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_domain_matches;
+
+    #[test]
+    fn first_party_exact_and_subdomain() {
+        assert!(host_domain_matches("example.com", "example.com"));
+        assert!(host_domain_matches("www.example.com", ".example.com"));
+        assert!(host_domain_matches("sub.example.com", "example.com"));
+    }
+
+    #[test]
+    fn third_party_and_suffix_lookalikes_rejected() {
+        assert!(!host_domain_matches("notexample.com", "example.com"));
+        assert!(!host_domain_matches("evil-example.com", "example.com"));
+        assert!(!host_domain_matches("example.com", "other.com"));
+        assert!(!host_domain_matches("example.com", ""));
     }
 }
