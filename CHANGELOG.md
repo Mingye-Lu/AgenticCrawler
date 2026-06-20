@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-21
+
+### Added
+
+- **Browser observation & DevTools toolset** — 13 new tools grow the toolbox from 29 to 42, giving the agent DevTools-style visibility into live page activity. All work across both the CloakBrowser and Chrome-extension backends and are built on a temporal observation system: every action bumps a monotonic `seq`, and the observation tools accept `since`/`until` windows so they can query "since the last action" (`BrowserBackend` gains `poll_observations` / `set_seq`).
+  - **Network** — `list_network_activity` (requests with status, type, size, and duration; filtering and adjective-based sorting) and `inspect_request` (per-request detail: request/response headers, request/response bodies gated on `include_body`, and a per-phase timing breakdown — DNS, connect, TLS, TTFB, download).
+  - **Console** — `list_page_logs` (console messages and uncaught exceptions/rejections, grouped by message/source/level, reporting verbatim console levels) and `inspect_log` (individual occurrences with stack traces).
+  - **WebSocket** — `list_websocket_activity` and `inspect_websocket` (sent/received frames).
+  - **Performance** — `get_page_performance` (Navigation/Resource Timing metrics plus the top resources by transfer size).
+  - **Coverage** — `measure_coverage` (JS/CSS used-vs-total bytes, persisted across navigations).
+  - **Storage** — `inspect_cookies` (security analysis with RFC 6265 third-party detection) and `inspect_storage` (local/session storage).
+  - **Accessibility** — `audit_accessibility` (axe-core WCAG audit: wcag2a / wcag2aa / wcag21aa / wcag22aa, using cumulative tag sets).
+  - **Network interception** — `intercept_network` (block or mock requests by glob or regex pattern).
+  - **Navigation** — `refresh` (reload the current page).
+
 ## [0.11.1] - 2026-06-19
 
 ### Added
@@ -739,6 +754,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.12.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.0
 [0.11.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.1
 [0.11.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.0
 [0.10.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.1
