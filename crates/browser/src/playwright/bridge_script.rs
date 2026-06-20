@@ -1281,7 +1281,18 @@ async function bootstrap() {
 
     if (command.action === 'get_cookies') {
       const context = browser.contexts()[0];
-      const cookies = await context.cookies();
+      const rawCookies = await context.cookies();
+      const cookies = rawCookies.map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        expires: (typeof c.expires === 'number' && c.expires >= 0) ? c.expires : null,
+        secure: !!c.secure,
+        http_only: !!c.httpOnly,
+        same_site: c.sameSite || null,
+        size_bytes: (c.name ? c.name.length : 0) + (c.value ? c.value.length : 0),
+      }));
       process.stdout.write(JSON.stringify({
         event: 'bridge_response',
         ok: true,
