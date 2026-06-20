@@ -34,6 +34,9 @@ pub mod wait;
 pub mod wait_for_subagents;
 pub mod websocket_activity;
 
+#[cfg(test)]
+pub mod test_support;
+
 pub mod cancel_script;
 pub mod list_scripts;
 pub mod read_script;

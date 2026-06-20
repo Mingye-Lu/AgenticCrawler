@@ -370,6 +370,32 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn list_websocket_activity_surfaces_connection_through_bridge() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let observations = vec![ObservationEvent::WebSocketFrame(ws_event(
+            "ws-1",
+            "wss://api.test/socket",
+            "received",
+            "hello",
+            5,
+            10,
+            1,
+            "open",
+        ))];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_websocket_activity(&json!({ "since": "all" }), &mut browser, &mut state)
+            .await
+            .expect("list_websocket_activity should succeed");
+        let rendered = format!("{effect:?}");
+
+        assert!(rendered.contains("wss://api.test/socket"));
+        assert!(!state.websocket_connection_refs.is_empty());
+    }
+
     #[test]
     fn parse_since_defaults_to_last() {
         assert_eq!(parse_since(&json!({})).unwrap(), SinceBound::Last);

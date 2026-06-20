@@ -445,6 +445,32 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn list_network_activity_surfaces_request_through_bridge() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let observations = vec![ObservationEvent::NetworkRequest(event(
+            "data",
+            1,
+            10,
+            Some(16),
+            Some(128),
+            "fetch",
+            RequestState::Completed,
+        ))];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_network_activity(&json!({ "since": "all" }), &mut browser, &mut state)
+            .await
+            .expect("list_network_activity should succeed");
+        let rendered = format!("{effect:?}");
+
+        assert!(rendered.contains("https://example.com/data"));
+        assert!(rendered.contains("@r1"));
+        assert!(state.network_request_refs.contains_key("@r1"));
+    }
+
     #[test]
     fn parse_input_defaults() {
         let input = parse_list_input(&json!({})).expect("input should parse");
