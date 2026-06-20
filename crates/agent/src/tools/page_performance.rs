@@ -8,6 +8,14 @@ pub fn parse_input(_input: &Value) -> Result<(), CrawlError> {
     Ok(())
 }
 
+fn parse_evaluate_value(result: &Value) -> Value {
+    match result.get("value") {
+        Some(Value::String(raw)) => serde_json::from_str(raw).unwrap_or(Value::Null),
+        Some(other) => other.clone(),
+        None => Value::Null,
+    }
+}
+
 pub async fn execute(
     _input: &Value,
     browser: &mut BrowserContext,
@@ -34,7 +42,7 @@ JSON.stringify(performance.getEntriesByType('navigation').map(function(e) {
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    let navigation = nav_result.get("value").cloned().unwrap_or(Value::Null);
+    let navigation = parse_evaluate_value(&nav_result);
 
     // Get resource timing
     let res_script = r"
@@ -57,10 +65,10 @@ JSON.stringify(performance.getEntriesByType('resource').map(function(e) {
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    let resources = res_result
-        .get("value")
-        .cloned()
-        .unwrap_or(Value::Array(vec![]));
+    let resources = match parse_evaluate_value(&res_result) {
+        Value::Array(items) => Value::Array(items),
+        _ => Value::Array(vec![]),
+    };
 
     // Build summary
     let mut total_requests = 0;
@@ -131,5 +139,38 @@ mod tests {
     fn parses_input_with_extra_fields() {
         let input = json!({"extra": "field"});
         assert!(parse_input(&input).is_ok());
+    }
+
+    #[test]
+    fn parse_evaluate_value_parses_stringified_json() {
+        let result = json!({ "value": "{\"ttfb_ms\":1,\"dom_complete_ms\":42}" });
+        assert_eq!(
+            super::parse_evaluate_value(&result),
+            json!({"ttfb_ms": 1, "dom_complete_ms": 42})
+        );
+    }
+
+    #[test]
+    fn parse_evaluate_value_parses_stringified_array() {
+        let result = json!({ "value": "[{\"url\":\"a\",\"transfer_size_kb\":3.0}]" });
+        assert_eq!(
+            super::parse_evaluate_value(&result),
+            json!([{"url": "a", "transfer_size_kb": 3.0}])
+        );
+    }
+
+    #[test]
+    fn parse_evaluate_value_passes_through_structured_value() {
+        let result = json!({ "value": [1, 2, 3] });
+        assert_eq!(super::parse_evaluate_value(&result), json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn parse_evaluate_value_null_when_missing_or_unparseable() {
+        assert_eq!(super::parse_evaluate_value(&json!({})), Value::Null);
+        assert_eq!(
+            super::parse_evaluate_value(&json!({ "value": "not json" })),
+            Value::Null
+        );
     }
 }
