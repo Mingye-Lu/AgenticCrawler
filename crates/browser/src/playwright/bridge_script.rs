@@ -98,167 +98,110 @@ function bufferEvent(pageIndex, event, seqAtInitiation = currentSeq) {
   }
 }
 
-const observationCdpSessions = new WeakMap();
-
 function truncateText(value, maxChars) {
   if (maxChars === undefined) maxChars = 8192;
   const text = (typeof value === 'string') ? value : String(value === null || value === undefined ? '' : value);
   return text.length > maxChars ? text.slice(0, maxChars) + '...[truncated]' : text;
 }
 
-function normalizeConsoleLevel(type) {
-  switch (String(type || '').toLowerCase()) {
-    case 'error':
-    case 'assert':
-      return 'error';
-    case 'warn':
-    case 'warning':
-      return 'warning';
-    case 'debug':
-    case 'trace':
-      return 'debug';
-    default:
-      return 'info';
-  }
-}
-
 function toNullableInt(value) {
   return Number.isInteger(value) ? value : null;
 }
 
-function firstNonEmpty() {
-  for (let i = 0; i < arguments.length; i++) {
-    const value = arguments[i];
-    if (typeof value === 'string' && value.trim() !== '') return value;
-  }
-  return null;
-}
-
-function topCallFrame(stackTrace) {
-  const frames = (stackTrace && Array.isArray(stackTrace.callFrames)) ? stackTrace.callFrames : [];
-  return frames.length > 0 ? frames[0] : null;
-}
-
-function formatPreview(obj, preview) {
-  const props = Array.isArray(preview.properties) ? preview.properties.slice(0, 5) : [];
-  const rendered = props.map((prop) => {
-    if (prop.value !== undefined) {
-      return prop.name + ': ' + (prop.type === 'string' ? JSON.stringify(prop.value) : String(prop.value));
+// CloakBrowser (rebrowser-style stealth) suppresses CDP Runtime event *delivery*
+// (Runtime.consoleAPICalled / exceptionThrown / bindingCalled) on every CDP
+// session -- including a freshly created one -- while still ACKing Runtime.enable.
+// So page.on('console')/'pageerror', a dedicated newCDPSession, and exposeBinding
+// all capture nothing from page JS. Runtime.evaluate is NOT suppressed, so we
+// install a page-context init-script that mirrors console.* and the global
+// error/unhandledrejection events into a page-global ring buffer, then pull it via
+// page.evaluate (drainConsolePage) on poll and before each navigation. Tradeoff:
+// console.* is no longer a native function (a minor fingerprint vector shared by
+// Sentry/LogRocket-style monitoring) -- accepted, since the CDP path yields zero
+// events under CloakBrowser.
+const CONSOLE_CAPTURE_SOURCE = `
+  (() => {
+    if (window.__acrawlConsoleHooked) return;
+    window.__acrawlConsoleHooked = true;
+    var BUF = [];
+    var MAX = 2000;
+    window.__acrawlConsoleBuffer = BUF;
+    function fmt(a) {
+      if (typeof a === 'string') return a;
+      if (a instanceof Error) return (a.stack || a.message || String(a));
+      try { return JSON.stringify(a); } catch (_) { return String(a); }
     }
-    return prop.name + ': ' + (prop.subtype || prop.type || '...');
-  });
-  const overflow = (preview.overflow || (Array.isArray(preview.properties) && preview.properties.length > 5)) ? ', ...' : '';
-  if (preview.subtype === 'array') return '[' + rendered.join(', ') + overflow + ']';
-  if (rendered.length > 0) return (obj.className || 'Object') + ' { ' + rendered.join(', ') + overflow + ' }';
-  return obj.description || obj.className || 'Object';
-}
+    function push(entry) {
+      BUF.push(entry);
+      if (BUF.length > MAX) BUF.splice(0, BUF.length - MAX);
+    }
+    ['log', 'info', 'warn', 'error', 'debug', 'trace'].forEach(function (m) {
+      var orig = console[m];
+      console[m] = function () {
+        try {
+          push({ level: m, message_type: 'Console', text: Array.prototype.slice.call(arguments).map(fmt).join(' '), ts: Date.now() });
+        } catch (_) {}
+        if (typeof orig === 'function') return orig.apply(console, arguments);
+      };
+    });
+    window.addEventListener('error', function (e) {
+      try {
+        push({
+          level: 'error',
+          message_type: 'Exception',
+          text: (e && e.message) ? String(e.message) : 'Uncaught error',
+          source_url: (e && e.filename) ? e.filename : null,
+          source_line: (e && typeof e.lineno === 'number') ? e.lineno : null,
+          source_column: (e && typeof e.colno === 'number') ? e.colno : null,
+          stack: (e && e.error && e.error.stack) ? String(e.error.stack) : null,
+          ts: Date.now(),
+        });
+      } catch (_) {}
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      try {
+        var reason = e ? e.reason : null;
+        var text = (reason instanceof Error) ? (reason.message || String(reason)) : fmt(reason);
+        push({ level: 'error', message_type: 'PromiseRejection', text: 'Unhandled promise rejection: ' + text, stack: (reason instanceof Error && reason.stack) ? String(reason.stack) : null, ts: Date.now() });
+      } catch (_) {}
+    });
+  })();
+`;
 
-function formatRemoteObject(obj) {
-  if (!obj || typeof obj !== 'object') return '';
-  if (obj.unserializableValue !== undefined) return String(obj.unserializableValue);
-  if (obj.subtype === 'null') return 'null';
-  if (obj.type === 'undefined') return 'undefined';
-  if (obj.type === 'string') return (obj.value !== undefined ? obj.value : (obj.description || ''));
-  if (obj.type === 'number' || obj.type === 'boolean' || obj.type === 'bigint') {
-    return obj.value !== undefined ? String(obj.value) : String(obj.description || '');
+const DRAIN_CONSOLE_JS = "(() => { var b = window.__acrawlConsoleBuffer || []; window.__acrawlConsoleBuffer = []; return b; })()";
+
+// Pull page-buffered console/error/rejection entries (see CONSOLE_CAPTURE_SOURCE)
+// into the Node-side observation buffer. The page global resets on navigation, so
+// this is invoked before navigate/reload/go_back and on every poll.
+async function drainConsolePage(page, pageIndex) {
+  if (!page) return;
+  let entries;
+  try {
+    entries = await page.evaluate(DRAIN_CONSOLE_JS);
+  } catch (_) {
+    return;
   }
-  if (obj.type === 'function') return obj.description || '[Function]';
-  if (obj.preview) return formatPreview(obj, obj.preview);
-  return obj.description || obj.className || obj.type || 'Object';
-}
-
-function formatConsoleArgs(args) {
-  const parts = Array.isArray(args) ? args.map(formatRemoteObject) : [];
-  return truncateText(parts.filter((p) => p !== '').join(' '));
-}
-
-function attachLegacyConsoleListeners(page, pageIndex) {
-  page.on('console', (msg) => {
-    const location = typeof msg.location === 'function' ? msg.location() : null;
+  if (!Array.isArray(entries)) return;
+  for (const entry of entries) {
+    if (!entry) continue;
     bufferEvent(pageIndex, {
       type: 'ConsoleMessage',
-      timestamp_ms: Date.now(),
+      timestamp_ms: typeof entry.ts === 'number' ? entry.ts : Date.now(),
       tab_index: pageIndex,
-      level: msg.type(),
-      message_type: 'Console',
-      text: truncateText(msg.text()),
-      source_url: location && location.url ? location.url : null,
-      source_line: location && location.lineNumber != null ? location.lineNumber : null,
-      source_column: location && location.columnNumber != null ? location.columnNumber : null,
-      stack: null,
+      level: entry.level ? String(entry.level) : 'info',
+      message_type: entry.message_type || 'Console',
+      text: truncateText(entry.text !== undefined && entry.text !== null ? entry.text : ''),
+      source_url: entry.source_url ? entry.source_url : null,
+      source_line: toNullableInt(entry.source_line),
+      source_column: toNullableInt(entry.source_column),
+      stack: entry.stack ? truncateText(entry.stack, 16384) : null,
     });
-  });
-  page.on('pageerror', (err) => {
-    bufferEvent(pageIndex, {
-      type: 'ConsoleMessage',
-      timestamp_ms: Date.now(),
-      tab_index: pageIndex,
-      level: 'error',
-      message_type: 'Exception',
-      text: truncateText(err.message),
-      source_url: null,
-      source_line: null,
-      source_column: null,
-      stack: err.stack ? truncateText(err.stack, 16384) : null,
-    });
-  });
-}
-
-async function detachObservationSession(page) {
-  const client = observationCdpSessions.get(page);
-  observationCdpSessions.delete(page);
-  if (!client) return;
-  try { client.removeAllListeners(); } catch (_) {}
-  await client.detach().catch(() => {});
-}
-
-// CloakBrowser (rebrowser-style stealth) suppresses CDP Runtime.enable, so Playwright's
-// page.on('console')/'pageerror' never fire for page-origin JS. A dedicated CDP session
-// re-enables Runtime on a separate target to capture console calls + uncaught exceptions.
-async function initCdpObservation(page, pageIndex) {
-  const client = await page.context().newCDPSession(page);
-  observationCdpSessions.set(page, client);
-
-  client.on('Runtime.consoleAPICalled', (event) => {
-    const frame = topCallFrame(event && event.stackTrace);
-    bufferEvent(pageIndex, {
-      type: 'ConsoleMessage',
-      timestamp_ms: Date.now(),
-      tab_index: pageIndex,
-      level: normalizeConsoleLevel(event && event.type),
-      message_type: 'Console',
-      text: formatConsoleArgs(event && event.args) || String((event && event.type) || 'console'),
-      source_url: frame && frame.url ? frame.url : null,
-      source_line: frame ? toNullableInt(frame.lineNumber) : null,
-      source_column: frame ? toNullableInt(frame.columnNumber) : null,
-      stack: null,
-    });
-  });
-
-  client.on('Runtime.exceptionThrown', (event) => {
-    const details = (event && event.exceptionDetails) || {};
-    const exception = details.exception || {};
-    const frame = topCallFrame(details.stackTrace);
-    bufferEvent(pageIndex, {
-      type: 'ConsoleMessage',
-      timestamp_ms: Date.now(),
-      tab_index: pageIndex,
-      level: 'error',
-      message_type: 'Exception',
-      text: truncateText(firstNonEmpty(details.text, typeof exception.value === 'string' ? exception.value : null, 'Uncaught exception')),
-      source_url: (frame && frame.url) ? frame.url : (details.url || null),
-      source_line: frame ? toNullableInt(frame.lineNumber) : toNullableInt(details.lineNumber),
-      source_column: frame ? toNullableInt(frame.columnNumber) : toNullableInt(details.columnNumber),
-      stack: (typeof exception.description === 'string' && exception.description) ? truncateText(exception.description, 16384) : null,
-    });
-  });
-
-  await client.send('Runtime.enable');
+  }
 }
 
 async function attachObservationListeners(page, pageIndex) {
   if (page.__acrawlObservationAttached) {
-    return page.__acrawlObservationAttachPromise;
+    return;
   }
   page.__acrawlObservationAttached = true;
 
@@ -387,18 +330,6 @@ async function attachObservationListeners(page, pageIndex) {
       });
     });
   });
-
-  page.once('close', () => { void detachObservationSession(page); });
-
-  page.__acrawlObservationAttachPromise = (async () => {
-    try {
-      await initCdpObservation(page, pageIndex);
-    } catch (error) {
-      process.stderr.write('[acrawl] CDP observation attach failed on tab ' + pageIndex + ': ' + String(error) + '\n');
-      attachLegacyConsoleListeners(page, pageIndex);
-    }
-  })();
-  return page.__acrawlObservationAttachPromise;
 }
 
 async function bootstrap() {
@@ -451,6 +382,7 @@ async function bootstrap() {
       }
     })();
   `);
+  await context.addInitScript(CONSOLE_CAPTURE_SOURCE);
   let page = await context.newPage();
   const pages = [page];
   await attachObservationListeners(page, 0);
@@ -501,6 +433,7 @@ async function bootstrap() {
 
     if (command.action === 'navigate') {
       try {
+        await drainConsolePage(page, activePageIndex());
         await page.goto(command.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         // Wait for SPA API calls to complete. Cap at 5s so pages with
         // persistent connections (WebSocket, SSE, polling) don't hang.
@@ -542,6 +475,7 @@ async function bootstrap() {
 
     if (command.action === 'reload') {
       try {
+        await drainConsolePage(page, activePageIndex());
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
         // Wait for SPA API calls to complete. Cap at 5s so pages with
         // persistent connections (WebSocket, SSE, polling) don't hang.
@@ -727,6 +661,7 @@ async function bootstrap() {
 
     if (command.action === 'go_back') {
       try {
+        await drainConsolePage(page, activePageIndex());
         await page.goBack({ waitUntil: 'domcontentloaded', timeout: 30000 });
         const url = page.url();
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { url } }) + '\n');
@@ -1268,6 +1203,7 @@ async function bootstrap() {
         // Build new context BEFORE closing old — rollback-safe
         const newContext = await browser.newContext(ctxOpts);
         const newPage = await newContext.newPage();
+        await newContext.addInitScript(CONSOLE_CAPTURE_SOURCE);
 
         if (command.screen) {
           await newContext.addInitScript(`
@@ -1349,6 +1285,7 @@ async function bootstrap() {
       try {
         const fallbackIndex = pages.indexOf(page);
         const tabIndex = typeof command.tab_index === 'number' ? command.tab_index : fallbackIndex;
+        await drainConsolePage(pages[tabIndex], tabIndex);
         const buf = observationBuffers.get(tabIndex);
         const events = buf ? [...buf.events] : [];
         if (buf) {
