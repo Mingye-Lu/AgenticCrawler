@@ -10,6 +10,7 @@ use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const DEFAULT_LIMIT: usize = 20;
+const MAX_LIMIT: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RequestFilter {
@@ -123,11 +124,12 @@ fn parse_list_input(input: &Value) -> Result<ListInput, CrawlError> {
         .filter(|items| !items.is_empty())
         .unwrap_or_else(|| vec![SortKey::Oldest]);
 
-    #[allow(clippy::cast_possible_truncation)]
     let limit = input
         .get("limit")
         .and_then(Value::as_u64)
-        .map_or(DEFAULT_LIMIT, |value| value as usize);
+        .map_or(DEFAULT_LIMIT, |value| {
+            usize::try_from(value).unwrap_or(MAX_LIMIT).min(MAX_LIMIT)
+        });
 
     Ok(ListInput {
         since,

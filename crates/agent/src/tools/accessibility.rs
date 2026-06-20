@@ -60,10 +60,8 @@ pub async fn execute(
     }
 
     let context_js = match scope {
-        Some(sel) => {
-            let escaped = sel.replace('\'', "\\'");
-            format!("'{escaped}'")
-        }
+        Some(sel) => serde_json::to_string(sel)
+            .map_err(|e| ToolExecutionError::new(format!("invalid scope selector: {e}")))?,
         None => "document".to_string(),
     };
 

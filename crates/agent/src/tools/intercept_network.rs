@@ -25,8 +25,11 @@ pub async fn execute(
             let mock = if action == "mock_response" {
                 let mock_val = &input["mock"];
                 Some(MockResponse {
-                    #[allow(clippy::cast_possible_truncation)]
-                    status: mock_val["status"].as_u64().map_or(200, |s| s as u16),
+                    status: mock_val["status"]
+                        .as_u64()
+                        .and_then(|s| u16::try_from(s).ok())
+                        .filter(|s| (100..=599).contains(s))
+                        .unwrap_or(200),
                     headers: mock_val["headers"].as_object().map(|m| {
                         m.iter()
                             .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
@@ -102,8 +105,7 @@ pub async fn execute(
             json!({
                 "rule_id": id,
                 "pattern": pat,
-                "action": act,
-                "hit_count": 0
+                "action": act
             })
         })
         .collect();
