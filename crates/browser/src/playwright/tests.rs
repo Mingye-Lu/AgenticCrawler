@@ -304,3 +304,21 @@ fn browser_state_empty_cookies_round_trips() {
     let parsed: BrowserState = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.url, "");
 }
+
+#[test]
+fn classify_io_error_maps_broken_pipe_to_child_closed() {
+    let err = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+    assert!(matches!(classify_io_error(err), BridgeError::ChildClosed));
+}
+
+#[test]
+fn classify_io_error_maps_windows_pipe_closing_to_child_closed() {
+    let err = std::io::Error::from_raw_os_error(232);
+    assert!(matches!(classify_io_error(err), BridgeError::ChildClosed));
+}
+
+#[test]
+fn classify_io_error_preserves_unrelated_errors() {
+    let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    assert!(matches!(classify_io_error(err), BridgeError::Io(_)));
+}

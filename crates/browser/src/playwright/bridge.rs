@@ -28,6 +28,22 @@ pub struct PlaywrightBridge {
 
 pub type SharedBridge = Arc<Mutex<Box<dyn BrowserBackend + Send>>>;
 
+fn classify_io_error(err: std::io::Error) -> BridgeError {
+    use std::io::ErrorKind;
+    let pipe_closed = matches!(
+        err.kind(),
+        ErrorKind::BrokenPipe
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::UnexpectedEof
+    ) || err.raw_os_error() == Some(232);
+    if pipe_closed {
+        BridgeError::ChildClosed
+    } else {
+        BridgeError::Io(err)
+    }
+}
+
 impl PlaywrightBridge {
     pub async fn new() -> Result<Self, BridgeError> {
         let args = if cfg!(windows) {
@@ -189,9 +205,15 @@ impl PlaywrightBridge {
         command: &serde_json::Value,
     ) -> Result<serde_json::Value, BridgeError> {
         let payload = serde_json::to_string(command)?;
-        self.stdin.write_all(payload.as_bytes()).await?;
-        self.stdin.write_all(b"\n").await?;
-        self.stdin.flush().await?;
+        self.stdin
+            .write_all(payload.as_bytes())
+            .await
+            .map_err(classify_io_error)?;
+        self.stdin
+            .write_all(b"\n")
+            .await
+            .map_err(classify_io_error)?;
+        self.stdin.flush().await.map_err(classify_io_error)?;
 
         let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
             .await
@@ -733,7 +755,11 @@ impl PlaywrightBridge {
 
     async fn read_bridge_line(&mut self) -> Result<String, BridgeError> {
         let mut line = String::new();
-        let bytes_read = self.stdout.read_line(&mut line).await?;
+        let bytes_read = self
+            .stdout
+            .read_line(&mut line)
+            .await
+            .map_err(classify_io_error)?;
         if bytes_read == 0 {
             return Err(BridgeError::ChildClosed);
         }
