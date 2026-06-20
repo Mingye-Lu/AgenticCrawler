@@ -1,7 +1,34 @@
+use std::collections::HashMap;
+
 use serde_json::{json, Value};
 
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
+
+/// Collapse coverage entries that share a URL, keeping the highest `used_bytes`.
+///
+/// With `resetOnNavigation: false`, a reload makes the same file appear twice —
+/// a stale pre-navigation snapshot (typically `used_bytes: 0`) alongside the
+/// real post-navigation entry. Keeping the max drops the stale 100%-unused row
+/// so it neither shows up nor skews `worst_offender`. First-seen order is kept.
+fn dedupe_by_url(entries: &[browser::FileCoverage]) -> Vec<browser::FileCoverage> {
+    let mut order: Vec<String> = Vec::new();
+    let mut best: HashMap<String, browser::FileCoverage> = HashMap::new();
+    for entry in entries {
+        if let Some(existing) = best.get_mut(&entry.url) {
+            if entry.used_bytes > existing.used_bytes {
+                *existing = entry.clone();
+            }
+        } else {
+            order.push(entry.url.clone());
+            best.insert(entry.url.clone(), entry.clone());
+        }
+    }
+    order
+        .into_iter()
+        .filter_map(|url| best.remove(&url))
+        .collect()
+}
 
 pub async fn execute(
     input: &Value,
@@ -32,13 +59,16 @@ pub async fn execute(
 
     let _ = bridge.start_coverage(do_js, do_css).await;
 
+    let js_coverage = dedupe_by_url(&coverage_data.js_coverage);
+    let css_coverage = dedupe_by_url(&coverage_data.css_coverage);
+
     let mut js_output = Vec::new();
     let mut total_unused_js: usize = 0;
     let mut total_unused_css: usize = 0;
     let mut worst_offender_url = String::new();
     let mut worst_offender_pct: f64 = 0.0;
 
-    for entry in &coverage_data.js_coverage {
+    for entry in &js_coverage {
         let unused_bytes = entry.total_bytes.saturating_sub(entry.used_bytes);
         let unused_pct = if entry.total_bytes > 0 {
             (f64::from(u32::try_from(unused_bytes).unwrap_or(u32::MAX))
@@ -65,7 +95,7 @@ pub async fn execute(
     }
 
     let mut css_output = Vec::new();
-    for entry in &coverage_data.css_coverage {
+    for entry in &css_coverage {
         let unused_bytes = entry.total_bytes.saturating_sub(entry.used_bytes);
         let unused_pct = if entry.total_bytes > 0 {
             (f64::from(u32::try_from(unused_bytes).unwrap_or(u32::MAX))
@@ -114,4 +144,51 @@ pub async fn execute(
     });
 
     Ok(ToolEffect::reply_json(&result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use browser::FileCoverage;
+
+    fn fc(url: &str, total: usize, used: usize) -> FileCoverage {
+        FileCoverage {
+            url: url.to_string(),
+            total_bytes: total,
+            used_bytes: used,
+        }
+    }
+
+    #[test]
+    fn dedupe_by_url_keeps_max_used_and_drops_stale_snapshot() {
+        let entries = vec![
+            fc("https://x/app.css", 88, 0),
+            fc("https://x/app.css", 88, 62),
+            fc("https://x/other.css", 50, 10),
+        ];
+        let deduped = dedupe_by_url(&entries);
+
+        assert_eq!(deduped.len(), 2);
+        let app = deduped
+            .iter()
+            .find(|e| e.url.ends_with("app.css"))
+            .expect("app.css survives");
+        assert_eq!(app.used_bytes, 62);
+        assert_eq!(app.total_bytes, 88);
+    }
+
+    #[test]
+    fn dedupe_by_url_preserves_first_seen_order() {
+        let entries = vec![
+            fc("https://x/b.js", 10, 5),
+            fc("https://x/a.js", 10, 5),
+            fc("https://x/b.js", 10, 9),
+        ];
+        let deduped = dedupe_by_url(&entries);
+
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].url, "https://x/b.js");
+        assert_eq!(deduped[0].used_bytes, 9);
+        assert_eq!(deduped[1].url, "https://x/a.js");
+    }
 }
