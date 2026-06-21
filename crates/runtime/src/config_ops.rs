@@ -428,145 +428,147 @@ fn parse_model(key: &str, value: &str) -> Result<String, ConfigError> {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn apply_set(settings: &mut Settings, spec: &KeySpec, value: &str) -> Result<(), ConfigError> {
     match (spec.key, spec.kind) {
         ("headless", ValueKind::Bool) => settings.headless = Some(parse_bool(spec.key, value)?),
         ("max_steps", ValueKind::U32) => settings.max_steps = Some(parse_u32(spec.key, value)?),
         ("model", ValueKind::Model) => settings.model = Some(parse_model(spec.key, value)?),
         ("reasoning_effort", ValueKind::Enum(allowed)) => {
-            settings.reasoning_effort = Some(parse_enum(spec.key, value, allowed)?.to_string())
+            settings.reasoning_effort = Some(parse_enum(spec.key, value, allowed)?.to_string());
         }
         ("output_dir", ValueKind::Path | ValueKind::String) => {
-            settings.output_dir = Some(value.to_string())
+            settings.output_dir = Some(value.to_string());
         }
         ("auto_compact_input_tokens", ValueKind::U64) => {
-            settings.auto_compact_input_tokens = Some(parse_u64(spec.key, value)?)
+            settings.auto_compact_input_tokens = Some(parse_u64(spec.key, value)?);
         }
         ("max_concurrent_per_parent", ValueKind::U32) => {
-            settings.max_concurrent_per_parent = Some(parse_u32(spec.key, value)?)
+            settings.max_concurrent_per_parent = Some(parse_u32(spec.key, value)?);
         }
         ("max_fork_depth", ValueKind::U32) => {
-            settings.max_fork_depth = Some(parse_u32(spec.key, value)?)
+            settings.max_fork_depth = Some(parse_u32(spec.key, value)?);
         }
         ("max_total_agents", ValueKind::U32) => {
-            settings.max_total_agents = Some(parse_u32(spec.key, value)?)
+            settings.max_total_agents = Some(parse_u32(spec.key, value)?);
         }
         ("fork_child_max_steps", ValueKind::U32) => {
-            settings.fork_child_max_steps = Some(parse_u32(spec.key, value)?)
+            settings.fork_child_max_steps = Some(parse_u32(spec.key, value)?);
         }
         ("fork_wait_timeout_secs", ValueKind::U32) => {
-            settings.fork_wait_timeout_secs = Some(parse_u32(spec.key, value)?)
+            settings.fork_wait_timeout_secs = Some(parse_u32(spec.key, value)?);
         }
         ("extension_bridge_token", ValueKind::String) => {
-            settings.extension_bridge_token = Some(value.to_string())
+            settings.extension_bridge_token = Some(value.to_string());
         }
         ("extension_bridge_port", ValueKind::U16) => {
-            settings.extension_bridge_port = Some(parse_u16(spec.key, value)?)
+            settings.extension_bridge_port = Some(parse_u16(spec.key, value)?);
         }
         ("browser_backend", ValueKind::NullableEnum(allowed)) => {
-            settings.browser_backend = parse_nullable_enum(spec.key, value, allowed)?
+            settings.browser_backend = parse_nullable_enum(spec.key, value, allowed)?;
         }
         ("compaction_prune_protect_tokens", ValueKind::U64) => {
-            settings.compaction_prune_protect_tokens = Some(parse_u64(spec.key, value)?)
+            settings.compaction_prune_protect_tokens = Some(parse_u64(spec.key, value)?);
         }
         ("compaction_prune_max_output_chars", ValueKind::U64) => {
-            settings.compaction_prune_max_output_chars = Some(parse_u64(spec.key, value)?)
+            settings.compaction_prune_max_output_chars = Some(parse_u64(spec.key, value)?);
         }
         ("compaction_preserve_recent_tokens", ValueKind::U64) => {
-            settings.compaction_preserve_recent_tokens = Some(parse_u64(spec.key, value)?)
+            settings.compaction_preserve_recent_tokens = Some(parse_u64(spec.key, value)?);
         }
         ("compaction_preserve_recent_messages_floor", ValueKind::U32) => {
-            settings.compaction_preserve_recent_messages_floor = Some(parse_u32(spec.key, value)?)
+            settings.compaction_preserve_recent_messages_floor = Some(parse_u32(spec.key, value)?);
         }
         ("compaction_max_summary_chars", ValueKind::U64) => {
-            settings.compaction_max_summary_chars = Some(parse_u64(spec.key, value)?)
+            settings.compaction_max_summary_chars = Some(parse_u64(spec.key, value)?);
         }
         ("compaction_llm_summarization", ValueKind::Bool) => {
-            settings.compaction_llm_summarization = Some(parse_bool(spec.key, value)?)
+            settings.compaction_llm_summarization = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.html_diff_mode", ValueKind::Bool) => {
-            optimization_mut(settings).html_diff_mode = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).html_diff_mode = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.loop_detection", ValueKind::Bool) => {
-            optimization_mut(settings).loop_detection = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).loop_detection = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.loop_detection_window", ValueKind::Usize) => {
-            optimization_mut(settings).loop_detection_window = Some(parse_usize(spec.key, value)?)
+            optimization_mut(settings).loop_detection_window = Some(parse_usize(spec.key, value)?);
         }
         ("optimization.loop_nudge_threshold", ValueKind::Usize) => {
-            optimization_mut(settings).loop_nudge_threshold = Some(parse_usize(spec.key, value)?)
+            optimization_mut(settings).loop_nudge_threshold = Some(parse_usize(spec.key, value)?);
         }
         ("optimization.page_fingerprinting", ValueKind::Bool) => {
-            optimization_mut(settings).page_fingerprinting = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).page_fingerprinting = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.planning_interval", ValueKind::Usize) => {
-            optimization_mut(settings).planning_interval = Some(parse_usize(spec.key, value)?)
+            optimization_mut(settings).planning_interval = Some(parse_usize(spec.key, value)?);
         }
         ("optimization.failure_classification", ValueKind::Bool) => {
-            optimization_mut(settings).failure_classification = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).failure_classification = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.self_healing", ValueKind::Bool) => {
-            optimization_mut(settings).self_healing = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).self_healing = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.self_healing_max_retries", ValueKind::Usize) => {
             optimization_mut(settings).self_healing_max_retries =
-                Some(parse_usize(spec.key, value)?)
+                Some(parse_usize(spec.key, value)?);
         }
         ("optimization.action_caching", ValueKind::Bool) => {
-            optimization_mut(settings).action_caching = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).action_caching = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.action_cache_ttl_secs", ValueKind::U64) => {
-            optimization_mut(settings).action_cache_ttl_secs = Some(parse_u64(spec.key, value)?)
+            optimization_mut(settings).action_cache_ttl_secs = Some(parse_u64(spec.key, value)?);
         }
         ("optimization.confidence_tracking", ValueKind::Bool) => {
-            optimization_mut(settings).confidence_tracking = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).confidence_tracking = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.compound_enrichment", ValueKind::Bool) => {
-            optimization_mut(settings).compound_enrichment = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).compound_enrichment = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.budget_max_session_cost_usd", ValueKind::NullableFloat) => {
             optimization_mut(settings).budget_max_session_cost_usd =
-                parse_nullable_float(spec.key, value)?
+                parse_nullable_float(spec.key, value)?;
         }
         ("optimization.budget_enforcement", ValueKind::NullableEnum(allowed)) => {
             optimization_mut(settings).budget_enforcement =
-                parse_nullable_enum(spec.key, value, allowed)?
+                parse_nullable_enum(spec.key, value, allowed)?;
         }
         ("optimization.budget_warn_threshold_pct", ValueKind::U32) => {
-            optimization_mut(settings).budget_warn_threshold_pct = Some(parse_u32(spec.key, value)?)
+            optimization_mut(settings).budget_warn_threshold_pct =
+                Some(parse_u32(spec.key, value)?);
         }
         ("optimization.per_agent_cost_tracking", ValueKind::Bool) => {
-            optimization_mut(settings).per_agent_cost_tracking = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).per_agent_cost_tracking = Some(parse_bool(spec.key, value)?);
         }
         ("optimization.content_aware_profiles", ValueKind::Bool) => {
-            optimization_mut(settings).content_aware_profiles = Some(parse_bool(spec.key, value)?)
+            optimization_mut(settings).content_aware_profiles = Some(parse_bool(spec.key, value)?);
         }
         ("script.max_steps", ValueKind::Usize) => {
-            script_mut(settings).max_steps = Some(parse_usize(spec.key, value)?)
+            script_mut(settings).max_steps = Some(parse_usize(spec.key, value)?);
         }
         ("script.max_timeout_secs", ValueKind::U64) => {
-            script_mut(settings).max_timeout_secs = Some(parse_u64(spec.key, value)?)
+            script_mut(settings).max_timeout_secs = Some(parse_u64(spec.key, value)?);
         }
         ("script.max_output_bytes", ValueKind::Usize) => {
-            script_mut(settings).max_output_bytes = Some(parse_usize(spec.key, value)?)
+            script_mut(settings).max_output_bytes = Some(parse_usize(spec.key, value)?);
         }
         ("script.max_parallel_branches", ValueKind::Usize) => {
-            script_mut(settings).max_parallel_branches = Some(parse_usize(spec.key, value)?)
+            script_mut(settings).max_parallel_branches = Some(parse_usize(spec.key, value)?);
         }
         ("script.max_concurrent_scripts", ValueKind::Usize) => {
-            script_mut(settings).max_concurrent_scripts = Some(parse_usize(spec.key, value)?)
+            script_mut(settings).max_concurrent_scripts = Some(parse_usize(spec.key, value)?);
         }
         ("script.per_step_timeout_secs", ValueKind::U64) => {
-            script_mut(settings).per_step_timeout_secs = Some(parse_u64(spec.key, value)?)
+            script_mut(settings).per_step_timeout_secs = Some(parse_u64(spec.key, value)?);
         }
         ("script.max_script_size_bytes", ValueKind::Usize) => {
-            script_mut(settings).max_script_size_bytes = Some(parse_usize(spec.key, value)?)
+            script_mut(settings).max_script_size_bytes = Some(parse_usize(spec.key, value)?);
         }
         ("script.max_nesting_depth", ValueKind::Usize) => {
-            script_mut(settings).max_nesting_depth = Some(parse_usize(spec.key, value)?)
+            script_mut(settings).max_nesting_depth = Some(parse_usize(spec.key, value)?);
         }
         ("script.scripts_dir", ValueKind::Path | ValueKind::String) => {
-            script_mut(settings).scripts_dir = Some(PathBuf::from(value))
+            script_mut(settings).scripts_dir = Some(PathBuf::from(value));
         }
         _ => return Err(bad_value(spec.key, value, "unsupported schema mapping")),
     }
@@ -593,76 +595,76 @@ fn apply_unset(settings: &mut Settings, key: &str) {
         "compaction_prune_max_output_chars" => settings.compaction_prune_max_output_chars = None,
         "compaction_preserve_recent_tokens" => settings.compaction_preserve_recent_tokens = None,
         "compaction_preserve_recent_messages_floor" => {
-            settings.compaction_preserve_recent_messages_floor = None
+            settings.compaction_preserve_recent_messages_floor = None;
         }
         "compaction_max_summary_chars" => settings.compaction_max_summary_chars = None,
         "compaction_llm_summarization" => settings.compaction_llm_summarization = None,
         "optimization.html_diff_mode" => {
-            set_optimization_field(settings, |o| o.html_diff_mode = None)
+            set_optimization_field(settings, |o| o.html_diff_mode = None);
         }
         "optimization.loop_detection" => {
-            set_optimization_field(settings, |o| o.loop_detection = None)
+            set_optimization_field(settings, |o| o.loop_detection = None);
         }
         "optimization.loop_detection_window" => {
-            set_optimization_field(settings, |o| o.loop_detection_window = None)
+            set_optimization_field(settings, |o| o.loop_detection_window = None);
         }
         "optimization.loop_nudge_threshold" => {
-            set_optimization_field(settings, |o| o.loop_nudge_threshold = None)
+            set_optimization_field(settings, |o| o.loop_nudge_threshold = None);
         }
         "optimization.page_fingerprinting" => {
-            set_optimization_field(settings, |o| o.page_fingerprinting = None)
+            set_optimization_field(settings, |o| o.page_fingerprinting = None);
         }
         "optimization.planning_interval" => {
-            set_optimization_field(settings, |o| o.planning_interval = None)
+            set_optimization_field(settings, |o| o.planning_interval = None);
         }
         "optimization.failure_classification" => {
-            set_optimization_field(settings, |o| o.failure_classification = None)
+            set_optimization_field(settings, |o| o.failure_classification = None);
         }
         "optimization.self_healing" => set_optimization_field(settings, |o| o.self_healing = None),
         "optimization.self_healing_max_retries" => {
-            set_optimization_field(settings, |o| o.self_healing_max_retries = None)
+            set_optimization_field(settings, |o| o.self_healing_max_retries = None);
         }
         "optimization.action_caching" => {
-            set_optimization_field(settings, |o| o.action_caching = None)
+            set_optimization_field(settings, |o| o.action_caching = None);
         }
         "optimization.action_cache_ttl_secs" => {
-            set_optimization_field(settings, |o| o.action_cache_ttl_secs = None)
+            set_optimization_field(settings, |o| o.action_cache_ttl_secs = None);
         }
         "optimization.confidence_tracking" => {
-            set_optimization_field(settings, |o| o.confidence_tracking = None)
+            set_optimization_field(settings, |o| o.confidence_tracking = None);
         }
         "optimization.compound_enrichment" => {
-            set_optimization_field(settings, |o| o.compound_enrichment = None)
+            set_optimization_field(settings, |o| o.compound_enrichment = None);
         }
         "optimization.budget_max_session_cost_usd" => {
-            set_optimization_field(settings, |o| o.budget_max_session_cost_usd = None)
+            set_optimization_field(settings, |o| o.budget_max_session_cost_usd = None);
         }
         "optimization.budget_enforcement" => {
-            set_optimization_field(settings, |o| o.budget_enforcement = None)
+            set_optimization_field(settings, |o| o.budget_enforcement = None);
         }
         "optimization.budget_warn_threshold_pct" => {
-            set_optimization_field(settings, |o| o.budget_warn_threshold_pct = None)
+            set_optimization_field(settings, |o| o.budget_warn_threshold_pct = None);
         }
         "optimization.per_agent_cost_tracking" => {
-            set_optimization_field(settings, |o| o.per_agent_cost_tracking = None)
+            set_optimization_field(settings, |o| o.per_agent_cost_tracking = None);
         }
         "optimization.content_aware_profiles" => {
-            set_optimization_field(settings, |o| o.content_aware_profiles = None)
+            set_optimization_field(settings, |o| o.content_aware_profiles = None);
         }
         "script.max_steps" => set_script_field(settings, |s| s.max_steps = None),
         "script.max_timeout_secs" => set_script_field(settings, |s| s.max_timeout_secs = None),
         "script.max_output_bytes" => set_script_field(settings, |s| s.max_output_bytes = None),
         "script.max_parallel_branches" => {
-            set_script_field(settings, |s| s.max_parallel_branches = None)
+            set_script_field(settings, |s| s.max_parallel_branches = None);
         }
         "script.max_concurrent_scripts" => {
-            set_script_field(settings, |s| s.max_concurrent_scripts = None)
+            set_script_field(settings, |s| s.max_concurrent_scripts = None);
         }
         "script.per_step_timeout_secs" => {
-            set_script_field(settings, |s| s.per_step_timeout_secs = None)
+            set_script_field(settings, |s| s.per_step_timeout_secs = None);
         }
         "script.max_script_size_bytes" => {
-            set_script_field(settings, |s| s.max_script_size_bytes = None)
+            set_script_field(settings, |s| s.max_script_size_bytes = None);
         }
         "script.max_nesting_depth" => set_script_field(settings, |s| s.max_nesting_depth = None),
         "script.scripts_dir" => set_script_field(settings, |s| s.scripts_dir = None),
@@ -756,6 +758,7 @@ fn script_is_empty(script: &ScriptSettings) -> bool {
         && script.scripts_dir.is_none()
 }
 
+#[allow(clippy::too_many_lines)]
 fn stored_value(settings: &Settings, key: &str) -> Value {
     match key {
         "headless" => json!(settings.headless),
@@ -1045,7 +1048,10 @@ fn effective_settings(settings: &Settings) -> Settings {
             settings,
         ) as u64),
         compaction_preserve_recent_messages_floor: Some(
-            settings_get_compaction_preserve_recent_messages_floor(settings) as u32,
+            u32::try_from(settings_get_compaction_preserve_recent_messages_floor(
+                settings,
+            ))
+            .unwrap_or(u32::MAX),
         ),
         compaction_max_summary_chars: Some(
             settings_get_compaction_max_summary_chars(settings) as u64
@@ -1123,8 +1129,7 @@ mod tests {
     fn unique_temp_dir() -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |duration| duration.as_nanos());
         std::env::temp_dir().join(format!(
             "acrawl_config_ops_test_{}_{}",
             std::process::id(),

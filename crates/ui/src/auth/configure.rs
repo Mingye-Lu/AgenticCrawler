@@ -36,12 +36,9 @@ pub fn run_auth_configure(provider: &str, flags: AuthFlags, json: bool) -> i32 {
         return 2;
     }
 
-    let group = match flag_group_for(canonical_id) {
-        Some(group) => group,
-        None => {
-            eprintln!("provider `{canonical_id}` does not support non-interactive configuration");
-            return 2;
-        }
+    let Some(group) = flag_group_for(canonical_id) else {
+        eprintln!("provider `{canonical_id}` does not support non-interactive configuration");
+        return 2;
     };
 
     let inputs = match validated_inputs(group, flags) {
@@ -122,31 +119,31 @@ fn validated_inputs(group: CredGroup, flags: AuthFlags) -> Result<CredInputs, &'
 
     match group {
         CredGroup::Simple => {
-            require(&inputs.api_key, "api-key")?;
+            require(inputs.api_key.as_deref(), "api-key")?;
             Ok(inputs)
         }
         CredGroup::Bedrock => {
-            require(&inputs.access_key, "access-key")?;
-            require(&inputs.secret_key, "secret-key")?;
+            require(inputs.access_key.as_deref(), "access-key")?;
+            require(inputs.secret_key.as_deref(), "secret-key")?;
             Ok(CredInputs {
                 region: Some(inputs.region.unwrap_or_else(|| "us-east-1".to_string())),
                 ..inputs
             })
         }
         CredGroup::Azure => {
-            require(&inputs.resource_name, "resource-name")?;
-            require(&inputs.deployment_name, "deployment-name")?;
-            require(&inputs.api_key, "api-key")?;
+            require(inputs.resource_name.as_deref(), "resource-name")?;
+            require(inputs.deployment_name.as_deref(), "deployment-name")?;
+            require(inputs.api_key.as_deref(), "api-key")?;
             Ok(inputs)
         }
         CredGroup::Custom => {
-            require(&inputs.base_url, "base-url")?;
+            require(inputs.base_url.as_deref(), "base-url")?;
             Ok(inputs)
         }
         CredGroup::Vertex => {
-            require(&inputs.gcp_project, "gcp-project")?;
-            require(&inputs.gcp_region, "gcp-region")?;
-            require(&inputs.api_key, "api-key")?;
+            require(inputs.gcp_project.as_deref(), "gcp-project")?;
+            require(inputs.gcp_region.as_deref(), "gcp-region")?;
+            require(inputs.api_key.as_deref(), "api-key")?;
             Ok(inputs)
         }
     }
@@ -159,7 +156,7 @@ fn normalized(value: Option<String>) -> Option<String> {
     })
 }
 
-fn require(value: &Option<String>, flag: &'static str) -> Result<(), &'static str> {
+fn require(value: Option<&str>, flag: &'static str) -> Result<(), &'static str> {
     if value.is_some() {
         Ok(())
     } else {

@@ -67,6 +67,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run(action: CliAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         CliAction::PrintSystemPrompt => print_system_prompt(),
@@ -500,6 +501,7 @@ fn parse_auth_list_args(args: &[String]) -> Result<CliAction, String> {
     Ok(CliAction::AuthList { json })
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_auth_config_or_interactive_args(args: &[String]) -> Result<CliAction, String> {
     let mut provider = None;
     let mut flags = AuthFlags::default();
@@ -866,6 +868,7 @@ fn client_key(ide: mcp_server::Ide) -> &'static str {
         .unwrap_or_default()
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn run_mcp_configured(
     clients: Vec<String>,
     all: bool,
@@ -937,10 +940,8 @@ fn run_mcp_configured(
 
     if explicit_client && success_count == 0 {
         3
-    } else if success_count > 0 {
-        0
     } else {
-        1
+        i32::from(success_count == 0)
     }
 }
 

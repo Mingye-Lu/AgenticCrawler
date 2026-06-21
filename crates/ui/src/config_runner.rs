@@ -16,6 +16,7 @@ pub enum ConfigAction {
     Path,
 }
 
+#[must_use]
 pub fn run_config(action: ConfigAction, json: bool) -> i32 {
     match run_config_inner(action, json) {
         Ok(()) => 0,
