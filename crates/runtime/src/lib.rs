@@ -1,6 +1,7 @@
 pub mod budget;
 mod compact;
 mod config;
+pub mod config_ops;
 mod control;
 mod conversation;
 mod json;

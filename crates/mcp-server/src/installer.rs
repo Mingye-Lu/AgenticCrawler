@@ -9,7 +9,7 @@ use dialoguer::{theme::ColorfulTheme, MultiSelect, Select};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ide {
+pub enum Ide {
     ClaudeCode,
     Cursor,
     Windsurf,
@@ -72,6 +72,28 @@ impl Ide {
         }
     }
 
+    fn key(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Cursor => "cursor",
+            Self::Windsurf => "windsurf",
+            Self::VsCode => "vscode",
+            Self::OpenCode => "opencode",
+            Self::ClaudeDesktop => "claude-desktop",
+            Self::JetBrains => "jetbrains",
+            Self::Trae => "trae",
+            Self::GeminiCli => "gemini-cli",
+            Self::QwenCode => "qwen-code",
+            Self::Crush => "crush",
+            Self::Zed => "zed",
+            Self::OpenClaw => "openclaw",
+            Self::CodexCli => "codex-cli",
+            Self::Hermes => "hermes",
+            Self::Goose => "goose",
+            Self::Aider => "aider",
+        }
+    }
+
     fn supports_project_scope(self) -> bool {
         !matches!(
             self,
@@ -93,7 +115,7 @@ impl Ide {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Scope {
+pub enum Scope {
     Global,
     Project,
 }
@@ -1032,28 +1054,17 @@ pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
 
     let scope = prompt_scope()?;
 
-    eprintln!("\nRemoving acrawl MCP server configuration...\n");
-
-    let mut success_count = 0u32;
-    for ide in &selected {
-        if scope == Scope::Global && !ide.supports_global_scope() {
-            eprintln!("  ⚠ {} — skipped (project-level config only)", ide.name());
-            continue;
-        }
-        if scope == Scope::Project && !ide.supports_project_scope() {
-            eprintln!("  ⚠ {} — skipped (global config only)", ide.name());
-            continue;
-        }
-        match uninstall_for_ide(*ide, scope) {
-            Ok(detail) => {
-                eprintln!("  ✓ {} — {detail}", ide.name());
-                success_count += 1;
-            }
-            Err(e) => {
-                eprintln!("  ✗ {} — error: {e}", ide.name());
-            }
-        }
-    }
+    let report = run_uninstall_for(&selected, scope, false);
+    let success_count = report
+        .results
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.status,
+                ClientStatus::Removed | ClientStatus::NotFound | ClientStatus::ManualInstructions
+            )
+        })
+        .count();
 
     if success_count > 0 {
         eprintln!(
@@ -1064,6 +1075,203 @@ pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("\nNo configurations were removed.");
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum ClientStatus {
+    Configured,
+    Removed,
+    NotFound,
+    SkippedScope,
+    ManualInstructions,
+    Error(String),
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ClientResult {
+    pub key: String,
+    pub display_name: String,
+    pub status: ClientStatus,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct InstallReport {
+    pub results: Vec<ClientResult>,
+}
+
+const CLIENT_KEYS: &[(&str, &str)] = &[
+    ("claude-code", "Claude Code"),
+    ("cursor", "Cursor"),
+    ("windsurf", "Windsurf"),
+    ("vscode", "VS Code (Copilot)"),
+    ("opencode", "OpenCode"),
+    ("claude-desktop", "Claude Desktop"),
+    ("jetbrains", "JetBrains IDEs"),
+    ("trae", "TRAE"),
+    ("gemini-cli", "Gemini CLI"),
+    ("qwen-code", "Qwen Code"),
+    ("crush", "Crush"),
+    ("zed", "Zed"),
+    ("openclaw", "OpenClaw"),
+    ("codex-cli", "Codex CLI"),
+    ("hermes", "Hermes"),
+    ("goose", "Goose"),
+    ("aider", "Aider"),
+];
+
+#[must_use]
+pub fn all_client_keys() -> &'static [(&'static str, &'static str)] {
+    CLIENT_KEYS
+}
+
+#[must_use]
+pub fn client_from_key(key: &str) -> Option<Ide> {
+    let needle = key.to_ascii_lowercase();
+    Ide::ALL.iter().copied().find(|ide| ide.key() == needle)
+}
+
+pub fn list_clients(json: bool) {
+    if json {
+        let arr: Vec<Value> = all_client_keys()
+            .iter()
+            .map(|(key, name)| json!({ "key": key, "display_name": name }))
+            .collect();
+        let out =
+            serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".to_string());
+        println!("{out}");
+    } else {
+        println!("Supported MCP clients ({} total):", all_client_keys().len());
+        for (key, name) in all_client_keys() {
+            println!("  {key:<14} {name}");
+        }
+    }
+}
+
+fn classify_install_status(ide: Ide) -> ClientStatus {
+    if matches!(ide, Ide::JetBrains | Ide::Goose) {
+        ClientStatus::ManualInstructions
+    } else {
+        ClientStatus::Configured
+    }
+}
+
+fn classify_uninstall_status(ide: Ide, detail: &str) -> ClientStatus {
+    if matches!(ide, Ide::JetBrains | Ide::Goose) {
+        ClientStatus::ManualInstructions
+    } else if detail.starts_with("not found") {
+        ClientStatus::NotFound
+    } else {
+        ClientStatus::Removed
+    }
+}
+
+fn skipped_for_scope(ide: Ide, scope: Scope, json: bool) -> bool {
+    if scope == Scope::Global && !ide.supports_global_scope() {
+        if !json {
+            eprintln!("  ⚠ {} — skipped (project-level config only)", ide.name());
+        }
+        return true;
+    }
+    if scope == Scope::Project && !ide.supports_project_scope() {
+        if !json {
+            eprintln!("  ⚠ {} — skipped (global config only)", ide.name());
+        }
+        return true;
+    }
+    false
+}
+
+fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) -> ClientResult {
+    let key = ide.key().to_string();
+    let display_name = ide.name().to_string();
+
+    if skipped_for_scope(ide, scope, json) {
+        return ClientResult {
+            key,
+            display_name,
+            status: ClientStatus::SkippedScope,
+        };
+    }
+
+    let status = match install_for_ide(ide, scope, acrawl_path) {
+        Ok(detail) => {
+            if !json {
+                eprintln!("  ✓ {} — {detail}", ide.name());
+            }
+            classify_install_status(ide)
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("  ✗ {} — error: {e}", ide.name());
+            }
+            ClientStatus::Error(e.to_string())
+        }
+    };
+
+    ClientResult {
+        key,
+        display_name,
+        status,
+    }
+}
+
+fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
+    let key = ide.key().to_string();
+    let display_name = ide.name().to_string();
+
+    if skipped_for_scope(ide, scope, json) {
+        return ClientResult {
+            key,
+            display_name,
+            status: ClientStatus::SkippedScope,
+        };
+    }
+
+    let status = match uninstall_for_ide(ide, scope) {
+        Ok(detail) => {
+            if !json {
+                eprintln!("  ✓ {} — {detail}", ide.name());
+            }
+            classify_uninstall_status(ide, &detail)
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("  ✗ {} — error: {e}", ide.name());
+            }
+            ClientStatus::Error(e.to_string())
+        }
+    };
+
+    ClientResult {
+        key,
+        display_name,
+        status,
+    }
+}
+
+#[must_use]
+pub fn run_install_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+    let acrawl_path = resolve_acrawl_path();
+    if !json {
+        eprintln!("\nInstalling acrawl MCP server (binary: {acrawl_path})...\n");
+    }
+    let results = clients
+        .iter()
+        .map(|ide| install_client_result(*ide, scope, &acrawl_path, json))
+        .collect();
+    InstallReport { results }
+}
+
+#[must_use]
+pub fn run_uninstall_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+    if !json {
+        eprintln!("\nRemoving acrawl MCP server configuration...\n");
+    }
+    let results = clients
+        .iter()
+        .map(|ide| uninstall_client_result(*ide, scope, json))
+        .collect();
+    InstallReport { results }
 }
 
 pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
@@ -1082,30 +1290,18 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let scope = prompt_scope()?;
-    let acrawl_path = resolve_acrawl_path();
 
-    eprintln!("\nInstalling acrawl MCP server (binary: {acrawl_path})...\n");
-
-    let mut success_count = 0u32;
-    for ide in &selected {
-        if scope == Scope::Global && !ide.supports_global_scope() {
-            eprintln!("  ⚠ {} — skipped (project-level config only)", ide.name());
-            continue;
-        }
-        if scope == Scope::Project && !ide.supports_project_scope() {
-            eprintln!("  ⚠ {} — skipped (global config only)", ide.name());
-            continue;
-        }
-        match install_for_ide(*ide, scope, &acrawl_path) {
-            Ok(detail) => {
-                eprintln!("  ✓ {} — {detail}", ide.name());
-                success_count += 1;
-            }
-            Err(e) => {
-                eprintln!("  ✗ {} — error: {e}", ide.name());
-            }
-        }
-    }
+    let report = run_install_for(&selected, scope, false);
+    let success_count = report
+        .results
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.status,
+                ClientStatus::Configured | ClientStatus::ManualInstructions
+            )
+        })
+        .count();
 
     if success_count > 0 {
         eprintln!(
@@ -1122,6 +1318,136 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn client_keys_match_expected_kebab_set() {
+        let expected = [
+            "claude-code",
+            "claude-desktop",
+            "cursor",
+            "windsurf",
+            "vscode",
+            "opencode",
+            "zed",
+            "trae",
+            "jetbrains",
+            "gemini-cli",
+            "qwen-code",
+            "codex-cli",
+            "hermes",
+            "openclaw",
+            "goose",
+            "crush",
+            "aider",
+        ];
+        assert_eq!(all_client_keys().len(), 17);
+        let mut actual: Vec<&str> = all_client_keys().iter().map(|(k, _)| *k).collect();
+        actual.sort_unstable();
+        let mut expected_sorted = expected.to_vec();
+        expected_sorted.sort_unstable();
+        assert_eq!(actual, expected_sorted);
+    }
+
+    #[test]
+    fn all_client_keys_matches_ide_all_order() {
+        let pairs: Vec<(&str, &str)> = Ide::ALL.iter().map(|ide| (ide.key(), ide.name())).collect();
+        assert_eq!(pairs.as_slice(), all_client_keys());
+    }
+
+    #[test]
+    fn client_from_key_is_case_insensitive_and_round_trips() {
+        for (key, _name) in all_client_keys() {
+            let ide = client_from_key(key).expect("known key should resolve");
+            assert_eq!(ide.key(), *key);
+            assert_eq!(client_from_key(&key.to_uppercase()), Some(ide));
+        }
+        assert_eq!(client_from_key("nonexistent"), None);
+        assert_eq!(client_from_key(""), None);
+        assert_eq!(client_from_key("vs-code"), None);
+    }
+
+    #[test]
+    fn classify_install_status_marks_manual_clients() {
+        assert_eq!(
+            classify_install_status(Ide::JetBrains),
+            ClientStatus::ManualInstructions
+        );
+        assert_eq!(
+            classify_install_status(Ide::Goose),
+            ClientStatus::ManualInstructions
+        );
+        assert_eq!(
+            classify_install_status(Ide::Cursor),
+            ClientStatus::Configured
+        );
+        assert_eq!(
+            classify_install_status(Ide::ClaudeCode),
+            ClientStatus::Configured
+        );
+    }
+
+    #[test]
+    fn classify_uninstall_status_distinguishes_outcomes() {
+        assert_eq!(
+            classify_uninstall_status(Ide::Cursor, "removed from /tmp/x"),
+            ClientStatus::Removed
+        );
+        assert_eq!(
+            classify_uninstall_status(Ide::Cursor, "not found in /tmp/x"),
+            ClientStatus::NotFound
+        );
+        assert_eq!(
+            classify_uninstall_status(Ide::JetBrains, "printed removal instructions"),
+            ClientStatus::ManualInstructions
+        );
+        assert_eq!(
+            classify_uninstall_status(Ide::Goose, "anything"),
+            ClientStatus::ManualInstructions
+        );
+    }
+
+    #[test]
+    fn run_install_for_skips_incompatible_scope_without_writing() {
+        let report = run_install_for(&[Ide::Trae], Scope::Global, true);
+        assert_eq!(report.results.len(), 1);
+        assert_eq!(report.results[0].key, "trae");
+        assert_eq!(report.results[0].display_name, "TRAE");
+        assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
+
+        let report = run_install_for(&[Ide::Windsurf], Scope::Project, true);
+        assert_eq!(report.results[0].key, "windsurf");
+        assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
+    }
+
+    #[test]
+    fn run_uninstall_for_skips_incompatible_scope() {
+        let report = run_uninstall_for(&[Ide::Crush], Scope::Global, true);
+        assert_eq!(report.results.len(), 1);
+        assert_eq!(report.results[0].key, "crush");
+        assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
+    }
+
+    #[test]
+    fn install_report_serializes_to_json() {
+        let report = InstallReport {
+            results: vec![
+                ClientResult {
+                    key: "cursor".to_string(),
+                    display_name: "Cursor".to_string(),
+                    status: ClientStatus::Configured,
+                },
+                ClientResult {
+                    key: "jetbrains".to_string(),
+                    display_name: "JetBrains IDEs".to_string(),
+                    status: ClientStatus::Error("boom".to_string()),
+                },
+            ],
+        };
+        let value = serde_json::to_value(&report).expect("report serializes");
+        assert_eq!(value["results"][0]["key"], "cursor");
+        assert_eq!(value["results"][0]["status"], "Configured");
+        assert_eq!(value["results"][1]["status"]["Error"], "boom");
+    }
 
     #[test]
     fn resolve_acrawl_path_returns_non_empty() {

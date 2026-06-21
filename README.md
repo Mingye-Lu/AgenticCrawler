@@ -722,6 +722,31 @@ Options:
 | `/version` | Version and build info | Yes |
 | `/exit` | Exit and save session | No |
 
+### Non-interactive / Agent use
+
+# Configure once
+acrawl auth anthropic --api-key sk-ant-...
+acrawl auth openai --api-key sk-...
+acrawl auth amazon-bedrock --access-key AKIA... --secret-key ... --region us-east-1
+acrawl auth other --base-url http://localhost:11434/v1  # Ollama, no key
+acrawl config set model anthropic/claude-sonnet-4-6
+
+# Verify setup
+acrawl auth status --check anthropic   # exits 0 if configured, 3 if not
+acrawl auth status --json              # full credential table (secrets masked)
+
+# Run
+acrawl prompt "scrape all titles from example.com" --output-format json
+
+# Settings
+acrawl config set headless false
+acrawl config set optimization.html_diff_mode true
+acrawl config get model --effective
+
+# MCP install
+acrawl mcp install --client opencode --scope user
+acrawl mcp install --all --yes
+
 ## Configuration
 
 All config lives in `~/.acrawl/` (override with `ACRAWL_CONFIG_HOME`).

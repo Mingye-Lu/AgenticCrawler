@@ -9,8 +9,9 @@ use api::{AnthropicClient, AuthSource};
 use runtime::ConfigLoader;
 
 use super::{
-    bind_oauth_listener, open_browser, persist_provider_credentials, wait_for_oauth_callback,
-    Provider,
+    bind_oauth_listener,
+    builder::{build_provider_config, CredGroup, CredInputs},
+    open_browser, persist_provider_credentials, wait_for_oauth_callback, Provider,
 };
 
 const DEFAULT_OAUTH_CALLBACK_PORT: u16 = 4545;
@@ -54,11 +55,13 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
             }
             persist_provider_credentials(
                 Provider::Anthropic,
-                api::StoredProviderConfig {
-                    auth_method: "api_key".to_string(),
-                    api_key: Some(key),
-                    ..Default::default()
-                },
+                build_provider_config(
+                    CredGroup::Simple,
+                    CredInputs {
+                        api_key: Some(key),
+                        ..CredInputs::default()
+                    },
+                ),
             )?;
         }
     }
