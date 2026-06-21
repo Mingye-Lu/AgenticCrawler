@@ -5,13 +5,14 @@ use std::collections::BTreeMap;
 use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::process;
 
 use acrawl_ui::{
     app::{
         initial_model_from_credentials, run_auth_cli, run_resume_command, AllowedToolSet, LiveCli,
     },
     error::CliError,
-    CliOutputFormat, TOKIO_RUNTIME,
+    AuthFlags, CliOutputFormat, ConfigAction, TOKIO_RUNTIME,
 };
 use agent::mvp_tool_specs;
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
@@ -51,15 +52,23 @@ fn main() {
             .expect("failed to create tokio runtime")
     });
 
-    if let Err(error) = run() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let action = match parse_args(&args) {
+        Ok(action) => action,
+        Err(error) => {
+            eprintln!("error: {error}");
+            process::exit(2);
+        }
+    };
+
+    if let Err(error) = run(action) {
         eprintln!("error: {error}");
-        std::process::exit(1);
+        process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    match parse_args(&args)? {
+fn run(action: CliAction) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
         CliAction::PrintSystemPrompt => print_system_prompt(),
         CliAction::Version => print_version(),
         CliAction::ResumeSession {
@@ -75,7 +84,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             LiveCli::new_non_interactive(model, true, allowed_tools)?
                 .run_turn_with_output(&prompt, output_format)?;
         }
-        CliAction::Auth { provider } => run_auth_cli(provider.as_deref())?,
+        CliAction::Auth { provider } => {
+            if !std::io::stdin().is_terminal() {
+                eprintln!(
+                    "interactive `acrawl auth` requires a TTY; use `--api-key` for non-interactive configuration"
+                );
+                process::exit(2);
+            }
+            run_auth_cli(provider.as_deref())?;
+        }
+        CliAction::AuthConfigure {
+            provider,
+            flags,
+            json,
+        } => process::exit(acrawl_ui::run_auth_configure(&provider, flags, json)),
+        CliAction::AuthStatus { check, json } => {
+            process::exit(acrawl_ui::run_auth_status(check.as_deref(), json));
+        }
+        CliAction::AuthList { json } => process::exit(acrawl_ui::run_auth_list(json)),
         CliAction::Update => {
             let rt = TOKIO_RUNTIME.get().expect("tokio runtime not initialized");
             rt.block_on(self_update::run_self_update())?;
@@ -83,8 +109,58 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
         CliAction::InstallBrowser => install_browser()?,
         CliAction::Mcp => mcp_server::run_mcp_server(),
-        CliAction::McpInstall => mcp_server::run_install()?,
-        CliAction::McpUninstall => mcp_server::run_uninstall()?,
+        CliAction::McpInstall => {
+            if !std::io::stdin().is_terminal() {
+                eprintln!(
+                    "interactive `acrawl mcp install` requires a TTY; use `--client` or `--all` for non-interactive mode"
+                );
+                process::exit(2);
+            }
+            mcp_server::run_install()?;
+        }
+        CliAction::McpUninstall => {
+            if !std::io::stdin().is_terminal() {
+                eprintln!(
+                    "interactive `acrawl mcp uninstall` requires a TTY; use `--client` or `--all` for non-interactive mode"
+                );
+                process::exit(2);
+            }
+            mcp_server::run_uninstall()?;
+        }
+        CliAction::ConfigGet {
+            key,
+            effective,
+            json,
+        } => process::exit(acrawl_ui::run_config(
+            ConfigAction::Get { key, effective },
+            json,
+        )),
+        CliAction::ConfigSet { key, value } => {
+            process::exit(acrawl_ui::run_config(
+                ConfigAction::Set { key, value },
+                false,
+            ));
+        }
+        CliAction::ConfigUnset { key } => {
+            process::exit(acrawl_ui::run_config(ConfigAction::Unset { key }, false));
+        }
+        CliAction::ConfigPath => process::exit(acrawl_ui::run_config(ConfigAction::Path, false)),
+        CliAction::McpInstallConfigured {
+            clients,
+            all,
+            scope,
+            json,
+        } => process::exit(run_mcp_configured(clients, all, scope, json, true)),
+        CliAction::McpUninstallConfigured {
+            clients,
+            all,
+            scope,
+            json,
+        } => process::exit(run_mcp_configured(clients, all, scope, json, false)),
+        CliAction::McpListClients { json } => {
+            mcp_server::list_clients(json);
+            process::exit(0);
+        }
         CliAction::Repl {
             model,
             allowed_tools,
@@ -127,6 +203,18 @@ enum CliAction {
     Auth {
         provider: Option<String>,
     },
+    AuthConfigure {
+        provider: String,
+        flags: AuthFlags,
+        json: bool,
+    },
+    AuthStatus {
+        check: Option<String>,
+        json: bool,
+    },
+    AuthList {
+        json: bool,
+    },
     Update,
     Uninstall {
         purge: bool,
@@ -135,6 +223,34 @@ enum CliAction {
     Mcp,
     McpInstall,
     McpUninstall,
+    ConfigGet {
+        key: Option<String>,
+        effective: bool,
+        json: bool,
+    },
+    ConfigSet {
+        key: String,
+        value: String,
+    },
+    ConfigUnset {
+        key: String,
+    },
+    ConfigPath,
+    McpInstallConfigured {
+        clients: Vec<String>,
+        all: bool,
+        scope: Option<String>,
+        json: bool,
+    },
+    McpUninstallConfigured {
+        clients: Vec<String>,
+        all: bool,
+        scope: Option<String>,
+        json: bool,
+    },
+    McpListClients {
+        json: bool,
+    },
     Repl {
         model: Option<String>,
         allowed_tools: Option<AllowedToolSet>,
@@ -255,10 +371,8 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
 
     match rest[0].as_str() {
         "system-prompt" => parse_system_prompt_args(&rest[1..]),
-        "auth" => {
-            let provider = rest.get(1).cloned();
-            Ok(CliAction::Auth { provider })
-        }
+        "auth" => parse_auth_args(&rest[1..]),
+        "config" => parse_config_args(&rest[1..]),
         "login" | "logout" => {
             Err(
                 "`acrawl login` and `acrawl logout` have been removed. Use `acrawl auth` instead."
@@ -270,17 +384,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             purge: rest.iter().any(|a| a == "--purge"),
         }),
         "install-browser" => Ok(CliAction::InstallBrowser),
-        "mcp" => match rest.get(1).map(String::as_str) {
-            None => Ok(CliAction::Mcp),
-            Some("install") if rest.len() == 2 => Ok(CliAction::McpInstall),
-            Some("uninstall") if rest.len() == 2 => Ok(CliAction::McpUninstall),
-            Some("--help" | "-h" | "help") if rest.len() == 2 => Ok(CliAction::Help),
-            Some("install") => Err("`acrawl mcp install` does not accept extra arguments".to_string()),
-            Some("uninstall") => Err("`acrawl mcp uninstall` does not accept extra arguments".to_string()),
-            Some(other) => Err(format!(
-                "unknown mcp subcommand: {other} (supported: install, uninstall)"
-            )),
-        },
+        "mcp" => parse_mcp_args(&rest[1..]),
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {
@@ -346,6 +450,507 @@ fn normalize_bool_flag(flag: &str, value: &str) -> Result<bool, String> {
             "unsupported value for {flag}: {other} (expected true/false)"
         )),
     }
+}
+
+fn parse_auth_args(args: &[String]) -> Result<CliAction, String> {
+    match args.first().map(String::as_str) {
+        Some("status") => parse_auth_status_args(&args[1..]),
+        Some("list") => parse_auth_list_args(&args[1..]),
+        _ => parse_auth_config_or_interactive_args(args),
+    }
+}
+
+fn parse_auth_status_args(args: &[String]) -> Result<CliAction, String> {
+    let mut check = None;
+    let mut json = false;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--check" => {
+                let value = args
+                    .get(index + 1)
+                    .ok_or_else(|| "missing value for --check".to_string())?;
+                check = Some(value.clone());
+                index += 2;
+            }
+            flag if flag.starts_with("--check=") => {
+                check = Some(flag[8..].to_string());
+                index += 1;
+            }
+            "--json" => {
+                json = true;
+                index += 1;
+            }
+            other => return Err(format!("unknown auth status option: {other}")),
+        }
+    }
+
+    Ok(CliAction::AuthStatus { check, json })
+}
+
+fn parse_auth_list_args(args: &[String]) -> Result<CliAction, String> {
+    let mut json = false;
+    for arg in args {
+        match arg.as_str() {
+            "--json" => json = true,
+            other => return Err(format!("unknown auth list option: {other}")),
+        }
+    }
+    Ok(CliAction::AuthList { json })
+}
+
+fn parse_auth_config_or_interactive_args(args: &[String]) -> Result<CliAction, String> {
+    let mut provider = None;
+    let mut flags = AuthFlags::default();
+    let mut json = false;
+    let mut saw_cred_flag = false;
+    let mut index = 0;
+
+    if let Some(first) = args.first().filter(|arg| !arg.starts_with('-')) {
+        provider = Some(first.clone());
+        index = 1;
+    }
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--api-key" => {
+                flags.api_key = Some(required_flag_value(args, index, "--api-key")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--api-key=") => {
+                flags.api_key = Some(flag[10..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--access-key" => {
+                flags.access_key = Some(required_flag_value(args, index, "--access-key")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--access-key=") => {
+                flags.access_key = Some(flag[13..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--secret-key" => {
+                flags.secret_key = Some(required_flag_value(args, index, "--secret-key")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--secret-key=") => {
+                flags.secret_key = Some(flag[13..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--region" => {
+                flags.region = Some(required_flag_value(args, index, "--region")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--region=") => {
+                flags.region = Some(flag[9..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--resource-name" => {
+                flags.resource_name =
+                    Some(required_flag_value(args, index, "--resource-name")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--resource-name=") => {
+                flags.resource_name = Some(flag[16..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--deployment-name" => {
+                flags.deployment_name =
+                    Some(required_flag_value(args, index, "--deployment-name")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--deployment-name=") => {
+                flags.deployment_name = Some(flag[18..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--base-url" => {
+                flags.base_url = Some(required_flag_value(args, index, "--base-url")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--base-url=") => {
+                flags.base_url = Some(flag[11..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--gcp-project" => {
+                flags.gcp_project =
+                    Some(required_flag_value(args, index, "--gcp-project")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--gcp-project=") => {
+                flags.gcp_project = Some(flag[14..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--gcp-region" => {
+                flags.gcp_region = Some(required_flag_value(args, index, "--gcp-region")?.clone());
+                saw_cred_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--gcp-region=") => {
+                flags.gcp_region = Some(flag[13..].to_string());
+                saw_cred_flag = true;
+                index += 1;
+            }
+            "--json" => {
+                json = true;
+                index += 1;
+            }
+            other => return Err(format!("unknown auth option: {other}")),
+        }
+    }
+
+    if saw_cred_flag {
+        let provider = provider.ok_or_else(|| {
+            "non-interactive `acrawl auth` requires a provider before credential flags".to_string()
+        })?;
+        return Ok(CliAction::AuthConfigure {
+            provider,
+            flags,
+            json,
+        });
+    }
+
+    if json {
+        return Err(
+            "`--json` requires credential flags, `auth status`, or `auth list`".to_string(),
+        );
+    }
+
+    if index < args.len() {
+        return Err(format!("unknown auth option: {}", args[index]));
+    }
+
+    Ok(CliAction::Auth { provider })
+}
+
+fn parse_config_args(args: &[String]) -> Result<CliAction, String> {
+    match args.first().map(String::as_str) {
+        Some("get") => parse_config_get_args(&args[1..]),
+        Some("set") => parse_config_set_args(&args[1..]),
+        Some("unset") => parse_config_unset_args(&args[1..]),
+        Some("path") => parse_config_path_args(&args[1..]),
+        Some(other) => Err(format!(
+            "unknown config subcommand: {other} (supported: get, set, unset, path)"
+        )),
+        None => Err("missing config subcommand (supported: get, set, unset, path)".to_string()),
+    }
+}
+
+fn parse_config_get_args(args: &[String]) -> Result<CliAction, String> {
+    let mut key = None;
+    let mut effective = false;
+    let mut json = false;
+
+    for arg in args {
+        match arg.as_str() {
+            "--effective" => effective = true,
+            "--json" => json = true,
+            other if other.starts_with('-') => {
+                return Err(format!("unknown config get option: {other}"))
+            }
+            other => {
+                if key.is_some() {
+                    return Err("config get accepts at most one key".to_string());
+                }
+                key = Some(other.to_string());
+            }
+        }
+    }
+
+    Ok(CliAction::ConfigGet {
+        key,
+        effective,
+        json,
+    })
+}
+
+fn parse_config_set_args(args: &[String]) -> Result<CliAction, String> {
+    if args.len() != 2 {
+        return Err("usage: acrawl config set <key> <value>".to_string());
+    }
+    Ok(CliAction::ConfigSet {
+        key: args[0].clone(),
+        value: args[1].clone(),
+    })
+}
+
+fn parse_config_unset_args(args: &[String]) -> Result<CliAction, String> {
+    if args.len() != 1 {
+        return Err("usage: acrawl config unset <key>".to_string());
+    }
+    Ok(CliAction::ConfigUnset {
+        key: args[0].clone(),
+    })
+}
+
+fn parse_config_path_args(args: &[String]) -> Result<CliAction, String> {
+    if let Some(other) = args.first() {
+        return Err(format!("unknown config path option: {other}"));
+    }
+    Ok(CliAction::ConfigPath)
+}
+
+fn parse_mcp_args(args: &[String]) -> Result<CliAction, String> {
+    match args.first().map(String::as_str) {
+        None => Ok(CliAction::Mcp),
+        Some("install") => parse_mcp_configured_args(&args[1..], true),
+        Some("uninstall") => parse_mcp_configured_args(&args[1..], false),
+        Some("--help" | "-h" | "help") if args.len() == 1 => Ok(CliAction::Help),
+        Some(other) => Err(format!(
+            "unknown mcp subcommand: {other} (supported: install, uninstall)"
+        )),
+    }
+}
+
+fn parse_mcp_configured_args(args: &[String], install: bool) -> Result<CliAction, String> {
+    if args.is_empty() {
+        return Ok(if install {
+            CliAction::McpInstall
+        } else {
+            CliAction::McpUninstall
+        });
+    }
+
+    let mut clients = Vec::new();
+    let mut all = false;
+    let mut scope = None;
+    let mut json = false;
+    let mut list_clients = false;
+    let mut saw_config_flag = false;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--client" => {
+                saw_config_flag = true;
+                let value = required_flag_value(args, index, "--client")?;
+                extend_clients(&mut clients, value)?;
+                index += 2;
+            }
+            flag if flag.starts_with("--client=") => {
+                saw_config_flag = true;
+                extend_clients(&mut clients, &flag[9..])?;
+                index += 1;
+            }
+            "--all" => {
+                all = true;
+                saw_config_flag = true;
+                index += 1;
+            }
+            "--scope" => {
+                scope = Some(required_flag_value(args, index, "--scope")?.clone());
+                saw_config_flag = true;
+                index += 2;
+            }
+            flag if flag.starts_with("--scope=") => {
+                scope = Some(flag[8..].to_string());
+                saw_config_flag = true;
+                index += 1;
+            }
+            "--yes" => {
+                saw_config_flag = true;
+                index += 1;
+            }
+            "--json" => {
+                json = true;
+                saw_config_flag = true;
+                index += 1;
+            }
+            "--list-clients" => {
+                list_clients = true;
+                saw_config_flag = true;
+                index += 1;
+            }
+            other => {
+                return Err(format!(
+                    "`acrawl mcp {}` does not accept extra arguments: {other}",
+                    if install { "install" } else { "uninstall" }
+                ));
+            }
+        }
+    }
+
+    if !saw_config_flag {
+        return Ok(if install {
+            CliAction::McpInstall
+        } else {
+            CliAction::McpUninstall
+        });
+    }
+
+    if list_clients {
+        return Ok(CliAction::McpListClients { json });
+    }
+
+    if let Some(scope_value) = scope.as_deref() {
+        parse_scope(scope_value)?;
+    }
+
+    Ok(if install {
+        CliAction::McpInstallConfigured {
+            clients,
+            all,
+            scope,
+            json,
+        }
+    } else {
+        CliAction::McpUninstallConfigured {
+            clients,
+            all,
+            scope,
+            json,
+        }
+    })
+}
+
+fn required_flag_value<'a>(
+    args: &'a [String],
+    index: usize,
+    flag: &str,
+) -> Result<&'a String, String> {
+    args.get(index + 1)
+        .ok_or_else(|| format!("missing value for {flag}"))
+}
+
+fn extend_clients(clients: &mut Vec<String>, value: &str) -> Result<(), String> {
+    for token in value.split(',') {
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let ide = mcp_server::client_from_key(trimmed).ok_or_else(|| {
+            format!(
+                "unknown MCP client `{trimmed}` (supported: {})",
+                mcp_server::all_client_keys()
+                    .iter()
+                    .map(|(key, _)| *key)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+        clients.push(client_key(ide).to_string());
+    }
+    Ok(())
+}
+
+fn parse_scope(value: &str) -> Result<mcp_server::Scope, String> {
+    match value {
+        "user" => Ok(mcp_server::Scope::Global),
+        "project" => Ok(mcp_server::Scope::Project),
+        other => Err(format!(
+            "unsupported value for --scope: {other} (expected user or project)"
+        )),
+    }
+}
+
+fn client_key(ide: mcp_server::Ide) -> &'static str {
+    mcp_server::all_client_keys()
+        .iter()
+        .find_map(|(key, _)| (mcp_server::client_from_key(key) == Some(ide)).then_some(*key))
+        .unwrap_or_default()
+}
+
+fn run_mcp_configured(
+    clients: Vec<String>,
+    all: bool,
+    scope: Option<String>,
+    json: bool,
+    install: bool,
+) -> i32 {
+    let explicit_client = !clients.is_empty();
+    if !all && clients.is_empty() {
+        return emit_subcommand_error(
+            json,
+            "non-interactive MCP mode requires `--client` or `--all`",
+            2,
+        );
+    }
+
+    let selected = if all {
+        mcp_server::all_client_keys()
+            .iter()
+            .map(|(key, _)| mcp_server::client_from_key(key).unwrap_or(mcp_server::Ide::Cursor))
+            .collect::<Vec<_>>()
+    } else {
+        clients
+            .iter()
+            .filter_map(|key| mcp_server::client_from_key(key))
+            .collect::<Vec<_>>()
+    };
+
+    let scope = match scope.as_deref() {
+        Some(value) => match parse_scope(value) {
+            Ok(scope) => scope,
+            Err(error) => return emit_subcommand_error(json, &error, 2),
+        },
+        None => mcp_server::Scope::Global,
+    };
+
+    let report = if install {
+        mcp_server::run_install_for(&selected, scope, json)
+    } else {
+        mcp_server::run_uninstall_for(&selected, scope, json)
+    };
+
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(output) => println!("{output}"),
+            Err(error) => {
+                return emit_subcommand_error(
+                    true,
+                    &format!("failed to serialize MCP report: {error}"),
+                    1,
+                );
+            }
+        }
+    }
+
+    let success_count = report
+        .results
+        .iter()
+        .filter(|result| {
+            matches!(
+                result.status,
+                mcp_server::installer::ClientStatus::Configured
+                    | mcp_server::installer::ClientStatus::ManualInstructions
+                    | mcp_server::installer::ClientStatus::Removed
+                    | mcp_server::installer::ClientStatus::NotFound
+            )
+        })
+        .count();
+
+    if explicit_client && success_count == 0 {
+        3
+    } else if success_count > 0 {
+        0
+    } else {
+        1
+    }
+}
+
+fn emit_subcommand_error(json: bool, error: &str, code: i32) -> i32 {
+    if json {
+        println!("{}", serde_json::json!({ "ok": false, "error": error }));
+    } else {
+        eprintln!("{error}");
+    }
+    code
 }
 
 fn parse_system_prompt_args(args: &[String]) -> Result<CliAction, String> {
