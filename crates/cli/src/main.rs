@@ -1244,13 +1244,72 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Configure credentials for a provider interactively"
     )?;
+    writeln!(
+        out,
+        "  acrawl auth <provider> --api-key KEY [provider-flags] [--json]"
+    )?;
+    writeln!(
+        out,
+        "      Configure provider credentials non-interactively"
+    )?;
+    writeln!(
+        out,
+        "      Provider-specific flags: --access-key, --secret-key, --region (Bedrock)"
+    )?;
+    writeln!(
+        out,
+        "                               --resource, --deployment (Azure)"
+    )?;
+    writeln!(
+        out,
+        "                               --base-url (Custom/Other)"
+    )?;
+    writeln!(
+        out,
+        "                               --gcp-project, --gcp-region (Vertex)"
+    )?;
+    writeln!(
+        out,
+        "      Warning: --api-key is visible in process list and shell history"
+    )?;
+    writeln!(out, "  acrawl auth status [--check <provider>] [--json]")?;
+    writeln!(
+        out,
+        "      Show configured providers (exit 3 if --check provider not configured)"
+    )?;
+    writeln!(out, "  acrawl auth list [--json]")?;
+    writeln!(out, "      List all available providers and their env vars")?;
+    writeln!(out, "  acrawl config get [<key>] [--effective] [--json]")?;
+    writeln!(out, "  acrawl config set <key> <value>")?;
+    writeln!(out, "  acrawl config unset <key>")?;
+    writeln!(out, "  acrawl config path")?;
+    writeln!(
+        out,
+        "      Read/write settings.json (dot-notation: optimization.html_diff_mode)"
+    )?;
+    writeln!(
+        out,
+        "  acrawl mcp install [--client a,b,...] [--all] [--scope user|project] [--json]"
+    )?;
+    writeln!(
+        out,
+        "  acrawl mcp uninstall [--client a,b,...] [--all] [--json]"
+    )?;
+    writeln!(out, "  acrawl mcp install --list-clients")?;
+    writeln!(out, "      Non-interactive MCP IDE configuration")?;
     writeln!(out, "  acrawl update")?;
     writeln!(out, "  acrawl mcp")?;
     writeln!(out, "      Start the built-in MCP server over stdio")?;
     writeln!(out, "  acrawl mcp install")?;
-    writeln!(out, "      Configure supported IDEs to launch `acrawl mcp`")?;
+    writeln!(
+        out,
+        "      Configure supported IDEs to launch `acrawl mcp` (interactive)"
+    )?;
     writeln!(out, "  acrawl mcp uninstall")?;
-    writeln!(out, "      Remove acrawl from IDE MCP configurations")?;
+    writeln!(
+        out,
+        "      Remove acrawl from IDE MCP configurations (interactive)"
+    )?;
     writeln!(out, "  acrawl install-browser")?;
     writeln!(
         out,
@@ -1300,6 +1359,16 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         .collect::<Vec<_>>()
         .join(", ");
     writeln!(out, "Resume-safe commands: {resume_commands}")?;
+    writeln!(out)?;
+    writeln!(out, "Exit codes:")?;
+    writeln!(out, "  0  Success")?;
+    writeln!(out, "  1  Runtime or I/O error")?;
+    writeln!(out, "  2  Usage or configuration error")?;
+    writeln!(
+        out,
+        "  3  State check failed (e.g. --check provider not configured)"
+    )?;
+    writeln!(out)?;
     writeln!(out, "Examples:")?;
     writeln!(
         out,
@@ -1764,5 +1833,277 @@ mod tests {
         assert!(help.contains("--purge"));
         assert!(help.contains("acrawl mcp"));
         assert!(help.contains("acrawl mcp install"));
+    }
+
+    #[test]
+    fn parses_auth_status_without_flags() {
+        with_clean_config_env(|| {
+            assert_eq!(
+                parse_args(&["auth".to_string(), "status".to_string()]).expect("auth status"),
+                CliAction::AuthStatus {
+                    check: None,
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_auth_status_with_check_provider() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "auth".to_string(),
+                "status".to_string(),
+                "--check".to_string(),
+                "openai".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("auth status --check openai"),
+                CliAction::AuthStatus {
+                    check: Some("openai".to_string()),
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_auth_status_with_json_flag() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "auth".to_string(),
+                "status".to_string(),
+                "--json".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("auth status --json"),
+                CliAction::AuthStatus {
+                    check: None,
+                    json: true,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_auth_list_without_flags() {
+        with_clean_config_env(|| {
+            assert_eq!(
+                parse_args(&["auth".to_string(), "list".to_string()]).expect("auth list"),
+                CliAction::AuthList { json: false }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_auth_list_with_json_flag() {
+        with_clean_config_env(|| {
+            let args = vec!["auth".to_string(), "list".to_string(), "--json".to_string()];
+            assert_eq!(
+                parse_args(&args).expect("auth list --json"),
+                CliAction::AuthList { json: true }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_auth_configure_openai_with_api_key() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "auth".to_string(),
+                "openai".to_string(),
+                "--api-key".to_string(),
+                "sk-test".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("auth openai --api-key sk-test"),
+                CliAction::AuthConfigure {
+                    provider: "openai".to_string(),
+                    flags: AuthFlags {
+                        api_key: Some("sk-test".to_string()),
+                        ..AuthFlags::default()
+                    },
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_auth_configure_bedrock_with_equals_flags() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "auth".to_string(),
+                "amazon-bedrock".to_string(),
+                "--access-key=AKIA".to_string(),
+                "--secret-key=sec".to_string(),
+                "--region=eu-west-1".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("auth amazon-bedrock with equals flags"),
+                CliAction::AuthConfigure {
+                    provider: "amazon-bedrock".to_string(),
+                    flags: AuthFlags {
+                        access_key: Some("AKIA".to_string()),
+                        secret_key: Some("sec".to_string()),
+                        region: Some("eu-west-1".to_string()),
+                        ..AuthFlags::default()
+                    },
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_config_get_without_key() {
+        with_clean_config_env(|| {
+            assert_eq!(
+                parse_args(&["config".to_string(), "get".to_string()]).expect("config get"),
+                CliAction::ConfigGet {
+                    key: None,
+                    effective: false,
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_config_get_with_key_and_effective() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "config".to_string(),
+                "get".to_string(),
+                "max_steps".to_string(),
+                "--effective".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("config get max_steps --effective"),
+                CliAction::ConfigGet {
+                    key: Some("max_steps".to_string()),
+                    effective: true,
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_config_set_key_value() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "config".to_string(),
+                "set".to_string(),
+                "headless".to_string(),
+                "true".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("config set headless true"),
+                CliAction::ConfigSet {
+                    key: "headless".to_string(),
+                    value: "true".to_string(),
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn rejects_config_set_missing_value() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "config".to_string(),
+                "set".to_string(),
+                "headless".to_string(),
+            ];
+            let err = parse_args(&args).expect_err("config set without value should fail");
+            assert!(
+                err.contains("usage: acrawl config set <key> <value>"),
+                "{err}"
+            );
+        });
+    }
+
+    #[test]
+    fn parses_config_unset_key() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "config".to_string(),
+                "unset".to_string(),
+                "headless".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("config unset headless"),
+                CliAction::ConfigUnset {
+                    key: "headless".to_string(),
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_config_path() {
+        with_clean_config_env(|| {
+            assert_eq!(
+                parse_args(&["config".to_string(), "path".to_string()]).expect("config path"),
+                CliAction::ConfigPath
+            );
+        });
+    }
+
+    #[test]
+    fn parses_mcp_install_with_client() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "mcp".to_string(),
+                "install".to_string(),
+                "--client".to_string(),
+                "cursor".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("mcp install --client cursor"),
+                CliAction::McpInstallConfigured {
+                    clients: vec!["cursor".to_string()],
+                    all: false,
+                    scope: None,
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_mcp_install_with_all_flag() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "mcp".to_string(),
+                "install".to_string(),
+                "--all".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("mcp install --all"),
+                CliAction::McpInstallConfigured {
+                    clients: Vec::new(),
+                    all: true,
+                    scope: None,
+                    json: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn parses_mcp_install_list_clients() {
+        with_clean_config_env(|| {
+            let args = vec![
+                "mcp".to_string(),
+                "install".to_string(),
+                "--list-clients".to_string(),
+            ];
+            assert_eq!(
+                parse_args(&args).expect("mcp install --list-clients"),
+                CliAction::McpListClients { json: false }
+            );
+        });
     }
 }

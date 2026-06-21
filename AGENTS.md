@@ -18,6 +18,20 @@ cargo fmt --check                                            # format check
 ./target/release/acrawl mcp                                  # launch MCP server (stdio)
 ./target/release/acrawl mcp install                          # interactive IDE installer
 ./target/release/acrawl --resume session.json /status /compact        # non-interactive session maintenance
+
+# Non-interactive provider setup (agent/CI use)
+acrawl auth anthropic --api-key "sk-ant-..."      # configure credentials
+acrawl auth openai --api-key "sk-..."             # other providers same pattern
+acrawl auth amazon-bedrock --access-key AKIA... --secret-key ... --region us-east-1
+acrawl config set model anthropic/claude-sonnet-4-6  # set default model
+acrawl auth status --check anthropic              # gate: exit 0 if ready, 3 if not
+acrawl auth status                                # show all configured providers
+acrawl auth list                                  # list all available providers
+acrawl config get headless                        # read a setting
+acrawl config set headless false                  # write a setting
+acrawl mcp install --client opencode             # install MCP for one IDE
+acrawl mcp install --all --yes                   # install for all IDEs
+# Exit codes: 0=ok  1=error  2=usage/config  3=not-configured
 ```
 
 The CLI reads LLM credentials from `~/.acrawl/credentials.json` (managed by `acrawl auth`) and runtime settings from `~/.acrawl/settings.json`. Both paths respect the `ACRAWL_CONFIG_HOME` env var override. Run `acrawl auth [anthropic|openai|other]` to configure a provider.
