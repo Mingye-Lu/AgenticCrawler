@@ -28,3 +28,5 @@ pub mod error;
 pub mod events;
 pub mod output_sink;
 pub mod session_mgr;
+
+pub use auth::configure::{run_auth_configure, AuthFlags};

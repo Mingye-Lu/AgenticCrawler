@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod builder;
+pub mod configure;
 pub mod custom;
 pub mod group;
 pub mod mask;
