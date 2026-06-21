@@ -177,12 +177,13 @@ fn run(action: CliAction) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_repl(model: String, allowed_tools: Option<AllowedToolSet>) -> Result<(), CliError> {
-    if !std::io::stdout().is_terminal() {
-        return Err(CliError::from(
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        eprintln!(
             "acrawl REPL requires an interactive terminal. \
              For headless use, run `acrawl prompt \"<goal>\"` (one-shot) \
-             or `acrawl --resume <session.json> <slash-commands>` (session maintenance).",
-        ));
+             or `acrawl --resume <session.json> <slash-commands>` (session maintenance)."
+        );
+        process::exit(2);
     }
     Ok(acrawl_tui::run_tui(model, allowed_tools)?)
 }
@@ -1259,7 +1260,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "                               --resource, --deployment (Azure)"
+        "                               --resource-name, --deployment-name (Azure)"
     )?;
     writeln!(
         out,
@@ -1294,7 +1295,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  acrawl mcp uninstall [--client a,b,...] [--all] [--json]"
+        "  acrawl mcp uninstall [--client a,b,...] [--all] [--scope user|project] [--json]"
     )?;
     writeln!(out, "  acrawl mcp install --list-clients")?;
     writeln!(out, "      Non-interactive MCP IDE configuration")?;
