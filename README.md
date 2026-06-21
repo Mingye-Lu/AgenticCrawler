@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 29 tools. 25 LLM providers. MCP server built-in.
+  Single binary. No Python runtime. 42 tools. 25 LLM providers. MCP server built-in.
 </p>
 
 ---
@@ -34,10 +34,10 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 - **No code required.** Describe the goal in English. The agent plans and executes.
 - **One binary, zero runtimes.** `cargo build --release` produces a self-contained executable. No Python, no Node runtime — just Rust and a Chromium download for browser automation.
 - **Smart fetching.** Static pages are served over HTTP (fast). When JavaScript or interaction is needed, acrawl detects JS framework markers (`__next_data__`, `__nuxt`, `__vue`, `ng-app`, React roots), auth redirects, and short `<noscript>` bodies — then transparently escalates to a headless browser.
-- **29 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, switch device emulation, manage tabs, run deterministic scripts — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
+- **42 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, switch device emulation, manage tabs, run deterministic scripts — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs. Includes 12 DevTools and observation tools for network inspection, performance monitoring, and accessibility auditing.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
 - **MCP client.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
-- **MCP server.** `acrawl mcp` exposes 25 browser tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code, Zed, JetBrains, TRAE, Gemini CLI, and more. Install with `acrawl mcp install`.
+- **MCP server.** `acrawl mcp` exposes 38 browser and script tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code, Zed, JetBrains, TRAE, Gemini CLI, and more. Install with `acrawl mcp install`.
 
 ### How does it compare?
 
@@ -202,7 +202,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 ## Features
 
-### 29-Tool Toolbox
+### 42-Tool Toolbox
 
 #### Navigation
 
@@ -213,6 +213,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
 | `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). Returns `page_state` after the condition is met. |
+| `refresh` | Reload the current page. Returns `page_state` after reload. Use after setting intercept rules to replay the page load with rules active. Seq counter increments for temporal observation queries. |
 
 #### Content Formats
 
@@ -267,6 +268,23 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 | `screenshot` | Capture a full-page screenshot (base64 PNG). |
 | `save_file` | Download a URL to the output directory (path traversal protected). |
 
+#### DevTools & Observation
+
+| Tool | Description |
+|------|-------------|
+| `list_network_activity` | List observed network requests buffered during this browser session. Supports temporal filtering by seq window, request-state filters, URL substring filtering, and adjective-based sorting such as slowest/fastest or newest/oldest. Returns stable @rN refs for follow-up inspection with inspect_request. |
+| `inspect_request` | Inspect a previously listed network request by its @rN id from list_network_activity. Returns the captured request metadata, coarse timing summary, initiator type, and notes about unavailable headers/bodies. |
+| `list_page_logs` | List buffered console logs for the current page with optional level filtering and seq-based temporal filtering. Group by exact message text (default, deduplicated with @logN IDs), source, or level. |
+| `inspect_log` | Inspect a deduplicated console log group from list_page_logs and return concrete instances with timestamps, stack traces, and source locations. |
+| `list_websocket_activity` | Overview of WebSocket connections and message counts. Returns connections with @wsN IDs. Use inspect_websocket to see actual message content. |
+| `inspect_websocket` | Inspect actual WebSocket messages for a connection. Provide @wsN ID from list_websocket_activity. Supports direction filter, pattern search, and sort_by (newest/oldest). |
+| `get_page_performance` | Get page performance metrics using Navigation Timing and Resource Timing APIs. Returns TTFB, DOM timings, and a breakdown of the top 20 resources by transfer size. Works on both browsers and SPAs. |
+| `inspect_cookies` | Inspect cookies on the current page with security analysis. Returns all cookies with domain, path, expiry, secure/httponly flags, and detected security issues. Includes third-party detection and filtering options. |
+| `inspect_storage` | Inspect browser storage (localStorage and sessionStorage) on the current page. Returns all key-value pairs with size information. Supports filtering by storage type and key pattern. |
+| `measure_coverage` | Measure JavaScript and CSS code coverage on the current page. Returns per-file byte usage showing how much code was actually executed/applied versus total loaded. Useful for identifying unused bundles, oversized dependencies, and performance optimization opportunities. |
+| `audit_accessibility` | Run axe-core WCAG accessibility audit on the current page. Returns violations grouped by impact level with selectors and descriptions. Use scope to limit to a specific DOM subtree. |
+| `intercept_network` | Manage network interception rules. Block or mock requests matching URL glob patterns. Rules are additive — each call adds a rule. Use refresh() after adding rules to replay the page load with rules active. |
+
 #### Agent Control
 
 | Tool | Description |
@@ -290,7 +308,7 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 
 #### page_state Reference
 
-Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_back`, `scroll`, `switch_tab`, `select_option`, `set_device`) all return a `page_state` object. There are two variants:
+Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_back`, `scroll`, `switch_tab`, `select_option`, `set_device`, `refresh`) all return a `page_state` object. There are two variants:
 
 **Full page_state**, returned after the first interaction on a URL, or when changes are too extensive to diff:
 
@@ -520,11 +538,11 @@ Use `--allowedTools` to restrict which tools the agent can invoke (comma-separat
 acrawl prompt "scrape titles" --allowedTools navigate,read_content,screenshot
 ```
 
-Omit `--allowedTools` to allow all 29 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
+Omit `--allowedTools` to allow all 42 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
 
 ### MCP Extensibility
 
-acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 29.
+acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 42.
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
@@ -532,10 +550,10 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 `acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, VS Code, Zed, JetBrains, TRAE, Gemini CLI, or any MCP-compatible client.
 
-The server provides **26 tools** in three modes:
+The server provides **39 tools** in three modes:
 
-**Direct browser tools (18)** — fine-grained control for clients that orchestrate themselves:
-`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `set_device`
+**Direct browser tools (31)** — fine-grained control for clients that orchestrate themselves:
+`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `set_device`, `refresh`, `list_network_activity`, `inspect_request`, `list_page_logs`, `inspect_log`, `list_websocket_activity`, `inspect_websocket`, `get_page_performance`, `inspect_cookies`, `inspect_storage`, `measure_coverage`, `audit_accessibility`, `intercept_network`
 
 **Script tools (7)** — deterministic multi-step automation without per-step LLM calls:
 `run_script`, `save_script`, `list_scripts`, `read_script`, `wait_for_scripts`, `script_status`, `cancel_script`
@@ -653,7 +671,7 @@ claude mcp add acrawl -- acrawl mcp
 
 The browser tools share a persistent session across calls. `run_goal` creates its own isolated agent and browser.
 
-**Requirements:** The 25 browser and script tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
+**Requirements:** The 38 browser and script tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
 
 ## Usage
 
@@ -833,7 +851,7 @@ flowchart LR
 ```
 
 1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/agent/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
-2. Each turn, it picks from its 21 tools based on what it observes on the page.
+2. Each turn, it picks from its 42 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
 4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
 5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` collects results; `cancel_subagent` aborts a running child; `subagent_status` polls without blocking.
@@ -847,7 +865,7 @@ crates/
   core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer
-  agent/        21 tools, agent loop, sub-agent fork/join, CrawlState
+  agent/        42 tools, agent loop, sub-agent fork/join, CrawlState
   runtime/      ConversationRuntime, config, sessions, MCP client stack, OAuth PKCE
   render/       Markdown rendering, tool output formatting, OutputSink
   mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer
