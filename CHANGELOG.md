@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-06-21
+
+### Added
+
+- **Non-interactive CLI for agent/CI use** — all credential and configuration management is now scriptable without a TTY, enabling headless CI pipelines and agent-driven setup.
+  - `acrawl auth <provider> --api-key <key>` (and provider-specific flags: `--access-key`/`--secret-key`/`--region` for Bedrock, `--resource-name`/`--deployment-name` for Azure, `--base-url` for custom endpoints) writes credentials non-interactively; `--json` emits a machine-readable result.
+  - `acrawl auth status [--check <provider>] [--json]` reports configured providers with masked secrets; `--check` exits 0 if the provider is ready or 3 if not configured — suitable as a CI gate.
+  - `acrawl auth list [--json]` lists all 25 supported providers with their env-var names.
+  - `acrawl config get [key] [--effective] [--all] [--json]` and `acrawl config set <key> <value>` / `acrawl config unset <key>` read and write `settings.json` using dot-notation keys (e.g. `optimization.html_diff_mode`).
+  - `acrawl mcp install --client <id,...> | --all [--scope user|project] [--yes] [--json]` and `acrawl mcp uninstall` equivalents run without prompts when non-interactive flags are supplied; `--list-clients --json` enumerates the 17 supported IDE clients.
+- **Exit-code taxonomy** — all subcommands now follow a consistent contract: `0` = success, `1` = runtime error, `2` = usage / configuration error, `3` = provider not configured.
+- **REPL TTY guard** — `acrawl` (bare invocation) now checks both `stdin` and `stdout` for TTY before launching the interactive REPL; non-TTY environments receive exit code `2` and a message pointing at `acrawl prompt` and `acrawl --resume`.
+
 ## [0.12.0] - 2026-06-21
 
 ### Added
@@ -754,6 +767,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.12.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.1
 [0.12.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.0
 [0.11.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.1
 [0.11.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.0
