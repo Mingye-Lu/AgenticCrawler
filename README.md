@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>LLM-powered web crawler.</strong> Describe what you want in plain English — get structured data back.
+  <strong>Browser automation agent that acts and observes.</strong> Navigate, click, and extract — or inspect network traffic, debug console errors, profile performance, and audit accessibility. One Rust binary.
 </p>
 
 <p align="center">
@@ -20,24 +20,25 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 42 tools. 25 LLM providers. MCP server built-in.
+  Single Rust binary. Full DevTools observability. 42 tools. 25 LLM providers. MCP server built-in.
 </p>
 
 ---
 
 ## Why acrawl?
 
-Most web scraping still means writing code: XPath selectors, pagination logic, retry handling, anti-bot workarounds. LLMs can read pages like humans do, but wiring one up to a browser is a project in itself.
+Most browser agents stop at navigate and click. acrawl goes further: the agent can also inspect network requests, analyze console errors, measure page performance, audit accessibility, and intercept network calls — the full DevTools surface, available as first-class agent tools.
 
-acrawl is that wiring, packaged as a single Rust binary. You describe a goal; the agent figures out which pages to visit, what to click, what to extract, and when it's done.
+It ships as a single Rust binary. No Python runtime, no Node runtime, no Docker. Drop it into any server or CI pipeline and describe a goal; the agent figures out what to visit, what to click, what to inspect, and when it's done.
 
-- **No code required.** Describe the goal in English. The agent plans and executes.
 - **One binary, zero runtimes.** `cargo build --release` produces a self-contained executable. No Python, no Node runtime — just Rust and a Chromium download for browser automation.
+- **Acts and observes.** The agent has the full DevTools surface as first-class tools: inspect network requests with timing, analyze and deduplicate console logs, stream WebSocket messages, measure page performance (TTFB, resource breakdown), audit cookies and browser storage, measure JS/CSS coverage, run axe-core WCAG accessibility audits, and intercept or mock network calls. No other agent framework exposes this.
+- **Deterministic where you can, AI where you must.** Define loops, conditionals, and parallel branches as JSON scripts — executed without any LLM calls. Fall back to the agent when pages behave unexpectedly. Best of both worlds.
+- **No code required.** Describe the goal in plain English. The agent plans, navigates, and extracts.
 - **Smart fetching.** Static pages are served over HTTP (fast). When JavaScript or interaction is needed, acrawl detects JS framework markers (`__next_data__`, `__nuxt`, `__vue`, `ng-app`, React roots), auth redirects, and short `<noscript>` bodies — then transparently escalates to a headless browser.
-- **42 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, switch device emulation, manage tabs, run deterministic scripts — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs. Includes 12 DevTools and observation tools for network inspection, performance monitoring, and accessibility auditing.
+- **Sub-agent parallelism.** Fork child agents onto separate browser tabs with independent state and step budgets. A URL-claiming registry prevents siblings from crawling the same page twice.
+- **MCP client and server.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers. Or flip it: `acrawl mcp` exposes 38 browser and DevTools tools plus `run_goal` to Claude Code, Cursor, VS Code, Zed, and 13 other clients.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
-- **MCP client.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
-- **MCP server.** `acrawl mcp` exposes 38 browser and script tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code, Zed, JetBrains, TRAE, Gemini CLI, and more. Install with `acrawl mcp install`.
 
 ### How does it compare?
 
@@ -56,6 +57,8 @@ acrawl is that wiring, packaged as a single Rust binary. You describe a goal; th
 | MCP client (use tools) | Yes | No | No | No | No | No | No | No |
 | MCP server (expose as tools) | Yes | No | No | No | Yes | Yes | No | No |
 | Stealth browser built-in | Yes | Cloud only | Via Browserbase | Cloud only | No | No | No | No |
+| DevTools observability (network, console, perf, a11y) | Yes | No | No | No | No | No | No | No |
+| Deterministic script layer (zero LLM calls) | Yes | No | Partial | No | No | No | Yes | Yes |
 | Open source | Yes | Yes (MIT) | Yes (MIT) | Yes (Apache) | Engine only | Yes (MIT) | Yes (BSD) | Yes (Apache) |
 
 Notes:
