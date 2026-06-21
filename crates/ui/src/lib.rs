@@ -22,6 +22,7 @@ impl CliOutputFormat {
 
 pub mod app;
 pub mod auth;
+pub mod config_runner;
 pub mod display_width;
 pub mod error;
 pub mod events;
