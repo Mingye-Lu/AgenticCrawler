@@ -5,6 +5,7 @@ pub mod custom;
 pub mod group;
 pub mod mask;
 pub mod openai;
+pub mod status;
 
 use std::io::{self, Read, Write};
 use std::net::TcpListener;

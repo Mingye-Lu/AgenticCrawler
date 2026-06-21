@@ -30,3 +30,4 @@ pub mod output_sink;
 pub mod session_mgr;
 
 pub use auth::configure::{run_auth_configure, AuthFlags};
+pub use auth::status::{run_auth_list, run_auth_status};
