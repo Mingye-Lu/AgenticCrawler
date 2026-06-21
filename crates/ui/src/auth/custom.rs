@@ -1,6 +1,9 @@
 use std::io::{self, Write};
 
-use super::{persist_provider_credentials, Provider};
+use super::{
+    builder::{build_provider_config, CredGroup, CredInputs},
+    persist_provider_credentials, Provider,
+};
 
 pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
     let existing = api::load_credentials()
@@ -35,16 +38,13 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
 
     persist_provider_credentials(
         Provider::Other,
-        api::StoredProviderConfig {
-            auth_method: if key.is_empty() {
-                "none".to_string()
-            } else {
-                "api_key".to_string()
+        build_provider_config(
+            CredGroup::Custom,
+            CredInputs {
+                api_key: (!key.is_empty()).then_some(key),
+                base_url: Some(base_url),
+                ..CredInputs::default()
             },
-            api_key: (!key.is_empty()).then_some(key),
-            base_url: Some(base_url),
-            default_model: existing.default_model,
-            ..Default::default()
-        },
+        ),
     )
 }

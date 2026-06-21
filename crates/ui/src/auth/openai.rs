@@ -4,8 +4,9 @@ use api::oauth::OAuthTokenExchangeRequest;
 use api::{AnthropicClient, AuthSource};
 
 use super::{
-    bind_oauth_listener, open_browser, persist_provider_credentials, wait_for_oauth_callback,
-    Provider,
+    bind_oauth_listener,
+    builder::{build_provider_config, CredGroup, CredInputs},
+    open_browser, persist_provider_credentials, wait_for_oauth_callback, Provider,
 };
 
 pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,11 +30,13 @@ pub(super) fn run_auth() -> Result<(), Box<dyn std::error::Error>> {
             }
             persist_provider_credentials(
                 Provider::OpenAi,
-                api::StoredProviderConfig {
-                    auth_method: "openai_key".to_string(),
-                    api_key: Some(key),
-                    ..Default::default()
-                },
+                build_provider_config(
+                    CredGroup::Simple,
+                    CredInputs {
+                        api_key: Some(key),
+                        ..CredInputs::default()
+                    },
+                ),
             )?;
         }
     }

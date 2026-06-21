@@ -1,5 +1,8 @@
 pub mod anthropic;
+pub mod builder;
 pub mod custom;
+pub mod group;
+pub mod mask;
 pub mod openai;
 
 use std::io::{self, Read, Write};
@@ -8,6 +11,8 @@ use std::process::Command;
 use std::sync::mpsc;
 
 use api::oauth::{parse_oauth_callback_request_target, OAuthCallbackParams};
+
+use self::builder::{build_provider_config, CredGroup, CredInputs};
 
 use crate::app::Provider;
 
@@ -150,13 +155,15 @@ fn run_bedrock_auth() -> Result<(), Box<dyn std::error::Error>> {
 
     persist_preset_credentials(
         "amazon-bedrock",
-        api::StoredProviderConfig {
-            auth_method: "api_key".to_string(),
-            api_key: Some(access_key),
-            aws_secret_access_key: Some(secret_key),
-            region: Some(region),
-            ..Default::default()
-        },
+        build_provider_config(
+            CredGroup::Bedrock,
+            CredInputs {
+                access_key: Some(access_key),
+                secret_key: Some(secret_key),
+                region: Some(region),
+                ..CredInputs::default()
+            },
+        ),
     )
 }
 
@@ -191,13 +198,15 @@ fn run_azure_auth() -> Result<(), Box<dyn std::error::Error>> {
 
     persist_preset_credentials(
         "azure",
-        api::StoredProviderConfig {
-            auth_method: "api_key".to_string(),
-            api_key: Some(api_key),
-            resource_name: Some(resource_name),
-            deployment_name: Some(deployment_name),
-            ..Default::default()
-        },
+        build_provider_config(
+            CredGroup::Azure,
+            CredInputs {
+                api_key: Some(api_key),
+                resource_name: Some(resource_name),
+                deployment_name: Some(deployment_name),
+                ..CredInputs::default()
+            },
+        ),
     )
 }
 
@@ -225,12 +234,14 @@ pub fn run_preset_auth(preset: &api::ProviderPreset) -> Result<(), Box<dyn std::
     }
     persist_preset_credentials(
         preset.id,
-        api::StoredProviderConfig {
-            auth_method: "api_key".to_string(),
-            api_key: Some(key),
-            base_url: Some(preset.base_url.to_string()),
-            ..Default::default()
-        },
+        build_provider_config(
+            CredGroup::Simple,
+            CredInputs {
+                api_key: Some(key),
+                base_url: Some(preset.base_url.to_string()),
+                ..CredInputs::default()
+            },
+        ),
     )
 }
 
