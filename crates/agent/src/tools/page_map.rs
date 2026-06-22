@@ -1,11 +1,17 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 
+use crate::semantic::{
+    assemble_region_tree, compute_accessible_name, select_active_dialog, RawElementFacts,
+    RegionCandidate,
+};
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
 
 const MAX_PAGE_MAP_LINKS: usize = 50;
 const MAX_PAGE_MAP_FORMS: usize = 10;
 const MAX_PAGE_MAP_LANDMARKS: usize = 20;
+const MAX_PAGE_MAP_REGIONS: usize = 16;
+const MAX_PAGE_MAP_CONTROLS: usize = 30;
 
 /// Normalize a URL for page-map caching and ref lifecycle comparison.
 /// Strips fragment unless it looks like a hash-based route (`#/…` or `#!/…`).
@@ -54,6 +60,8 @@ pub fn apply_page_map_caps(value: &mut Value) {
     let truncated_links = truncate_array_field(value, "links", MAX_PAGE_MAP_LINKS);
     let truncated_forms = truncate_array_field(value, "forms", MAX_PAGE_MAP_FORMS);
     let truncated_landmarks = truncate_array_field(value, "landmarks", MAX_PAGE_MAP_LANDMARKS);
+    let truncated_regions = truncate_array_field(value, "regions", MAX_PAGE_MAP_REGIONS);
+    let truncated_controls = truncate_array_field(value, "controls", MAX_PAGE_MAP_CONTROLS);
 
     if let Some(object) = value.as_object_mut() {
         object.insert("truncated_links".to_string(), Value::Bool(truncated_links));
@@ -61,6 +69,14 @@ pub fn apply_page_map_caps(value: &mut Value) {
         object.insert(
             "truncated_landmarks".to_string(),
             Value::Bool(truncated_landmarks),
+        );
+        object.insert(
+            "truncated_regions".to_string(),
+            Value::Bool(truncated_regions),
+        );
+        object.insert(
+            "truncated_controls".to_string(),
+            Value::Bool(truncated_controls),
         );
     }
 }
@@ -78,12 +94,151 @@ fn truncate_array_field(value: &mut Value, key: &str, max_len: usize) -> bool {
         })
 }
 
+fn resolve_scope(scope: Option<&str>, browser: &BrowserContext) -> Option<String> {
+    match scope {
+        Some("dialog") => Some(
+            "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                .to_string(),
+        ),
+        Some("main") => Some("main, [role=\"main\"]".to_string()),
+        Some("sidebar") => Some("[role=\"complementary\"], aside, nav".to_string()),
+        Some(handle) if handle.starts_with("@r") => browser
+            .last_snapshot_region_selector(handle)
+            .map(str::to_string),
+        Some(other) => Some(other.to_string()),
+        None => None,
+    }
+}
+
+fn infer_control_role(tag: &str, role: Option<&str>) -> String {
+    role.map_or_else(
+        || {
+            match tag {
+                "button" => "button",
+                "select" => "combobox",
+                "textarea" | "input" => "textbox",
+                _ => "",
+            }
+            .to_string()
+        },
+        str::to_string,
+    )
+}
+
+fn control_facts_from_value(value: &Value) -> RawElementFacts {
+    RawElementFacts {
+        tag: value
+            .get("tag")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        role: value
+            .get("role")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        aria_expanded: None,
+        aria_selected: None,
+        aria_pressed: None,
+        aria_controls: None,
+        aria_owns: None,
+        text: value
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        aria_label: value
+            .get("aria_label")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        aria_labelledby_text: value
+            .get("aria_labelledby_text")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        title: value
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        placeholder: value
+            .get("placeholder")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        name: value
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        visible: true,
+        floating: false,
+        selector: value
+            .get("selector")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    }
+}
+
+fn enrich_semantic_sections(result: &mut Value) {
+    let regions = result
+        .get("regionCandidates")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| serde_json::from_value::<RegionCandidate>(item.clone()).ok())
+                .collect::<Vec<_>>()
+        })
+        .map(|candidates| assemble_region_tree(&candidates))
+        .unwrap_or_default();
+
+    let active_dialog = select_active_dialog(&regions).map(|region| {
+        json!({
+            "handle": region.handle,
+            "selector": region.selector,
+            "label": region.label,
+        })
+    });
+
+    let controls = result
+        .get("nonFormControls")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    let facts = control_facts_from_value(item);
+                    json!({
+                        "label": compute_accessible_name(&facts),
+                        "role": infer_control_role(&facts.tag, facts.role.as_deref()),
+                        "selector": facts.selector,
+                        "value": item.get("value").cloned().unwrap_or(Value::Null),
+                        "required": item.get("required").and_then(Value::as_bool).unwrap_or(false),
+                        "disabled": item.get("disabled").and_then(Value::as_bool).unwrap_or(false),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if let Some(object) = result.as_object_mut() {
+        object.insert(
+            "regions".to_string(),
+            serde_json::to_value(regions).unwrap_or_else(|_| Value::Array(Vec::new())),
+        );
+        object.insert(
+            "active_dialog".to_string(),
+            active_dialog.unwrap_or(Value::Null),
+        );
+        object.insert("controls".to_string(), Value::Array(controls));
+        object.remove("regionCandidates");
+        object.remove("nonFormControls");
+    }
+}
+
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
     crawl_state: &mut crate::state::CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let scope = input.get("scope").and_then(Value::as_str);
+    let resolved_scope = resolve_scope(scope, browser);
 
     let settings = runtime::load_settings();
     let compound_enrichment = runtime::settings_get_compound_enrichment(&settings);
@@ -92,9 +247,11 @@ pub async fn execute(
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .page_map(scope, compound_enrichment)
+        .page_map(resolved_scope.as_deref(), compound_enrichment)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+
+    enrich_semantic_sections(&mut result);
 
     apply_page_map_caps(&mut result);
 
@@ -135,9 +292,13 @@ pub async fn execute(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use std::sync::Arc;
 
-    use super::apply_page_map_caps;
+    use serde_json::{json, Value};
+    use tokio::sync::Mutex;
+
+    use super::{apply_page_map_caps, enrich_semantic_sections, resolve_scope};
+    use browser::BrowserContext;
 
     #[test]
     fn page_map_response_structure_has_all_sections() {
@@ -340,6 +501,149 @@ mod tests {
 
         assert_eq!(value["links"].as_array().map(Vec::len), Some(5));
         assert_eq!(value["truncated_links"], json!(false));
+    }
+
+    #[test]
+    fn page_map_caps_regions_and_controls() {
+        let mut value = json!({
+            "headings": [],
+            "landmarks": [],
+            "forms": [],
+            "links": [],
+            "regions": (0..20)
+                .map(|index| json!({
+                    "kind": "Region",
+                    "label": format!("region {index}"),
+                    "handle": format!("@r{}", index + 1),
+                    "selector": format!("#region-{index}"),
+                    "visible": true,
+                    "children": []
+                }))
+                .collect::<Vec<_>>(),
+            "controls": (0..40)
+                .map(|index| json!({
+                    "label": format!("Control {index}"),
+                    "role": "textbox",
+                    "selector": format!("#control-{index}"),
+                    "value": null,
+                    "required": false,
+                    "disabled": false
+                }))
+                .collect::<Vec<_>>(),
+            "interactive": {},
+            "meta": {}
+        });
+
+        apply_page_map_caps(&mut value);
+
+        assert_eq!(value["regions"].as_array().map(Vec::len), Some(16));
+        assert_eq!(value["controls"].as_array().map(Vec::len), Some(30));
+        assert_eq!(value["truncated_regions"], json!(true));
+        assert_eq!(value["truncated_controls"], json!(true));
+    }
+
+    #[test]
+    fn page_map_assembles_regions_from_raw_candidates() {
+        let mut value = json!({
+            "regionCandidates": [
+                {
+                    "tag": "main",
+                    "role": null,
+                    "aria_label": null,
+                    "id": null,
+                    "depth": 1,
+                    "parent_idx": null,
+                    "selector": "main",
+                    "visible": true
+                },
+                {
+                    "tag": "div",
+                    "role": "dialog",
+                    "aria_label": "Confirm",
+                    "id": "modal",
+                    "depth": 2,
+                    "parent_idx": 0,
+                    "selector": "div#modal",
+                    "visible": true
+                }
+            ],
+            "nonFormControls": [
+                {
+                    "tag": "input",
+                    "role": null,
+                    "text": "",
+                    "aria_label": "Search",
+                    "aria_labelledby_text": null,
+                    "title": null,
+                    "placeholder": null,
+                    "name": null,
+                    "value": null,
+                    "required": false,
+                    "disabled": false,
+                    "selector": "input#search"
+                }
+            ],
+            "headings": [],
+            "landmarks": [],
+            "forms": [],
+            "links": [],
+            "interactive": {"counts": {"total": 0, "buttons": 0, "inputs": 0, "selects": 0, "textareas": 0}, "elements": []},
+            "meta": {"title": "Test", "url": "https://example.com", "description": ""},
+            "total_landmarks": 0,
+            "total_forms": 0,
+            "total_links": 0
+        });
+
+        enrich_semantic_sections(&mut value);
+
+        assert_eq!(value["regions"].as_array().map(Vec::len), Some(1));
+        assert_eq!(value["regions"][0]["label"], json!("main panel"));
+        assert_eq!(
+            value["regions"][0]["children"][0]["label"],
+            json!("Confirm")
+        );
+        assert_eq!(value["active_dialog"]["handle"], json!("@r2"));
+        assert_eq!(value["active_dialog"]["selector"], json!("div#modal"));
+        assert_eq!(value["controls"][0]["label"], json!("Search"));
+        assert_eq!(value["controls"][0]["role"], json!("textbox"));
+        assert!(value.get("regionCandidates").is_none());
+        assert!(value.get("nonFormControls").is_none());
+    }
+
+    #[test]
+    fn semantic_scope_tokens_resolve_from_snapshot() {
+        let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
+            Arc::new(Mutex::new(Box::new(browser::NopBridge)));
+        let mut ctx = BrowserContext::new(bridge);
+        ctx.set_page_snapshot(
+            "https://example.com",
+            None,
+            json!({
+                "regions": [{
+                    "handle": "@r1",
+                    "selector": "main",
+                    "children": [{
+                        "handle": "@r2",
+                        "selector": "#modal",
+                        "children": []
+                    }]
+                }]
+            }),
+        );
+
+        assert_eq!(
+            resolve_scope(Some("main"), &ctx),
+            Some("main, [role=\"main\"]".to_string())
+        );
+        assert_eq!(
+            resolve_scope(Some("dialog"), &ctx),
+            Some(
+                "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                    .to_string(),
+            )
+        );
+        assert_eq!(resolve_scope(Some("@r2"), &ctx), Some("#modal".to_string()));
+        assert_eq!(resolve_scope(Some("@r9"), &ctx), None);
     }
 
     #[test]

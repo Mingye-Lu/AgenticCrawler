@@ -52,6 +52,34 @@ function pageMapScript(scope) {
     selector: cssPath(el),
     text_preview: (el.innerText || '').trim().slice(0, 120),
   }));
+  const regionSelector = 'nav, main, aside, article, header, footer, section, form, ' +
+    '[role="dialog"], [role="alertdialog"], [role="region"], ' +
+    '[role="navigation"], [role="main"], [role="complementary"], ' +
+    '[role="banner"], [role="form"], ' +
+    '[aria-modal="true"], section[aria-label], [popover]';
+  const regionNodes = Array.from(root.querySelectorAll(regionSelector));
+  const regionCandidates = regionNodes.map((el) => {
+    const parent = el.parentElement;
+    const parentIdx = parent ? regionNodes.indexOf(parent) : null;
+    return {
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') || null,
+      aria_label: el.getAttribute('aria-label') || null,
+      id: el.id || null,
+      depth: (function countDepth(node, scopeRoot) {
+        let d = 0;
+        let cur = node;
+        while (cur && cur !== scopeRoot) {
+          d++;
+          cur = cur.parentElement;
+        }
+        return d;
+      })(el, root),
+      parent_idx: parentIdx >= 0 ? parentIdx : null,
+      selector: cssPath(el),
+      visible: el.offsetParent !== null && !el.hidden,
+    };
+  });
   const total_landmarks = landmarks.length;
   const cappedLandmarks = landmarks.slice(0, 20);
 
@@ -196,6 +224,27 @@ function pageMapScript(scope) {
     }
   }
   const interactive = { counts, elements: interactiveEls };
+  const nonFormControls = Array.from(root.querySelectorAll(
+    'input:not(form input), select:not(form select), textarea:not(form textarea), ' +
+    'button:not(form button), [role="checkbox"]:not(form [role="checkbox"]), ' +
+    '[role="switch"]:not(form [role="switch"]), [role="combobox"]:not(form [role="combobox"])'
+  )).map(el => ({
+    tag: el.tagName.toLowerCase(),
+    role: el.getAttribute('role') || null,
+    text: (el.innerText || '').trim().slice(0, 120),
+    aria_label: el.getAttribute('aria-label') || null,
+    aria_labelledby_text: (() => {
+      const id = el.getAttribute('aria-labelledby');
+      return id ? (document.getElementById(id)?.innerText?.trim() || null) : null;
+    })(),
+    title: el.title || null,
+    placeholder: el.placeholder || null,
+    name: el.name || null,
+    value: el.value || null,
+    required: Boolean(el.required),
+    disabled: Boolean(el.disabled),
+    selector: cssPath(el),
+  }));
 
   const meta = {
     title: document.title,
@@ -203,7 +252,7 @@ function pageMapScript(scope) {
     url: window.location.href,
   };
 
-  return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, total_landmarks, total_forms, total_links };
+  return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, regionCandidates, nonFormControls, total_landmarks, total_forms, total_links };
 }
 
 async function handlePageMap(tabId, payload) {

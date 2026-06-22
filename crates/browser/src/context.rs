@@ -137,6 +137,15 @@ impl BrowserContext {
         self.page_snapshots.last().map(|((url, _), _)| url.as_str())
     }
 
+    #[must_use]
+    pub fn last_snapshot_region_selector(&self, handle: &str) -> Option<&str> {
+        self.page_snapshots
+            .last()
+            .and_then(|(_, snapshot)| snapshot.get("regions"))
+            .and_then(Value::as_array)
+            .and_then(|regions| find_region_selector(regions, handle))
+    }
+
     pub fn ref_map_mut(&mut self) -> &mut RefMap {
         &mut self.ref_map
     }
@@ -145,6 +154,24 @@ impl BrowserContext {
     pub fn ref_map(&self) -> &RefMap {
         &self.ref_map
     }
+}
+
+fn find_region_selector<'a>(regions: &'a [Value], handle: &str) -> Option<&'a str> {
+    for region in regions {
+        if region.get("handle").and_then(Value::as_str) == Some(handle) {
+            if let Some(selector) = region.get("selector").and_then(Value::as_str) {
+                return Some(selector);
+            }
+        }
+
+        if let Some(children) = region.get("children").and_then(Value::as_array) {
+            if let Some(selector) = find_region_selector(children, handle) {
+                return Some(selector);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -237,6 +264,30 @@ mod tests {
         ctx.set_page_snapshot("https://example.com/page2", None, json!({}));
 
         assert_eq!(ctx.snapshot_url(), Some("https://example.com/page2"));
+    }
+
+    #[test]
+    fn last_snapshot_region_selector_finds_nested_region_handle() {
+        let mut ctx = BrowserContext::new(test_bridge());
+
+        ctx.set_page_snapshot(
+            "https://example.com/page2",
+            None,
+            json!({
+                "regions": [{
+                    "handle": "@r1",
+                    "selector": "main",
+                    "children": [{
+                        "handle": "@r2",
+                        "selector": "#dialog",
+                        "children": []
+                    }]
+                }]
+            }),
+        );
+
+        assert_eq!(ctx.last_snapshot_region_selector("@r2"), Some("#dialog"));
+        assert_eq!(ctx.last_snapshot_region_selector("@r99"), None);
     }
 
     #[test]

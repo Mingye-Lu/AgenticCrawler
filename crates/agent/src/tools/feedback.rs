@@ -14,8 +14,9 @@ const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Build structured page state from a raw `page_map` value (full, no diff).
 ///
-/// Applies caps, extracts url/title from meta, and strips `forms` and
-/// `interactive` fields to keep interaction responses concise.
+/// Applies caps, extracts url/title from meta, preserves `regions` and
+/// `active_dialog`, and strips `forms`, `interactive`, and `controls` to keep
+/// interaction responses concise.
 pub fn build_page_state_from_map(mut pm: Value) -> Value {
     apply_page_map_caps(&mut pm);
 
@@ -36,6 +37,7 @@ pub fn build_page_state_from_map(mut pm: Value) -> Value {
     if let Some(obj) = pm.as_object_mut() {
         obj.remove("forms");
         obj.remove("interactive");
+        obj.remove("controls");
     }
 
     json!({
@@ -492,6 +494,31 @@ mod tests {
                     "selector": "a.home"
                 }
             ],
+            "regions": [
+                {
+                    "kind": "Main",
+                    "label": "main panel",
+                    "handle": "@r1",
+                    "selector": "main",
+                    "visible": true,
+                    "children": []
+                }
+            ],
+            "active_dialog": {
+                "handle": "@r2",
+                "selector": "#confirm-dialog",
+                "label": "Confirm"
+            },
+            "controls": [
+                {
+                    "label": "Search",
+                    "role": "textbox",
+                    "selector": "#search",
+                    "value": null,
+                    "required": false,
+                    "disabled": false
+                }
+            ],
             "interactive": {
                 "buttons": 3,
                 "inputs": 2,
@@ -515,6 +542,8 @@ mod tests {
         assert!(pm["headings"].is_array());
         assert!(pm["landmarks"].is_array());
         assert!(pm["links"].is_array());
+        assert!(pm["regions"].is_array());
+        assert!(pm.get("active_dialog").is_some());
         assert!(pm["meta"].is_object());
 
         assert!(
@@ -524,6 +553,10 @@ mod tests {
         assert!(
             pm.get("interactive").is_none(),
             "interactive should be removed from page_map"
+        );
+        assert!(
+            pm.get("controls").is_none(),
+            "controls should be removed from page_map"
         );
 
         assert!(pm.get("truncated_links").is_some());
