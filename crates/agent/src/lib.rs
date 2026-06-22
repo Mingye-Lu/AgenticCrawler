@@ -12,6 +12,7 @@ pub mod registry;
 pub mod script_executor;
 pub mod script_manager;
 pub mod self_healing;
+pub mod semantic;
 mod shared_client;
 pub mod state;
 pub mod tools;

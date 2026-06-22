@@ -383,12 +383,23 @@ fn fallback_value() -> Value {
     })
 }
 
+fn page_state_from_feedback_map(browser: &mut BrowserContext, mut pm: Value) -> Value {
+    let full_url = extract_url(&pm).to_string();
+    let cache_key = normalize_url(&full_url).to_string();
+
+    let response = match browser.page_snapshot_for_url(&cache_key, None) {
+        Some(prev) => build_diff_page_state(prev, &mut pm),
+        None => build_page_state_from_map(pm.clone()),
+    };
+
+    browser.set_page_snapshot(&cache_key, None, pm);
+    response
+}
+
 /// Best-effort post-action page state for interaction tool responses.
 ///
-/// Calls `page_map_feedback` on the bridge (which may return a pre-computed
-/// diff from the extension, or a full `page_map` from Playwright). If the
-/// response is already a diff, passes it through. Otherwise applies
-/// Rust-side differential comparison against the cached snapshot.
+/// Calls `page_map_feedback` on the bridge and applies Rust-side differential
+/// comparison against the cached snapshot.
 pub async fn post_action_page_state(browser: &mut BrowserContext) -> Value {
     let result = timeout(FEEDBACK_TIMEOUT, async {
         let mut bridge = browser.acquire_bridge().await?;
@@ -397,23 +408,7 @@ pub async fn post_action_page_state(browser: &mut BrowserContext) -> Value {
     .await;
 
     match result {
-        Ok(Ok(pm)) => {
-            if pm.get("changed").is_some() {
-                return pm;
-            }
-
-            let mut pm = pm;
-            let full_url = extract_url(&pm).to_string();
-            let cache_key = normalize_url(&full_url).to_string();
-
-            let response = match browser.page_snapshot_for_url(&cache_key) {
-                Some(prev) => build_diff_page_state(prev, &mut pm),
-                None => build_page_state_from_map(pm.clone()),
-            };
-
-            browser.set_page_snapshot(cache_key, pm);
-            response
-        }
+        Ok(Ok(pm)) => page_state_from_feedback_map(browser, pm),
         _ => fallback_value(),
     }
 }
@@ -431,9 +426,18 @@ pub fn record_page_fingerprint(url: &str, page_map: &Value, crawl_state: &mut Cr
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::Mutex;
+
     use serde_json::json;
 
-    use super::{build_diff_page_state, build_page_state_from_map, fallback_value};
+    use super::{
+        build_diff_page_state, build_page_state_from_map, fallback_value,
+        page_state_from_feedback_map,
+    };
+    use crate::BrowserContext;
+    use browser::BrowserBackend;
 
     #[test]
     fn feedback_fallback_value_has_correct_shape() {
@@ -869,6 +873,54 @@ mod tests {
         let added = changes["added_interactive"].as_array().unwrap();
         assert_eq!(added.len(), 1);
         assert_eq!(added[0]["text"], "Delete");
+        assert_eq!(added[0]["selector"], "#del-btn");
+    }
+
+    #[test]
+    fn extension_style_raw_page_map_uses_same_diff_as_bridge_path() {
+        let prev = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+        let mut current = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"},
+                    {"tag": "button", "text": "Delete", "selector": "#del-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let bridge = Arc::new(Mutex::new(Box::new(
+            crate::tools::test_support::ObservationMockBackend::default(),
+        ) as Box<dyn BrowserBackend + Send>));
+        let mut browser = BrowserContext::new(bridge);
+        browser.set_page_snapshot("https://example.com/", None, prev.clone());
+
+        let extension_path = page_state_from_feedback_map(&mut browser, current.clone());
+        let bridge_path = build_diff_page_state(&prev, &mut current);
+
+        assert_eq!(extension_path, bridge_path);
+        assert_eq!(extension_path["changed"], true);
+        let added = extension_path["changes"]["added_interactive"]
+            .as_array()
+            .expect("added_interactive should be present");
+        assert_eq!(added.len(), 1);
         assert_eq!(added[0]["selector"], "#del-btn");
     }
 
