@@ -236,19 +236,19 @@ fn fill_form_tool() -> ToolSpec {
 fn select_option_tool() -> ToolSpec {
     ToolSpec {
         name: "select_option",
-        description: "Select an option from a <select> dropdown element. Identify the target dropdown via CSS selector or @eN ref, then specify which option to select by its value attribute, visible label text, or zero-based index. Returns post-action page_state showing any page changes triggered by the selection (e.g. dependent dropdowns updating).",
+        description: "Select an option from a native <select> or custom ARIA/portal dropdown. Identify the target control via CSS selector or @eN ref, then specify which option to select by its value attribute, visible label text, or zero-based index. Omit value, label, and index to open the dropdown, enumerate the currently available options, and return them without selecting. Returns post-action page_state showing any page changes triggered by the selection (e.g. dependent dropdowns updating).",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or @eN ref targeting the <select> element (e.g. \"@e4\", \"select#country\", \"select[name='size']\")." },
-                "value": { "type": "string", "description": "The value attribute of the <option> to select (e.g. \"us\", \"medium\"). Use when you know the option's value." },
-                "label": { "type": "string", "description": "The visible text of the <option> to select (e.g. \"United States\", \"Medium\"). Use when you know the display text." },
+                "selector": { "type": "string", "description": "CSS selector or @eN ref targeting the native select or custom dropdown trigger (e.g. \"@e4\", \"select#country\", \"button[role='combobox']\")." },
+                "value": { "type": "string", "description": "The value attribute of the option to select (e.g. \"us\", \"medium\"). For custom dropdowns without exposed values, this is matched against visible option text." },
+                "label": { "type": "string", "description": "The visible text of the option to select (e.g. \"United States\", \"Medium\"). Use when you know the display text." },
                 "index": { "type": "integer", "description": "Zero-based index of the <option> to select (0 = first option). Use when value/label are unknown." }
             },
             "required": ["selector"],
             "additionalProperties": false
         }),
-        instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option. Returns a `page_state` with the updated page structure after selection. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e4\")."),
+        instructions: Some("Works on native `<select>` elements and custom ARIA or portal-rendered dropdowns. Provide `selector`, then optionally set `value`, `label`, or `index` to choose an option. If all three are omitted, the tool opens the dropdown, lists the currently visible options, and returns them without selecting. Returns a `page_state` with the updated page structure after selection or list-mode open. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e4\")."),
     }
 }
 
