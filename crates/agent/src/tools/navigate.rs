@@ -450,7 +450,7 @@ fn cache_page_map_snapshot(
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let cache_key = normalize_url(pm_url).to_string();
-    browser.set_page_snapshot(cache_key, page_map.clone());
+    browser.set_page_snapshot(&cache_key, None, page_map.clone());
 
     let fp_settings = runtime::load_settings();
     if runtime::settings_get_page_fingerprinting(&fp_settings) {

@@ -114,7 +114,7 @@ pub async fn execute(
         }
 
         annotate_refs(&mut result, browser);
-        browser.set_page_snapshot(cache_key, result.clone());
+        browser.set_page_snapshot(&cache_key, None, result.clone());
     } else {
         annotate_refs(&mut result, browser);
     }

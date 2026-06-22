@@ -662,7 +662,7 @@ impl CrawlerAgent {
         }
 
         crate::tools::page_map::annotate_refs(&mut fresh_page_map, browser);
-        browser.set_page_snapshot(cache_key, fresh_page_map.clone());
+        browser.set_page_snapshot(&cache_key, None, fresh_page_map.clone());
 
         let Some(new_selector) = crate::self_healing::find_healed_selector(
             &old_ref,

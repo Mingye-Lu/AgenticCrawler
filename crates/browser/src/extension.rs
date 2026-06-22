@@ -223,12 +223,6 @@ impl BrowserBackend for ExtensionBridge {
         Self::require_result(response, "page_map")
     }
 
-    async fn page_map_feedback(&mut self) -> Result<Value, BridgeError> {
-        let payload = json!({"diff": true});
-        let response = self.send_command("page_map", payload).await?;
-        Self::require_result(response, "page_map")
-    }
-
     async fn read_content(
         &mut self,
         heading: Option<&str>,
