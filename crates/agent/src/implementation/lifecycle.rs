@@ -164,6 +164,7 @@ impl CrawlerAgent {
 mod tests {
     use std::sync::Arc;
 
+    use serde_json::Value;
     use tokio::sync::Mutex;
 
     use super::*;
@@ -175,6 +176,29 @@ mod tests {
                 .await
                 .expect("bridge should initialize for lifecycle test"),
         ) as Box<dyn BrowserBackend + Send>))
+    }
+
+    async fn respond_ok(
+        command_rx: &mut tokio::sync::mpsc::Receiver<(
+            crate::BridgeCommand,
+            tokio::sync::oneshot::Sender<crate::ws_server::BridgeResponse>,
+        )>,
+        expected_action: &str,
+        result: Option<Value>,
+    ) {
+        let (cmd, resp_tx) = command_rx
+            .recv()
+            .await
+            .unwrap_or_else(|| panic!("extension should receive {expected_action}"));
+        assert_eq!(cmd.action, expected_action);
+        resp_tx
+            .send(crate::ws_server::BridgeResponse {
+                id: cmd.id,
+                ok: true,
+                result,
+                error: None,
+            })
+            .unwrap();
     }
 
     #[tokio::test]
@@ -320,7 +344,6 @@ mod tests {
 
     #[tokio::test]
     async fn tool_execution_routes_commands_through_extension_bridge() {
-        use crate::ws_server::BridgeResponse;
         use acrawl_core::ToolExecutor;
         use serde_json::json;
 
@@ -344,86 +367,41 @@ mod tests {
             );
 
         // acquire_bridge() calls switch_tab first
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive switch_tab");
-        assert_eq!(cmd.action, "switch_tab");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: Some(json!({"url": "about:blank", "title": ""})),
-                error: None,
-            })
-            .unwrap();
+        respond_ok(
+            &mut command_rx,
+            "switch_tab",
+            Some(json!({"url": "about:blank", "title": ""})),
+        )
+        .await;
 
         // Then click
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive click");
-        assert_eq!(cmd.action, "click");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: None,
-                error: None,
-            })
-            .unwrap();
+        respond_ok(&mut command_rx, "click", None).await;
 
         // increment_seq pushes the current seq to the extension bridge so
         // buffered observations are tagged for temporal filtering.
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive set_seq");
-        assert_eq!(cmd.action, "set_seq");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: None,
-                error: None,
-            })
-            .unwrap();
+        respond_ok(&mut command_rx, "set_seq", None).await;
 
         // post_action_page_state: acquire_bridge (switch_tab) + page_map
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive second switch_tab");
-        assert_eq!(cmd.action, "switch_tab");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: Some(json!({"url": "about:blank", "title": ""})),
-                error: None,
-            })
-            .unwrap();
-
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive page_map");
-        assert_eq!(cmd.action, "page_map");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: Some(json!({
-                    "headings": [],
-                    "landmarks": [],
-                    "forms": [],
-                    "links": [],
-                    "interactive": {},
-                    "meta": {"url": "https://test.com", "title": "Test Page", "description": ""}
-                })),
-                error: None,
-            })
-            .unwrap();
+        respond_ok(
+            &mut command_rx,
+            "switch_tab",
+            Some(json!({"url": "about:blank", "title": ""})),
+        )
+        .await;
+        respond_ok(&mut command_rx, "execute_js", Some(json!(null))).await;
+        respond_ok(
+            &mut command_rx,
+            "page_map",
+            Some(json!({
+                "headings": [],
+                "landmarks": [],
+                "forms": [],
+                "links": [],
+                "interactive": {},
+                "meta": {"url": "https://test.com", "title": "Test Page", "description": ""}
+            })),
+        )
+        .await;
 
         let result = handle.await.expect("task should complete");
         let output = result.expect("click should succeed through extension bridge");

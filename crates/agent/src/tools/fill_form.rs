@@ -12,6 +12,7 @@ struct FillFormInput {
     fields: BTreeMap<String, String>,
     submit: bool,
     form_selector: String,
+    widen: bool,
 }
 
 fn parse_input(input: &Value) -> Result<FillFormInput, CrawlError> {
@@ -50,6 +51,7 @@ fn parse_input(input: &Value) -> Result<FillFormInput, CrawlError> {
         fields,
         submit,
         form_selector,
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -69,6 +71,10 @@ pub async fn execute(
             Ok::<_, ToolExecutionError>((resolved, val.clone()))
         })
         .collect::<Result<Vec<_>, _>>()?;
+
+    let resolved_form_selector =
+        super::ref_resolve::resolve_selector(&params.form_selector, browser.ref_map())
+            .map_err(ToolExecutionError::new)?;
 
     fill_fields(browser, &resolved_fields).await?;
 
@@ -92,7 +98,7 @@ pub async fn execute(
                 if (form.dispatchEvent(evt)) form.submit();
                 return 'dispatched';
             }})()"#,
-            params.form_selector.replace('\'', "\\'")
+            resolved_form_selector.replace('\'', "\\'")
         );
         browser
             .acquire_bridge()
@@ -123,7 +129,12 @@ pub async fn execute(
     }
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        Some(&resolved_form_selector),
+        params.widen,
+    )
+    .await;
 
     let field_count = params.fields.len();
     Ok(ToolEffect::reply_json(&serde_json::json!({

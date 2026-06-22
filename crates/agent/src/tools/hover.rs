@@ -4,12 +4,22 @@ use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
-pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
-    input
+pub struct HoverInput {
+    selector: String,
+    widen: bool,
+}
+
+pub fn parse_input(input: &Value) -> Result<HoverInput, CrawlError> {
+    let selector = input
         .get("selector")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .ok_or_else(|| CrawlError::new("hover requires 'selector' field"))
+        .ok_or_else(|| CrawlError::new("hover requires 'selector' field"))?;
+
+    Ok(HoverInput {
+        selector,
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 pub async fn execute(
@@ -17,8 +27,8 @@ pub async fn execute(
     browser: &mut BrowserContext,
     crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
-    let selector = parse_input(input)?;
-    let resolved = super::ref_resolve::resolve_selector(&selector, browser.ref_map())
+    let params = parse_input(input)?;
+    let resolved = super::ref_resolve::resolve_selector(&params.selector, browser.ref_map())
         .map_err(ToolExecutionError::new)?;
 
     browser
@@ -30,12 +40,13 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state =
+        super::feedback::post_action_page_state(browser, Some(&resolved), params.widen).await;
 
     Ok(ToolEffect::reply_json(&json!({
         "seq": seq,
         "success": true,
-        "message": format!("Hovered over: {selector}"),
+        "message": format!("Hovered over: {}", params.selector),
         "page_state": page_state
     })))
 }
@@ -49,8 +60,9 @@ mod tests {
     #[test]
     fn parses_selector() {
         let input = json!({"selector": ".menu-item"});
-        let selector = parse_input(&input).unwrap();
-        assert_eq!(selector, ".menu-item");
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.selector, ".menu-item");
+        assert!(!parsed.widen);
     }
 
     #[test]

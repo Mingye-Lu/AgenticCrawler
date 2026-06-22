@@ -19,6 +19,7 @@ pub struct SelectOptionInput {
     pub value: Option<String>,
     pub label: Option<String>,
     pub index: Option<usize>,
+    pub widen: bool,
 }
 
 pub fn parse_input(input: &Value) -> Result<SelectOptionInput, CrawlError> {
@@ -55,6 +56,7 @@ pub fn parse_input(input: &Value) -> Result<SelectOptionInput, CrawlError> {
             .and_then(Value::as_str)
             .map(str::to_string),
         index,
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -105,7 +107,8 @@ async fn execute_native(
         Some(option.name.clone())
     } else {
         let seq = super::seq::increment_seq(crawl_state, browser).await;
-        let page_state = super::feedback::post_action_page_state(browser).await;
+        let page_state =
+            super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
         return Ok(ToolEffect::reply_json(&json!({
             "seq": seq,
             "success": true,
@@ -116,7 +119,8 @@ async fn execute_native(
     };
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state =
+        super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
 
     Ok(ToolEffect::reply_json(&json!({
         "seq": seq,
@@ -147,7 +151,8 @@ async fn execute_custom(
 
     if params.value.is_none() && params.label.is_none() && params.index.is_none() {
         let seq = super::seq::increment_seq(crawl_state, browser).await;
-        let page_state = super::feedback::post_action_page_state(browser).await;
+        let page_state =
+            super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
         return Ok(ToolEffect::reply_json(&json!({
             "seq": seq,
             "success": true,
@@ -176,7 +181,8 @@ async fn execute_custom(
         verify_custom_selection(browser, selector, &target_option.selector, &target_text).await?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state =
+        super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
 
     if verified {
         return Ok(ToolEffect::reply_json(&json!({

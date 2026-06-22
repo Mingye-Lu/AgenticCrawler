@@ -8,6 +8,7 @@ use crate::{CrawlError, ToolEffect, ToolExecutionError};
 struct ClickAtInput {
     x: f64,
     y: f64,
+    widen: bool,
 }
 
 fn parse_input(input: &Value) -> Result<ClickAtInput, CrawlError> {
@@ -21,7 +22,11 @@ fn parse_input(input: &Value) -> Result<ClickAtInput, CrawlError> {
         .and_then(Value::as_f64)
         .ok_or_else(|| CrawlError::new("missing required field: y"))?;
 
-    Ok(ClickAtInput { x, y })
+    Ok(ClickAtInput {
+        x,
+        y,
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 pub async fn execute(
@@ -39,7 +44,7 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state = super::feedback::post_action_page_state(browser, None, params.widen).await;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "seq": seq,

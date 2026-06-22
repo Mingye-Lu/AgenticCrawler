@@ -138,6 +138,11 @@ impl BrowserContext {
     }
 
     #[must_use]
+    pub fn last_page_snapshot(&self) -> Option<&Value> {
+        self.page_snapshots.last().map(|(_, snapshot)| snapshot)
+    }
+
+    #[must_use]
     pub fn last_snapshot_region_selector(&self, handle: &str) -> Option<&str> {
         self.page_snapshots
             .last()

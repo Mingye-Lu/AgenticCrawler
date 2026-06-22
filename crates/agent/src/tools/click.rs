@@ -7,6 +7,7 @@ use crate::{CrawlError, ToolEffect, ToolExecutionError};
 #[derive(Debug)]
 struct ClickInput {
     selector: String,
+    widen: bool,
 }
 
 fn parse_input(input: &Value) -> Result<ClickInput, CrawlError> {
@@ -21,6 +22,7 @@ fn parse_input(input: &Value) -> Result<ClickInput, CrawlError> {
 
     Ok(ClickInput {
         selector: selector.to_string(),
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -42,7 +44,8 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state =
+        super::feedback::post_action_page_state(browser, Some(&selector), params.widen).await;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "seq": seq,

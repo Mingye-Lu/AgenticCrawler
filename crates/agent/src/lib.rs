@@ -185,7 +185,8 @@ fn click_tool() -> ToolSpec {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Use @eN refs for stability." }
+                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Use @eN refs for stability." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["selector"],
             "additionalProperties": false
@@ -202,7 +203,8 @@ fn click_at_tool() -> ToolSpec {
             "type": "object",
             "properties": {
                 "x": { "type": "number", "description": "X coordinate in viewport pixels (0 = left edge). Obtain via execute_js with getBoundingClientRect() on the target element." },
-                "y": { "type": "number", "description": "Y coordinate in viewport pixels (0 = top edge). Obtain via execute_js with getBoundingClientRect() on the target element." }
+                "y": { "type": "number", "description": "Y coordinate in viewport pixels (0 = top edge). Obtain via execute_js with getBoundingClientRect() on the target element." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -224,7 +226,8 @@ fn fill_form_tool() -> ToolSpec {
                     "description": "Map of field identifiers to values. Keys can be CSS selectors (\"input[name='email']\"), field name/ID attributes (\"email\"), or @eN refs from page_map (\"@e5\"). Values are the text to type into each field."
                 },
                 "submit": { "type": "boolean", "description": "If true, submit the form after filling all fields (triggers form submission event). Default: false." },
-                "form_selector": { "type": "string", "description": "CSS selector or @eN ref targeting a specific <form> element. Required when the page has multiple forms to disambiguate which form to fill." }
+                "form_selector": { "type": "string", "description": "CSS selector or @eN ref targeting a specific <form> element. Required when the page has multiple forms to disambiguate which form to fill." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["fields"],
             "additionalProperties": false
@@ -243,7 +246,8 @@ fn select_option_tool() -> ToolSpec {
                 "selector": { "type": "string", "description": "CSS selector or @eN ref targeting the native select or custom dropdown trigger (e.g. \"@e4\", \"select#country\", \"button[role='combobox']\")." },
                 "value": { "type": "string", "description": "The value attribute of the option to select (e.g. \"us\", \"medium\"). For custom dropdowns without exposed values, this is matched against visible option text." },
                 "label": { "type": "string", "description": "The visible text of the option to select (e.g. \"United States\", \"Medium\"). Use when you know the display text." },
-                "index": { "type": "integer", "description": "Zero-based index of the <option> to select (0 = first option). Use when value/label are unknown." }
+                "index": { "type": "integer", "description": "Zero-based index of the <option> to select (0 = first option). Use when value/label are unknown." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["selector"],
             "additionalProperties": false
@@ -259,7 +263,8 @@ fn hover_tool() -> ToolSpec {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map targeting the element to hover over (e.g. \"@e2\", \".menu-trigger\", \"nav li\")." }
+                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map targeting the element to hover over (e.g. \"@e2\", \".menu-trigger\", \"nav li\")." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["selector"],
             "additionalProperties": false
@@ -276,7 +281,8 @@ fn press_key_tool() -> ToolSpec {
             "type": "object",
             "properties": {
                 "key": { "type": "string", "description": "Key to press — use Playwright key names: \"Enter\", \"Escape\", \"Tab\", \"ArrowDown\", \"ArrowUp\", \"Backspace\", \"Space\", or single characters like \"a\". Modifier combos: \"Control+a\", \"Shift+Tab\"." },
-                "selector": { "type": "string", "description": "Optional CSS selector or @eN ref to focus before pressing the key. If omitted, the key is dispatched to the currently focused element or the page." }
+                "selector": { "type": "string", "description": "Optional CSS selector or @eN ref to focus before pressing the key. If omitted, the key is dispatched to the currently focused element or the page." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["key"],
             "additionalProperties": false
