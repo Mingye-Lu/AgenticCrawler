@@ -218,7 +218,7 @@ fn click_at_tool() -> ToolSpec {
 fn fill_form_tool() -> ToolSpec {
     ToolSpec {
         name: "fill_form",
-        description: "Fill one or more form fields with values and optionally submit the form. Accepts field identifiers as CSS selectors, field names/IDs, or @eN references from page_map. Returns post-action page_state with the resulting URL and structural diff. Use form_selector to disambiguate when the page contains multiple forms.",
+        description: "Fill one or more form fields with values and optionally submit the form. Accepts field identifiers as CSS selectors, field names/IDs, or @eN references from page_map. Also resolves fields by visible label text page-wide — works in modals and div-based UIs without a <form> boundary. Returns post-action page_state with the resulting URL and structural diff. Use form_selector to disambiguate when the page contains multiple forms.",
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -234,7 +234,7 @@ fn fill_form_tool() -> ToolSpec {
             "required": ["fields"],
             "additionalProperties": false
         }),
-        instructions: Some("Keys in `fields` accept CSS selectors, plain field names/IDs, or @eN element refs from page_map (e.g., {\"@e5\": \"value\"}). Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms. The response includes post-action page state showing the resulting URL and page structure."),
+        instructions: Some("Keys in `fields` accept CSS selectors, plain field names/IDs, @eN element refs from page_map (e.g., {\"@e5\": \"value\"}), or a visible label text — labels are matched page-wide so fields inside modals or div-based UIs without a <form> boundary still resolve. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms. The response includes post-action page state showing the resulting URL and page structure."),
     }
 }
 
@@ -312,7 +312,7 @@ fn execute_js_tool() -> ToolSpec {
 fn page_map_tool() -> ToolSpec {
     ToolSpec {
         name: "page_map",
-        description: "Get a comprehensive structural map of the current page including headings (h1–h6 with section sizes), landmark regions, forms with field details, links (text + href, capped at 50), and interactive elements (buttons, inputs, selects with state and @eN refs). Use to discover page structure before interacting, or with scope to inspect a specific modal/dialog without background noise. Each interactive element returns a stable @eN reference for use in click, fill_form, hover, press_key, and select_option.",
+        description: "Get a comprehensive structural map of the current page including headings (h1–h6 with section sizes), landmark regions, forms with field details, links (text + href, capped at 50), and interactive elements (buttons, inputs, selects with state and @eN refs). Also returns a regions hierarchy (sidebar/main/dialog), the active_dialog, and non-form controls alongside headings/landmarks/links/interactive. Use to discover page structure before interacting, or with scope to inspect a specific modal/dialog without background noise. Scope accepts semantic tokens ('dialog', 'main', 'sidebar') or a region handle (@r1) in addition to a raw CSS selector. Each interactive element returns a stable @eN reference for use in click, fill_form, hover, press_key, and select_option.",
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -323,7 +323,7 @@ fn page_map_tool() -> ToolSpec {
             },
             "additionalProperties": false
         }),
-        instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page. Use links[].href with navigate instead of clicking when the URL is visible. Each interactive element includes a `ref` field (@e1, @e2, ...) — use these stable handles in click, fill_form, hover, press_key, and select_option instead of copying full CSS selectors."),
+        instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), a regions hierarchy (sidebar/main/dialog with @rN handles), the active_dialog, non-form controls, and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page — scope accepts a raw CSS selector, a semantic token ('dialog', 'main', 'sidebar'), or a region handle (@r1). Use links[].href with navigate instead of clicking when the URL is visible. Each interactive element includes a `ref` field (@e1, @e2, ...) — use these stable handles in click, fill_form, hover, press_key, and select_option instead of copying full CSS selectors."),
     }
 }
 
