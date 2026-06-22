@@ -181,17 +181,19 @@ fn extraction_tools() -> Vec<ToolSpec> {
 fn click_tool() -> ToolSpec {
     ToolSpec {
         name: "click",
-        description: "Click on a page element identified by CSS selector or @eN reference from page_map. May trigger navigation, form submission, or dynamic content changes. Returns post-action page_state showing the resulting URL, title, and structural diff. Prefer navigate with a direct URL from page_map.links when available — use click only for buttons, toggles, and elements without direct links.",
+        description: "Click on a page element identified by CSS selector, @eN reference, or visible label text. May trigger navigation, form submission, or dynamic content changes. Returns post-action page_state. Use 'selector' for CSS/ref-based targeting; use 'text' (with optional 'role' and 'region') to activate a button, tab, checkbox, or link by its visible label — useful for SPA admin UIs and modals where CSS paths are fragile.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Use @eN refs for stability." },
+                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Mutually exclusive with 'text'." },
+                "text": { "type": "string", "description": "Activate by visible label text instead of a selector. Finds the interactive element whose accessible name best matches this text. Mutually exclusive with 'selector'." },
+                "role": { "type": "string", "description": "Optional ARIA role filter when using 'text' (e.g. 'button', 'tab', 'checkbox', 'menuitem'). Narrows the match." },
+                "region": { "type": "string", "description": "Optional region handle (@r1, @r2…) or semantic token ('dialog', 'main', 'sidebar') to constrain the text search to a specific UI area." },
                 "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
-            "required": ["selector"],
             "additionalProperties": false
         }),
-        instructions: Some("May trigger navigation or page changes. The response includes post-action page state (URL, title, page structure) so you can see what changed. Use navigate with a direct URL from page_map.links instead of click when possible — it's more reliable. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e3\")."),
+        instructions: Some("Two usage modes: (1) selector/ref mode: provide 'selector' with a CSS selector or @eN ref — reliable for elements with stable identifiers. (2) text mode: provide 'text' to find and click an element by its visible label (button text, aria-label, link text). Optionally add 'role' to narrow by ARIA role and 'region' to restrict search to a UI region. 'selector' and 'text' are mutually exclusive — provide exactly one."),
     }
 }
 
