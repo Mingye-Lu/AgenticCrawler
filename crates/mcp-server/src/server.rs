@@ -1162,12 +1162,15 @@ mod tests {
 
     #[test]
     fn read_protocol_message_skips_leading_whitespace_before_json() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-        let data = format!("\r\n  {body}\n").into_bytes();
-        let mut cursor = Cursor::new(data);
-        let parsed =
-            read_protocol_message(&mut cursor).expect("leading whitespace should be drained");
-        assert_eq!(parsed, body.as_bytes());
+        with_transport_mode_lock(|| {
+            let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+            let data = format!("\r\n  {body}\n").into_bytes();
+            let mut cursor = Cursor::new(data);
+            let parsed =
+                read_protocol_message(&mut cursor).expect("leading whitespace should be drained");
+            assert_eq!(parsed, body.as_bytes());
+            assert_eq!(output_mode(), TransportMode::LineDelimited);
+        });
     }
 
     #[test]

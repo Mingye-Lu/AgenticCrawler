@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RawElementFacts {
     pub tag: String,
     pub role: Option<String>,
@@ -20,7 +22,7 @@ pub struct RawElementFacts {
     pub selector: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RegionKind {
     Sidebar,
     Main,
@@ -33,7 +35,7 @@ pub enum RegionKind {
     Other,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegionCandidate {
     pub tag: String,
     pub role: Option<String>,
@@ -45,7 +47,7 @@ pub struct RegionCandidate {
     pub visible: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegionNode {
     pub kind: RegionKind,
     pub label: String,
@@ -402,6 +404,42 @@ mod tests {
         facts.text = Some("  Visible text  ".to_string());
 
         assert_eq!(compute_accessible_name(&facts), "Visible text");
+    }
+
+    #[test]
+    fn raw_element_facts_deserializes_from_dom_snapshot_json() {
+        let json = serde_json::json!({
+            "elements": [{
+                "tag": "button",
+                "role": "combobox",
+                "aria_expanded": "false",
+                "aria_selected": null,
+                "aria_pressed": null,
+                "aria_controls": "menu-1",
+                "aria_owns": null,
+                "text": "Choose",
+                "aria_label": null,
+                "aria_labelledby_text": null,
+                "title": null,
+                "placeholder": null,
+                "name": null,
+                "visible": true,
+                "floating": false,
+                "selector": "button.cmb"
+            }]
+        });
+
+        let elements = json["elements"].as_array().unwrap();
+        let el = &elements[0];
+        assert_eq!(el["tag"].as_str().unwrap(), "button");
+        assert_eq!(el["role"].as_str().unwrap(), "combobox");
+        assert!(el["visible"].as_bool().unwrap());
+
+        let facts: Vec<RawElementFacts> = serde_json::from_value(json["elements"].clone()).unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].tag, "button");
+        assert_eq!(facts[0].role.as_deref(), Some("combobox"));
+        assert!(facts[0].visible);
     }
 
     #[test]

@@ -287,6 +287,17 @@ impl PlaywrightBridge {
         self.send_raw_command(&cmd).await
     }
 
+    pub async fn extract_dom_snapshot(
+        &mut self,
+        scope: Option<&str>,
+    ) -> Result<serde_json::Value, BridgeError> {
+        let mut cmd = serde_json::json!({ "action": "extract_dom_snapshot" });
+        if let Some(s) = scope {
+            cmd["scope"] = serde_json::Value::String(s.to_string());
+        }
+        self.send_raw_command(&cmd).await
+    }
+
     pub async fn read_content(
         &mut self,
         heading: Option<&str>,

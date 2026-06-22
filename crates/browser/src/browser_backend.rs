@@ -128,6 +128,14 @@ pub trait BrowserBackend: Debug {
         self.page_map(None, false).await
     }
 
+    async fn extract_dom_snapshot(
+        &mut self,
+        scope: Option<&str>,
+    ) -> Result<serde_json::Value, BridgeError> {
+        let _ = scope;
+        Ok(serde_json::json!({ "elements": [] }))
+    }
+
     /// Drains buffered observation events. Required for every backend — no
     /// default impl on purpose: observation tools dispatch through
     /// `dyn BrowserBackend`, so a missing override silently breaks the feature.

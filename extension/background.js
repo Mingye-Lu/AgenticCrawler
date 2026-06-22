@@ -9,6 +9,7 @@ try {
     'commands/screenshot.js',
     'commands/execute_js.js',
     'commands/page_map.js',
+    'commands/extract_dom_snapshot.js',
     'commands/read_content.js',
     'commands/list_resources.js',
     'commands/hover.js',
@@ -511,6 +512,9 @@ async function handleCommand(cmd) {
             break;
           case 'page_map':
             result = await handlePageMap(tabId, cmd.payload || {});
+            break;
+          case 'extract_dom_snapshot':
+            result = await handleExtractDomSnapshot(tabId, cmd.payload || {});
             break;
           case 'read_content':
             result = await handleReadContent(tabId, cmd.payload || {});

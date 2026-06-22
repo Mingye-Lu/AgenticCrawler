@@ -805,6 +805,34 @@ async function bootstrap() {
             selector: cssPath(el),
             text_preview: (el.innerText || '').trim().slice(0, 120),
           }));
+          const regionSelector = 'nav, main, aside, article, header, footer, section, form, ' +
+            '[role="dialog"], [role="alertdialog"], [role="region"], ' +
+            '[role="navigation"], [role="main"], [role="complementary"], ' +
+            '[role="banner"], [role="form"], ' +
+            '[aria-modal="true"], section[aria-label], [popover]';
+          const regionNodes = Array.from(root.querySelectorAll(regionSelector));
+          const regionCandidates = regionNodes.map((el) => {
+            const parent = el.parentElement;
+            const parentIdx = parent ? regionNodes.indexOf(parent) : null;
+            return {
+              tag: el.tagName.toLowerCase(),
+              role: el.getAttribute('role') || null,
+              aria_label: el.getAttribute('aria-label') || null,
+              id: el.id || null,
+              depth: (function countDepth(node, scopeRoot) {
+                let d = 0;
+                let cur = node;
+                while (cur && cur !== scopeRoot) {
+                  d++;
+                  cur = cur.parentElement;
+                }
+                return d;
+              })(el, root),
+              parent_idx: parentIdx >= 0 ? parentIdx : null,
+              selector: cssPath(el),
+              visible: el.offsetParent !== null && !el.hidden,
+            };
+          });
           const total_landmarks = landmarks.length;
           const cappedLandmarks = landmarks.slice(0, 20);
 
@@ -1000,6 +1028,27 @@ async function bootstrap() {
             }
           }
           const interactive = { counts, elements: interactiveEls };
+          const nonFormControls = Array.from(root.querySelectorAll(
+            'input:not(form input), select:not(form select), textarea:not(form textarea), ' +
+            'button:not(form button), [role="checkbox"]:not(form [role="checkbox"]), ' +
+            '[role="switch"]:not(form [role="switch"]), [role="combobox"]:not(form [role="combobox"])'
+          )).map(el => ({
+            tag: el.tagName.toLowerCase(),
+            role: el.getAttribute('role') || null,
+            text: (el.innerText || '').trim().slice(0, 120),
+            aria_label: el.getAttribute('aria-label') || null,
+            aria_labelledby_text: (() => {
+              const id = el.getAttribute('aria-labelledby');
+              return id ? (document.getElementById(id)?.innerText?.trim() || null) : null;
+            })(),
+            title: el.title || null,
+            placeholder: el.placeholder || null,
+            name: el.name || null,
+            value: el.value || null,
+            required: Boolean(el.required),
+            disabled: Boolean(el.disabled),
+            selector: cssPath(el),
+          }));
 
           const meta = {
             title: document.title,
@@ -1007,11 +1056,108 @@ async function bootstrap() {
             url: window.location.href,
           };
 
-          return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, total_landmarks, total_forms, total_links };
+          return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, regionCandidates, nonFormControls, total_landmarks, total_forms, total_links };
         }, {scope, compoundEnrichment});
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'page_map_error', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'extract_dom_snapshot') {
+      try {
+        const scope = command.scope || null;
+        const result = await page.evaluate((scope) => {
+          let root = document;
+          if (scope) {
+            const scoped = document.querySelector(scope);
+            if (!scoped) {
+              return { elements: [] };
+            }
+            root = scoped;
+          }
+
+          function cssPath(el) {
+            if (el.id) return '#' + CSS.escape(el.id);
+            const parts = [];
+            let cur = el;
+            while (cur && cur !== document.body && cur !== document.documentElement) {
+              let seg = cur.tagName.toLowerCase();
+              const parent = cur.parentElement;
+              if (parent) {
+                const sibs = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+                if (sibs.length > 1) seg += ':nth-of-type(' + (sibs.indexOf(cur) + 1) + ')';
+              }
+              parts.unshift(seg);
+              cur = cur.parentElement;
+            }
+            return parts.join(' > ');
+          }
+
+          function getLabelledByText(el) {
+            const labelledBy = el.getAttribute('aria-labelledby');
+            if (!labelledBy) return null;
+            const text = labelledBy
+              .split(/\s+/)
+              .filter(Boolean)
+              .map((id) => document.getElementById(id)?.innerText?.trim() || '')
+              .filter(Boolean)
+              .join(' ')
+              .trim();
+            return text || null;
+          }
+
+          function isVisible(el) {
+            const style = getComputedStyle(el);
+            return el.offsetParent !== null && !el.hidden && style.visibility !== 'hidden';
+          }
+
+          function isFloating(el) {
+            const style = getComputedStyle(el);
+            return ['fixed', 'absolute'].includes(style.position) && Number.parseInt(style.zIndex || '0', 10) > 0;
+          }
+
+          const selectors = [
+            'button', 'input', 'select', 'textarea',
+            '[role="combobox"]', '[role="listbox"]', '[role="option"]',
+            '[role="menuitem"]', '[role="treeitem"]', '[role="tab"]',
+            '[role="menu"]', '[role="menubar"]', 'li[role]',
+            '[aria-expanded]', '[aria-controls]', '[aria-owns]',
+            '[popover]', '[aria-haspopup]'
+          ];
+
+          const seen = new Set();
+          const elements = [];
+          for (const el of root.querySelectorAll(selectors.join(','))) {
+            const selector = cssPath(el);
+            if (seen.has(selector)) continue;
+            seen.add(selector);
+            elements.push({
+              tag: el.tagName.toLowerCase(),
+              role: el.getAttribute('role'),
+              aria_expanded: el.getAttribute('aria-expanded'),
+              aria_selected: el.getAttribute('aria-selected'),
+              aria_pressed: el.getAttribute('aria-pressed'),
+              aria_controls: el.getAttribute('aria-controls'),
+              aria_owns: el.getAttribute('aria-owns'),
+              text: el.innerText?.trim()?.slice(0, 120) || null,
+              aria_label: el.getAttribute('aria-label'),
+              aria_labelledby_text: getLabelledByText(el),
+              title: el.getAttribute('title'),
+              placeholder: el.getAttribute('placeholder'),
+              name: el.getAttribute('name'),
+              visible: isVisible(el),
+              floating: isFloating(el),
+              selector,
+            });
+          }
+
+          return { elements };
+        }, scope);
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'extract_dom_snapshot_error', message: String(error) } }) + '\n');
       }
       continue;
     }
