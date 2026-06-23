@@ -358,6 +358,20 @@ Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_b
 
 If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. The embedded `page_map` preserves `regions` and `active_dialog` but omits the verbose `forms`, `interactive`, and `controls` arrays to keep interaction responses concise — call the `page_map` tool to retrieve those. Caps: max 50 links, 20 landmarks per page_state.
 
+#### Tool-Specific Response Fields
+
+The `navigate` tool response includes additional fields beyond `page_state`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `recaptcha_detected` | `boolean` | `true` when the page loads Google reCAPTCHA v3 (invisible, score-based) CDN scripts without a visible v2 widget. Presence alone is not a block signal; the agent keeps reading and extracting normally. |
+
+The `fill_form` tool response includes an optional field:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `submission_warning` | `string` (optional) | Present when `submit: true` matched a form and produced no visible page change (same URL, `changed: false`) while reCAPTCHA v3 was detected. The text is hypothesis-worded — a silent backend rejection is one of several possible explanations. Names the remedy: `acrawl config set headless false` (or `--headed`) or `/extension`. |
+
 
 ### Sub-Agent Parallelism
 
@@ -869,6 +883,7 @@ acrawl works well on most public web content, but some situations are outside wh
 | **PDF and binary file content** | `save_file` downloads any URL to disk. The agent cannot read the text content of a saved PDF, use `navigate` on a URL that serves HTML, or pipe the download through a text extractor externally. |
 | **WebGL / canvas fingerprinting** | Some anti-bot systems fingerprint the GPU via WebGL. CloakBrowser mitigates common checks but cannot spoof hardware-level fingerprints. |
 | **Sites that require a real mouse trajectory** | Bot-detection systems that analyse mouse movement patterns may flag headless browser interactions. Switch to extension mode for these sites. |
+| **reCAPTCHA v3 (invisible, score-based)** | reCAPTCHA v3 is invisible — there is no widget or challenge prompt. On headless browsers (the default), v3 scores sessions low and the backend may silently reject form submissions with no error shown. The `navigate` response includes `recaptcha_detected: true` when v3 scripts are present; `fill_form(submit: true)` includes a hedged `submission_warning` when a silent rejection is suspected. To rule out reCAPTCHA, a human can retry with `acrawl config set headless false` (or `--headed`), or use the extension bridge (`/extension`) to operate in a real browser session. |
 
 
 ## How It Works

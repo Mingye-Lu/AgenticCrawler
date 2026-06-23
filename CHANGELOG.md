@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **reCAPTCHA v3 presence detection** (`recaptcha_detected`): `navigate` now reports `recaptcha_detected: true` in its JSON response when the page loads Google reCAPTCHA v3 (invisible, score-based) CDN scripts without a visible v2 widget. This is informational — presence alone does not indicate a block.
+- **Silent form-submission warning** (`submission_warning`): when `fill_form(submit: true)` produces no visible page change (same URL, `changed: false`) and reCAPTCHA v3 is present, the reply includes a `submission_warning` field with a hedged explanation and the remedy (`acrawl config set headless false` / `--headed` / `/extension`).
+- **Agent remedy guidance**: the system prompt now encodes a two-condition rule — `recaptcha_detected: true` is not a blocker; only a silent-submission (no page change after submit) should prompt the agent to report the headless remedy.
+
 ## [0.12.2] - 2026-06-23
 
 ### Added
