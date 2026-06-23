@@ -949,7 +949,10 @@ mod tests {
 
         if let ToolEffect::Reply(json_str) = reply {
             let parsed: Value = serde_json::from_str(&json_str).expect("failed to parse JSON");
-            assert_eq!(parsed["recaptcha_detected"], true, "recaptcha_detected should be true");
+            assert_eq!(
+                parsed["recaptcha_detected"], true,
+                "recaptcha_detected should be true"
+            );
         } else {
             panic!("expected Reply variant");
         }
@@ -981,7 +984,10 @@ mod tests {
 
         if let ToolEffect::Reply(json_str) = reply {
             let parsed: Value = serde_json::from_str(&json_str).expect("failed to parse JSON");
-            assert_eq!(parsed["recaptcha_detected"], false, "recaptcha_detected should be false");
+            assert_eq!(
+                parsed["recaptcha_detected"], false,
+                "recaptcha_detected should be false"
+            );
         } else {
             panic!("expected Reply variant");
         }

@@ -151,13 +151,12 @@ pub async fn execute(
     )
     .await;
 
-    let submission_warning = if params.submit
-        && page_state.get("changed").and_then(Value::as_bool) == Some(false)
-    {
-        recaptcha_v3_silent_submission_warning(browser).await
-    } else {
-        None
-    };
+    let submission_warning =
+        if params.submit && page_state.get("changed").and_then(Value::as_bool) == Some(false) {
+            recaptcha_v3_silent_submission_warning(browser).await
+        } else {
+            None
+        };
 
     let field_count = params.fields.len();
     let mut reply = serde_json::json!({
