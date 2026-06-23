@@ -144,8 +144,12 @@ impl BrowserContext {
 
     #[must_use]
     pub fn last_snapshot_region_selector(&self, handle: &str) -> Option<&str> {
+        // Resolve from the most recent *full-page* snapshot (scope == "") so that a scoped
+        // post-action diff stored after page_map doesn't silently break @rN handle lookups.
         self.page_snapshots
-            .last()
+            .iter()
+            .rev()
+            .find(|((_, scope), _)| scope.is_empty())
             .and_then(|(_, snapshot)| snapshot.get("regions"))
             .and_then(Value::as_array)
             .and_then(|regions| find_region_selector(regions, handle))
@@ -293,6 +297,25 @@ mod tests {
 
         assert_eq!(ctx.last_snapshot_region_selector("@r2"), Some("#dialog"));
         assert_eq!(ctx.last_snapshot_region_selector("@r99"), None);
+    }
+
+    #[test]
+    fn last_snapshot_region_selector_uses_full_page_snapshot_when_scoped_is_newer() {
+        let mut ctx = BrowserContext::new(test_bridge());
+
+        // Full-page snapshot with region @r1
+        ctx.set_page_snapshot(
+            "https://example.com",
+            None,
+            json!({
+                "regions": [{"handle": "@r1", "selector": "main", "children": []}]
+            }),
+        );
+
+        // Scoped snapshot stored AFTER (no regions) — must not shadow @r1
+        ctx.set_page_snapshot("https://example.com", Some("#dialog"), json!({}));
+
+        assert_eq!(ctx.last_snapshot_region_selector("@r1"), Some("main"));
     }
 
     #[test]

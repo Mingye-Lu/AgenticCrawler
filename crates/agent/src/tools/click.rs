@@ -108,6 +108,14 @@ async fn resolve_by_text(
                 const lby = el.getAttribute('aria-labelledby');
                 if (lby) name = document.getElementById(lby)?.innerText?.trim() || '';
             }}
+            if (!name && el.id) {{
+                const lbl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+                if (lbl) name = (lbl.innerText || '').trim();
+            }}
+            if (!name) {{
+                const wrapping = el.closest('label');
+                if (wrapping) name = (wrapping.innerText || '').replace((el.textContent || '').trim(), '').trim();
+            }}
             if (!name) name = (el.innerText || '').trim();
             if (!name) name = el.title || el.placeholder || '';
             if (!name) continue;

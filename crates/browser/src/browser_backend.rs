@@ -136,7 +136,9 @@ pub trait BrowserBackend: Debug {
         scope: Option<&str>,
     ) -> Result<serde_json::Value, BridgeError> {
         let _ = scope;
-        Ok(serde_json::json!({ "elements": [] }))
+        Err(BridgeError::Unsupported(
+            "extract_dom_snapshot not implemented for this backend".into(),
+        ))
     }
 
     /// Drains buffered observation events. Required for every backend — no
