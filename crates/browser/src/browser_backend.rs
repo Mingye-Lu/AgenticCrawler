@@ -124,8 +124,21 @@ pub trait BrowserBackend: Debug {
         options: &serde_json::Value,
     ) -> Result<serde_json::Value, BridgeError>;
 
-    async fn page_map_feedback(&mut self) -> Result<serde_json::Value, BridgeError> {
-        self.page_map(None, false).await
+    async fn page_map_feedback(
+        &mut self,
+        scope: Option<&str>,
+    ) -> Result<serde_json::Value, BridgeError> {
+        self.page_map(scope, false).await
+    }
+
+    async fn extract_dom_snapshot(
+        &mut self,
+        scope: Option<&str>,
+    ) -> Result<serde_json::Value, BridgeError> {
+        let _ = scope;
+        Err(BridgeError::Unsupported(
+            "extract_dom_snapshot not implemented for this backend".into(),
+        ))
     }
 
     /// Drains buffered observation events. Required for every backend — no

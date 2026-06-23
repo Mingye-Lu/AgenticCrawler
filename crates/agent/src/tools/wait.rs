@@ -106,7 +106,7 @@ pub async fn execute(
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-        let page_state = super::feedback::post_action_page_state(browser).await;
+        let page_state = super::feedback::post_action_page_state(browser, None, false).await;
 
         Ok(ToolEffect::reply_json(&json!({
             "success": true,
@@ -118,7 +118,7 @@ pub async fn execute(
     } else {
         tokio::time::sleep(Duration::from_millis(parsed.timeout_ms)).await;
 
-        let page_state = super::feedback::post_action_page_state(browser).await;
+        let page_state = super::feedback::post_action_page_state(browser, None, false).await;
 
         Ok(ToolEffect::reply_json(&json!({
             "success": true,

@@ -252,10 +252,10 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 
 | Tool | Description |
 |------|-------------|
-| `click` | Click an element by CSS selector. Returns `page_state` after the click. |
+| `click` | Click an element by CSS selector, `@eN` ref, or visible label text. Use `text` (with optional `role`/`region`) to activate a button, tab, or link by its label — handy for SPA admin UIs and modals where CSS paths are fragile. Returns `page_state` after the click. |
 | `click_at` | Click at specific viewport coordinates (x, y). Use for canvas, maps, or SVGs. Returns `page_state`. |
-| `fill_form` | Fill form fields by selector or name, with optional auto-submit. Returns `page_state`. |
-| `select_option` | Select a dropdown option by value, label, or index. Returns `page_state`. |
+| `fill_form` | Fill form fields by selector, name, `@eN` ref, or visible label text — labels resolve page-wide, so fields in modals and div-based UIs without a `<form>` boundary work too. Optional auto-submit. Returns `page_state`. |
+| `select_option` | Select a dropdown option by value, label, or index. Works on native `<select>` and custom ARIA/portal dropdowns; omit value/label/index to list the available options without selecting. Returns `page_state`. |
 | `hover` | Hover over an element to reveal tooltips or menus. Returns `page_state`. |
 | `press_key` | Press a keyboard key (Enter, Escape, Tab, etc.), optionally targeting an element. Returns `page_state`. |
 | `set_device` | Switch browser device emulation (mobile/desktop). Supports 10 presets (iphone_15, pixel_7, ipad_pro, desktop, etc.) or custom viewport/UA/touch parameters. Returns differential `page_state` showing responsive layout changes. |
@@ -265,7 +265,7 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 
 | Tool | Description |
 |------|-------------|
-| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive elements (with selectors and state). Supports `scope` to query within a specific element (e.g. a modal). |
+| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive elements (with selectors and state), plus a `regions` hierarchy (sidebar/main/dialog), the `active_dialog`, and non-form `controls`. `scope` accepts a CSS selector, a semantic token (`dialog`/`main`/`sidebar`), or a region handle (`@r1`) to query within a specific element (e.g. a modal). |
 | `read_content` | Extract text by heading name or CSS selector, with offset/limit pagination for large pages. |
 | `list_resources` | List all links, images, and forms on the current page. |
 | `screenshot` | Capture a full-page screenshot (base64 PNG). |
@@ -323,11 +323,14 @@ Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_b
     "headings": [{ "level": 1, "text": "...", "id": "...", "selector": "...", "char_count": 0, "preview": "..." }],
     "landmarks": [{ "tag": "nav", "role": "navigation", "id": "...", "selector": "...", "text_preview": "..." }],
     "links": [{ "text": "...", "href": "...", "selector": "..." }],
-    "interactive": { "counts": { "buttons": 0, "inputs": 0, "selects": 0, "textareas": 0, "total": 0 }, "elements": [] },
+    "regions": [{ "kind": "Main", "label": "main panel", "handle": "@r1", "selector": "main", "visible": true, "children": [] }],
+    "active_dialog": null,
     "meta": { "title": "...", "url": "...", "description": "..." },
     "truncated_links": false,
     "truncated_forms": false,
-    "truncated_landmarks": false
+    "truncated_landmarks": false,
+    "truncated_regions": false,
+    "truncated_controls": false
   }
 }
 ```
@@ -353,7 +356,7 @@ Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_b
 }
 ```
 
-If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. Caps: max 50 links, 20 landmarks per page_state.
+If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. The embedded `page_map` preserves `regions` and `active_dialog` but omits the verbose `forms`, `interactive`, and `controls` arrays to keep interaction responses concise — call the `page_map` tool to retrieve those. Caps: max 50 links, 20 landmarks per page_state.
 
 
 ### Sub-Agent Parallelism

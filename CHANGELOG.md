@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`page_map` — semantic region tree and active dialog detection**: emits a `regions` tree with ephemeral `@rN` handles and human-readable labels (`sidebar`, `main panel`, `admin modal`); `active_dialog` points to the topmost visible overlay; non-`<form>` controls (div-based modal inputs) surface with accessible names. `scope` now also accepts semantic tokens (`"dialog"`, `"main"`, `"sidebar"`) and `@rN` handles in addition to raw CSS selectors.
+- **`fill_form` — page-wide label resolution**: field keys resolve by visible label text page-wide without a `<form>` boundary, enabling fill in modal/admin UIs built from divs. Falls back to fuzzy matching via `crate::semantic::match_text`.
+- **`select_option` — portal-aware custom dropdown engine**: handles ARIA combobox/listbox and div-based dropdowns whose option list renders in a portal outside the trigger's DOM subtree. Detects open state via four signals (aria-expanded flip, new listbox/menu, new options, new floating panel), locates the option container via aria-controls/owns then document-wide search, and selects keyboard-first with a click fallback. Omitting `value`/`label`/`index` opens and enumerates available options without selecting (list-options mode).
+- **`click` — text + role + region activation**: new `text` parameter activates elements by visible label, including `<label for=id>` and wrapping `<label>` resolution. Optional `role` filter (supports semantic ARIA roles for native elements) and `region` filter (`@rN` handle or `"dialog"`/`"main"`/`"sidebar"` token). `selector` and `text` are mutually exclusive.
+
+### Changed
+
+- Post-action diffs auto-scope to the interacted container or active dialog by default; pass `widen: true` to any interaction tool to restore the full-page diff.
+- Diff computation consolidated to Rust (`feedback.rs`); the Chrome extension's JS-side `computePageMapDiff` / `pageMapCache` removed — both backends flow through a single diff path.
+- `@rN` region handles now resolve from the last full-page `page_map` snapshot rather than the most-recently-stored snapshot, so handles remain stable after container-scoped interactions.
+
+### Fixed
+
+- **click**: `@rN` region handle not in snapshot now hard-fails instead of silently widening scope to full page
+- **click**: remove `|| document` JS fallback; scoped IIFE throws if the scope element is missing from the DOM
+- **click, fill_form**: `aria-labelledby` now correctly resolved as a whitespace-separated id list
+- **fill_form**: `submit` no longer reports success when no `<form>` matched the selector (`form_not_found` outcome now surfaces as an error)
+- **select_option**: popup closure alone no longer counts as verified selection; only trigger-text change or `aria-selected` qualify
+- **browser/playwright**: `isVisible` in DOM-snapshot extraction now uses `getBoundingClientRect()` matching the extension backend, fixing false-invisible on `position:fixed` portal overlays
+- **feedback**: post-action snapshots now enriched before caching, so `@rN` region handles remain valid after interactions; bare-tag diff-scope selectors (`section`, `article`, `form`) replaced with id-based or role-scoped selectors to prevent anchoring to the wrong container
+
 ## [0.12.1] - 2026-06-21
 
 ### Added

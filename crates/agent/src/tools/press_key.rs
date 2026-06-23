@@ -7,6 +7,7 @@ use crate::{CrawlError, ToolEffect, ToolExecutionError};
 pub struct PressKeyInput {
     pub key: String,
     pub selector: Option<String>,
+    pub widen: bool,
 }
 
 pub fn parse_input(input: &Value) -> Result<PressKeyInput, CrawlError> {
@@ -21,7 +22,11 @@ pub fn parse_input(input: &Value) -> Result<PressKeyInput, CrawlError> {
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    Ok(PressKeyInput { key, selector })
+    Ok(PressKeyInput {
+        key,
+        selector,
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 pub async fn execute(
@@ -48,7 +53,12 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        resolved_selector.as_deref(),
+        parsed.widen,
+    )
+    .await;
 
     Ok(ToolEffect::reply_json(&json!({
         "seq": seq,

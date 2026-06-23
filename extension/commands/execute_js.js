@@ -16,5 +16,5 @@ async function handleExecuteJs(tabId, payload) {
     throw new Error(res.exceptionDetails.text || 'JS execution threw exception');
   }
 
-  return { result: res.result?.value };
+  return { value: res.result?.value };
 }

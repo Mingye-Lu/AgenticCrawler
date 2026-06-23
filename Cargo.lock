@@ -97,6 +97,7 @@ dependencies = [
  "regex",
  "runtime",
  "script",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

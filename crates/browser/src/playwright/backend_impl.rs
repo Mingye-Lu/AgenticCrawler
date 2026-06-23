@@ -96,6 +96,13 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::page_map(self, scope, compound_enrichment).await
     }
 
+    async fn extract_dom_snapshot(
+        &mut self,
+        scope: Option<&str>,
+    ) -> Result<serde_json::Value, BridgeError> {
+        PlaywrightBridge::extract_dom_snapshot(self, scope).await
+    }
+
     async fn read_content(
         &mut self,
         heading: Option<&str>,

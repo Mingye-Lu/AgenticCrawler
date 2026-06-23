@@ -4,7 +4,9 @@ use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_
 use crate::prune::{prune_html_with_profile, select_profile, CleaningProfile};
 use crate::state::CrawlState;
 use crate::tools::html_diff::HtmlDiffTracker;
-use crate::tools::page_map::{annotate_refs, apply_page_map_caps, normalize_url};
+use crate::tools::page_map::{
+    annotate_refs, apply_page_map_caps, enrich_semantic_sections, normalize_url,
+};
 use crate::BrowserContext;
 use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
@@ -409,6 +411,7 @@ async fn build_page_map(
         match browser.acquire_bridge().await {
             Ok(mut bridge) => match bridge.page_map(None, compound_enrichment).await {
                 Ok(mut value) => {
+                    enrich_semantic_sections(&mut value);
                     apply_page_map_caps(&mut value);
                     value
                 }
@@ -450,7 +453,7 @@ fn cache_page_map_snapshot(
         .and_then(Value::as_str)
         .unwrap_or("unknown");
     let cache_key = normalize_url(pm_url).to_string();
-    browser.set_page_snapshot(cache_key, page_map.clone());
+    browser.set_page_snapshot(&cache_key, None, page_map.clone());
 
     let fp_settings = runtime::load_settings();
     if runtime::settings_get_page_fingerprinting(&fp_settings) {

@@ -12,6 +12,7 @@ pub mod registry;
 pub mod script_executor;
 pub mod script_manager;
 pub mod self_healing;
+pub mod semantic;
 mod shared_client;
 pub mod state;
 pub mod tools;
@@ -180,16 +181,19 @@ fn extraction_tools() -> Vec<ToolSpec> {
 fn click_tool() -> ToolSpec {
     ToolSpec {
         name: "click",
-        description: "Click on a page element identified by CSS selector or @eN reference from page_map. May trigger navigation, form submission, or dynamic content changes. Returns post-action page_state showing the resulting URL, title, and structural diff. Prefer navigate with a direct URL from page_map.links when available — use click only for buttons, toggles, and elements without direct links.",
+        description: "Click on a page element identified by CSS selector, @eN reference, or visible label text. May trigger navigation, form submission, or dynamic content changes. Returns post-action page_state. Use 'selector' for CSS/ref-based targeting; use 'text' (with optional 'role' and 'region') to activate a button, tab, checkbox, or link by its visible label — useful for SPA admin UIs and modals where CSS paths are fragile.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Use @eN refs for stability." }
+                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Mutually exclusive with 'text'." },
+                "text": { "type": "string", "description": "Activate by visible label text instead of a selector. Finds the interactive element whose accessible name best matches this text. Mutually exclusive with 'selector'." },
+                "role": { "type": "string", "description": "Optional ARIA role filter when using 'text' (e.g. 'button', 'tab', 'checkbox', 'menuitem'). Narrows the match." },
+                "region": { "type": "string", "description": "Optional region handle (@r1, @r2…) or semantic token ('dialog', 'main', 'sidebar') to constrain the text search to a specific UI area." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
-            "required": ["selector"],
             "additionalProperties": false
         }),
-        instructions: Some("May trigger navigation or page changes. The response includes post-action page state (URL, title, page structure) so you can see what changed. Use navigate with a direct URL from page_map.links instead of click when possible — it's more reliable. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e3\")."),
+        instructions: Some("Two usage modes: (1) selector/ref mode: provide 'selector' with a CSS selector or @eN ref — reliable for elements with stable identifiers. (2) text mode: provide 'text' to find and click an element by its visible label (button text, aria-label, link text). Optionally add 'role' to narrow by ARIA role and 'region' to restrict search to a UI region. 'selector' and 'text' are mutually exclusive — provide exactly one."),
     }
 }
 
@@ -201,7 +205,8 @@ fn click_at_tool() -> ToolSpec {
             "type": "object",
             "properties": {
                 "x": { "type": "number", "description": "X coordinate in viewport pixels (0 = left edge). Obtain via execute_js with getBoundingClientRect() on the target element." },
-                "y": { "type": "number", "description": "Y coordinate in viewport pixels (0 = top edge). Obtain via execute_js with getBoundingClientRect() on the target element." }
+                "y": { "type": "number", "description": "Y coordinate in viewport pixels (0 = top edge). Obtain via execute_js with getBoundingClientRect() on the target element." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["x", "y"],
             "additionalProperties": false
@@ -213,7 +218,7 @@ fn click_at_tool() -> ToolSpec {
 fn fill_form_tool() -> ToolSpec {
     ToolSpec {
         name: "fill_form",
-        description: "Fill one or more form fields with values and optionally submit the form. Accepts field identifiers as CSS selectors, field names/IDs, or @eN references from page_map. Returns post-action page_state with the resulting URL and structural diff. Use form_selector to disambiguate when the page contains multiple forms.",
+        description: "Fill one or more form fields with values and optionally submit the form. Accepts field identifiers as CSS selectors, field names/IDs, or @eN references from page_map. Also resolves fields by visible label text page-wide — works in modals and div-based UIs without a <form> boundary. Returns post-action page_state with the resulting URL and structural diff. Use form_selector to disambiguate when the page contains multiple forms.",
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -223,31 +228,33 @@ fn fill_form_tool() -> ToolSpec {
                     "description": "Map of field identifiers to values. Keys can be CSS selectors (\"input[name='email']\"), field name/ID attributes (\"email\"), or @eN refs from page_map (\"@e5\"). Values are the text to type into each field."
                 },
                 "submit": { "type": "boolean", "description": "If true, submit the form after filling all fields (triggers form submission event). Default: false." },
-                "form_selector": { "type": "string", "description": "CSS selector or @eN ref targeting a specific <form> element. Required when the page has multiple forms to disambiguate which form to fill." }
+                "form_selector": { "type": "string", "description": "CSS selector or @eN ref targeting a specific <form> element. Required when the page has multiple forms to disambiguate which form to fill." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["fields"],
             "additionalProperties": false
         }),
-        instructions: Some("Keys in `fields` accept CSS selectors, plain field names/IDs, or @eN element refs from page_map (e.g., {\"@e5\": \"value\"}). Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms. The response includes post-action page state showing the resulting URL and page structure."),
+        instructions: Some("Keys in `fields` accept CSS selectors, plain field names/IDs, @eN element refs from page_map (e.g., {\"@e5\": \"value\"}), or a visible label text — labels are matched page-wide so fields inside modals or div-based UIs without a <form> boundary still resolve. Set `submit` to true to submit after filling. Use `form_selector` when the page has multiple forms. The response includes post-action page state showing the resulting URL and page structure."),
     }
 }
 
 fn select_option_tool() -> ToolSpec {
     ToolSpec {
         name: "select_option",
-        description: "Select an option from a <select> dropdown element. Identify the target dropdown via CSS selector or @eN ref, then specify which option to select by its value attribute, visible label text, or zero-based index. Returns post-action page_state showing any page changes triggered by the selection (e.g. dependent dropdowns updating).",
+        description: "Select an option from a native <select> or custom ARIA/portal dropdown. Identify the target control via CSS selector or @eN ref, then specify which option to select by its value attribute, visible label text, or zero-based index. Omit value, label, and index to open the dropdown, enumerate the currently available options, and return them without selecting. Returns post-action page_state showing any page changes triggered by the selection (e.g. dependent dropdowns updating).",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or @eN ref targeting the <select> element (e.g. \"@e4\", \"select#country\", \"select[name='size']\")." },
-                "value": { "type": "string", "description": "The value attribute of the <option> to select (e.g. \"us\", \"medium\"). Use when you know the option's value." },
-                "label": { "type": "string", "description": "The visible text of the <option> to select (e.g. \"United States\", \"Medium\"). Use when you know the display text." },
-                "index": { "type": "integer", "description": "Zero-based index of the <option> to select (0 = first option). Use when value/label are unknown." }
+                "selector": { "type": "string", "description": "CSS selector or @eN ref targeting the native select or custom dropdown trigger (e.g. \"@e4\", \"select#country\", \"button[role='combobox']\")." },
+                "value": { "type": "string", "description": "The value attribute of the option to select (e.g. \"us\", \"medium\"). For custom dropdowns without exposed values, this is matched against visible option text." },
+                "label": { "type": "string", "description": "The visible text of the option to select (e.g. \"United States\", \"Medium\"). Use when you know the display text." },
+                "index": { "type": "integer", "description": "Zero-based index of the <option> to select (0 = first option). Use when value/label are unknown." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["selector"],
             "additionalProperties": false
         }),
-        instructions: Some("Provide `selector` for the <select> element, then one of `value`, `label`, or `index` to identify the option. Returns a `page_state` with the updated page structure after selection. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e4\")."),
+        instructions: Some("Works on native `<select>` elements and custom ARIA or portal-rendered dropdowns. Provide `selector`, then optionally set `value`, `label`, or `index` to choose an option. If all three are omitted, the tool opens the dropdown, lists the currently visible options, and returns them without selecting. Returns a `page_state` with the updated page structure after selection or list-mode open. The selector field accepts CSS selectors or @eN element refs from page_map output (e.g., \"@e4\")."),
     }
 }
 
@@ -258,7 +265,8 @@ fn hover_tool() -> ToolSpec {
         input_schema: json!({
             "type": "object",
             "properties": {
-                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map targeting the element to hover over (e.g. \"@e2\", \".menu-trigger\", \"nav li\")." }
+                "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map targeting the element to hover over (e.g. \"@e2\", \".menu-trigger\", \"nav li\")." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["selector"],
             "additionalProperties": false
@@ -275,7 +283,8 @@ fn press_key_tool() -> ToolSpec {
             "type": "object",
             "properties": {
                 "key": { "type": "string", "description": "Key to press — use Playwright key names: \"Enter\", \"Escape\", \"Tab\", \"ArrowDown\", \"ArrowUp\", \"Backspace\", \"Space\", or single characters like \"a\". Modifier combos: \"Control+a\", \"Shift+Tab\"." },
-                "selector": { "type": "string", "description": "Optional CSS selector or @eN ref to focus before pressing the key. If omitted, the key is dispatched to the currently focused element or the page." }
+                "selector": { "type": "string", "description": "Optional CSS selector or @eN ref to focus before pressing the key. If omitted, the key is dispatched to the currently focused element or the page." },
+                "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "required": ["key"],
             "additionalProperties": false
@@ -303,7 +312,7 @@ fn execute_js_tool() -> ToolSpec {
 fn page_map_tool() -> ToolSpec {
     ToolSpec {
         name: "page_map",
-        description: "Get a comprehensive structural map of the current page including headings (h1–h6 with section sizes), landmark regions, forms with field details, links (text + href, capped at 50), and interactive elements (buttons, inputs, selects with state and @eN refs). Use to discover page structure before interacting, or with scope to inspect a specific modal/dialog without background noise. Each interactive element returns a stable @eN reference for use in click, fill_form, hover, press_key, and select_option.",
+        description: "Get a comprehensive structural map of the current page including headings (h1–h6 with section sizes), landmark regions, forms with field details, links (text + href, capped at 50), and interactive elements (buttons, inputs, selects with state and @eN refs). Also returns a regions hierarchy (sidebar/main/dialog), the active_dialog, and non-form controls alongside headings/landmarks/links/interactive. Use to discover page structure before interacting, or with scope to inspect a specific modal/dialog without background noise. Scope accepts semantic tokens ('dialog', 'main', 'sidebar') or a region handle (@r1) in addition to a raw CSS selector. Each interactive element returns a stable @eN reference for use in click, fill_form, hover, press_key, and select_option.",
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -314,7 +323,7 @@ fn page_map_tool() -> ToolSpec {
             },
             "additionalProperties": false
         }),
-        instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page. Use links[].href with navigate instead of clicking when the URL is visible. Each interactive element includes a `ref` field (@e1, @e2, ...) — use these stable handles in click, fill_form, hover, press_key, and select_option instead of copying full CSS selectors."),
+        instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), a regions hierarchy (sidebar/main/dialog with @rN handles), the active_dialog, non-form controls, and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page — scope accepts a raw CSS selector, a semantic token ('dialog', 'main', 'sidebar'), or a region handle (@r1). Use links[].href with navigate instead of clicking when the URL is visible. Each interactive element includes a `ref` field (@e1, @e2, ...) — use these stable handles in click, fill_form, hover, press_key, and select_option instead of copying full CSS selectors."),
     }
 }
 

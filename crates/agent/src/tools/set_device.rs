@@ -343,7 +343,7 @@ pub async fn execute(
     crawl_state.action_cache = None;
     crawl_state.current_device = Some(device_name.clone());
 
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state = super::feedback::post_action_page_state(browser, None, false).await;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "success": true,

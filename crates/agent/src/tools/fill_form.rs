@@ -12,6 +12,7 @@ struct FillFormInput {
     fields: BTreeMap<String, String>,
     submit: bool,
     form_selector: String,
+    widen: bool,
 }
 
 fn parse_input(input: &Value) -> Result<FillFormInput, CrawlError> {
@@ -50,6 +51,7 @@ fn parse_input(input: &Value) -> Result<FillFormInput, CrawlError> {
         fields,
         submit,
         form_selector,
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 
@@ -70,15 +72,11 @@ pub async fn execute(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    for (selector, value) in &resolved_fields {
-        browser
-            .acquire_bridge()
-            .await
-            .map_err(|e| ToolExecutionError::new(e.to_string()))?
-            .fill(selector, value)
-            .await
-            .map_err(|e| ToolExecutionError::new(format!("failed to fill '{selector}': {e}")))?;
-    }
+    let resolved_form_selector =
+        super::ref_resolve::resolve_selector(&params.form_selector, browser.ref_map())
+            .map_err(ToolExecutionError::new)?;
+
+    fill_fields(browser, &resolved_fields).await?;
 
     if params.submit {
         let pre_url = match browser.acquire_bridge().await {
@@ -100,15 +98,26 @@ pub async fn execute(
                 if (form.dispatchEvent(evt)) form.submit();
                 return 'dispatched';
             }})()"#,
-            params.form_selector.replace('\'', "\\'")
+            resolved_form_selector.replace('\'', "\\'")
         );
-        browser
+        let submit_result = browser
             .acquire_bridge()
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?
             .evaluate(&js)
             .await
             .map_err(|e| ToolExecutionError::new(format!("failed to submit form: {e}")))?;
+
+        let outcome = submit_result
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+
+        if outcome == "form_not_found" {
+            return Err(ToolExecutionError::new(format!(
+                "no <form> matched selector '{resolved_form_selector}'; to submit a div-based SPA form, use click(text='Submit') instead"
+            )));
+        }
 
         if let Some(ref old_url) = pre_url {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
@@ -131,7 +140,12 @@ pub async fn execute(
     }
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        Some(&resolved_form_selector),
+        params.widen,
+    )
+    .await;
 
     let field_count = params.fields.len();
     Ok(ToolEffect::reply_json(&serde_json::json!({
@@ -143,6 +157,120 @@ pub async fn execute(
         ),
         "page_state": page_state
     })))
+}
+
+async fn fill_fields(
+    browser: &mut BrowserContext,
+    resolved_fields: &[(String, String)],
+) -> Result<(), ToolExecutionError> {
+    for (selector, value) in resolved_fields {
+        let fast_path = browser
+            .acquire_bridge()
+            .await
+            .map_err(|e| ToolExecutionError::new(e.to_string()))?
+            .fill(selector, value)
+            .await;
+
+        if let Err(fast_err) = fast_path {
+            // Fallback for controls outside any <form> (div-based admin UIs,
+            // modals, panels): fuzzy-match the field against page-wide labels.
+            match resolve_field_by_label(browser, selector).await? {
+                Some(fuzzy_selector) => {
+                    browser
+                        .acquire_bridge()
+                        .await
+                        .map_err(|e| ToolExecutionError::new(e.to_string()))?
+                        .fill(&fuzzy_selector, value)
+                        .await
+                        .map_err(|e| {
+                            ToolExecutionError::new(format!(
+                                "failed to fill '{selector}' (matched label to '{fuzzy_selector}'): {e}"
+                            ))
+                        })?;
+                }
+                None => {
+                    return Err(ToolExecutionError::new(format!(
+                        "failed to fill '{selector}': {fast_err}"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn resolve_field_by_label(
+    browser: &mut BrowserContext,
+    label_query: &str,
+) -> Result<Option<String>, ToolExecutionError> {
+    let script = r#"(() => {
+        function selectorOf(el) {
+            if (el.id) return '#' + CSS.escape(el.id);
+            const path = [];
+            let cur = el;
+            while (cur && cur.parentElement) {
+                if (cur.id) { path.unshift('#' + CSS.escape(cur.id)); break; }
+                const parent = cur.parentElement;
+                const tag = cur.tagName.toLowerCase();
+                const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+                path.unshift(same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(cur) + 1) + ')' : tag);
+                cur = parent;
+            }
+            return path.join(' > ');
+        }
+        const results = [];
+        const controls = document.querySelectorAll(
+            'input:not([type="hidden"]), textarea, select, ' +
+            '[role="checkbox"], [role="switch"], [role="combobox"], [role="textbox"]'
+        );
+        for (const el of controls) {
+            let label = '';
+            // 1. label[for=id]
+            if (el.id) {
+                const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                if (lbl) label = lbl.innerText.trim();
+            }
+            // 2. parent <label>
+            if (!label) {
+                const parent = el.closest('label');
+                if (parent) label = parent.innerText.replace(el.value || '', '').trim();
+            }
+            // 3. aria-label
+            if (!label) label = el.getAttribute('aria-label') || '';
+            // 4. aria-labelledby (space-separated list of ids per spec)
+            if (!label) {
+                const lblById = el.getAttribute('aria-labelledby');
+                if (lblById) label = lblById.split(/\s+/).filter(Boolean)
+                    .map(id => document.getElementById(id)?.innerText?.trim() || '')
+                    .filter(Boolean).join(' ').trim();
+            }
+            // 5. placeholder / title / name
+            if (!label) label = el.placeholder || el.title || el.name || '';
+
+            if (label) {
+                results.push([label.slice(0, 80), selectorOf(el)]);
+            }
+        }
+        return results;
+    })()"#;
+
+    let raw = browser
+        .acquire_bridge()
+        .await
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?
+        .evaluate(script)
+        .await
+        .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+
+    let pairs: Vec<(String, String)> = raw
+        .get("value")
+        .and_then(|v| serde_json::from_value::<Vec<[String; 2]>>(v.clone()).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|[name, sel]| (name, sel))
+        .collect();
+
+    Ok(crate::semantic::match_text(label_query, &pairs, None).map(|(best, _)| best))
 }
 
 #[cfg(test)]
@@ -227,5 +355,46 @@ mod tests {
         assert!(response["page_state"]["url"].is_string());
         assert!(response["page_state"]["title"].is_string());
         assert!(!response["page_state"]["page_map"].is_null());
+    }
+
+    #[test]
+    fn match_text_exact_wins_over_fuzzy() {
+        let candidates = vec![
+            ("Email address".to_string(), "#email".to_string()),
+            ("Password".to_string(), "#pw".to_string()),
+        ];
+        let (best, _) = crate::semantic::match_text("Email address", &candidates, None).unwrap();
+        assert_eq!(best, "#email");
+    }
+
+    #[test]
+    fn match_text_case_insensitive_fallback() {
+        let candidates = vec![("Email address".to_string(), "#email".to_string())];
+        let (best, _) = crate::semantic::match_text("email address", &candidates, None).unwrap();
+        assert_eq!(best, "#email");
+    }
+
+    #[test]
+    fn match_text_contains_fallback() {
+        let candidates = vec![("Email address".to_string(), "#email".to_string())];
+        let (best, _) = crate::semantic::match_text("email", &candidates, None).unwrap();
+        assert_eq!(best, "#email");
+    }
+
+    #[test]
+    fn match_text_no_match_returns_none() {
+        let candidates = vec![("Email address".to_string(), "#email".to_string())];
+        assert!(crate::semantic::match_text("phone", &candidates, None).is_none());
+    }
+
+    #[test]
+    fn match_text_ambiguous_returns_best_and_alternatives() {
+        let candidates = vec![
+            ("Name".to_string(), "#name-1".to_string()),
+            ("Name".to_string(), "#name-2".to_string()),
+        ];
+        let (best, alternatives) = crate::semantic::match_text("Name", &candidates, None).unwrap();
+        assert_eq!(best, "#name-1");
+        assert_eq!(alternatives, vec!["#name-2".to_string()]);
     }
 }

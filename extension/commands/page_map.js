@@ -1,151 +1,5 @@
 'use strict';
 
-const pageMapCache = new Map();
-
-function urlWithoutHash(url) {
-  const idx = url.indexOf('#');
-  if (idx === -1) return url;
-  const frag = url.slice(idx + 1);
-  if (frag.startsWith('/') || frag.startsWith('!/')) return url;
-  return url.slice(0, idx);
-}
-
-function headingKey(h) { return `${h.level}:${h.text}`; }
-function linkKey(l) { return `${l.text}\x00${l.href}`; }
-function landmarkKey(lm) { return `${lm.tag || ''}\x00${lm.role || ''}\x00${lm.id || ''}`; }
-
-function diffArrays(prev, curr, keyFn) {
-  const prevCounts = Object.create(null);
-  for (const item of prev) {
-    const k = keyFn(item);
-    prevCounts[k] = (prevCounts[k] || 0) + 1;
-  }
-  const currCounts = Object.create(null);
-  for (const item of curr) {
-    const k = keyFn(item);
-    currCounts[k] = (currCounts[k] || 0) + 1;
-  }
-
-  const addedBudget = Object.create(null);
-  for (const k of Object.keys(currCounts)) {
-    const diff = currCounts[k] - (prevCounts[k] || 0);
-    if (diff > 0) addedBudget[k] = diff;
-  }
-  const removedBudget = Object.create(null);
-  for (const k of Object.keys(prevCounts)) {
-    const diff = prevCounts[k] - (currCounts[k] || 0);
-    if (diff > 0) removedBudget[k] = diff;
-  }
-
-  const added = curr.filter(item => {
-    const k = keyFn(item);
-    if (addedBudget[k] > 0) { addedBudget[k]--; return true; }
-    return false;
-  });
-  const removed = prev.filter(item => {
-    const k = keyFn(item);
-    if (removedBudget[k] > 0) { removedBudget[k]--; return true; }
-    return false;
-  });
-  return { added, removed };
-}
-
-function computePageMapDiff(prev, current) {
-  const url = current.meta?.url || 'unknown';
-  const title = current.meta?.title || 'unknown';
-
-  const { added: addedHeadings, removed: removedHeadings } =
-    diffArrays(prev.headings || [], current.headings || [], headingKey);
-  const { added: addedLinks, removed: removedLinks } =
-    diffArrays(prev.links || [], current.links || [], linkKey);
-  const { added: addedLandmarks, removed: removedLandmarks } =
-    diffArrays(prev.landmarks || [], current.landmarks || [], landmarkKey);
-
-  const STATE_FIELDS = ['disabled', 'checked', 'value', 'aria_pressed', 'aria_expanded', 'aria_selected'];
-  const MAX_INTERACTIVE_DIFF = 5;
-  const prevElements = prev.interactive?.elements || [];
-  const currElements = current.interactive?.elements || [];
-  const prevBySelector = Object.create(null);
-  for (const el of prevElements) {
-    if (el.selector) prevBySelector[el.selector] = el;
-  }
-  const currBySelector = Object.create(null);
-  for (const el of currElements) {
-    if (el.selector) currBySelector[el.selector] = el;
-  }
-
-  const briefEntry = (el) => {
-    const e = { selector: el.selector };
-    if (el.tag) e.tag = el.tag;
-    if (el.text) e.text = el.text;
-    if (el.role) e.role = el.role;
-    return e;
-  };
-
-  const addedInteractive = currElements
-    .filter(el => el.selector && !prevBySelector[el.selector])
-    .slice(0, MAX_INTERACTIVE_DIFF)
-    .map(briefEntry);
-
-  const removedInteractive = prevElements
-    .filter(el => el.selector && !currBySelector[el.selector])
-    .slice(0, MAX_INTERACTIVE_DIFF)
-    .map(briefEntry);
-
-  const modifiedInteractive = [];
-  for (const el of currElements) {
-    if (!el.selector) continue;
-    const prevEl = prevBySelector[el.selector];
-    if (!prevEl) continue;
-    const stateChanges = {};
-    for (const field of STATE_FIELDS) {
-      const pv = prevEl[field] ?? null;
-      const cv = el[field] ?? null;
-      if (pv !== cv) stateChanges[field] = cv;
-    }
-    if (Object.keys(stateChanges).length > 0) {
-      const entry = { selector: el.selector };
-      if (el.tag) entry.tag = el.tag;
-      if (el.text) entry.text = el.text;
-      entry.state_changes = stateChanges;
-      modifiedInteractive.push(entry);
-    }
-  }
-
-  const hasChanges = addedHeadings.length + removedHeadings.length +
-    addedLinks.length + removedLinks.length +
-    addedLandmarks.length + removedLandmarks.length +
-    addedInteractive.length + removedInteractive.length +
-    modifiedInteractive.length > 0;
-
-  if (!hasChanges) {
-    return { url, title, changed: false };
-  }
-
-  const totalPrev = (prev.headings || []).length +
-    (prev.links || []).length + (prev.landmarks || []).length;
-  const totalChanged = addedHeadings.length + removedHeadings.length +
-    addedLinks.length + removedLinks.length +
-    addedLandmarks.length + removedLandmarks.length;
-
-  if (totalPrev > 0 && totalChanged > totalPrev) {
-    return null; // diff too large, caller should return full
-  }
-
-  const changes = {};
-  if (addedHeadings.length) changes.added_headings = addedHeadings;
-  if (removedHeadings.length) changes.removed_headings = removedHeadings;
-  if (addedLinks.length) changes.added_links = addedLinks;
-  if (removedLinks.length) changes.removed_links = removedLinks;
-  if (addedLandmarks.length) changes.added_landmarks = addedLandmarks;
-  if (removedLandmarks.length) changes.removed_landmarks = removedLandmarks;
-  if (addedInteractive.length) changes.added_interactive = addedInteractive;
-  if (removedInteractive.length) changes.removed_interactive = removedInteractive;
-  if (modifiedInteractive.length) changes.modified_interactive = modifiedInteractive;
-
-  return { url, title, changed: true, changes };
-}
-
 function pageMapScript(scope) {
   let root = document;
   if (scope) {
@@ -198,6 +52,34 @@ function pageMapScript(scope) {
     selector: cssPath(el),
     text_preview: (el.innerText || '').trim().slice(0, 120),
   }));
+  const regionSelector = 'nav, main, aside, article, header, footer, section, form, ' +
+    '[role="dialog"], [role="alertdialog"], [role="region"], ' +
+    '[role="navigation"], [role="main"], [role="complementary"], ' +
+    '[role="banner"], [role="form"], ' +
+    '[aria-modal="true"], section[aria-label], [popover]';
+  const regionNodes = Array.from(root.querySelectorAll(regionSelector));
+  const regionCandidates = regionNodes.map((el) => {
+    const parent = el.parentElement;
+    const parentIdx = parent ? regionNodes.indexOf(parent) : null;
+    return {
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role') || null,
+      aria_label: el.getAttribute('aria-label') || null,
+      id: el.id || null,
+      depth: (function countDepth(node, scopeRoot) {
+        let d = 0;
+        let cur = node;
+        while (cur && cur !== scopeRoot) {
+          d++;
+          cur = cur.parentElement;
+        }
+        return d;
+      })(el, root),
+      parent_idx: parentIdx >= 0 ? parentIdx : null,
+      selector: cssPath(el),
+      visible: !el.hidden && (function(e) { const s = window.getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden' && e.getBoundingClientRect().height > 0; })(el),
+    };
+  });
   const total_landmarks = landmarks.length;
   const cappedLandmarks = landmarks.slice(0, 20);
 
@@ -342,6 +224,27 @@ function pageMapScript(scope) {
     }
   }
   const interactive = { counts, elements: interactiveEls };
+  const nonFormControls = Array.from(root.querySelectorAll(
+    'input:not(form input), select:not(form select), textarea:not(form textarea), ' +
+    'button:not(form button), [role="checkbox"]:not(form [role="checkbox"]), ' +
+    '[role="switch"]:not(form [role="switch"]), [role="combobox"]:not(form [role="combobox"])'
+  )).map(el => ({
+    tag: el.tagName.toLowerCase(),
+    role: el.getAttribute('role') || null,
+    text: (el.innerText || '').trim().slice(0, 120),
+    aria_label: el.getAttribute('aria-label') || null,
+    aria_labelledby_text: (() => {
+      const id = el.getAttribute('aria-labelledby');
+      return id ? (document.getElementById(id)?.innerText?.trim() || null) : null;
+    })(),
+    title: el.title || null,
+    placeholder: el.placeholder || null,
+    name: el.name || null,
+    value: el.value || null,
+    required: Boolean(el.required),
+    disabled: Boolean(el.disabled),
+    selector: cssPath(el),
+  }));
 
   const meta = {
     title: document.title,
@@ -349,14 +252,13 @@ function pageMapScript(scope) {
     url: window.location.href,
   };
 
-  return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, total_landmarks, total_forms, total_links };
+  return { headings, landmarks: cappedLandmarks, forms, links, interactive, meta, regionCandidates, nonFormControls, total_landmarks, total_forms, total_links };
 }
 
 async function handlePageMap(tabId, payload) {
   await ensureAttached(tabId);
 
   const scope = (payload && payload.scope) || null;
-  const diffMode = Boolean(payload && payload.diff);
   const expression = scope
     ? `(${pageMapScript.toString()})(${JSON.stringify(scope)})`
     : `(${pageMapScript.toString()})(null)`;
@@ -370,25 +272,5 @@ async function handlePageMap(tabId, payload) {
     throw new Error(res.exceptionDetails.text || 'page_map script threw exception');
   }
 
-  const current = res.result?.value || {};
-
-  if (diffMode && !scope) {
-    const currentUrl = urlWithoutHash(current.meta?.url || '');
-    const cached = pageMapCache.get(tabId);
-
-    if (cached && cached.url === currentUrl) {
-      const diff = computePageMapDiff(cached.data, current);
-      pageMapCache.set(tabId, { url: currentUrl, data: current });
-      if (diff !== null) {
-        return diff;
-      }
-    } else {
-      pageMapCache.set(tabId, { url: currentUrl, data: current });
-    }
-  } else if (!scope) {
-    const currentUrl = urlWithoutHash(current.meta?.url || '');
-    pageMapCache.set(tabId, { url: currentUrl, data: current });
-  }
-
-  return current;
+  return res.result?.value || {};
 }

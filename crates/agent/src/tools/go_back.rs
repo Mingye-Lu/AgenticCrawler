@@ -22,7 +22,7 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let page_state = super::feedback::post_action_page_state(browser, None, false).await;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
         "seq": seq,

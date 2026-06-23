@@ -14,9 +14,11 @@ const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Build structured page state from a raw `page_map` value (full, no diff).
 ///
-/// Applies caps, extracts url/title from meta, and strips `forms` and
-/// `interactive` fields to keep interaction responses concise.
+/// Applies caps, extracts url/title from meta, preserves `regions` and
+/// `active_dialog`, and strips `forms`, `interactive`, and `controls` to keep
+/// interaction responses concise.
 pub fn build_page_state_from_map(mut pm: Value) -> Value {
+    super::page_map::enrich_semantic_sections(&mut pm);
     apply_page_map_caps(&mut pm);
 
     let url = pm
@@ -36,6 +38,7 @@ pub fn build_page_state_from_map(mut pm: Value) -> Value {
     if let Some(obj) = pm.as_object_mut() {
         obj.remove("forms");
         obj.remove("interactive");
+        obj.remove("controls");
     }
 
     json!({
@@ -383,37 +386,120 @@ fn fallback_value() -> Value {
     })
 }
 
+fn evaluate_payload(value: &Value) -> &Value {
+    value.get("value").unwrap_or(value)
+}
+
+fn active_dialog_scope(snapshot: &Value) -> Option<String> {
+    let dialog = snapshot.get("active_dialog")?;
+    if dialog
+        .get("visible")
+        .and_then(Value::as_bool)
+        .is_some_and(|visible| !visible)
+    {
+        return None;
+    }
+
+    dialog
+        .get("selector")
+        .and_then(Value::as_str)
+        .filter(|selector| !selector.is_empty())
+        .map(str::to_string)
+}
+
+async fn resolve_interacted_scope(
+    dialog_scope: Option<String>,
+    interacted_selector: Option<&str>,
+    widen: bool,
+    bridge: &mut (dyn browser::BrowserBackend + Send),
+) -> Option<String> {
+    if widen {
+        return None;
+    }
+
+    if let Some(scope) = dialog_scope {
+        return Some(scope);
+    }
+
+    let selector = interacted_selector?;
+    let selector_json = serde_json::to_string(selector).ok()?;
+    let script = format!(
+        r"(() => {{
+            const el = document.querySelector({selector_json});
+            if (!el) return null;
+            let cur = el;
+            while (cur && cur !== document.body) {{
+                const role = cur.getAttribute('role');
+                if (
+                    ['dialog', 'alertdialog', 'region', 'main', 'complementary', 'navigation', 'form'].includes(role) ||
+                    ['DIALOG', 'MAIN', 'ASIDE', 'NAV', 'FORM', 'SECTION', 'ARTICLE'].includes(cur.tagName)
+                ) {{
+                    if (cur.id) return '#' + CSS.escape(cur.id);
+                    if (role === 'dialog' || role === 'alertdialog') {{
+                        return '[role=' + role + ']';
+                    }}
+                    return null;
+                }}
+                cur = cur.parentElement;
+            }}
+            return null;
+        }})()"
+    );
+
+    bridge
+        .evaluate(&script)
+        .await
+        .ok()
+        .and_then(|value| evaluate_payload(&value).as_str().map(str::to_string))
+}
+
+fn page_state_from_feedback_map(
+    browser: &mut BrowserContext,
+    scope: Option<&str>,
+    mut pm: Value,
+) -> Value {
+    // Enrich in place before caching so stored snapshots preserve regions and
+    // active_dialog for later scoped interactions.
+    super::page_map::enrich_semantic_sections(&mut pm);
+
+    let full_url = extract_url(&pm).to_string();
+    let cache_key = normalize_url(&full_url).to_string();
+
+    let response = match browser.page_snapshot_for_url(&cache_key, scope) {
+        Some(prev) => build_diff_page_state(prev, &mut pm),
+        None => build_page_state_from_map(pm.clone()),
+    };
+
+    browser.set_page_snapshot(&cache_key, scope, pm);
+    response
+}
+
 /// Best-effort post-action page state for interaction tool responses.
 ///
-/// Calls `page_map_feedback` on the bridge (which may return a pre-computed
-/// diff from the extension, or a full `page_map` from Playwright). If the
-/// response is already a diff, passes it through. Otherwise applies
-/// Rust-side differential comparison against the cached snapshot.
-pub async fn post_action_page_state(browser: &mut BrowserContext) -> Value {
+/// Calls `page_map_feedback` on the bridge and applies Rust-side differential
+/// comparison against the cached snapshot.
+pub async fn post_action_page_state(
+    browser: &mut BrowserContext,
+    interacted_selector: Option<&str>,
+    widen: bool,
+) -> Value {
+    let dialog_scope = if widen {
+        None
+    } else {
+        browser.last_page_snapshot().and_then(active_dialog_scope)
+    };
+
     let result = timeout(FEEDBACK_TIMEOUT, async {
         let mut bridge = browser.acquire_bridge().await?;
-        bridge.page_map_feedback().await
+        let scope =
+            resolve_interacted_scope(dialog_scope, interacted_selector, widen, &mut **bridge).await;
+        let page_map = bridge.page_map_feedback(scope.as_deref()).await?;
+        Ok::<_, browser::BridgeError>((scope, page_map))
     })
     .await;
 
     match result {
-        Ok(Ok(pm)) => {
-            if pm.get("changed").is_some() {
-                return pm;
-            }
-
-            let mut pm = pm;
-            let full_url = extract_url(&pm).to_string();
-            let cache_key = normalize_url(&full_url).to_string();
-
-            let response = match browser.page_snapshot_for_url(&cache_key) {
-                Some(prev) => build_diff_page_state(prev, &mut pm),
-                None => build_page_state_from_map(pm.clone()),
-            };
-
-            browser.set_page_snapshot(cache_key, pm);
-            response
-        }
+        Ok(Ok((scope, pm))) => page_state_from_feedback_map(browser, scope.as_deref(), pm),
         _ => fallback_value(),
     }
 }
@@ -431,9 +517,208 @@ pub fn record_page_fingerprint(url: &str, page_map: &Value, crawl_state: &mut Cr
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::Mutex as StdMutex;
 
-    use super::{build_diff_page_state, build_page_state_from_map, fallback_value};
+    use async_trait::async_trait;
+    use browser::{
+        BridgeError, BrowserState, PageInfo, ScreenshotOptions, StorageEntry, StorageType,
+    };
+    use tokio::sync::Mutex;
+
+    use serde_json::{json, Value};
+
+    use super::{
+        build_diff_page_state, build_page_state_from_map, fallback_value,
+        page_state_from_feedback_map, post_action_page_state,
+    };
+    use crate::BrowserContext;
+    use browser::BrowserBackend;
+
+    #[derive(Debug, Default)]
+    struct FeedbackMockState {
+        page_maps: HashMap<String, Value>,
+        requested_scopes: Vec<Option<String>>,
+        evaluate_result: Value,
+        evaluate_scripts: Vec<String>,
+    }
+
+    #[derive(Debug)]
+    struct FeedbackMockBackend {
+        state: Arc<StdMutex<FeedbackMockState>>,
+    }
+
+    #[async_trait]
+    impl BrowserBackend for FeedbackMockBackend {
+        async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
+            Ok(PageInfo {
+                title: "Test".to_string(),
+                html: String::new(),
+            })
+        }
+
+        async fn new_page(&mut self, _url: Option<&str>) -> Result<usize, BridgeError> {
+            Ok(0)
+        }
+
+        async fn close_page(&mut self, _page_index: usize) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn scroll(&mut self, _direction: &str, _pixels: i64) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn page_map(
+            &mut self,
+            scope: Option<&str>,
+            _compound_enrichment: bool,
+        ) -> Result<Value, BridgeError> {
+            let mut state = self.state.lock().expect("mock state poisoned");
+            state.requested_scopes.push(scope.map(str::to_string));
+            let key = scope.unwrap_or("").to_string();
+            state
+                .page_maps
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| BridgeError::Protocol(format!("missing page_map for scope '{key}'")))
+        }
+
+        async fn read_content(
+            &mut self,
+            _heading: Option<&str>,
+            _selector: Option<&str>,
+            _offset: usize,
+            _max_chars: usize,
+        ) -> Result<Value, BridgeError> {
+            Ok(json!({}))
+        }
+
+        async fn wait_for_selector(
+            &mut self,
+            _selector: &str,
+            _timeout_ms: u64,
+            _state: Option<&str>,
+        ) -> Result<bool, BridgeError> {
+            Ok(true)
+        }
+
+        async fn select_option(
+            &mut self,
+            _selector: &str,
+            _value: &str,
+        ) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn evaluate(&mut self, script: &str) -> Result<Value, BridgeError> {
+            let mut state = self.state.lock().expect("mock state poisoned");
+            state.evaluate_scripts.push(script.to_string());
+            Ok(state.evaluate_result.clone())
+        }
+
+        async fn hover(&mut self, _selector: &str) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn press_key(
+            &mut self,
+            _key: &str,
+            _selector: Option<&str>,
+        ) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn switch_tab(&mut self, _index: i64) -> Result<Value, BridgeError> {
+            Ok(json!({ "ok": true }))
+        }
+
+        async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
+            Ok(BrowserState {
+                cookies: Value::Array(Vec::new()),
+                local_storage: Value::Object(serde_json::Map::new()),
+                url: String::new(),
+            })
+        }
+
+        async fn import_cookies(&mut self, _state: &BrowserState) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn import_cookies_only(&mut self, _state: &BrowserState) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn import_local_storage(&mut self, _state: &BrowserState) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn list_resources(&mut self) -> Result<Value, BridgeError> {
+            Ok(json!([]))
+        }
+
+        async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+            Ok(String::new())
+        }
+
+        async fn click(&mut self, _selector: &str) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn click_at(&mut self, _x: f64, _y: f64) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn fill(&mut self, _selector: &str, _value: &str) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn screenshot(
+            &mut self,
+            _options: &ScreenshotOptions<'_>,
+        ) -> Result<(String, usize), BridgeError> {
+            Ok((String::new(), 0))
+        }
+
+        async fn go_back(&mut self) -> Result<String, BridgeError> {
+            Ok(String::new())
+        }
+
+        async fn set_device(&mut self, _options: &Value) -> Result<Value, BridgeError> {
+            Ok(json!({}))
+        }
+
+        async fn poll_observations(
+            &mut self,
+        ) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
+
+        async fn get_storage(
+            &mut self,
+            _target: StorageType,
+        ) -> Result<(Vec<StorageEntry>, Vec<StorageEntry>), BridgeError> {
+            Ok((Vec::new(), Vec::new()))
+        }
+    }
+
+    fn browser_with_feedback_backend(
+        state: FeedbackMockState,
+        url: &str,
+    ) -> (BrowserContext, Arc<StdMutex<FeedbackMockState>>) {
+        let state = Arc::new(StdMutex::new(state));
+        let bridge = Arc::new(Mutex::new(Box::new(FeedbackMockBackend {
+            state: Arc::clone(&state),
+        }) as Box<dyn BrowserBackend + Send>));
+        let mut browser = BrowserContext::new(bridge);
+        browser.set_navigated_url(url, true);
+        (browser, state)
+    }
 
     #[test]
     fn feedback_fallback_value_has_correct_shape() {
@@ -488,6 +773,31 @@ mod tests {
                     "selector": "a.home"
                 }
             ],
+            "regions": [
+                {
+                    "kind": "Main",
+                    "label": "main panel",
+                    "handle": "@r1",
+                    "selector": "main",
+                    "visible": true,
+                    "children": []
+                }
+            ],
+            "active_dialog": {
+                "handle": "@r2",
+                "selector": "#confirm-dialog",
+                "label": "Confirm"
+            },
+            "controls": [
+                {
+                    "label": "Search",
+                    "role": "textbox",
+                    "selector": "#search",
+                    "value": null,
+                    "required": false,
+                    "disabled": false
+                }
+            ],
             "interactive": {
                 "buttons": 3,
                 "inputs": 2,
@@ -511,6 +821,8 @@ mod tests {
         assert!(pm["headings"].is_array());
         assert!(pm["landmarks"].is_array());
         assert!(pm["links"].is_array());
+        assert!(pm["regions"].is_array());
+        assert!(pm.get("active_dialog").is_some());
         assert!(pm["meta"].is_object());
 
         assert!(
@@ -520,6 +832,10 @@ mod tests {
         assert!(
             pm.get("interactive").is_none(),
             "interactive should be removed from page_map"
+        );
+        assert!(
+            pm.get("controls").is_none(),
+            "controls should be removed from page_map"
         );
 
         assert!(pm.get("truncated_links").is_some());
@@ -873,6 +1189,54 @@ mod tests {
     }
 
     #[test]
+    fn extension_style_raw_page_map_uses_same_diff_as_bridge_path() {
+        let prev = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+        let mut current = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {
+                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
+                "elements": [
+                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"},
+                    {"tag": "button", "text": "Delete", "selector": "#del-btn", "type": "submit"}
+                ]
+            },
+            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
+        });
+
+        let bridge = Arc::new(Mutex::new(Box::new(
+            crate::tools::test_support::ObservationMockBackend::default(),
+        ) as Box<dyn BrowserBackend + Send>));
+        let mut browser = BrowserContext::new(bridge);
+        browser.set_page_snapshot("https://example.com/", None, prev.clone());
+
+        let extension_path = page_state_from_feedback_map(&mut browser, None, current.clone());
+        let bridge_path = build_diff_page_state(&prev, &mut current);
+
+        assert_eq!(extension_path, bridge_path);
+        assert_eq!(extension_path["changed"], true);
+        let added = extension_path["changes"]["added_interactive"]
+            .as_array()
+            .expect("added_interactive should be present");
+        assert_eq!(added.len(), 1);
+        assert_eq!(added[0]["selector"], "#del-btn");
+    }
+
+    #[test]
     fn diff_removed_interactive_elements_detected() {
         let prev = json!({
             "headings": [],
@@ -950,5 +1314,278 @@ mod tests {
         assert_eq!(modified.len(), 1);
         assert_eq!(modified[0]["selector"], "#dropdown");
         assert_eq!(modified[0]["state_changes"]["value"], "Option 1");
+    }
+
+    #[test]
+    fn scoped_diff_filters_to_container() {
+        let url = "https://example.com/settings";
+        let prev_full = json!({
+            "headings": [
+                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
+            ],
+            "landmarks": [
+                {"tag": "main", "role": "main", "id": "content", "selector": "main", "text_preview": "Content"}
+            ],
+            "links": [
+                {"text": "Profile", "href": "https://example.com/profile", "selector": "header a.profile"},
+                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Settings", "url": url, "description": ""}
+        });
+        let mut current_full = json!({
+            "headings": [
+                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
+            ],
+            "landmarks": [
+                {"tag": "main", "role": "main", "id": "content", "selector": "main", "text_preview": "Content"}
+            ],
+            "links": [
+                {"text": "Profile", "href": "https://example.com/profile", "selector": "header a.profile"},
+                {"text": "Billing", "href": "https://example.com/billing", "selector": "header a.billing"},
+                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"},
+                {"text": "Reset", "href": "https://example.com/reset", "selector": "#settings a.reset"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Settings", "url": url, "description": ""}
+        });
+        let prev_scoped = json!({
+            "headings": [
+                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
+            ],
+            "landmarks": [],
+            "links": [
+                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Settings", "url": url, "description": ""}
+        });
+        let current_scoped = json!({
+            "headings": [
+                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
+            ],
+            "landmarks": [],
+            "links": [
+                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"},
+                {"text": "Reset", "href": "https://example.com/reset", "selector": "#settings a.reset"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Settings", "url": url, "description": ""}
+        });
+
+        let full_diff = build_diff_page_state(&prev_full, &mut current_full);
+
+        let bridge = Arc::new(Mutex::new(Box::new(
+            crate::tools::test_support::ObservationMockBackend::default(),
+        ) as Box<dyn BrowserBackend + Send>));
+        let mut browser = BrowserContext::new(bridge);
+        browser.set_page_snapshot(url, Some("#settings"), prev_scoped);
+
+        let scoped_diff =
+            page_state_from_feedback_map(&mut browser, Some("#settings"), current_scoped);
+
+        assert_eq!(
+            full_diff["changes"]["added_links"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            scoped_diff["changes"]["added_links"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(scoped_diff["changes"]["added_links"][0]["text"], "Reset");
+    }
+
+    #[tokio::test]
+    async fn active_dialog_scope_uses_dialog_baseline() {
+        let url = "https://example.com/page";
+        let prev_dialog = json!({
+            "headings": [
+                {"level": 2, "text": "Confirm", "selector": "#confirm-dialog h2", "char_count": 10, "preview": "Confirm"}
+            ],
+            "landmarks": [
+                {"tag": "dialog", "role": "dialog", "id": "confirm-dialog", "selector": "#confirm-dialog", "text_preview": "Confirm dialog"}
+            ],
+            "links": [
+                {"text": "Cancel", "href": "https://example.com/cancel", "selector": "#confirm-dialog a.cancel"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Dialog", "url": url, "description": ""}
+        });
+        let current_dialog = json!({
+            "headings": [
+                {"level": 2, "text": "Confirm", "selector": "#confirm-dialog h2", "char_count": 10, "preview": "Confirm"}
+            ],
+            "landmarks": [
+                {"tag": "dialog", "role": "dialog", "id": "confirm-dialog", "selector": "#confirm-dialog", "text_preview": "Confirm dialog"}
+            ],
+            "links": [
+                {"text": "Cancel", "href": "https://example.com/cancel", "selector": "#confirm-dialog a.cancel"},
+                {"text": "Delete", "href": "https://example.com/delete", "selector": "#confirm-dialog a.delete"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Dialog", "url": url, "description": ""}
+        });
+
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([("#confirm-dialog".to_string(), current_dialog)]),
+                evaluate_result: json!("section"),
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, Some("#confirm-dialog"), prev_dialog);
+        browser.set_page_snapshot(
+            url,
+            None,
+            json!({
+                "headings": [],
+                "landmarks": [],
+                "links": [],
+                "forms": [],
+                "interactive": {},
+                "active_dialog": {"selector": "#confirm-dialog", "visible": true},
+                "meta": {"title": "Page", "url": url, "description": ""}
+            }),
+        );
+
+        let result = post_action_page_state(&mut browser, Some("#outside"), false).await;
+        let state = state.lock().expect("mock state poisoned");
+
+        assert_eq!(
+            state.requested_scopes,
+            vec![Some("#confirm-dialog".to_string())]
+        );
+        assert!(state.evaluate_scripts.is_empty());
+        assert_eq!(result["changes"]["added_links"][0]["text"], "Delete");
+    }
+
+    #[tokio::test]
+    async fn widen_true_returns_full_page_diff() {
+        let url = "https://example.com/page";
+        let prev_full = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"},
+                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": url, "description": ""}
+        });
+        let prev_scoped = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": url, "description": ""}
+        });
+        let current_full = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"},
+                {"text": "Billing", "href": "https://example.com/billing", "selector": "header a.billing"},
+                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"},
+                {"text": "Reset", "href": "https://example.com/reset", "selector": "#panel a.reset"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": url, "description": ""}
+        });
+        let current_scoped = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"},
+                {"text": "Reset", "href": "https://example.com/reset", "selector": "#panel a.reset"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": url, "description": ""}
+        });
+
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([
+                    (String::new(), current_full),
+                    ("section".to_string(), current_scoped),
+                ]),
+                evaluate_result: json!("section"),
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, prev_full);
+        browser.set_page_snapshot(url, Some("section"), prev_scoped);
+
+        let result = post_action_page_state(&mut browser, Some("#trigger"), true).await;
+        let state = state.lock().expect("mock state poisoned");
+
+        assert_eq!(state.requested_scopes, vec![None]);
+        assert!(state.evaluate_scripts.is_empty());
+        assert_eq!(
+            result["changes"]["added_links"].as_array().unwrap().len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn no_container_falls_back_to_full_page() {
+        let url = "https://example.com/page";
+        let prev_full = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": url, "description": ""}
+        });
+        let current_full = json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [
+                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"},
+                {"text": "Billing", "href": "https://example.com/billing", "selector": "header a.billing"}
+            ],
+            "forms": [],
+            "interactive": {},
+            "meta": {"title": "Page", "url": url, "description": ""}
+        });
+
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), current_full)]),
+                evaluate_result: Value::Null,
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, prev_full);
+
+        let result = post_action_page_state(&mut browser, Some("#trigger"), false).await;
+        let state = state.lock().expect("mock state poisoned");
+
+        assert_eq!(state.requested_scopes, vec![None]);
+        assert_eq!(state.evaluate_scripts.len(), 1);
+        assert_eq!(result["changes"]["added_links"][0]["text"], "Billing");
     }
 }
