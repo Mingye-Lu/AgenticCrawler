@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-06-23
+
 ### Added
 
 - **`page_map` — semantic region tree and active dialog detection**: emits a `regions` tree with ephemeral `@rN` handles and human-readable labels (`sidebar`, `main panel`, `admin modal`); `active_dialog` points to the topmost visible overlay; non-`<form>` controls (div-based modal inputs) surface with accessible names. `scope` now also accepts semantic tokens (`"dialog"`, `"main"`, `"sidebar"`) and `@rN` handles in addition to raw CSS selectors.
@@ -790,6 +792,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.12.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.2
 [0.12.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.1
 [0.12.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.0
 [0.11.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.1
