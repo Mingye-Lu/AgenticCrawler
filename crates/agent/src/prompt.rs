@@ -179,6 +179,16 @@ fn section_error_recovery() -> String {
      - CAPTCHA or human verification (e.g. \"verify you are human\", \
      \"unusual traffic\", reCAPTCHA, hCaptcha, checkbox challenges): \
      Stop and report the blocker in your results. Do NOT retry or try to solve it.\n\
+     - reCAPTCHA v3 (invisible, score-based): A navigate result with \
+     recaptcha_detected: true is NOT a blocker by itself — keep reading and \
+     extracting normally, exactly as you would on any other page. Only when a \
+     form submission produces no visible page change (same URL, changed: \
+     false) is this the likely cause: the browser is probably headless, \
+     reCAPTCHA v3 scores headless sessions low, and the server may silently \
+     reject the submission. Do NOT change settings or call any tool to fix \
+     this yourself — report it to the user: a human can retry with `acrawl \
+     config set headless false` (or --headed), or use the extension bridge \
+     (/extension).\n\
      - Login wall or paywall: Stop and report the blocker in your results.\n\
      - Anti-bot detection (403/429 errors, empty page, \"access denied\"): \
      Wait briefly (use the `wait` tool) and retry once. \
@@ -494,5 +504,39 @@ mod tests {
 
         assert_eq!(prompt.len(), 10);
         assert!(prompt[9].contains("You are stuck"));
+    }
+
+    #[test]
+    fn prompt_contains_recaptcha_v3_remedy() {
+        let specs = crate::mvp_tool_specs();
+        let prompt = build_system_prompt(&specs, None);
+        let joined = prompt.join("\n");
+
+        assert_eq!(
+            prompt.len(),
+            9,
+            "guidance appended inside error-recovery must not add a 10th section"
+        );
+
+        assert!(
+            joined.contains("reCAPTCHA v3"),
+            "should mention reCAPTCHA v3"
+        );
+        assert!(
+            joined.contains("recaptcha_detected: true is NOT a blocker"),
+            "recaptcha_detected: true alone must not be treated as a blocker"
+        );
+        assert!(
+            joined.contains("headless"),
+            "should explain the headless low-score remedy"
+        );
+        assert!(
+            joined.contains("acrawl config set headless false"),
+            "should surface the human-runnable remedy command"
+        );
+        assert!(
+            joined.contains("/extension"),
+            "should mention the extension bridge alternative"
+        );
     }
 }
