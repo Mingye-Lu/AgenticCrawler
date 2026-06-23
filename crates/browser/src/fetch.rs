@@ -806,6 +806,7 @@ fn http_response_to_page(resp: HttpResponse) -> FetchedPage {
 /// (`class="g-recaptcha"`) but loads specific Google CDN scripts. Form
 /// submissions on v3-protected pages are silently rejected if the headless
 /// browser's score is too low.
+#[must_use]
 pub fn looks_like_recaptcha_v3(html: &str) -> bool {
     let lower = html.to_lowercase();
     let has_recaptcha_script = lower.contains("www.google.com/recaptcha/api.js")
