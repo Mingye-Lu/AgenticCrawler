@@ -61,9 +61,14 @@ async fn resolve_by_text(
     region: Option<&str>,
 ) -> Result<String, ToolExecutionError> {
     let scope_sel: Option<String> = match region {
-        Some(r) if r.starts_with("@r") => {
-            browser.last_snapshot_region_selector(r).map(str::to_string)
-        }
+        Some(r) if r.starts_with("@r") => match browser.last_snapshot_region_selector(r) {
+            Some(selector) => Some(selector.to_string()),
+            None => {
+                return Err(ToolExecutionError::new(format!(
+                    "unknown region handle '{r}'; call page_map first to get fresh handles"
+                )))
+            }
+        },
         Some("dialog") => {
             Some("[role=\"dialog\"],[role=\"alertdialog\"],[aria-modal=\"true\"]".to_string())
         }
@@ -74,63 +79,13 @@ async fn resolve_by_text(
     };
 
     let scope_init = match &scope_sel {
-        Some(s) => format!("document.querySelector({s:?}) || document"),
+        Some(s) => format!(
+            r"(() => {{ const __scope = document.querySelector({s:?}); if (!__scope) throw new Error('region scope element not found: {s}'); return __scope; }})()"
+        ),
         None => "document".to_string(),
     };
 
-    let script = format!(
-        r#"(() => {{
-        function selectorOf(el) {{
-            if (el.id) return '#' + CSS.escape(el.id);
-            const path = [];
-            let cur = el;
-            while (cur && cur.parentElement) {{
-                if (cur.id) {{ path.unshift('#' + CSS.escape(cur.id)); break; }}
-                const parent = cur.parentElement;
-                const tag = cur.tagName.toLowerCase();
-                const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
-                path.unshift(same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(cur) + 1) + ')' : tag);
-                cur = parent;
-            }}
-            return path.join(' > ');
-        }}
-        const root = {scope_init};
-        const sels = [
-            'button','a[href]','[role="button"]','[role="tab"]',
-            '[role="menuitem"]','[role="checkbox"]','[role="switch"]',
-            '[role="link"]','input[type="button"]','input[type="submit"]',
-            'input[type="checkbox"]','input[type="radio"]'
-        ];
-        const candidates = [];
-        for (const el of root.querySelectorAll(sels.join(','))) {{
-            let name = el.getAttribute('aria-label') || '';
-            if (!name) {{
-                const lby = el.getAttribute('aria-labelledby');
-                if (lby) name = document.getElementById(lby)?.innerText?.trim() || '';
-            }}
-            if (!name && el.id) {{
-                const lbl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
-                if (lbl) name = (lbl.innerText || '').trim();
-            }}
-            if (!name) {{
-                const wrapping = el.closest('label');
-                if (wrapping) name = (wrapping.innerText || '').replace((el.textContent || '').trim(), '').trim();
-            }}
-            if (!name) name = (el.innerText || '').trim();
-            if (!name) name = el.title || el.placeholder || '';
-            if (!name) continue;
-            const roleAttr = el.getAttribute('role');
-            const inputType = (el.type || '').toLowerCase();
-            const role = roleAttr ||
-                (el.tagName === 'INPUT' && inputType === 'checkbox' ? 'checkbox' :
-                 el.tagName === 'INPUT' && inputType === 'radio' ? 'radio' :
-                 el.tagName === 'INPUT' && ['button','submit','reset','image'].includes(inputType) ? 'button' :
-                 el.tagName === 'A' ? 'link' : el.tagName.toLowerCase());
-            candidates.push([name.slice(0, 80), selectorOf(el), role]);
-        }}
-        return candidates;
-    }})()"#
-    );
+    let script = build_resolve_by_text_script(&scope_init);
 
     let raw = browser
         .acquire_bridge()
@@ -162,6 +117,68 @@ async fn resolve_by_text(
                 .unwrap_or_default()
         ))),
     }
+}
+
+fn build_resolve_by_text_script(scope_init: &str) -> String {
+    format!(
+        r#"(() => {{
+        function selectorOf(el) {{
+            if (el.id) return '#' + CSS.escape(el.id);
+            const path = [];
+            let cur = el;
+            while (cur && cur.parentElement) {{
+                if (cur.id) {{ path.unshift('#' + CSS.escape(cur.id)); break; }}
+                const parent = cur.parentElement;
+                const tag = cur.tagName.toLowerCase();
+                const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+                path.unshift(same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(cur) + 1) + ')' : tag);
+                cur = parent;
+            }}
+            return path.join(' > ');
+        }}
+        const root = {scope_init};
+        const sels = [
+            'button','a[href]','[role="button"]','[role="tab"]',
+            '[role="menuitem"]','[role="checkbox"]','[role="switch"]',
+            '[role="link"]','input[type="button"]','input[type="submit"]',
+            'input[type="checkbox"]','input[type="radio"]'
+        ];
+        const candidates = [];
+        for (const el of root.querySelectorAll(sels.join(','))) {{
+            let name = el.getAttribute('aria-label') || '';
+            if (!name) {{
+                const lby = el.getAttribute('aria-labelledby');
+                if (lby) name = lby
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .map(id => document.getElementById(id)?.innerText?.trim() || '')
+                    .filter(Boolean)
+                    .join(' ')
+                    .trim();
+            }}
+            if (!name && el.id) {{
+                const lbl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+                if (lbl) name = (lbl.innerText || '').trim();
+            }}
+            if (!name) {{
+                const wrapping = el.closest('label');
+                if (wrapping) name = (wrapping.innerText || '').replace((el.textContent || '').trim(), '').trim();
+            }}
+            if (!name) name = (el.innerText || '').trim();
+            if (!name) name = el.title || el.placeholder || '';
+            if (!name) continue;
+            const roleAttr = el.getAttribute('role');
+            const inputType = (el.type || '').toLowerCase();
+            const role = roleAttr ||
+                (el.tagName === 'INPUT' && inputType === 'checkbox' ? 'checkbox' :
+                 el.tagName === 'INPUT' && inputType === 'radio' ? 'radio' :
+                 el.tagName === 'INPUT' && ['button','submit','reset','image'].includes(inputType) ? 'button' :
+                 el.tagName === 'A' ? 'link' : el.tagName.toLowerCase());
+            candidates.push([name.slice(0, 80), selectorOf(el), role]);
+        }}
+        return candidates;
+    }})()"#
+    )
 }
 
 pub async fn execute(

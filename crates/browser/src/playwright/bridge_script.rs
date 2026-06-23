@@ -1109,8 +1109,11 @@ async function bootstrap() {
           }
 
           function isVisible(el) {
+            if (el.hidden) return false;
             const style = getComputedStyle(el);
-            return el.offsetParent !== null && !el.hidden && style.visibility !== 'hidden';
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 || rect.height > 0;
           }
 
           function isFloating(el) {

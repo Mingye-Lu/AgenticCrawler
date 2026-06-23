@@ -94,20 +94,30 @@ fn truncate_array_field(value: &mut Value, key: &str, max_len: usize) -> bool {
         })
 }
 
-fn resolve_scope(scope: Option<&str>, browser: &BrowserContext) -> Option<String> {
-    match scope {
+fn resolve_scope(
+    scope: Option<&str>,
+    browser: &BrowserContext,
+) -> Result<Option<String>, ToolExecutionError> {
+    Ok(match scope {
         Some("dialog") => Some(
             "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
                 .to_string(),
         ),
         Some("main") => Some("main, [role=\"main\"]".to_string()),
         Some("sidebar") => Some("[role=\"complementary\"], aside, nav".to_string()),
-        Some(handle) if handle.starts_with("@r") => browser
-            .last_snapshot_region_selector(handle)
-            .map(str::to_string),
+        Some(handle) if handle.starts_with("@r") => {
+            match browser.last_snapshot_region_selector(handle) {
+                Some(selector) => Some(selector.to_string()),
+                None => {
+                    return Err(ToolExecutionError::new(format!(
+                        "unknown region handle '{handle}'; call page_map first to get fresh handles"
+                    )))
+                }
+            }
+        }
         Some(other) => Some(other.to_string()),
         None => None,
-    }
+    })
 }
 
 fn infer_control_role(tag: &str, role: Option<&str>) -> String {
@@ -238,7 +248,7 @@ pub async fn execute(
     crawl_state: &mut crate::state::CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let scope = input.get("scope").and_then(Value::as_str);
-    let resolved_scope = resolve_scope(scope, browser);
+    let resolved_scope = resolve_scope(scope, browser)?;
 
     let settings = runtime::load_settings();
     let compound_enrichment = runtime::settings_get_compound_enrichment(&settings);
@@ -632,18 +642,24 @@ mod tests {
         );
 
         assert_eq!(
-            resolve_scope(Some("main"), &ctx),
+            resolve_scope(Some("main"), &ctx).unwrap(),
             Some("main, [role=\"main\"]".to_string())
         );
         assert_eq!(
-            resolve_scope(Some("dialog"), &ctx),
+            resolve_scope(Some("dialog"), &ctx).unwrap(),
             Some(
                 "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
                     .to_string(),
             )
         );
-        assert_eq!(resolve_scope(Some("@r2"), &ctx), Some("#modal".to_string()));
-        assert_eq!(resolve_scope(Some("@r9"), &ctx), None);
+        assert_eq!(
+            resolve_scope(Some("@r2"), &ctx).unwrap(),
+            Some("#modal".to_string())
+        );
+        assert_eq!(
+            resolve_scope(Some("@r9"), &ctx).unwrap_err().to_string(),
+            "unknown region handle '@r9'; call page_map first to get fresh handles"
+        );
     }
 
     #[test]

@@ -435,7 +435,10 @@ async fn resolve_interacted_scope(
                     ['DIALOG', 'MAIN', 'ASIDE', 'NAV', 'FORM', 'SECTION', 'ARTICLE'].includes(cur.tagName)
                 ) {{
                     if (cur.id) return '#' + CSS.escape(cur.id);
-                    return cur.tagName.toLowerCase();
+                    if (role === 'dialog' || role === 'alertdialog') {{
+                        return '[role=' + role + ']';
+                    }}
+                    return null;
                 }}
                 cur = cur.parentElement;
             }}
@@ -455,6 +458,10 @@ fn page_state_from_feedback_map(
     scope: Option<&str>,
     mut pm: Value,
 ) -> Value {
+    // Enrich in place before caching so stored snapshots preserve regions and
+    // active_dialog for later scoped interactions.
+    super::page_map::enrich_semantic_sections(&mut pm);
+
     let full_url = extract_url(&pm).to_string();
     let cache_key = normalize_url(&full_url).to_string();
 

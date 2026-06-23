@@ -100,13 +100,24 @@ pub async fn execute(
             }})()"#,
             resolved_form_selector.replace('\'', "\\'")
         );
-        browser
+        let submit_result = browser
             .acquire_bridge()
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?
             .evaluate(&js)
             .await
             .map_err(|e| ToolExecutionError::new(format!("failed to submit form: {e}")))?;
+
+        let outcome = submit_result
+            .get("value")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+
+        if outcome == "form_not_found" {
+            return Err(ToolExecutionError::new(format!(
+                "no <form> matched selector '{resolved_form_selector}'; to submit a div-based SPA form, use click(text='Submit') instead"
+            )));
+        }
 
         if let Some(ref old_url) = pre_url {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
@@ -226,10 +237,12 @@ async fn resolve_field_by_label(
             }
             // 3. aria-label
             if (!label) label = el.getAttribute('aria-label') || '';
-            // 4. aria-labelledby
+            // 4. aria-labelledby (space-separated list of ids per spec)
             if (!label) {
                 const lblById = el.getAttribute('aria-labelledby');
-                if (lblById) label = document.getElementById(lblById)?.innerText?.trim() || '';
+                if (lblById) label = lblById.split(/\s+/).filter(Boolean)
+                    .map(id => document.getElementById(id)?.innerText?.trim() || '')
+                    .filter(Boolean).join(' ').trim();
             }
             // 5. placeholder / title / name
             if (!label) label = el.placeholder || el.title || el.name || '';

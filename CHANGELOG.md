@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diff computation consolidated to Rust (`feedback.rs`); the Chrome extension's JS-side `computePageMapDiff` / `pageMapCache` removed — both backends flow through a single diff path.
 - `@rN` region handles now resolve from the last full-page `page_map` snapshot rather than the most-recently-stored snapshot, so handles remain stable after container-scoped interactions.
 
+### Fixed
+
+- **click**: `@rN` region handle not in snapshot now hard-fails instead of silently widening scope to full page
+- **click**: remove `|| document` JS fallback; scoped IIFE throws if the scope element is missing from the DOM
+- **click, fill_form**: `aria-labelledby` now correctly resolved as a whitespace-separated id list
+- **fill_form**: `submit` no longer reports success when no `<form>` matched the selector (`form_not_found` outcome now surfaces as an error)
+- **select_option**: popup closure alone no longer counts as verified selection; only trigger-text change or `aria-selected` qualify
+- **browser/playwright**: `isVisible` in DOM-snapshot extraction now uses `getBoundingClientRect()` matching the extension backend, fixing false-invisible on `position:fixed` portal overlays
+- **feedback**: post-action snapshots now enriched before caching, so `@rN` region handles remain valid after interactions; bare-tag diff-scope selectors (`section`, `article`, `form`) replaced with id-based or role-scoped selectors to prevent anchoring to the wrong container
+
 ## [0.12.1] - 2026-06-21
 
 ### Added

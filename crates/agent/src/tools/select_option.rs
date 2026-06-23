@@ -816,19 +816,6 @@ async fn verify_custom_selection(
 
             if (target && target.getAttribute('aria-selected') === 'true') return true;
 
-            const controlledIds = [trigger.getAttribute('aria-controls'), trigger.getAttribute('aria-owns')]
-                .filter(Boolean)
-                .flatMap((value) => value.split(/\s+/).filter(Boolean));
-            if (controlledIds.length > 0) {{
-                const stillVisible = controlledIds.some((id) => {{
-                    const node = document.getElementById(id);
-                    if (!node) return false;
-                    const style = getComputedStyle(node);
-                    return node.offsetParent !== null && !node.hidden && style.visibility !== 'hidden';
-                }});
-                if (!stillVisible) return true;
-            }}
-
             return false;
         }})()"
     );
