@@ -4,7 +4,9 @@ use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_
 use crate::prune::{prune_html_with_profile, select_profile, CleaningProfile};
 use crate::state::CrawlState;
 use crate::tools::html_diff::HtmlDiffTracker;
-use crate::tools::page_map::{annotate_refs, apply_page_map_caps, enrich_semantic_sections, normalize_url};
+use crate::tools::page_map::{
+    annotate_refs, apply_page_map_caps, enrich_semantic_sections, normalize_url,
+};
 use crate::BrowserContext;
 use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
