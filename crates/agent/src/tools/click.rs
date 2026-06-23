@@ -119,7 +119,13 @@ async fn resolve_by_text(
             if (!name) name = (el.innerText || '').trim();
             if (!name) name = el.title || el.placeholder || '';
             if (!name) continue;
-            const role = el.getAttribute('role') || el.tagName.toLowerCase();
+            const roleAttr = el.getAttribute('role');
+            const inputType = (el.type || '').toLowerCase();
+            const role = roleAttr ||
+                (el.tagName === 'INPUT' && inputType === 'checkbox' ? 'checkbox' :
+                 el.tagName === 'INPUT' && inputType === 'radio' ? 'radio' :
+                 el.tagName === 'INPUT' && ['button','submit','reset','image'].includes(inputType) ? 'button' :
+                 el.tagName === 'A' ? 'link' : el.tagName.toLowerCase());
             candidates.push([name.slice(0, 80), selectorOf(el), role]);
         }}
         return candidates;
