@@ -830,7 +830,7 @@ async function bootstrap() {
               })(el, root),
               parent_idx: parentIdx >= 0 ? parentIdx : null,
               selector: cssPath(el),
-              visible: el.offsetParent !== null && !el.hidden,
+              visible: !el.hidden && (function(e) { const s = window.getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden' && e.getBoundingClientRect().height > 0; })(el),
             };
           });
           const total_landmarks = landmarks.length;
