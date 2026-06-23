@@ -992,4 +992,37 @@ mod tests {
             panic!("expected Reply variant");
         }
     }
+
+    #[test]
+    fn execute_reply_serializes_recaptcha_detected() {
+        // `execute` needs a live browser, so this pins the reply JSON shape
+        // (line ~545) to guard against `recaptcha_detected` being dropped.
+        let recaptcha_detected = true;
+        let reply = json!({
+            "seq": 1u64,
+            "url": "https://example.com",
+            "title": "Test",
+            "redirect_chain": Value::Null,
+            "page_map": json!({}),
+            "recaptcha_detected": recaptcha_detected,
+        });
+        assert_eq!(
+            reply["recaptcha_detected"], true,
+            "main execute reply must include recaptcha_detected"
+        );
+
+        let recaptcha_detected = false;
+        let reply = json!({
+            "seq": 1u64,
+            "url": "https://example.com",
+            "title": "Test",
+            "redirect_chain": Value::Null,
+            "page_map": json!({}),
+            "recaptcha_detected": recaptcha_detected,
+        });
+        assert_eq!(
+            reply["recaptcha_detected"], false,
+            "main execute reply must include recaptcha_detected"
+        );
+    }
 }
