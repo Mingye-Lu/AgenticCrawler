@@ -193,6 +193,20 @@ async fn resolve_field_by_label(
     label_query: &str,
 ) -> Result<Option<String>, ToolExecutionError> {
     let script = r#"(() => {
+        function selectorOf(el) {
+            if (el.id) return '#' + CSS.escape(el.id);
+            const path = [];
+            let cur = el;
+            while (cur && cur.parentElement) {
+                if (cur.id) { path.unshift('#' + CSS.escape(cur.id)); break; }
+                const parent = cur.parentElement;
+                const tag = cur.tagName.toLowerCase();
+                const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+                path.unshift(same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(cur) + 1) + ')' : tag);
+                cur = parent;
+            }
+            return path.join(' > ');
+        }
         const results = [];
         const controls = document.querySelectorAll(
             'input:not([type="hidden"]), textarea, select, ' +
@@ -221,8 +235,7 @@ async fn resolve_field_by_label(
             if (!label) label = el.placeholder || el.title || el.name || '';
 
             if (label) {
-                const sel = el.id ? '#' + CSS.escape(el.id) : null;
-                if (sel) results.push([label.slice(0, 80), sel]);
+                results.push([label.slice(0, 80), selectorOf(el)]);
             }
         }
         return results;

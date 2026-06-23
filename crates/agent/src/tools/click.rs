@@ -80,6 +80,20 @@ async fn resolve_by_text(
 
     let script = format!(
         r#"(() => {{
+        function selectorOf(el) {{
+            if (el.id) return '#' + CSS.escape(el.id);
+            const path = [];
+            let cur = el;
+            while (cur && cur.parentElement) {{
+                if (cur.id) {{ path.unshift('#' + CSS.escape(cur.id)); break; }}
+                const parent = cur.parentElement;
+                const tag = cur.tagName.toLowerCase();
+                const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+                path.unshift(same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(cur) + 1) + ')' : tag);
+                cur = parent;
+            }}
+            return path.join(' > ');
+        }}
         const root = {scope_init};
         const sels = [
             'button','a[href]','[role="button"]','[role="tab"]',
@@ -98,8 +112,7 @@ async fn resolve_by_text(
             if (!name) name = el.title || el.placeholder || '';
             if (!name) continue;
             const role = el.getAttribute('role') || el.tagName.toLowerCase();
-            const sel = el.id ? '#' + CSS.escape(el.id) : null;
-            if (sel) candidates.push([name.slice(0, 80), sel, role]);
+            candidates.push([name.slice(0, 80), selectorOf(el), role]);
         }}
         return candidates;
     }})()"#
