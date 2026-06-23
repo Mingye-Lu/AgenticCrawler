@@ -922,4 +922,68 @@ mod tests {
         let forms = page_map["forms"].as_array().unwrap();
         assert!(forms[0].get("selector").is_none());
     }
+
+    #[test]
+    fn reply_without_page_map_serializes_recaptcha_detected_true() {
+        let page = crate::FetchedPage {
+            url: "https://example.com".to_string(),
+            title: Some("Test Page".to_string()),
+            html: "<h1>Test</h1>".to_string(),
+            text: "Test".to_string(),
+            markdown: "# Test".to_string(),
+            fetched_via_browser: false,
+            redirect_chain: None,
+            recaptcha_detected: true,
+        };
+
+        let reply = reply_without_page_map(
+            &page,
+            "Test Page",
+            "Test content",
+            "markdown",
+            &ContentDepth::Main,
+            false,
+            1,
+            &json!(null),
+        );
+
+        if let ToolEffect::Reply(json_str) = reply {
+            let parsed: Value = serde_json::from_str(&json_str).expect("failed to parse JSON");
+            assert_eq!(parsed["recaptcha_detected"], true, "recaptcha_detected should be true");
+        } else {
+            panic!("expected Reply variant");
+        }
+    }
+
+    #[test]
+    fn reply_without_page_map_serializes_recaptcha_detected_false() {
+        let page = crate::FetchedPage {
+            url: "https://example.com".to_string(),
+            title: Some("Test Page".to_string()),
+            html: "<h1>Test</h1>".to_string(),
+            text: "Test".to_string(),
+            markdown: "# Test".to_string(),
+            fetched_via_browser: false,
+            redirect_chain: None,
+            recaptcha_detected: false,
+        };
+
+        let reply = reply_without_page_map(
+            &page,
+            "Test Page",
+            "Test content",
+            "markdown",
+            &ContentDepth::Main,
+            false,
+            1,
+            &json!(null),
+        );
+
+        if let ToolEffect::Reply(json_str) = reply {
+            let parsed: Value = serde_json::from_str(&json_str).expect("failed to parse JSON");
+            assert_eq!(parsed["recaptcha_detected"], false, "recaptcha_detected should be false");
+        } else {
+            panic!("expected Reply variant");
+        }
+    }
 }
