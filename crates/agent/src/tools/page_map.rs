@@ -175,7 +175,7 @@ fn control_facts_from_value(value: &Value) -> RawElementFacts {
     }
 }
 
-fn enrich_semantic_sections(result: &mut Value) {
+pub(super) fn enrich_semantic_sections(result: &mut Value) {
     let regions = result
         .get("regionCandidates")
         .and_then(Value::as_array)

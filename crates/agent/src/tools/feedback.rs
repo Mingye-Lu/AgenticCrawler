@@ -18,6 +18,7 @@ const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
 /// `active_dialog`, and strips `forms`, `interactive`, and `controls` to keep
 /// interaction responses concise.
 pub fn build_page_state_from_map(mut pm: Value) -> Value {
+    super::page_map::enrich_semantic_sections(&mut pm);
     apply_page_map_caps(&mut pm);
 
     let url = pm
