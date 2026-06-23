@@ -250,6 +250,7 @@ fn http_fetch_path_has_markdown() {
         markdown: "# Title\n\nSome content".to_string(),
         fetched_via_browser: false,
         redirect_chain: None,
+        recaptcha_detected: false,
     };
 
     assert!(page.markdown.contains('#'));

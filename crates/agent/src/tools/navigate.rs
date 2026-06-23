@@ -397,6 +397,7 @@ fn reply_without_page_map(
         "truncated": truncated,
         "content_length": content_length,
         "redirect_chain": redirect_chain,
+        "recaptcha_detected": page.recaptcha_detected,
     }))
 }
 
@@ -540,7 +541,8 @@ pub async fn execute(
         "truncated": truncated,
         "content_length": content_length,
         "redirect_chain": redirect_chain,
-        "page_map": page_map
+        "page_map": page_map,
+        "recaptcha_detected": page.recaptcha_detected,
     })))
 }
 

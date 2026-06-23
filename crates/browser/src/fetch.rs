@@ -17,6 +17,10 @@ pub struct FetchedPage {
     pub markdown: String,
     pub fetched_via_browser: bool,
     pub redirect_chain: Option<Vec<String>>,
+    /// Whether Google reCAPTCHA v3 (invisible score-based) is detected.
+    /// Unlike v2 (visible widget), v3 has no visual feedback when it silently
+    /// blocks headless browser form submissions.
+    pub recaptcha_detected: bool,
 }
 
 #[derive(Debug)]
@@ -764,6 +768,7 @@ impl FetchRouter {
         } else {
             Some(page_info.title)
         };
+        let recaptcha_detected = looks_like_recaptcha_v3(&page_info.html);
 
         Ok(FetchedPage {
             url: url.to_string(),
@@ -773,6 +778,7 @@ impl FetchRouter {
             markdown,
             fetched_via_browser: true,
             redirect_chain: None,
+            recaptcha_detected,
         })
     }
 }
@@ -781,6 +787,7 @@ fn http_response_to_page(resp: HttpResponse) -> FetchedPage {
     let title = extract_title(&resp.body);
     let text = extract_text(&resp.body);
     let markdown = crate::markdown::html_to_markdown(&resp.body);
+    let recaptcha_detected = looks_like_recaptcha_v3(&resp.body);
     FetchedPage {
         url: resp.url,
         title,
@@ -789,7 +796,23 @@ fn http_response_to_page(resp: HttpResponse) -> FetchedPage {
         markdown,
         fetched_via_browser: false,
         redirect_chain: None,
+        recaptcha_detected,
     }
+}
+
+/// Detect Google reCAPTCHA v3 in raw HTML content.
+///
+/// reCAPTCHA v3 is invisible and score-based — it has no visible widget
+/// (`class="g-recaptcha"`) but loads specific Google CDN scripts. Form
+/// submissions on v3-protected pages are silently rejected if the headless
+/// browser's score is too low.
+pub fn looks_like_recaptcha_v3(html: &str) -> bool {
+    let lower = html.to_lowercase();
+    let has_recaptcha_script = lower.contains("www.google.com/recaptcha/api.js")
+        || lower.contains("www.gstatic.com/recaptcha/releases/");
+    let has_visible_widget =
+        lower.contains("class=\"g-recaptcha\"") || lower.contains("class='g-recaptcha'");
+    has_recaptcha_script && !has_visible_widget
 }
 
 #[cfg(test)]
@@ -1138,6 +1161,7 @@ mod tests {
             markdown: String::new(),
             fetched_via_browser: false,
             redirect_chain: None,
+            recaptcha_detected: false,
         };
         // Compile-time check: the markdown field exists and is a String
         let _: &String = &page.markdown;
@@ -1457,5 +1481,49 @@ mod tests {
             style_blocks_length("<style>abc</style>middle<style>de</style>"),
             5
         );
+    }
+
+    // ── reCAPTCHA v3 detection ──────────────────────────────────────
+
+    #[test]
+    fn recaptcha_v3_detected_by_api_js_script() {
+        let html = r#"<html><head>
+<script src="https://www.google.com/recaptcha/api.js?render=6Lc..."></script>
+</head><body><form>...</form></body></html>"#;
+        assert!(looks_like_recaptcha_v3(html));
+    }
+
+    #[test]
+    fn recaptcha_v3_detected_by_gstatic_releases() {
+        let html = r#"<html><head>
+<script src="https://www.gstatic.com/recaptcha/releases/v3.0.0/recaptcha__en.js"></script>
+</head><body></body></html>"#;
+        assert!(looks_like_recaptcha_v3(html));
+    }
+
+    #[test]
+    fn recaptcha_v3_not_triggered_by_visible_v2_widget() {
+        // v2 has a visible .g-recaptcha div — this is already handled elsewhere
+        let html = r#"<html><body>
+<div class="g-recaptcha" data-sitekey="..."></div>
+<script src="https://www.google.com/recaptcha/api.js"></script>
+</body></html>"#;
+        assert!(!looks_like_recaptcha_v3(html));
+    }
+
+    #[test]
+    fn recaptcha_v3_not_triggered_no_recaptcha_scripts() {
+        assert!(!looks_like_recaptcha_v3(
+            "<html><body><p>Hello</p></body></html>"
+        ));
+        assert!(!looks_like_recaptcha_v3(""));
+    }
+
+    #[test]
+    fn recaptcha_v3_case_insensitive() {
+        let html = r#"<html><head>
+<SCRIPT SRC="HTTPS://WWW.GOOGLE.COM/RECAPTCHA/API.JS?render=explicit"></SCRIPT>
+</head><body></body></html>"#;
+        assert!(looks_like_recaptcha_v3(html));
     }
 }

@@ -249,6 +249,7 @@ fn fetched_page_struct_fields() {
         markdown: "# Example".to_string(),
         fetched_via_browser: false,
         redirect_chain: None,
+        recaptcha_detected: false,
     };
     assert_eq!(page.url, "https://example.com");
     assert_eq!(page.title.as_deref(), Some("Example"));
