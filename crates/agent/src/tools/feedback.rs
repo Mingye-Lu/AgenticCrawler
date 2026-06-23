@@ -516,7 +516,7 @@ pub fn record_page_fingerprint(url: &str, page_map: &Value, crawl_state: &mut Cr
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
@@ -537,11 +537,12 @@ mod tests {
     use browser::BrowserBackend;
 
     #[derive(Debug, Default)]
-    struct FeedbackMockState {
-        page_maps: HashMap<String, Value>,
-        requested_scopes: Vec<Option<String>>,
-        evaluate_result: Value,
-        evaluate_scripts: Vec<String>,
+    pub(crate) struct FeedbackMockState {
+        pub(crate) page_maps: HashMap<String, Value>,
+        pub(crate) requested_scopes: Vec<Option<String>>,
+        pub(crate) evaluate_result: Value,
+        pub(crate) evaluate_scripts: Vec<String>,
+        pub(crate) evaluate_script_results: Vec<(String, Value)>,
     }
 
     #[derive(Debug)]
@@ -615,6 +616,13 @@ mod tests {
         async fn evaluate(&mut self, script: &str) -> Result<Value, BridgeError> {
             let mut state = self.state.lock().expect("mock state poisoned");
             state.evaluate_scripts.push(script.to_string());
+            if let Some((_, result)) = state
+                .evaluate_script_results
+                .iter()
+                .find(|(pattern, _)| script.contains(pattern))
+            {
+                return Ok(result.clone());
+            }
             Ok(state.evaluate_result.clone())
         }
 
@@ -707,7 +715,7 @@ mod tests {
         }
     }
 
-    fn browser_with_feedback_backend(
+    pub(crate) fn browser_with_feedback_backend(
         state: FeedbackMockState,
         url: &str,
     ) -> (BrowserContext, Arc<StdMutex<FeedbackMockState>>) {

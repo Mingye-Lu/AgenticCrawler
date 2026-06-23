@@ -7,6 +7,10 @@ use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
+const RECAPTCHA_V3_SILENT_SUBMISSION_AUDIT: &str = r"(typeof grecaptcha !== 'undefined' || /recaptcha\/(api\.js|releases)/i.test(document.documentElement.innerHTML)) && !document.querySelector('.g-recaptcha')";
+
+const RECAPTCHA_V3_SILENT_SUBMISSION_WARNING: &str = "Form submitted but no visible page change was detected. This page uses reCAPTCHA v3 (invisible, score-based); headless browsers often score too low and the server may silently reject the submission — though this could also be an unshown validation error or a successful inline update. To rule out reCAPTCHA, a human can retry with `acrawl config set headless false` (or `--headed`), or use the extension bridge (`/extension`).";
+
 #[derive(Debug)]
 struct FillFormInput {
     fields: BTreeMap<String, String>,
@@ -147,8 +151,16 @@ pub async fn execute(
     )
     .await;
 
+    let submission_warning = if params.submit
+        && page_state.get("changed").and_then(Value::as_bool) == Some(false)
+    {
+        recaptcha_v3_silent_submission_warning(browser).await
+    } else {
+        None
+    };
+
     let field_count = params.fields.len();
-    Ok(ToolEffect::reply_json(&serde_json::json!({
+    let mut reply = serde_json::json!({
         "seq": seq,
         "success": true,
         "message": format!(
@@ -156,7 +168,31 @@ pub async fn execute(
             if params.submit { " and submitted form" } else { "" }
         ),
         "page_state": page_state
-    })))
+    });
+    if let Some(warning) = submission_warning {
+        reply["submission_warning"] = Value::String(warning);
+    }
+    Ok(ToolEffect::reply_json(&reply))
+}
+
+async fn recaptcha_v3_silent_submission_warning(browser: &mut BrowserContext) -> Option<String> {
+    let mut bridge = browser.acquire_bridge().await.ok()?;
+    let detected = bridge
+        .evaluate(RECAPTCHA_V3_SILENT_SUBMISSION_AUDIT)
+        .await
+        .ok()
+        .as_ref()
+        .and_then(evaluate_bool)
+        .unwrap_or(false);
+
+    detected.then(|| RECAPTCHA_V3_SILENT_SUBMISSION_WARNING.to_string())
+}
+
+fn evaluate_bool(value: &Value) -> Option<bool> {
+    value
+        .get("value")
+        .and_then(Value::as_bool)
+        .or_else(|| value.as_bool())
 }
 
 async fn fill_fields(
@@ -276,7 +312,11 @@ async fn resolve_field_by_label(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
     use serde_json::json;
+
+    use crate::tools::feedback::tests::{browser_with_feedback_backend, FeedbackMockState};
 
     #[test]
     fn parse_valid_fields() {
@@ -396,5 +436,154 @@ mod tests {
         let (best, alternatives) = crate::semantic::match_text("Name", &candidates, None).unwrap();
         assert_eq!(best, "#name-1");
         assert_eq!(alternatives, vec!["#name-2".to_string()]);
+    }
+
+    fn form_page_map(url: &str, extra_link: Option<&str>) -> Value {
+        let mut links = Vec::new();
+        if let Some(text) = extra_link {
+            links.push(json!({
+                "text": text,
+                "href": format!("{url}#{text}"),
+                "selector": format!("a[data-link='{text}']")
+            }));
+        }
+
+        json!({
+            "headings": [],
+            "landmarks": [],
+            "forms": [],
+            "links": links,
+            "interactive": {},
+            "meta": {"title": "Form", "url": url, "description": ""}
+        })
+    }
+
+    #[tokio::test]
+    async fn submit_with_silent_no_change_and_recaptcha_v3_adds_warning() {
+        let url = "https://example.com/form";
+        let page_map = form_page_map(url, None);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_script_results: vec![
+                    ("window.location.href".to_string(), json!({"value": url})),
+                    ("form_not_found".to_string(), json!({"value": "clicked"})),
+                    ("typeof grecaptcha".to_string(), json!({"value": true})),
+                ],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+        let crawl_state = CrawlState::default();
+
+        let response = execute(
+            &json!({
+                "fields": {"#email": "jane@example.com"},
+                "submit": true
+            }),
+            &mut browser,
+            &crawl_state,
+        )
+        .await
+        .expect("fill_form should succeed");
+
+        let ToolEffect::Reply(body) = response else {
+            panic!("expected reply");
+        };
+        let payload: Value = serde_json::from_str(&body).expect("reply json");
+        assert_eq!(payload["page_state"]["changed"], false);
+        assert_eq!(
+            payload["submission_warning"],
+            Value::String(RECAPTCHA_V3_SILENT_SUBMISSION_WARNING.to_string())
+        );
+
+        let state = state.lock().expect("mock state poisoned");
+        assert!(state
+            .evaluate_scripts
+            .iter()
+            .any(|script| script.contains("typeof grecaptcha")));
+    }
+
+    #[tokio::test]
+    async fn submit_with_silent_no_change_and_no_recaptcha_v3_skips_warning() {
+        let url = "https://example.com/form";
+        let page_map = form_page_map(url, None);
+        let (mut browser, _) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_script_results: vec![
+                    ("window.location.href".to_string(), json!({"value": url})),
+                    ("form_not_found".to_string(), json!({"value": "clicked"})),
+                    ("typeof grecaptcha".to_string(), json!({"value": false})),
+                ],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+        let crawl_state = CrawlState::default();
+
+        let response = execute(
+            &json!({
+                "fields": {"#email": "jane@example.com"},
+                "submit": true
+            }),
+            &mut browser,
+            &crawl_state,
+        )
+        .await
+        .expect("fill_form should succeed");
+
+        let ToolEffect::Reply(body) = response else {
+            panic!("expected reply");
+        };
+        let payload: Value = serde_json::from_str(&body).expect("reply json");
+        assert!(payload.get("submission_warning").is_none());
+    }
+
+    #[tokio::test]
+    async fn submit_with_visible_change_skips_warning_even_with_recaptcha_v3() {
+        let url = "https://example.com/form";
+        let prev_page_map = form_page_map(url, None);
+        let current_page_map = form_page_map(url, Some("updated"));
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), current_page_map)]),
+                evaluate_script_results: vec![
+                    ("window.location.href".to_string(), json!({"value": url})),
+                    ("form_not_found".to_string(), json!({"value": "clicked"})),
+                    ("typeof grecaptcha".to_string(), json!({"value": true})),
+                ],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, prev_page_map);
+        let crawl_state = CrawlState::default();
+
+        let response = execute(
+            &json!({
+                "fields": {"#email": "jane@example.com"},
+                "submit": true
+            }),
+            &mut browser,
+            &crawl_state,
+        )
+        .await
+        .expect("fill_form should succeed");
+
+        let ToolEffect::Reply(body) = response else {
+            panic!("expected reply");
+        };
+        let payload: Value = serde_json::from_str(&body).expect("reply json");
+        assert_eq!(payload["page_state"]["changed"], true);
+        assert!(payload.get("submission_warning").is_none());
+
+        let state = state.lock().expect("mock state poisoned");
+        assert!(!state
+            .evaluate_scripts
+            .iter()
+            .any(|script| script.contains("typeof grecaptcha")));
     }
 }
