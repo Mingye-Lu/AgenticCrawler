@@ -427,12 +427,17 @@ fn save_file_tool() -> ToolSpec {
                 "output_dir": {
                     "type": "string",
                     "description": "Override the default output directory. Can be relative (resolved against CWD) or absolute. If omitted, uses the configured output_dir from settings."
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": { "type": "string" },
+                    "description": "Optional HTTP request headers to send with the download (e.g. Referer, Origin, User-Agent). Use for CDNs that reject requests lacking a Referer."
                 }
             },
             "required": ["url"],
             "additionalProperties": false
         }),
-        instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename`, `subdir`, and `output_dir`."),
+        instructions: Some("Downloads the resource at `url` into the output directory. Optionally specify `filename`, `subdir`, `output_dir`, and `headers` (for CDNs that require a Referer or custom header)."),
     }
 }
 
@@ -479,7 +484,7 @@ fn list_network_activity_tool() -> ToolSpec {
             "properties": {
                 "since": {
                     "type": ["string", "number"],
-                    "description": "Start of time window. 'all' = entire session, 'last' = since last action (default), or a seq number from a previous action response."
+                    "description": "Start of time window. 'all' = entire session, 'last' = since last action (default), or a seq number from a previous action response. Network capture starts automatically at browser launch — use `since='all'` to retrieve any request from any point in the session regardless of when it occurred."
                 },
                 "until": {
                     "type": ["string", "number"],
@@ -487,12 +492,29 @@ fn list_network_activity_tool() -> ToolSpec {
                 },
                 "filter": {
                     "type": "string",
-                    "enum": ["all", "xhr", "failed", "pending", "aborted"],
+                    "enum": ["all", "xhr", "media", "failed", "pending", "aborted"],
                     "default": "all"
                 },
                 "pattern": {
                     "type": "string",
                     "description": "URL substring filter"
+                },
+                "method": {
+                    "type": "string",
+                    "description": "Filter by HTTP method (case-insensitive), e.g. 'GET', 'POST'."
+                },
+                "unique_urls": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Collapse multiple requests to the same URL into one row (largest size kept, with request_count)."
+                },
+                "min_size_kb": {
+                    "type": "number",
+                    "description": "Only include requests whose response size is at least this many kilobytes."
+                },
+                "max_size_kb": {
+                    "type": "number",
+                    "description": "Only include requests whose response size is at most this many kilobytes."
                 },
                 "sort_by": {
                     "type": "array",
@@ -510,7 +532,7 @@ fn list_network_activity_tool() -> ToolSpec {
             "required": [],
             "additionalProperties": false
         }),
-        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request."),
+        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, filter='media' for image/audio/video, method='POST' to narrow by verb, unique_urls=true to deduplicate, min_size_kb/max_size_kb for size filtering, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request."),
     }
 }
 
@@ -1065,5 +1087,51 @@ mod tests {
                 spec.name
             );
         }
+    }
+
+    #[test]
+    fn schema_advertises_new_network_params() {
+        let specs = mvp_tool_specs();
+
+        let net = specs
+            .iter()
+            .find(|s| s.name == "list_network_activity")
+            .expect("list_network_activity tool must exist");
+
+        let props = &net.input_schema["properties"];
+
+        let filter_enum = props["filter"]["enum"]
+            .as_array()
+            .expect("filter must be an enum array");
+        assert!(
+            filter_enum.iter().any(|v| v == "media"),
+            "filter enum must contain 'media', got: {filter_enum:?}"
+        );
+        assert!(
+            props.get("method").is_some(),
+            "list_network_activity must have 'method' property"
+        );
+        assert!(
+            props.get("unique_urls").is_some(),
+            "list_network_activity must have 'unique_urls' property"
+        );
+        assert!(
+            props.get("min_size_kb").is_some(),
+            "list_network_activity must have 'min_size_kb' property"
+        );
+        assert!(
+            props.get("max_size_kb").is_some(),
+            "list_network_activity must have 'max_size_kb' property"
+        );
+
+        let save = specs
+            .iter()
+            .find(|s| s.name == "save_file")
+            .expect("save_file tool must exist");
+
+        assert!(
+            save.input_schema["properties"].get("headers").is_some(),
+            "save_file must have 'headers' property"
+        );
     }
 }
