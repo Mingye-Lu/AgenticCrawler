@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{hash_map::Entry, BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use browser::{NetworkRequestEvent, RequestState};
@@ -19,6 +19,7 @@ enum RequestFilter {
     Failed,
     Pending,
     Aborted,
+    Media,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +53,10 @@ struct ListInput {
     pattern: Option<String>,
     sort_by: Vec<SortKey>,
     limit: usize,
+    unique_urls: bool,
+    method: Option<String>,
+    min_size_kb: Option<u64>,
+    max_size_kb: Option<u64>,
 }
 
 fn parse_list_input(input: &Value) -> Result<ListInput, CrawlError> {
@@ -88,9 +93,10 @@ fn parse_list_input(input: &Value) -> Result<ListInput, CrawlError> {
         "failed" => RequestFilter::Failed,
         "pending" => RequestFilter::Pending,
         "aborted" => RequestFilter::Aborted,
+        "media" => RequestFilter::Media,
         _ => {
             return Err(CrawlError::new(
-                "'filter' must be one of: all, xhr, failed, pending, aborted",
+                "'filter' must be one of: all, xhr, failed, pending, aborted, media",
             ));
         }
     };
@@ -131,6 +137,26 @@ fn parse_list_input(input: &Value) -> Result<ListInput, CrawlError> {
             usize::try_from(value).unwrap_or(MAX_LIMIT).min(MAX_LIMIT)
         });
 
+    let unique_urls = input
+        .get("unique_urls")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let method = input
+        .get("method")
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_uppercase())
+        .filter(|value| !value.is_empty());
+
+    let min_size_kb = input.get("min_size_kb").and_then(Value::as_u64);
+    let max_size_kb = input.get("max_size_kb").and_then(Value::as_u64);
+
+    if let (Some(min), Some(max)) = (min_size_kb, max_size_kb) {
+        if min > max {
+            return Err(CrawlError::new("min_size_kb cannot exceed max_size_kb"));
+        }
+    }
+
     Ok(ListInput {
         since,
         until,
@@ -138,6 +164,10 @@ fn parse_list_input(input: &Value) -> Result<ListInput, CrawlError> {
         pattern,
         sort_by,
         limit,
+        unique_urls,
+        method,
+        min_size_kb,
+        max_size_kb,
     })
 }
 
@@ -170,6 +200,15 @@ fn request_matches_filter(event: &NetworkRequestEvent, filter: RequestFilter) ->
         RequestFilter::Failed => event.state == RequestState::Failed,
         RequestFilter::Pending => event.state == RequestState::Pending,
         RequestFilter::Aborted => event.state == RequestState::Aborted,
+        RequestFilter::Media => event.response_headers.as_ref().is_some_and(|headers| {
+            headers
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case("content-type"))
+                .is_some_and(|(_, value)| {
+                    let value = value.to_ascii_lowercase();
+                    value.starts_with("video/") || value.starts_with("audio/")
+                })
+        }),
     }
 }
 
@@ -212,7 +251,55 @@ fn latest_requests(events: &[NetworkRequestEvent]) -> Vec<NetworkRequestEvent> {
     by_request_id.into_values().collect()
 }
 
-fn matching_requests(crawl_state: &CrawlState, input: &ListInput) -> Vec<NetworkRequestEvent> {
+fn within_size_bounds(
+    event: &NetworkRequestEvent,
+    min_size_kb: Option<u64>,
+    max_size_kb: Option<u64>,
+) -> bool {
+    let size = event.size_bytes.unwrap_or(0);
+    if let Some(min) = min_size_kb {
+        if size < min.saturating_mul(1024) {
+            return false;
+        }
+    }
+    if let Some(max) = max_size_kb {
+        if size > max.saturating_mul(1024) {
+            return false;
+        }
+    }
+    true
+}
+
+fn deduplicate_by_url(
+    events: Vec<NetworkRequestEvent>,
+) -> (Vec<NetworkRequestEvent>, HashMap<String, u32>) {
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    let mut by_url: HashMap<String, NetworkRequestEvent> = HashMap::new();
+    for event in events {
+        *counts.entry(event.url.clone()).or_insert(0) += 1;
+        match by_url.entry(event.url.clone()) {
+            Entry::Occupied(mut occupied) => {
+                let existing = occupied.get_mut();
+                let max_size = existing.size_bytes.max(event.size_bytes);
+                let event_is_later = (event.seq_at_initiation, event.timestamp_ms)
+                    > (existing.seq_at_initiation, existing.timestamp_ms);
+                if event_is_later {
+                    *existing = event;
+                }
+                existing.size_bytes = max_size;
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(event);
+            }
+        }
+    }
+    (by_url.into_values().collect(), counts)
+}
+
+fn matching_requests(
+    crawl_state: &CrawlState,
+    input: &ListInput,
+) -> (Vec<NetworkRequestEvent>, HashMap<String, u32>) {
     let since = match input.since {
         SinceBound::All => 0,
         SinceBound::Last => crawl_state.seq_counter.current().saturating_sub(1),
@@ -223,7 +310,7 @@ fn matching_requests(crawl_state: &CrawlState, input: &ListInput) -> Vec<Network
         UntilBound::Seq(value) => Some(value),
     };
 
-    let mut requests = latest_requests(&crawl_state.network_request_events)
+    let filtered = latest_requests(&crawl_state.network_request_events)
         .into_iter()
         .filter(|event| {
             event.seq_at_initiation >= since
@@ -236,10 +323,23 @@ fn matching_requests(crawl_state: &CrawlState, input: &ListInput) -> Vec<Network
                 .as_deref()
                 .is_none_or(|pattern| event.url.contains(pattern))
         })
+        .filter(|event| {
+            input
+                .method
+                .as_deref()
+                .is_none_or(|method| event.method.eq_ignore_ascii_case(method))
+        })
+        .filter(|event| within_size_bounds(event, input.min_size_kb, input.max_size_kb))
         .collect::<Vec<_>>();
 
+    let (mut requests, request_counts) = if input.unique_urls {
+        deduplicate_by_url(filtered)
+    } else {
+        (filtered, HashMap::new())
+    };
+
     requests.sort_by(|left, right| compare_requests(left, right, &input.sort_by));
-    requests
+    (requests, request_counts)
 }
 
 fn build_by_type(events: &[NetworkRequestEvent]) -> BTreeMap<String, usize> {
@@ -252,8 +352,23 @@ fn build_by_type(events: &[NetworkRequestEvent]) -> BTreeMap<String, usize> {
     by_type
 }
 
-fn build_request_row(event: &NetworkRequestEvent, id: &str, now_ms: u64) -> Value {
-    json!({
+fn build_request_row(
+    event: &NetworkRequestEvent,
+    id: &str,
+    now_ms: u64,
+    request_count: Option<u32>,
+) -> Value {
+    let content_type = event
+        .response_headers
+        .as_ref()
+        .and_then(|headers| {
+            headers
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case("content-type"))
+        })
+        .map_or(Value::Null, |(_, value)| json!(value));
+
+    let mut row = json!({
         "id": id,
         "url": event.url,
         "method": event.method,
@@ -266,9 +381,18 @@ fn build_request_row(event: &NetworkRequestEvent, id: &str, now_ms: u64) -> Valu
         "duration_ms": event.duration_ms,
         "type": normalize_request_type(&event.request_type),
         "state": state_name(event.state),
+        "content_type": content_type,
         "initiated_ms_ago": (event.state == RequestState::Pending)
             .then_some(now_ms.saturating_sub(event.timestamp_ms)),
-    })
+    });
+
+    if let Some(count) = request_count {
+        if let Some(object) = row.as_object_mut() {
+            object.insert("request_count".to_string(), json!(count));
+        }
+    }
+
+    row
 }
 
 pub async fn list_network_activity(
@@ -287,7 +411,7 @@ pub async fn list_network_activity(
 
     crawl_state.ingest_observations(polled);
 
-    let all_matching = matching_requests(crawl_state, &input);
+    let (all_matching, request_counts) = matching_requests(crawl_state, &input);
     let truncated = all_matching.len() > input.limit;
     let visible = all_matching
         .iter()
@@ -305,7 +429,12 @@ pub async fn list_network_activity(
             crawl_state
                 .network_request_refs
                 .insert(id.clone(), event.clone());
-            build_request_row(event, &id, now_ms)
+            let request_count = if input.unique_urls {
+                request_counts.get(&event.url).copied()
+            } else {
+                None
+            };
+            build_request_row(event, &id, now_ms, request_count)
         })
         .collect::<Vec<_>>();
 
@@ -501,6 +630,10 @@ mod tests {
         assert_eq!(input.filter, RequestFilter::All);
         assert_eq!(input.sort_by, vec![SortKey::Oldest]);
         assert_eq!(input.limit, DEFAULT_LIMIT);
+        assert!(!input.unique_urls);
+        assert_eq!(input.method, None);
+        assert_eq!(input.min_size_kb, None);
+        assert_eq!(input.max_size_kb, None);
     }
 
     #[test]
@@ -539,7 +672,7 @@ mod tests {
         };
         let input = parse_list_input(&json!({"since": 2, "until": 3})).unwrap();
 
-        let requests = matching_requests(&state, &input);
+        let (requests, _counts) = matching_requests(&state, &input);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].request_id, "two");
     }
@@ -580,7 +713,8 @@ mod tests {
         };
         let input = parse_list_input(&json!({"sort_by": ["slowest", "newest"]})).unwrap();
 
-        let ids = matching_requests(&state, &input)
+        let (requests, _counts) = matching_requests(&state, &input);
+        let ids = requests
             .into_iter()
             .map(|request| request.request_id)
             .collect::<Vec<_>>();
@@ -669,5 +803,434 @@ mod tests {
         assert!(rendered_no_body.contains("ttfb_ms"));
         assert!(!rendered_no_body.contains("REQ_BODY_MARKER"));
         assert!(!rendered_no_body.contains("RESP_BODY_MARKER"));
+    }
+
+    fn reply_payload(effect: &ToolEffect) -> Value {
+        match effect {
+            ToolEffect::Reply(body) => {
+                serde_json::from_str(body).expect("reply body should be valid json")
+            }
+            other => panic!("expected reply effect, got {other:?}"),
+        }
+    }
+
+    fn row_urls(payload: &Value) -> Vec<String> {
+        payload["requests"]
+            .as_array()
+            .expect("requests should be an array")
+            .iter()
+            .map(|row| {
+                row["url"]
+                    .as_str()
+                    .expect("row url should be a string")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn media_filter_matches_video_and_audio_content_types() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut video = event(
+            "vid",
+            1,
+            10,
+            Some(10),
+            Some(1000),
+            "media",
+            RequestState::Completed,
+        );
+        video.response_headers = Some(BTreeMap::from([(
+            "Content-Type".to_string(),
+            "video/mp4".to_string(),
+        )]));
+        let mut audio = event(
+            "aud",
+            2,
+            20,
+            Some(10),
+            Some(1000),
+            "media",
+            RequestState::Completed,
+        );
+        audio.response_headers = Some(BTreeMap::from([(
+            "content-type".to_string(),
+            "audio/ogg".to_string(),
+        )]));
+        let mut html = event(
+            "doc",
+            3,
+            30,
+            Some(10),
+            Some(1000),
+            "document",
+            RequestState::Completed,
+        );
+        html.response_headers = Some(BTreeMap::from([(
+            "content-type".to_string(),
+            "text/html".to_string(),
+        )]));
+        let no_headers = event(
+            "bare",
+            4,
+            40,
+            Some(10),
+            Some(1000),
+            "fetch",
+            RequestState::Completed,
+        );
+
+        let observations = vec![
+            ObservationEvent::NetworkRequest(Box::new(video)),
+            ObservationEvent::NetworkRequest(Box::new(audio)),
+            ObservationEvent::NetworkRequest(Box::new(html)),
+            ObservationEvent::NetworkRequest(Box::new(no_headers)),
+        ];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_network_activity(
+            &json!({ "since": "all", "filter": "media" }),
+            &mut browser,
+            &mut state,
+        )
+        .await
+        .expect("list_network_activity should succeed");
+        let payload = reply_payload(&effect);
+
+        let urls = row_urls(&payload);
+        assert_eq!(urls.len(), 2, "only video and audio responses match media");
+        assert!(urls.iter().any(|url| url.ends_with("/vid")));
+        assert!(urls.iter().any(|url| url.ends_with("/aud")));
+        assert!(!urls.iter().any(|url| url.ends_with("/doc")));
+        assert!(
+            !urls.iter().any(|url| url.ends_with("/bare")),
+            "events without response_headers fail closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn method_filter_is_case_insensitive() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut post = event(
+            "p",
+            1,
+            10,
+            Some(10),
+            Some(100),
+            "fetch",
+            RequestState::Completed,
+        );
+        post.method = "POST".to_string();
+        let get_one = event(
+            "g1",
+            2,
+            20,
+            Some(10),
+            Some(100),
+            "fetch",
+            RequestState::Completed,
+        );
+        let get_two = event(
+            "g2",
+            3,
+            30,
+            Some(10),
+            Some(100),
+            "fetch",
+            RequestState::Completed,
+        );
+
+        let observations = vec![
+            ObservationEvent::NetworkRequest(Box::new(post)),
+            ObservationEvent::NetworkRequest(Box::new(get_one)),
+            ObservationEvent::NetworkRequest(Box::new(get_two)),
+        ];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_network_activity(
+            &json!({ "since": "all", "method": "post" }),
+            &mut browser,
+            &mut state,
+        )
+        .await
+        .expect("list_network_activity should succeed");
+        let payload = reply_payload(&effect);
+
+        let rows = payload["requests"]
+            .as_array()
+            .expect("requests should be an array");
+        assert_eq!(rows.len(), 1, "lowercase method input matches POST events");
+        assert_eq!(rows[0]["method"].as_str(), Some("POST"));
+        assert!(rows[0]["url"].as_str().unwrap().ends_with("/p"));
+    }
+
+    #[tokio::test]
+    async fn size_range_filter_bounds_requests() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let below = event(
+            "below",
+            1,
+            10,
+            Some(10),
+            Some(50_000),
+            "fetch",
+            RequestState::Completed,
+        );
+        let inside_low = event(
+            "low",
+            2,
+            20,
+            Some(10),
+            Some(200_000),
+            "fetch",
+            RequestState::Completed,
+        );
+        let inside_high = event(
+            "high",
+            3,
+            30,
+            Some(10),
+            Some(300_000),
+            "fetch",
+            RequestState::Completed,
+        );
+        let above = event(
+            "above",
+            4,
+            40,
+            Some(10),
+            Some(600_000),
+            "fetch",
+            RequestState::Completed,
+        );
+
+        let observations = vec![
+            ObservationEvent::NetworkRequest(Box::new(below)),
+            ObservationEvent::NetworkRequest(Box::new(inside_low)),
+            ObservationEvent::NetworkRequest(Box::new(inside_high)),
+            ObservationEvent::NetworkRequest(Box::new(above)),
+        ];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_network_activity(
+            &json!({ "since": "all", "min_size_kb": 100, "max_size_kb": 500 }),
+            &mut browser,
+            &mut state,
+        )
+        .await
+        .expect("list_network_activity should succeed");
+        let payload = reply_payload(&effect);
+
+        let urls = row_urls(&payload);
+        assert_eq!(urls.len(), 2, "only in-range sizes survive");
+        assert!(urls.iter().any(|url| url.ends_with("/low")));
+        assert!(urls.iter().any(|url| url.ends_with("/high")));
+    }
+
+    #[test]
+    fn size_range_rejects_inverted_bounds() {
+        let result = parse_list_input(&json!({ "min_size_kb": 500, "max_size_kb": 100 }));
+        let error = result.expect_err("inverted size bounds should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("min_size_kb cannot exceed max_size_kb"),
+            "unexpected error message: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn inverted_size_bounds_make_handler_error() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut browser = browser_with_observations(vec![]);
+        let mut state = CrawlState::default();
+
+        let result = list_network_activity(
+            &json!({ "min_size_kb": 500, "max_size_kb": 100 }),
+            &mut browser,
+            &mut state,
+        )
+        .await;
+
+        assert!(result.is_err(), "handler must surface the validation error");
+    }
+
+    #[tokio::test]
+    async fn unique_urls_collapses_same_url_keeping_latest_and_max_size() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut first = event(
+            "a",
+            1,
+            100,
+            Some(10),
+            Some(1000),
+            "fetch",
+            RequestState::Completed,
+        );
+        first.url = "https://example.com/same".to_string();
+        let mut second = event(
+            "b",
+            2,
+            200,
+            Some(10),
+            Some(3000),
+            "fetch",
+            RequestState::Completed,
+        );
+        second.url = "https://example.com/same".to_string();
+        let mut third = event(
+            "c",
+            3,
+            300,
+            Some(10),
+            Some(2000),
+            "fetch",
+            RequestState::Completed,
+        );
+        third.url = "https://example.com/same".to_string();
+
+        let observations = vec![
+            ObservationEvent::NetworkRequest(Box::new(first)),
+            ObservationEvent::NetworkRequest(Box::new(second)),
+            ObservationEvent::NetworkRequest(Box::new(third)),
+        ];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_network_activity(
+            &json!({ "since": "all", "unique_urls": true }),
+            &mut browser,
+            &mut state,
+        )
+        .await
+        .expect("list_network_activity should succeed");
+        let payload = reply_payload(&effect);
+
+        let rows = payload["requests"]
+            .as_array()
+            .expect("requests should be an array");
+        assert_eq!(rows.len(), 1, "same-url events collapse to one row");
+        assert_eq!(rows[0]["request_count"].as_u64(), Some(3));
+        // max of {1000, 3000, 2000} bytes = 3000 -> round(3000 / 1024) = 3 KB
+        assert_eq!(rows[0]["size_kb"].as_u64(), Some(3), "dedup keeps max size");
+
+        let representative = state
+            .network_request_refs
+            .get("@r1")
+            .expect("@r1 should resolve to the representative event");
+        assert_eq!(
+            representative.request_id, "c",
+            "representative keeps the latest event's request_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn content_type_present_for_typed_response_and_null_otherwise() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut typed = event(
+            "typed",
+            1,
+            10,
+            Some(10),
+            Some(100),
+            "fetch",
+            RequestState::Completed,
+        );
+        typed.response_headers = Some(BTreeMap::from([(
+            "Content-Type".to_string(),
+            "application/json".to_string(),
+        )]));
+        let untyped = event(
+            "untyped",
+            2,
+            20,
+            Some(10),
+            Some(100),
+            "fetch",
+            RequestState::Completed,
+        );
+
+        let observations = vec![
+            ObservationEvent::NetworkRequest(Box::new(typed)),
+            ObservationEvent::NetworkRequest(Box::new(untyped)),
+        ];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_network_activity(
+            &json!({ "since": "all", "sort_by": ["oldest"] }),
+            &mut browser,
+            &mut state,
+        )
+        .await
+        .expect("list_network_activity should succeed");
+        let payload = reply_payload(&effect);
+
+        let rows = payload["requests"]
+            .as_array()
+            .expect("requests should be an array");
+        let typed_row = rows
+            .iter()
+            .find(|row| row["url"].as_str().unwrap().ends_with("/typed"))
+            .expect("typed row present");
+        let untyped_row = rows
+            .iter()
+            .find(|row| row["url"].as_str().unwrap().ends_with("/untyped"))
+            .expect("untyped row present");
+
+        assert_eq!(
+            typed_row["content_type"].as_str(),
+            Some("application/json"),
+            "content_type surfaces inline"
+        );
+        assert!(
+            untyped_row.get("content_type").is_some(),
+            "content_type key is always present"
+        );
+        assert!(
+            untyped_row["content_type"].is_null(),
+            "content_type is null when response_headers are absent"
+        );
+    }
+
+    #[tokio::test]
+    async fn defaults_omit_request_count_field() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let observations = vec![ObservationEvent::NetworkRequest(Box::new(event(
+            "data",
+            1,
+            10,
+            Some(16),
+            Some(128),
+            "fetch",
+            RequestState::Completed,
+        )))];
+        let mut browser = browser_with_observations(observations);
+        let mut state = CrawlState::default();
+
+        let effect = list_network_activity(&json!({ "since": "all" }), &mut browser, &mut state)
+            .await
+            .expect("list_network_activity should succeed");
+        let payload = reply_payload(&effect);
+
+        let rows = payload["requests"]
+            .as_array()
+            .expect("requests should be an array");
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].get("request_count").is_none(),
+            "request_count is omitted without unique_urls"
+        );
+        assert_eq!(payload["summary"]["total"].as_u64(), Some(1));
     }
 }
