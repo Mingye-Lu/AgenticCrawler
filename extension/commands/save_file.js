@@ -3,12 +3,12 @@
 const SAVE_FILE_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
 async function handleSaveFile(tabId, payload) {
-  const { url } = payload;
+  const { url, headers = {} } = payload;
   if (!url) throw new Error('save_file requires payload.url');
 
   let response;
   try {
-    response = await fetch(url, { credentials: 'include' });
+    response = await fetch(url, { credentials: 'include', headers });
   } catch (e) {
     throw new Error(`Failed to fetch ${url}: ${e.message}`);
   }

@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::browser_backend::{BrowserBackend, ScreenshotOptions};
 use crate::{ConsoleMessageEvent, NetworkRequestEvent, ObservationEvent, WebSocketFrameEvent};
 
@@ -162,8 +164,13 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::list_resources(self).await
     }
 
-    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError> {
-        PlaywrightBridge::save_file(self, url, path).await
+    async fn save_file(
+        &mut self,
+        url: &str,
+        path: &str,
+        headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
+        PlaywrightBridge::save_file(self, url, path, headers).await
     }
 
     async fn click(&mut self, selector: &str) -> Result<(), BridgeError> {

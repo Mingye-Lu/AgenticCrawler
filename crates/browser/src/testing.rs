@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -74,7 +76,12 @@ impl BrowserBackend for NopBridge {
     async fn list_resources(&mut self) -> Result<Value, BridgeError> {
         Err(BridgeError::Protocol("NopBridge".into()))
     }
-    async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+    async fn save_file(
+        &mut self,
+        _url: &str,
+        _path: &str,
+        _headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
         Err(BridgeError::Protocol("NopBridge".into()))
     }
     async fn click(&mut self, _selector: &str) -> Result<(), BridgeError> {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 
 use async_trait::async_trait;
@@ -110,7 +110,12 @@ pub trait BrowserBackend: Debug {
     async fn import_cookies_only(&mut self, state: &BrowserState) -> Result<(), BridgeError>;
     async fn import_local_storage(&mut self, state: &BrowserState) -> Result<(), BridgeError>;
     async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError>;
-    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError>;
+    async fn save_file(
+        &mut self,
+        url: &str,
+        path: &str,
+        headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError>;
     async fn click(&mut self, selector: &str) -> Result<(), BridgeError>;
     async fn click_at(&mut self, x: f64, y: f64) -> Result<(), BridgeError>;
     async fn fill(&mut self, selector: &str, value: &str) -> Result<(), BridgeError>;

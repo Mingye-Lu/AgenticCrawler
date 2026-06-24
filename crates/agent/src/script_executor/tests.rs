@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -200,7 +201,12 @@ impl BrowserBackend for MockBridge {
         Ok(json!({"links": [], "images": [], "forms": []}))
     }
 
-    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError> {
+    async fn save_file(
+        &mut self,
+        url: &str,
+        path: &str,
+        _headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
         self.log("save_file", json!({"url": url, "path": path}));
         Ok(path.to_string())
     }

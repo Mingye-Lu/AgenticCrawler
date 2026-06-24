@@ -3,6 +3,7 @@
 //! observation tools be exercised over the full `poll_observations` dispatch
 //! path (the path that regressed in the inherent-vs-trait wiring bug).
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -13,9 +14,13 @@ use browser::{
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
+pub type SaveFileHeadersRecord = Arc<Mutex<Option<BTreeMap<String, String>>>>;
+
 #[derive(Debug, Default)]
 pub struct ObservationMockBackend {
     pub observations: Vec<ObservationEvent>,
+    pub last_save_file_headers: Option<BTreeMap<String, String>>,
+    pub save_file_headers_sink: Option<SaveFileHeadersRecord>,
 }
 
 #[async_trait]
@@ -92,7 +97,16 @@ impl BrowserBackend for ObservationMockBackend {
     async fn list_resources(&mut self) -> Result<Value, BridgeError> {
         Ok(json!([]))
     }
-    async fn save_file(&mut self, _: &str, _: &str) -> Result<String, BridgeError> {
+    async fn save_file(
+        &mut self,
+        _: &str,
+        _: &str,
+        headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
+        self.last_save_file_headers = headers.cloned();
+        if let Some(sink) = &self.save_file_headers_sink {
+            *sink.lock().await = self.last_save_file_headers.clone();
+        }
         Ok(String::new())
     }
     async fn click(&mut self, _: &str) -> Result<(), BridgeError> {
@@ -126,8 +140,29 @@ impl BrowserBackend for ObservationMockBackend {
 
 #[must_use]
 pub fn browser_with_observations(observations: Vec<ObservationEvent>) -> BrowserContext {
-    let bridge: SharedBridge = Arc::new(Mutex::new(
-        Box::new(ObservationMockBackend { observations }) as Box<dyn BrowserBackend + Send>,
-    ));
+    let bridge: SharedBridge = Arc::new(Mutex::new(Box::new(ObservationMockBackend {
+        observations,
+        last_save_file_headers: None,
+        save_file_headers_sink: None,
+    }) as Box<dyn BrowserBackend + Send>));
     BrowserContext::new(bridge)
+}
+
+#[must_use]
+pub fn browser_with_save_file_header_recorder(
+    observations: Vec<ObservationEvent>,
+) -> (BrowserContext, SaveFileHeadersRecord) {
+    let sink = Arc::new(Mutex::new(None));
+    let bridge: SharedBridge = Arc::new(Mutex::new(Box::new(ObservationMockBackend {
+        observations,
+        last_save_file_headers: None,
+        save_file_headers_sink: Some(sink.clone()),
+    }) as Box<dyn BrowserBackend + Send>));
+    (BrowserContext::new(bridge), sink)
+}
+
+pub async fn take_recorded_save_file_headers(
+    sink: &SaveFileHeadersRecord,
+) -> Option<BTreeMap<String, String>> {
+    sink.lock().await.clone()
 }

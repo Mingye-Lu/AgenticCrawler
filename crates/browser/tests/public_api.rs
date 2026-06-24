@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -124,7 +125,12 @@ impl BrowserBackend for MockBrowserBackend {
         Ok(serde_json::json!({"links": [], "images": []}))
     }
 
-    async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+    async fn save_file(
+        &mut self,
+        _url: &str,
+        _path: &str,
+        _headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
         Ok("saved.txt".to_string())
     }
 

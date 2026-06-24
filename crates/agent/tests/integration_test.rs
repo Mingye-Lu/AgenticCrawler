@@ -365,7 +365,12 @@ mod set_device_integration {
         async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
             unreachable!()
         }
-        async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+        async fn save_file(
+            &mut self,
+            _url: &str,
+            _path: &str,
+            _headers: Option<&std::collections::BTreeMap<String, String>>,
+        ) -> Result<String, BridgeError> {
             unreachable!()
         }
         async fn click(&mut self, _selector: &str) -> Result<(), BridgeError> {
@@ -489,7 +494,12 @@ mod set_device_integration {
         async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
             unreachable!()
         }
-        async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+        async fn save_file(
+            &mut self,
+            _url: &str,
+            _path: &str,
+            _headers: Option<&std::collections::BTreeMap<String, String>>,
+        ) -> Result<String, BridgeError> {
             unreachable!()
         }
         async fn click(&mut self, _selector: &str) -> Result<(), BridgeError> {

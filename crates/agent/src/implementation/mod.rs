@@ -21,6 +21,9 @@ mod fork;
 mod lifecycle;
 
 #[cfg(test)]
+use std::collections::BTreeMap;
+
+#[cfg(test)]
 use crate::BrowserBackend;
 #[cfg(test)]
 use crate::{BridgeError, BrowserState, PageInfo, ScreenshotOptions};
@@ -1327,7 +1330,12 @@ mod tests {
             Err(BridgeError::Protocol("unused".into()))
         }
 
-        async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+        async fn save_file(
+            &mut self,
+            _url: &str,
+            _path: &str,
+            _headers: Option<&BTreeMap<String, String>>,
+        ) -> Result<String, BridgeError> {
             Err(BridgeError::Protocol("unused".into()))
         }
 

@@ -1288,7 +1288,7 @@ async function bootstrap() {
       try {
         const fs = require('node:fs');
         const nodePath = require('node:path');
-        const response = await context.request.get(command.url, { timeout: 30000 });
+        const response = await context.request.get(command.url, { headers: command.headers || {}, timeout: 30000 });
         if (!response.ok()) {
           throw new Error(`HTTP ${response.status()} ${response.statusText()} for ${command.url}`);
         }
