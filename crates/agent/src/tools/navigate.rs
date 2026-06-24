@@ -994,35 +994,37 @@ mod tests {
     }
 
     #[test]
-    fn execute_reply_serializes_recaptcha_detected() {
-        // `execute` needs a live browser, so this pins the reply JSON shape
-        // (line ~545) to guard against `recaptcha_detected` being dropped.
-        let recaptcha_detected = true;
-        let reply = json!({
-            "seq": 1u64,
-            "url": "https://example.com",
-            "title": "Test",
-            "redirect_chain": Value::Null,
-            "page_map": json!({}),
-            "recaptcha_detected": recaptcha_detected,
-        });
-        assert_eq!(
-            reply["recaptcha_detected"], true,
-            "main execute reply must include recaptcha_detected"
-        );
-
-        let recaptcha_detected = false;
-        let reply = json!({
-            "seq": 1u64,
-            "url": "https://example.com",
-            "title": "Test",
-            "redirect_chain": Value::Null,
-            "page_map": json!({}),
-            "recaptcha_detected": recaptcha_detected,
-        });
-        assert_eq!(
-            reply["recaptcha_detected"], false,
-            "main execute reply must include recaptcha_detected"
-        );
+    fn execute_path_reply_without_page_map_serializes_recaptcha_detected() {
+        for &detected in &[true, false] {
+            let page = crate::FetchedPage {
+                url: "https://example.com".to_string(),
+                title: Some("Test".to_string()),
+                html: String::new(),
+                text: String::new(),
+                markdown: String::new(),
+                fetched_via_browser: false,
+                redirect_chain: None,
+                recaptcha_detected: detected,
+            };
+            let reply = reply_without_page_map(
+                &page,
+                "Test",
+                "content",
+                "fit_markdown",
+                &ContentDepth::Main,
+                false,
+                1,
+                &json!([]),
+            );
+            let ToolEffect::Reply(json_str) = reply else {
+                panic!("expected Reply variant");
+            };
+            let parsed: Value =
+                serde_json::from_str(&json_str).expect("reply_without_page_map must return JSON");
+            assert_eq!(
+                parsed["recaptcha_detected"], detected,
+                "execute HTTP path must include recaptcha_detected={detected}"
+            );
+        }
     }
 }
