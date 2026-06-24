@@ -532,7 +532,7 @@ fn list_network_activity_tool() -> ToolSpec {
             "required": [],
             "additionalProperties": false
         }),
-        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, filter='media' for image/audio/video, method='POST' to narrow by verb, unique_urls=true to deduplicate, min_size_kb/max_size_kb for size filtering, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request."),
+        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, filter='media' for audio/video, method='POST' to narrow by verb, unique_urls=true to deduplicate, min_size_kb/max_size_kb for size filtering, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request."),
     }
 }
 
