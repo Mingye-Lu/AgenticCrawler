@@ -478,7 +478,7 @@ fn list_page_logs_tool() -> ToolSpec {
 fn list_network_activity_tool() -> ToolSpec {
     ToolSpec {
         name: "list_network_activity",
-        description: "List observed network requests buffered during this browser session. Supports temporal filtering by seq window, request-state filters, URL substring filtering, and adjective-based sorting such as slowest/fastest or newest/oldest. Returns stable @rN refs for follow-up inspection with inspect_request.",
+        description: "List observed network requests buffered during this browser session. Supports temporal filtering by seq window, request-state filters, URL substring filtering, adjective-based sorting such as slowest/fastest or newest/oldest, and an inline content_type field on each row. Returns stable @rN refs for follow-up inspection with inspect_request.",
         input_schema: json!({
             "type": "object",
             "properties": {
@@ -506,14 +506,14 @@ fn list_network_activity_tool() -> ToolSpec {
                 "unique_urls": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Collapse multiple requests to the same URL into one row (largest size kept, with request_count)."
+                    "description": "Collapse multiple requests to the same URL into one row. The representative row is the one with the largest response size (ties broken by most recent). Includes request_count."
                 },
                 "min_size_kb": {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Only include requests whose response size is at least this many kilobytes."
                 },
                 "max_size_kb": {
-                    "type": "number",
+                    "type": "integer",
                     "description": "Only include requests whose response size is at most this many kilobytes."
                 },
                 "sort_by": {
@@ -532,7 +532,7 @@ fn list_network_activity_tool() -> ToolSpec {
             "required": [],
             "additionalProperties": false
         }),
-        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, filter='media' for audio/video, method='POST' to narrow by verb, unique_urls=true to deduplicate, min_size_kb/max_size_kb for size filtering, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request."),
+        instructions: Some("Use this to inspect buffered request activity from the current browser session. Default window is since the previous action. Use since='all' for the whole retained session buffer, numeric since/until for half-open [since, until) filtering, filter='xhr' for fetch/XHR-style calls, filter='media' for audio/video, method='POST' to narrow by verb, unique_urls=true to deduplicate, min_size_kb/max_size_kb for size filtering, and sort_by adjective pairs like ['slowest','largest'] for stable ranking. Each listed request gets an @rN id that is only stable for the latest list_network_activity result and can be passed to inspect_request. Each row includes an inline content_type field (null if no Content-Type header was received)."),
     }
 }
 
