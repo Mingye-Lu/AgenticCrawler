@@ -148,8 +148,8 @@ fn parse_list_input(input: &Value) -> Result<ListInput, CrawlError> {
         .map(|value| value.trim().to_uppercase())
         .filter(|value| !value.is_empty());
 
-    let min_size_kb = input.get("min_size_kb").and_then(Value::as_u64);
-    let max_size_kb = input.get("max_size_kb").and_then(Value::as_u64);
+    let min_size_kb = parse_size_kb_input(input, "min_size_kb");
+    let max_size_kb = parse_size_kb_input(input, "max_size_kb");
 
     if let (Some(min), Some(max)) = (min_size_kb, max_size_kb) {
         if min > max {
@@ -179,6 +179,14 @@ fn now_ms() -> u64 {
             let ms = duration.as_millis() as u64;
             ms
         })
+}
+
+fn parse_size_kb_input(input: &Value, key: &str) -> Option<u64> {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    input
+        .get(key)
+        .and_then(Value::as_f64)
+        .map(|value| value.max(0.0) as u64)
 }
 
 fn normalize_request_type(request_type: &str) -> String {
@@ -256,7 +264,13 @@ fn within_size_bounds(
     min_size_kb: Option<u64>,
     max_size_kb: Option<u64>,
 ) -> bool {
-    let size = event.size_bytes.unwrap_or(0);
+    if min_size_kb.is_none() && max_size_kb.is_none() {
+        return true;
+    }
+    // Exclude requests with unknown size when a size filter is active
+    let Some(size) = event.size_bytes else {
+        return false;
+    };
     if let Some(min) = min_size_kb {
         if size < min.saturating_mul(1024) {
             return false;
@@ -280,13 +294,16 @@ fn deduplicate_by_url(
         match by_url.entry(event.url.clone()) {
             Entry::Occupied(mut occupied) => {
                 let existing = occupied.get_mut();
-                let max_size = existing.size_bytes.max(event.size_bytes);
-                let event_is_later = (event.seq_at_initiation, event.timestamp_ms)
+                // Keep the event with the largest size_bytes as the representative
+                // so that inspect_request(@rN) reflects the same request as size_kb.
+                // Tie-break: prefer the latest by (seq_at_initiation, timestamp_ms).
+                let new_is_larger = event.size_bytes > existing.size_bytes;
+                let same_size = event.size_bytes == existing.size_bytes;
+                let new_is_later = (event.seq_at_initiation, event.timestamp_ms)
                     > (existing.seq_at_initiation, existing.timestamp_ms);
-                if event_is_later {
+                if new_is_larger || (same_size && new_is_later) {
                     *existing = event;
                 }
-                existing.size_bytes = max_size;
             }
             Entry::Vacant(vacant) => {
                 vacant.insert(event);
@@ -1063,7 +1080,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unique_urls_collapses_same_url_keeping_latest_and_max_size() {
+    async fn unique_urls_collapses_same_url_keeping_largest_representative() {
         use crate::tools::test_support::browser_with_observations;
 
         let mut first = event(
@@ -1127,8 +1144,8 @@ mod tests {
             .get("@r1")
             .expect("@r1 should resolve to the representative event");
         assert_eq!(
-            representative.request_id, "c",
-            "representative keeps the latest event's request_id"
+            representative.request_id, "b",
+            "representative keeps the largest event's request_id"
         );
     }
 
