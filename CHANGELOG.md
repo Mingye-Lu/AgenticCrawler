@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-06-25
+
 ### Added
 
 - **`list_network_activity` — richer filters and inline content type**: `filter='media'` selects audio/video responses (not images); `method` filters by HTTP verb (case-insensitive); `min_size_kb`/`max_size_kb` bound requests by response size (unknown-size requests are excluded when a size filter is active); `unique_urls=true` collapses duplicate URLs to the representative with the **largest** response size (other fields including `inspect_request(@rN)` reflect that same request), with a `request_count`; every row now includes an inline `content_type` field.
@@ -797,6 +799,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.12.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.3
 [0.12.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.2
 [0.12.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.1
 [0.12.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.0
