@@ -1110,7 +1110,12 @@ mod tests {
             Ok(json!([]))
         }
 
-        async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+        async fn save_file(
+            &mut self,
+            _url: &str,
+            _path: &str,
+            _headers: Option<&std::collections::BTreeMap<String, String>>,
+        ) -> Result<String, BridgeError> {
             Ok(String::new())
         }
 

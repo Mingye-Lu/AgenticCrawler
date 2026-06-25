@@ -251,7 +251,12 @@ mod tests {
         async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!([]))
         }
-        async fn save_file(&mut self, _: &str, _: &str) -> Result<String, BridgeError> {
+        async fn save_file(
+            &mut self,
+            _: &str,
+            _: &str,
+            _headers: Option<&std::collections::BTreeMap<String, String>>,
+        ) -> Result<String, BridgeError> {
             Ok(String::new())
         }
         async fn click(&mut self, _: &str) -> Result<(), BridgeError> {

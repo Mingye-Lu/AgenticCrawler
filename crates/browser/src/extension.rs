@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -347,12 +348,22 @@ impl BrowserBackend for ExtensionBridge {
         Self::require_result(response, "list_resources")
     }
 
-    async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError> {
+    async fn save_file(
+        &mut self,
+        url: &str,
+        path: &str,
+        headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
         if path.contains("..") {
             return Err(BridgeError::Protocol(
                 "save_file path contains path traversal".into(),
             ));
         }
+
+        let headers = headers
+            .map(serde_json::to_value)
+            .transpose()?
+            .unwrap_or_else(|| json!({}));
 
         let response = self
             .send_command(
@@ -360,6 +371,7 @@ impl BrowserBackend for ExtensionBridge {
                 json!({
                     "url": url,
                     "path": path,
+                    "headers": headers,
                 }),
             )
             .await?;

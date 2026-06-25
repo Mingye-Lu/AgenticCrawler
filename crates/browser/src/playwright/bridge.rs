@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -584,11 +585,20 @@ impl PlaywrightBridge {
         self.send_raw_command(&cmd).await
     }
 
-    pub async fn save_file(&mut self, url: &str, path: &str) -> Result<String, BridgeError> {
+    pub async fn save_file(
+        &mut self,
+        url: &str,
+        path: &str,
+        headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
+        let headers_json = headers
+            .map(|map| serde_json::to_value(map).unwrap_or(serde_json::json!({})))
+            .unwrap_or(serde_json::json!({}));
         let cmd = serde_json::json!({
             "action": "save_file",
             "url": url,
             "path": path,
+            "headers": headers_json,
         });
         let result = self.send_raw_command(&cmd).await?;
         Ok(result
