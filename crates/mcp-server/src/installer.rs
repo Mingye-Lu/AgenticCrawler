@@ -534,15 +534,26 @@ fn merge_json_config(
 
 fn install_claude_code_global(acrawl_path: &str) -> io::Result<String> {
     if command_exists("claude") {
-        // Always remove first (ignore errors — may not exist) to guarantee override.
+        // `--scope user` is required: `claude mcp add` defaults to `local`
+        // (current-directory-only) scope, which would silently downgrade a
+        // global install to per-directory. Remove from the same scope first.
         let _ = Command::new("claude")
-            .args(["mcp", "remove", "acrawl"])
+            .args(["mcp", "remove", "--scope", "user", "acrawl"])
             .output();
         let status = Command::new("claude")
-            .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
+            .args([
+                "mcp",
+                "add",
+                "--scope",
+                "user",
+                "acrawl",
+                "--",
+                acrawl_path,
+                "mcp",
+            ])
             .status()?;
         if status.success() {
-            return Ok("configured via `claude mcp add`".to_string());
+            return Ok("configured via `claude mcp add --scope user`".to_string());
         }
     }
     let home = home_dir()
@@ -822,10 +833,10 @@ fn remove_json_config(path: &Path, root_key: &str, server_name: &str) -> io::Res
 fn uninstall_claude_code_global() -> io::Result<String> {
     if command_exists("claude") {
         let status = Command::new("claude")
-            .args(["mcp", "remove", "acrawl"])
+            .args(["mcp", "remove", "--scope", "user", "acrawl"])
             .status()?;
         if status.success() {
-            return Ok("removed via `claude mcp remove`".to_string());
+            return Ok("removed via `claude mcp remove --scope user`".to_string());
         }
     }
     let home = home_dir()
