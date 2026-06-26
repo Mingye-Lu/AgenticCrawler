@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-06-26
+
+### Fixed
+
+- **`mcp install` (Claude Code)**: selecting **Global** scope now installs the MCP server at Claude Code's `user` scope instead of silently falling back to `local` (current-directory-only) scope. `claude mcp add` / `claude mcp remove` are now invoked with `--scope user`, so a global install updates the user-wide config (`~/.claude.json` top-level `mcpServers`) and applies across all projects rather than only the directory the installer happened to run from.
+
 ## [0.12.3] - 2026-06-25
 
 ### Added
@@ -799,6 +805,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.12.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.4
 [0.12.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.3
 [0.12.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.2
 [0.12.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.1
