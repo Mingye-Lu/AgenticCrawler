@@ -485,4 +485,42 @@ mod tests {
             RetryStrategy::NoRetry
         );
     }
+
+    #[test]
+    fn silent_submit_recaptcha_v3_message_classifies_as_captcha_detected() {
+        // The plan-fixed message from T3's RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE constant.
+        // Using the verbatim plan text to pin the classifier contract independently of T3.
+        let msg = "A submit request was sent but the page did not change, and this page uses reCAPTCHA v3 (invisible, score-based). Headless browsers often score too low and the server may silently reject the submission — though this could also be a client-side validation error or a successful inline update. acrawl cannot read the server-side score. Report this to the user and do not retry the same submit; a human can re-run with `acrawl config set headless false` (or `--headed`), or use the extension bridge (`/extension`) to operate in a real browser session.";
+
+        // The message contains "reCAPTCHA v3" which matches the classifier's captcha branch.
+        let category = classify("fill_form", msg);
+        assert_eq!(
+            category,
+            FailureCategory::CaptchaDetected,
+            "silent-submit message must classify as CaptchaDetected"
+        );
+
+        // CaptchaDetected must map to NoRetry.
+        let strategy = retry_strategy(&category);
+        assert_eq!(
+            strategy,
+            RetryStrategy::NoRetry,
+            "CaptchaDetected must have NoRetry strategy"
+        );
+
+        // Guard: message must NOT contain substrings that mis-route to other branches.
+        assert!(
+            !msg.to_lowercase().contains("budget exceeded"),
+            "message must not collide with budget branch"
+        );
+        assert!(
+            !msg.to_lowercase().contains("cost limit"),
+            "message must not collide with cost-limit branch"
+        );
+        // Also verify the message does NOT contain the word "blocked" (plan constraint).
+        assert!(
+            !msg.to_lowercase().contains("blocked"),
+            "message must not use the word 'blocked'"
+        );
+    }
 }
