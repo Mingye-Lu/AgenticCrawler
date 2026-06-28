@@ -1286,7 +1286,10 @@ fn classify_uninstall_status(ide: Ide, detail: &str) -> ClientStatus {
 fn skipped_for_scope(ide: Ide, scope: Scope, json: bool) -> bool {
     if scope == Scope::Global && !ide.supports_global_scope() {
         if !json {
-            eprintln!("{}", format_skipped_line(ide.name(), "project-level config only"));
+            eprintln!(
+                "{}",
+                format_skipped_line(ide.name(), "project-level config only")
+            );
         }
         return true;
     }
