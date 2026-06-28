@@ -1984,12 +1984,24 @@ mod tests {
 
         assert!(result.is_err());
         let state = state.lock().expect("mock state poisoned");
-        let probe_calls = state
-            .evaluate_scripts
-            .iter()
-            .filter(|script| script.contains("grecaptcha"))
-            .count();
-        assert_eq!(probe_calls, 1, "probe should run exactly once");
+        // The audit probe must run exactly once — no retries.  We assert on the
+        // *total* evaluate call count (not just a filtered subset) to prove that
+        // nothing re-invoked the probe after the `Err` was returned.
+        //
+        // Broader no-double-submit guarantee: the `Err(CaptchaDetected)` return
+        // maps to `RetryStrategy::NoRetry`, which prevents `implementation/mod.rs`
+        // self-healing from re-invoking the interaction tool (and therefore the
+        // submit action).  That path is independently covered by
+        // `silent_submit_recaptcha_v3_message_classifies_as_captcha_detected`.
+        assert_eq!(
+            state.evaluate_scripts.len(),
+            1,
+            "exactly one evaluate call total — audit probe must not be re-invoked"
+        );
+        assert!(
+            state.evaluate_scripts[0].contains("grecaptcha"),
+            "the single evaluate call must be the v3 reCAPTCHA probe"
+        );
     }
 
     #[tokio::test]

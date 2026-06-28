@@ -49,7 +49,7 @@ pub async fn execute(
     let page_state = super::feedback::post_action_page_state(
         browser,
         crawl_state,
-        InteractionKind::PossibleSubmit,
+        InteractionKind::Passive,
         None,
         params.widen,
     )
