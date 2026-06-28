@@ -14,6 +14,26 @@ use super::page_map::{apply_page_map_caps, normalize_url};
 
 const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// Error message returned when a silent reCAPTCHA v3 submission is detected.
+///
+/// IMPORTANT: this exact string is pinned by the `failure_classifier` test — it MUST contain
+/// "reCAPTCHA" (for `CaptchaDetected` routing) and MUST NOT contain "blocked".
+pub(crate) const RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE: &str =
+    "A submit request was sent but the page did not change, and this page uses reCAPTCHA v3 \
+     (invisible, score-based). Headless browsers often score too low and the server may silently \
+     reject the submission — though this could also be a client-side validation error or a \
+     successful inline update. acrawl cannot read the server-side score. Report this to the user \
+     and do not retry the same submit; a human can re-run with `acrawl config set headless false` \
+     (or `--headed`), or use the extension bridge (`/extension`) to operate in a real browser \
+     session.";
+
+/// JavaScript snippet evaluated to detect reCAPTCHA v3 presence.
+/// Returns true if v3 scripts are present AND there is no visible v2 widget.
+/// Fail-open: wrapped in try/catch, any exception returns false.
+const RECAPTCHA_V3_PROBE_JS: &str = "(() => { try { return (typeof grecaptcha !== 'undefined' || \
+     /recaptcha\\/(api\\.js|releases)/i.test(document.documentElement.innerHTML)) && \
+     !document.querySelector('.g-recaptcha'); } catch (e) { return false; } })()";
+
 /// Hint for `post_action_page_state` indicating whether the caller might have triggered a form
 /// submission. Used by the silent-submit audit (implemented separately) to narrow detection to
 /// submit-capable interaction tools only.
@@ -495,12 +515,11 @@ fn page_state_from_feedback_map(
 /// comparison against the cached snapshot.
 pub(crate) async fn post_action_page_state(
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    _crawl_state: &CrawlState,
     interaction_kind: InteractionKind,
     interacted_selector: Option<&str>,
     widen: bool,
 ) -> Result<Value, ToolExecutionError> {
-    let _ = (crawl_state, interaction_kind);
     let dialog_scope = if widen {
         None
     } else {
@@ -517,8 +536,57 @@ pub(crate) async fn post_action_page_state(
     .await;
 
     match result {
-        Ok(Ok((scope, pm))) => Ok(page_state_from_feedback_map(browser, scope.as_deref(), pm)),
+        Ok(Ok((scope, pm))) => {
+            let page_state = page_state_from_feedback_map(browser, scope.as_deref(), pm);
+            if let Some(msg) = audit_silent_submission(browser, interaction_kind, &page_state).await
+            {
+                return Err(ToolExecutionError::new(msg.to_string()));
+            }
+            Ok(page_state)
+        }
         _ => Ok(fallback_value()),
+    }
+}
+
+/// Audit a just-completed interaction for a likely silent reCAPTCHA v3 rejection.
+///
+/// Returns `Some(RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE)` **only** when ALL three gates pass:
+/// 1. `interaction_kind == InteractionKind::PossibleSubmit` — passive actions never trigger.
+/// 2. Page did not navigate or structurally change (same URL, no headings/links/landmarks diff).
+/// 3. reCAPTCHA v3 is present on the page (`RECAPTCHA_V3_PROBE_JS` returns `true`).
+///
+/// Fail-open: any error (bridge acquire, evaluate timeout, ambiguous result) returns `None`.
+async fn audit_silent_submission(
+    browser: &mut BrowserContext,
+    interaction_kind: InteractionKind,
+    page_state: &Value,
+) -> Option<&'static str> {
+    if interaction_kind != InteractionKind::PossibleSubmit {
+        return None;
+    }
+
+    if !matches!(page_state.get("changed"), Some(Value::Bool(false))) {
+        return None;
+    }
+
+    let v3_present = {
+        let Ok(mut bridge) = browser.acquire_bridge().await else {
+            return None;
+        };
+        match bridge.evaluate(RECAPTCHA_V3_PROBE_JS).await {
+            Ok(result) => result
+                .get("value")
+                .and_then(Value::as_bool)
+                .or_else(|| result.as_bool())
+                .unwrap_or(false),
+            Err(_) => return None,
+        }
+    };
+
+    if v3_present {
+        Some(RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE)
+    } else {
+        None
     }
 }
 
@@ -550,6 +618,7 @@ mod tests {
     use super::{
         build_diff_page_state, build_page_state_from_map, fallback_value,
         page_state_from_feedback_map, post_action_page_state, InteractionKind,
+        RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE,
     };
     use crate::state::CrawlState;
     use crate::BrowserContext;
@@ -560,6 +629,8 @@ mod tests {
         page_maps: HashMap<String, Value>,
         requested_scopes: Vec<Option<String>>,
         evaluate_result: Value,
+        evaluate_script_results: Vec<(String, Value)>,
+        evaluate_error_substrings: Vec<String>,
         evaluate_scripts: Vec<String>,
     }
 
@@ -634,6 +705,18 @@ mod tests {
         async fn evaluate(&mut self, script: &str) -> Result<Value, BridgeError> {
             let mut state = self.state.lock().expect("mock state poisoned");
             state.evaluate_scripts.push(script.to_string());
+            if state
+                .evaluate_error_substrings
+                .iter()
+                .any(|substring| script.contains(substring))
+            {
+                return Err(BridgeError::Protocol("mock evaluate failure".to_string()));
+            }
+            for (substring, result) in &state.evaluate_script_results {
+                if script.contains(substring.as_str()) {
+                    return Ok(result.clone());
+                }
+            }
             Ok(state.evaluate_result.clone())
         }
 
@@ -742,6 +825,25 @@ mod tests {
         let mut browser = BrowserContext::new(bridge);
         browser.set_navigated_url(url, true);
         (browser, state)
+    }
+
+    fn minimal_page_map(url: &str, title: &str) -> Value {
+        json!({
+            "headings": [],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {"elements": []},
+            "meta": {"title": title, "url": url, "description": ""}
+        })
+    }
+
+    fn unchanged_response(url: &str, title: &str) -> Value {
+        json!({
+            "url": url,
+            "title": title,
+            "changed": false
+        })
     }
 
     #[test]
@@ -1635,5 +1737,291 @@ mod tests {
         assert_eq!(state.requested_scopes, vec![None]);
         assert_eq!(state.evaluate_scripts.len(), 1);
         assert_eq!(result["changes"]["added_links"][0]["text"], "Billing");
+    }
+
+    #[tokio::test]
+    async fn silent_submit_fires_on_silent_v3_rejection() {
+        let url = "https://example.com/form";
+        let title = "Form";
+        let page_map = minimal_page_map(url, title);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::PossibleSubmit,
+            None,
+            false,
+        )
+        .await;
+
+        let err = result.expect_err("silent v3 rejection should error");
+        assert_eq!(err.to_string(), RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE);
+        assert!(err.to_string().contains("reCAPTCHA"));
+        assert!(!err.to_string().to_lowercase().contains("blocked"));
+
+        let state = state.lock().expect("mock state poisoned");
+        assert_eq!(state.evaluate_scripts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn silent_submit_does_not_fire_without_v3_probe_match() {
+        let url = "https://example.com/form";
+        let title = "Form";
+        let page_map = minimal_page_map(url, title);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": false}))],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::PossibleSubmit,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, unchanged_response(url, title));
+        let state = state.lock().expect("mock state poisoned");
+        assert_eq!(state.evaluate_scripts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn silent_submit_does_not_fire_when_page_changed() {
+        let url = "https://example.com/form";
+        let prev = minimal_page_map(url, "Form");
+        let current = json!({
+            "headings": [
+                {"level": 1, "text": "Thanks", "id": "thanks", "selector": "#thanks", "char_count": 6, "preview": "Thanks"}
+            ],
+            "landmarks": [],
+            "links": [],
+            "forms": [],
+            "interactive": {"elements": []},
+            "meta": {"title": "Form", "url": url, "description": ""}
+        });
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), current)]),
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, prev);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::PossibleSubmit,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["changed"], Value::Bool(true));
+        let state = state.lock().expect("mock state poisoned");
+        assert!(state.evaluate_scripts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn silent_submit_does_not_fire_for_passive_interaction() {
+        let url = "https://example.com/form";
+        let title = "Form";
+        let page_map = minimal_page_map(url, title);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, unchanged_response(url, title));
+        let state = state.lock().expect("mock state poisoned");
+        assert!(state.evaluate_scripts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn silent_submit_does_not_fire_on_first_interaction_without_changed_key() {
+        let url = "https://example.com/form";
+        let title = "Form";
+        let page_map = minimal_page_map(url, title);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map)]),
+                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::PossibleSubmit,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.get("changed").is_none());
+        let state = state.lock().expect("mock state poisoned");
+        assert!(state.evaluate_scripts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn silent_submit_fail_opens_when_probe_evaluate_errors() {
+        let url = "https://example.com/form";
+        let title = "Form";
+        let page_map = minimal_page_map(url, title);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_error_substrings: vec!["grecaptcha".to_string()],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::PossibleSubmit,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, unchanged_response(url, title));
+        let state = state.lock().expect("mock state poisoned");
+        assert_eq!(state.evaluate_scripts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn silent_submit_fail_opens_when_probe_returns_non_bool() {
+        let url = "https://example.com/form";
+        let title = "Form";
+        let page_map = minimal_page_map(url, title);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_script_results: vec![("grecaptcha".to_string(), Value::Null)],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::PossibleSubmit,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, unchanged_response(url, title));
+        let state = state.lock().expect("mock state poisoned");
+        assert_eq!(state.evaluate_scripts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn silent_submit_no_double_submit_probe_runs_once() {
+        let url = "https://example.com/form";
+        let page_map = minimal_page_map(url, "Form");
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::PossibleSubmit,
+            None,
+            false,
+        )
+        .await;
+
+        assert!(result.is_err());
+        let state = state.lock().expect("mock state poisoned");
+        let probe_calls = state
+            .evaluate_scripts
+            .iter()
+            .filter(|script| script.contains("grecaptcha"))
+            .count();
+        assert_eq!(probe_calls, 1, "probe should run exactly once");
+    }
+
+    #[tokio::test]
+    async fn silent_submit_passive_action_byte_identical_regression() {
+        let url = "https://example.com/form";
+        let title = "Form";
+        let page_map = minimal_page_map(url, title);
+        let (mut browser, state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        browser.set_page_snapshot(url, None, page_map);
+
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let expected = unchanged_response(url, title);
+        assert_eq!(
+            serde_json::to_vec(&result).unwrap(),
+            serde_json::to_vec(&expected).unwrap()
+        );
+        let state = state.lock().expect("mock state poisoned");
+        assert!(state.evaluate_scripts.is_empty());
     }
 }
