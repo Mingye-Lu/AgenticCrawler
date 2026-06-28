@@ -862,7 +862,7 @@ acrawl works well on most public web content, but some situations are outside wh
 
 | Scenario | Behavior |
 |----------|----------|
-| **CAPTCHA / bot challenges** | CloakBrowser uses stealth techniques to avoid bot detection, but unsolvable CAPTCHAs (image puzzles, Cloudflare Turnstile requiring proof-of-work) will block progress. Use the real-browser extension (`/extension`) where your browser already has a trusted session. |
+| **CAPTCHA / bot challenges** | CloakBrowser uses stealth techniques to avoid bot detection, but unsolvable CAPTCHAs (image puzzles, Cloudflare Turnstile requiring proof-of-work) will block progress. Use the real-browser extension (`/extension`) where your browser already has a trusted session. **reCAPTCHA v3** is invisible (no widget) — if a form submit produces no page change while v3 is present, acrawl heuristically detects the likely silent rejection and returns a `CaptchaDetected` error rather than a misleading success. This is a best-effort heuristic; acrawl cannot read the server-side score. The error message names the remedy: `acrawl config set headless false` (or `--headed`), or `/extension`. |
 | **SMS / TOTP 2FA** | The agent can fill in a 2FA code if you paste it into the REPL, but it cannot receive or generate codes itself. |
 | **Login-walled content** | For sites where you must be logged in, use the extension mode so the agent operates in your existing authenticated browser session. |
 | **Single-page apps that load content on scroll** | The agent can `scroll` to trigger lazy loading, but infinite-scroll feeds with no end condition may require explicit step limits. |

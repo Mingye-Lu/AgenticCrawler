@@ -4,6 +4,8 @@ use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
+use super::feedback::InteractionKind;
+
 #[derive(Debug)]
 struct ClickInput {
     selector: Option<String>,
@@ -211,8 +213,14 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state =
-        super::feedback::post_action_page_state(browser, Some(&selector), params.widen).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::PossibleSubmit,
+        Some(&selector),
+        params.widen,
+    )
+    .await?;
 
     let display_target = params.text.as_deref().map_or_else(
         || params.selector.clone().unwrap_or_default(),

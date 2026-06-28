@@ -171,14 +171,14 @@ impl ToolRegistry {
             "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
             "refresh" => crate::tools::refresh::execute(input, browser, crawl_state).await,
             "scroll" => crate::tools::scroll::execute(input, browser, crawl_state).await,
-            "wait" => crate::tools::wait::execute(input, browser).await,
+            "wait" => crate::tools::wait::execute(input, browser, crawl_state).await,
             "select_option" => {
                 crate::tools::select_option::execute(input, browser, crawl_state).await
             }
             "execute_js" => crate::tools::execute_js::execute(input, browser, crawl_state).await,
             "hover" => crate::tools::hover::execute(input, browser, crawl_state).await,
             "press_key" => crate::tools::press_key::execute(input, browser, crawl_state).await,
-            "switch_tab" => crate::tools::switch_tab::execute(input, browser).await,
+            "switch_tab" => crate::tools::switch_tab::execute(input, browser, crawl_state).await,
             "list_resources" => crate::tools::list_resources::execute(input, browser).await,
             "list_page_logs" => {
                 crate::tools::page_logs::execute_list_page_logs(input, browser, crawl_state).await

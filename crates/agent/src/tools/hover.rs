@@ -4,6 +4,8 @@ use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
+use super::feedback::InteractionKind;
+
 pub struct HoverInput {
     selector: String,
     widen: bool,
@@ -40,8 +42,14 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state =
-        super::feedback::post_action_page_state(browser, Some(&resolved), params.widen).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::Passive,
+        Some(&resolved),
+        params.widen,
+    )
+    .await?;
 
     Ok(ToolEffect::reply_json(&json!({
         "seq": seq,
