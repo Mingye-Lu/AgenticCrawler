@@ -136,13 +136,52 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
-fn command_exists(name: &str) -> bool {
+fn resolve_command(name: &str) -> Option<PathBuf> {
     let check = if cfg!(windows) {
-        Command::new("where").arg(name).output()
+        Command::new("where.exe").arg(name).output()
     } else {
         Command::new("which").arg(name).output()
     };
-    check.is_ok_and(|o| o.status.success())
+    let output = check.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut candidates = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from);
+
+    #[cfg(windows)]
+    {
+        let mut fallback = None;
+        for candidate in candidates.by_ref() {
+            if fallback.is_none() {
+                fallback = Some(candidate.clone());
+            }
+
+            let extension = candidate
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if matches!(extension.as_str(), "exe" | "cmd" | "bat" | "com") {
+                return Some(candidate);
+            }
+        }
+        fallback
+    }
+
+    #[cfg(not(windows))]
+    {
+        candidates.next()
+    }
+}
+
+fn command_exists(name: &str) -> bool {
+    resolve_command(name).is_some()
 }
 
 fn detect_ides() -> Vec<DetectedIde> {
@@ -697,17 +736,17 @@ fn install_openclaw(acrawl_path: &str) -> io::Result<String> {
 }
 
 fn install_codex_cli(acrawl_path: &str) -> io::Result<String> {
-    if !command_exists("codex") {
-        return Err(io::Error::new(
+    let codex = resolve_command("codex").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "codex CLI not found on PATH; run `codex mcp add acrawl -- <path-to-acrawl> mcp` manually",
-        ));
-    }
+        )
+    })?;
 
-    let _ = Command::new("codex")
+    let _ = Command::new(&codex)
         .args(["mcp", "remove", "acrawl"])
         .output();
-    let status = Command::new("codex")
+    let status = Command::new(&codex)
         .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
         .status()?;
     if status.success() {
@@ -718,17 +757,17 @@ fn install_codex_cli(acrawl_path: &str) -> io::Result<String> {
 }
 
 fn install_hermes(acrawl_path: &str) -> io::Result<String> {
-    if !command_exists("hermes") {
-        return Err(io::Error::new(
+    let hermes = resolve_command("hermes").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "hermes CLI not found on PATH; add acrawl manually in Hermes MCP settings",
-        ));
-    }
+        )
+    })?;
 
-    let _ = Command::new("hermes")
+    let _ = Command::new(&hermes)
         .args(["mcp", "remove", "acrawl"])
         .output();
-    let status = Command::new("hermes")
+    let status = Command::new(&hermes)
         .args([
             "mcp",
             "add",
@@ -975,14 +1014,14 @@ fn uninstall_openclaw() -> io::Result<String> {
 }
 
 fn uninstall_codex_cli() -> io::Result<String> {
-    if !command_exists("codex") {
-        return Err(io::Error::new(
+    let codex = resolve_command("codex").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "codex CLI not found on PATH; run `codex mcp remove acrawl` manually",
-        ));
-    }
+        )
+    })?;
 
-    let status = Command::new("codex")
+    let status = Command::new(&codex)
         .args(["mcp", "remove", "acrawl"])
         .status()?;
     if status.success() {
@@ -993,14 +1032,14 @@ fn uninstall_codex_cli() -> io::Result<String> {
 }
 
 fn uninstall_hermes() -> io::Result<String> {
-    if !command_exists("hermes") {
-        return Err(io::Error::new(
+    let hermes = resolve_command("hermes").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "hermes CLI not found on PATH; remove acrawl manually in Hermes MCP settings",
-        ));
-    }
+        )
+    })?;
 
-    let status = Command::new("hermes")
+    let status = Command::new(&hermes)
         .args(["mcp", "remove", "acrawl"])
         .status()?;
     if status.success() {
