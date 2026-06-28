@@ -4,6 +4,8 @@ use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
+use super::feedback::InteractionKind;
+
 pub struct PressKeyInput {
     pub key: String,
     pub selector: Option<String>,
@@ -55,10 +57,12 @@ pub async fn execute(
     let seq = super::seq::increment_seq(crawl_state, browser).await;
     let page_state = super::feedback::post_action_page_state(
         browser,
+        crawl_state,
+        InteractionKind::PossibleSubmit,
         resolved_selector.as_deref(),
         parsed.widen,
     )
-    .await;
+    .await?;
 
     Ok(ToolEffect::reply_json(&json!({
         "seq": seq,
