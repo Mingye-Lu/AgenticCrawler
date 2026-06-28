@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-06-28
+
 ### Added
 
 - **reCAPTCHA v3 silent-submission detection**: when any interaction tool (`click`, `fill_form`, `press_key`, etc.) submits a form that reCAPTCHA v3 silently rejects (submit request sent, page unchanged, v3 present), acrawl now returns a `CaptchaDetected` error with a hypothesis-worded message and `NoRetry` strategy instead of a misleading success `page_state`. Detection is a heuristic — acrawl cannot read the server-side score. The error instructs the agent to report and stop, and names the remedy (`headless false` / `--headed` / `/extension`). Detection lives at the single shared interaction chokepoint (`feedback::post_action_page_state`) and covers all current and future interaction tools automatically.
+
+### Fixed
+
+- **Codex CLI MCP installer on Windows**: the `mcp install` command now correctly installs for the Codex CLI client on Windows, resolving path and shim handling issues in the installer.
 
 ### Changed
 
@@ -813,6 +819,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.12.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.5
 [0.12.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.4
 [0.12.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.3
 [0.12.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.2
