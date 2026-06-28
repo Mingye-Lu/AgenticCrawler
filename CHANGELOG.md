@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **reCAPTCHA v3 silent-submission detection**: when any interaction tool (`click`, `fill_form`, `press_key`, etc.) submits a form that reCAPTCHA v3 silently rejects (submit request sent, page unchanged, v3 present), acrawl now returns a `CaptchaDetected` error with a hypothesis-worded message and `NoRetry` strategy instead of a misleading success `page_state`. Detection is a heuristic — acrawl cannot read the server-side score. The error instructs the agent to report and stop, and names the remedy (`headless false` / `--headed` / `/extension`). Detection lives at the single shared interaction chokepoint (`feedback::post_action_page_state`) and covers all current and future interaction tools automatically.
+
+### Changed
+
+- **`fill_form`, `click`, and other interaction tools — MCP/script contract**: these tools may now return a `CaptchaDetected` error instead of a success `page_state` when a submit-capable interaction is followed by no page change while reCAPTCHA v3 is present. MCP clients and `run_script` consumers that assume interaction tools always succeed on the happy path should handle this error. The change is fail-open: passive actions (hover, scroll, switch_tab, go_back, refresh, wait, select_option) and interactions where the page changes or navigates are unaffected.
+
 ## [0.12.4] - 2026-06-26
 
 ### Fixed
