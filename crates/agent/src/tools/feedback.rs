@@ -4,6 +4,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::time::timeout;
 
+use acrawl_core::error::ToolExecutionError;
+
 use crate::page_fingerprint::PageFingerprint;
 use crate::state::CrawlState;
 use crate::BrowserContext;
@@ -11,6 +13,19 @@ use crate::BrowserContext;
 use super::page_map::{apply_page_map_caps, normalize_url};
 
 const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Hint for `post_action_page_state` indicating whether the caller might have triggered a form
+/// submission. Used by the silent-submit audit (implemented separately) to narrow detection to
+/// submit-capable interaction tools only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InteractionKind {
+    /// The interaction could have triggered a form submission (click, `fill_form` with
+    /// `submit:true`, `press_key` on a submit-capable element).
+    PossibleSubmit,
+    /// The interaction cannot submit a form (`hover`, `scroll`, `switch_tab`, `set_device`,
+    /// `go_back`, `refresh`, `wait`, `select_option`, `fill_form` without submit).
+    Passive,
+}
 
 /// Build structured page state from a raw `page_map` value (full, no diff).
 ///
@@ -478,11 +493,14 @@ fn page_state_from_feedback_map(
 ///
 /// Calls `page_map_feedback` on the bridge and applies Rust-side differential
 /// comparison against the cached snapshot.
-pub async fn post_action_page_state(
+pub(crate) async fn post_action_page_state(
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
+    interaction_kind: InteractionKind,
     interacted_selector: Option<&str>,
     widen: bool,
-) -> Value {
+) -> Result<Value, ToolExecutionError> {
+    let _ = (crawl_state, interaction_kind);
     let dialog_scope = if widen {
         None
     } else {
@@ -499,8 +517,8 @@ pub async fn post_action_page_state(
     .await;
 
     match result {
-        Ok(Ok((scope, pm))) => page_state_from_feedback_map(browser, scope.as_deref(), pm),
-        _ => fallback_value(),
+        Ok(Ok((scope, pm))) => Ok(page_state_from_feedback_map(browser, scope.as_deref(), pm)),
+        _ => Ok(fallback_value()),
     }
 }
 
@@ -531,8 +549,9 @@ mod tests {
 
     use super::{
         build_diff_page_state, build_page_state_from_map, fallback_value,
-        page_state_from_feedback_map, post_action_page_state,
+        page_state_from_feedback_map, post_action_page_state, InteractionKind,
     };
+    use crate::state::CrawlState;
     use crate::BrowserContext;
     use browser::BrowserBackend;
 
@@ -1466,7 +1485,15 @@ mod tests {
             }),
         );
 
-        let result = post_action_page_state(&mut browser, Some("#outside"), false).await;
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::Passive,
+            Some("#outside"),
+            false,
+        )
+        .await
+        .unwrap();
         let state = state.lock().expect("mock state poisoned");
 
         assert_eq!(
@@ -1540,7 +1567,15 @@ mod tests {
         browser.set_page_snapshot(url, None, prev_full);
         browser.set_page_snapshot(url, Some("section"), prev_scoped);
 
-        let result = post_action_page_state(&mut browser, Some("#trigger"), true).await;
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::Passive,
+            Some("#trigger"),
+            true,
+        )
+        .await
+        .unwrap();
         let state = state.lock().expect("mock state poisoned");
 
         assert_eq!(state.requested_scopes, vec![None]);
@@ -1586,7 +1621,15 @@ mod tests {
         );
         browser.set_page_snapshot(url, None, prev_full);
 
-        let result = post_action_page_state(&mut browser, Some("#trigger"), false).await;
+        let result = post_action_page_state(
+            &mut browser,
+            &CrawlState::default(),
+            InteractionKind::Passive,
+            Some("#trigger"),
+            false,
+        )
+        .await
+        .unwrap();
         let state = state.lock().expect("mock state poisoned");
 
         assert_eq!(state.requested_scopes, vec![None]);

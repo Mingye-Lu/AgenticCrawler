@@ -7,6 +7,8 @@ use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
+use super::feedback::InteractionKind;
+
 #[derive(Debug)]
 struct FillFormInput {
     fields: BTreeMap<String, String>,
@@ -142,10 +144,16 @@ pub async fn execute(
     let seq = super::seq::increment_seq(crawl_state, browser).await;
     let page_state = super::feedback::post_action_page_state(
         browser,
+        crawl_state,
+        if params.submit {
+            InteractionKind::PossibleSubmit
+        } else {
+            InteractionKind::Passive
+        },
         Some(&resolved_form_selector),
         params.widen,
     )
-    .await;
+    .await?;
 
     let field_count = params.fields.len();
     Ok(ToolEffect::reply_json(&serde_json::json!({

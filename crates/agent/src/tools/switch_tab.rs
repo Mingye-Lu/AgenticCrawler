@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
+
+use super::feedback::InteractionKind;
 
 pub fn parse_input(input: &Value) -> i64 {
     input
@@ -14,6 +17,7 @@ pub fn parse_input(input: &Value) -> i64 {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let index = parse_input(input);
 
@@ -40,7 +44,14 @@ pub async fn execute(
         .and_then(serde_json::Value::as_i64)
         .unwrap_or(0);
 
-    let page_state = super::feedback::post_action_page_state(browser, None, false).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::Passive,
+        None,
+        false,
+    )
+    .await?;
 
     Ok(ToolEffect::reply_json(&json!({
         "success": true,

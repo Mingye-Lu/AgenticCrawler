@@ -8,6 +8,8 @@ use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
+use super::feedback::InteractionKind;
+
 const OPEN_WAIT: Duration = Duration::from_millis(300);
 const VERIFY_WAIT: Duration = Duration::from_millis(200);
 const MAX_OPTION_ATTEMPTS: usize = 5;
@@ -107,8 +109,14 @@ async fn execute_native(
         Some(option.name.clone())
     } else {
         let seq = super::seq::increment_seq(crawl_state, browser).await;
-        let page_state =
-            super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
+        let page_state = super::feedback::post_action_page_state(
+            browser,
+            crawl_state,
+            InteractionKind::Passive,
+            Some(selector),
+            params.widen,
+        )
+        .await?;
         return Ok(ToolEffect::reply_json(&json!({
             "seq": seq,
             "success": true,
@@ -119,8 +127,14 @@ async fn execute_native(
     };
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state =
-        super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::Passive,
+        Some(selector),
+        params.widen,
+    )
+    .await?;
 
     Ok(ToolEffect::reply_json(&json!({
         "seq": seq,
@@ -151,8 +165,14 @@ async fn execute_custom(
 
     if params.value.is_none() && params.label.is_none() && params.index.is_none() {
         let seq = super::seq::increment_seq(crawl_state, browser).await;
-        let page_state =
-            super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
+        let page_state = super::feedback::post_action_page_state(
+            browser,
+            crawl_state,
+            InteractionKind::Passive,
+            Some(selector),
+            params.widen,
+        )
+        .await?;
         return Ok(ToolEffect::reply_json(&json!({
             "seq": seq,
             "success": true,
@@ -181,8 +201,14 @@ async fn execute_custom(
         verify_custom_selection(browser, selector, &target_option.selector, &target_text).await?;
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
-    let page_state =
-        super::feedback::post_action_page_state(browser, Some(selector), params.widen).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::Passive,
+        Some(selector),
+        params.widen,
+    )
+    .await?;
 
     if verified {
         return Ok(ToolEffect::reply_json(&json!({

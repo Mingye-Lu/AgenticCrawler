@@ -2,8 +2,11 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
+
+use super::feedback::InteractionKind;
 
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
@@ -94,6 +97,7 @@ fn parse_timeout_ms(input: &Value) -> Result<u64, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
@@ -106,7 +110,14 @@ pub async fn execute(
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-        let page_state = super::feedback::post_action_page_state(browser, None, false).await;
+        let page_state = super::feedback::post_action_page_state(
+            browser,
+            crawl_state,
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await?;
 
         Ok(ToolEffect::reply_json(&json!({
             "success": true,
@@ -118,7 +129,14 @@ pub async fn execute(
     } else {
         tokio::time::sleep(Duration::from_millis(parsed.timeout_ms)).await;
 
-        let page_state = super::feedback::post_action_page_state(browser, None, false).await;
+        let page_state = super::feedback::post_action_page_state(
+            browser,
+            crawl_state,
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await?;
 
         Ok(ToolEffect::reply_json(&json!({
             "success": true,
