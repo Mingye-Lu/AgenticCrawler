@@ -275,7 +275,6 @@ pub(crate) enum ModelSubcommand {
     Path,
 }
 
-
 #[allow(clippy::too_many_lines)]
 fn parse_args(args: &[String]) -> Result<CliAction, String> {
     let mut model = initial_model_from_credentials();

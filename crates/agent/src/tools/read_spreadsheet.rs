@@ -61,9 +61,9 @@ fn parse_cell_range(s: &str) -> CellRange {
     }
 }
 
-/// Parse Excel-style range like "A1:D10" into CellRange::Range.
+/// Parse Excel-style range like "A1:D10" into `CellRange::Range`.
 /// Column letters: A=0, B=1, ..., Z=25, AA=26, etc.
-/// Row numbers are 1-indexed in Excel notation, 0-indexed in CellRange.
+/// Row numbers are 1-indexed in Excel notation, 0-indexed in `CellRange`.
 fn parse_excel_range(s: &str) -> Option<CellRange> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() != 2 {
@@ -79,7 +79,7 @@ fn parse_excel_range(s: &str) -> Option<CellRange> {
     })
 }
 
-/// Parse a cell reference like "A1" into (col_index, row_index) (both 0-indexed).
+/// Parse a cell reference like "A1" into (`col_index`, `row_index`) (both 0-indexed).
 fn parse_cell_ref(s: &str) -> Option<(usize, usize)> {
     let s = s.trim().to_uppercase();
     let col_end = s.find(|c: char| c.is_ascii_digit())?;
