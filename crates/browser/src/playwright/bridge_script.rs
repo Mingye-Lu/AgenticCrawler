@@ -115,6 +115,71 @@ async function resolveEditorSurface(pg, sel) {
   return sel;
 }
 
+async function tryRichEditorFill(pg, sel, value) {
+  // Step 1: CodeMirror v5 JS API — instant, no typing latency
+  try {
+    const cm5ok = await pg.evaluate(({ s, v }) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) {}
+      const cm = el?.closest?.('.CodeMirror');
+      if (cm?.CodeMirror) {
+        cm.CodeMirror.setValue(v);
+        cm.CodeMirror.getDoc().markClean();
+        cm.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
+      return false;
+    }, { s: sel, v: value });
+    if (cm5ok) return 'codemirror5';
+  } catch (_) {}
+
+  // Step 2: any contenteditable via execCommand — covers CM6, ProseMirror, TipTap, Quill, Lexical, Slate
+  try {
+    const ceOk = await pg.evaluate(({ s, v }) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) {}
+      let ce = el;
+      while (ce && ce !== document.body) {
+        if (ce.getAttribute('contenteditable') === 'true') break;
+        ce = ce.parentElement;
+      }
+      if (!ce || ce === document.body) {
+        const root = el?.closest('form, [class*="editor"], [role="textbox"]') || document.body;
+        ce = root.querySelector('[contenteditable="true"]');
+      }
+      if (!ce || ce === document.body) return false;
+      ce.focus();
+      document.execCommand('selectAll', false, null);
+      return document.execCommand('insertText', false, v);
+    }, { s: sel, v: value });
+    if (ceOk) return 'contenteditable';
+  } catch (_) {}
+
+  // Step 3: focus + Ctrl+A + keyboard.type — universal last resort
+  try {
+    const focused = await pg.evaluate(({ s }) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) {}
+      let ce = el;
+      while (ce && ce !== document.body) {
+        if (ce.getAttribute('contenteditable') === 'true') { ce.focus(); return true; }
+        ce = ce.parentElement;
+      }
+      const root = el?.closest('form, [class*="editor"]') || document.body;
+      const found = root.querySelector('[contenteditable="true"]');
+      if (found && found !== document.body) { found.focus(); return true; }
+      return false;
+    }, { s: sel });
+    if (focused) {
+      await pg.keyboard.press('Control+a');
+      await pg.keyboard.type(value, { delay: 0 });
+      return 'keyboard';
+    }
+  } catch (_) {}
+
+  return null;
+}
+
 const observationBuffers = new Map();
 const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
 let currentSeq = 0;
@@ -733,12 +798,20 @@ async function bootstrap() {
     }
 
     if (command.action === 'fill') {
+      let sel = command.selector;
       try {
-        let sel = await resolveFillSelector(page, command.selector);
+        sel = await resolveFillSelector(page, sel);
         sel = await resolveEditorSurface(page, sel);
         await page.fill(sel, command.value, { timeout: 5000 });
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
       } catch (mainError) {
+        try {
+          const richEditorResult = await tryRichEditorFill(page, sel, command.value);
+          if (richEditorResult) {
+            process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, richEditor: richEditorResult } }) + '\n');
+            continue;
+          }
+        } catch (_) {}
         let filledInFrame = false;
         for (const frame of page.frames()) {
           if (frame === page.mainFrame()) continue;
@@ -1804,6 +1877,30 @@ bootstrap().catch((error) => {
 #[cfg(test)]
 mod tests {
     use super::PLAYWRIGHT_BRIDGE_NODE_SCRIPT;
+
+    #[test]
+    fn bridge_fill_has_rich_editor_cascade() {
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("tryRichEditorFill"),
+            "Missing tryRichEditorFill function"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("CodeMirror.setValue"),
+            "Missing CM5 JS API step"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("execCommand('insertText'"),
+            "Missing execCommand contenteditable step"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("keyboard"),
+            "Missing keyboard fallback step"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("richEditor"),
+            "Missing richEditor field in success payload"
+        );
+    }
 
     #[test]
     fn bridge_has_editor_surface_redirect() {
