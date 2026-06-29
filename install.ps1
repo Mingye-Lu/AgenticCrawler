@@ -164,7 +164,7 @@ if ($nodeAvailable) {
     } else {
         Write-Host "Installing CloakBrowser..." -ForegroundColor Gray
         try {
-            & npm install --prefix $ConfigHome cloakbrowser playwright-core 2>&1 | Out-Null
+            & npm.cmd install --prefix $ConfigHome cloakbrowser playwright-core 2>&1 | Out-Null
             Write-Host "  CloakBrowser installed." -ForegroundColor Green
         } catch {
             Write-Warning "CloakBrowser installation failed: $_"
@@ -174,7 +174,7 @@ if ($nodeAvailable) {
 
     Write-Host "Ensuring browser binary is downloaded..." -ForegroundColor Gray
     try {
-        & npx --prefix $ConfigHome cloakbrowser install 2>&1 | Out-Null
+        & npx.cmd --prefix $ConfigHome cloakbrowser install 2>&1 | Out-Null
         Write-Host "  Browser binary ready." -ForegroundColor Green
     } catch {
         Write-Warning "Browser binary download failed. It will be downloaded on first use."
