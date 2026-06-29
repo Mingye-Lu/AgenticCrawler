@@ -1,5 +1,6 @@
 pub mod action_cache;
 pub mod agent;
+pub mod aria;
 pub mod child_events;
 pub mod confidence;
 pub mod failure_classifier;

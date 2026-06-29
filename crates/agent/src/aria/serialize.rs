@@ -1,0 +1,432 @@
+use std::fmt::Write as _;
+
+use crate::aria::node::{AriaNode, AriaStates};
+
+const MAX_CHILDREN_PER_PARENT: usize = 50;
+const MAX_TOTAL_NODES: usize = 2_000;
+const DEGRADED_DEPTH: usize = 1;
+
+#[must_use]
+pub fn to_yaml(root: &AriaNode, depth: Option<usize>) -> String {
+    let effective_depth = if count_emitted_nodes(root, depth, 0) > MAX_TOTAL_NODES {
+        Some(DEGRADED_DEPTH)
+    } else {
+        depth
+    };
+
+    let mut lines = Vec::new();
+    serialize_node(root, 0, effective_depth, &mut lines);
+    lines.join("\n")
+}
+
+fn serialize_node(
+    node: &AriaNode,
+    current_depth: usize,
+    max_depth: Option<usize>,
+    lines: &mut Vec<String>,
+) {
+    let indent = "  ".repeat(current_depth);
+
+    if node.role == "text" {
+        lines.push(format!(
+            "{indent}- text: {}",
+            escape_name(node.name.as_deref().unwrap_or(""))
+        ));
+        return;
+    }
+
+    let mut line = format!(
+        "{indent}- {} {}",
+        node.role,
+        escape_name(node.name.as_deref().unwrap_or(""))
+    );
+
+    for state in render_states(&node.states) {
+        line.push(' ');
+        line.push_str(&state);
+    }
+
+    if let Some(ref_id) = &node.ref_id {
+        let _ = write!(line, " [ref={ref_id}]");
+    }
+
+    line.push(':');
+    lines.push(line);
+
+    let child_indent = "  ".repeat(current_depth + 1);
+    if let Some(url) = &node.url {
+        lines.push(format!("{child_indent}/url: {url}"));
+    }
+
+    if max_depth.is_some_and(|max| current_depth >= max) {
+        push_omitted_marker(
+            lines,
+            current_depth + 1,
+            node.children.len() + node.omitted_children,
+        );
+        return;
+    }
+
+    for child in node.children.iter().take(MAX_CHILDREN_PER_PARENT) {
+        serialize_node(child, current_depth + 1, max_depth, lines);
+    }
+
+    let omitted_children =
+        node.omitted_children + node.children.len().saturating_sub(MAX_CHILDREN_PER_PARENT);
+    push_omitted_marker(lines, current_depth + 1, omitted_children);
+}
+
+fn render_states(states: &AriaStates) -> Vec<String> {
+    let mut rendered = Vec::new();
+
+    if states.active {
+        rendered.push("[active]".to_string());
+    }
+    if states.checked {
+        rendered.push("[checked]".to_string());
+    }
+    if states.disabled {
+        rendered.push("[disabled]".to_string());
+    }
+    match states.expanded {
+        Some(true) => rendered.push("[expanded]".to_string()),
+        Some(false) => rendered.push("[expanded=false]".to_string()),
+        None => {}
+    }
+    if states.invalid {
+        rendered.push("[invalid]".to_string());
+    }
+    if let Some(level) = states.level {
+        rendered.push(format!("[level={level}]"));
+    }
+    if states.pressed == Some(true) {
+        rendered.push("[pressed=true]".to_string());
+    }
+    if states.selected {
+        rendered.push("[selected]".to_string());
+    }
+
+    rendered
+}
+
+fn push_omitted_marker(lines: &mut Vec<String>, depth: usize, omitted_children: usize) {
+    if omitted_children == 0 {
+        return;
+    }
+
+    let indent = "  ".repeat(depth);
+    lines.push(format!("{indent}- {omitted_children} children omitted"));
+}
+
+fn count_emitted_nodes(node: &AriaNode, max_depth: Option<usize>, current_depth: usize) -> usize {
+    let mut count = 1;
+
+    if node.role == "text" {
+        return count;
+    }
+
+    if max_depth.is_some_and(|max| current_depth >= max) {
+        if node.children.len() + node.omitted_children > 0 {
+            count += 1;
+        }
+        return count;
+    }
+
+    for child in node.children.iter().take(MAX_CHILDREN_PER_PARENT) {
+        count += count_emitted_nodes(child, max_depth, current_depth + 1);
+        if count > MAX_TOTAL_NODES {
+            return count;
+        }
+    }
+
+    if node.omitted_children + node.children.len().saturating_sub(MAX_CHILDREN_PER_PARENT) > 0 {
+        count += 1;
+    }
+
+    count
+}
+
+fn escape_name(raw: &str) -> String {
+    let truncated = truncate_name(raw);
+    let mut escaped = String::with_capacity(truncated.len() + 2);
+    escaped.push('"');
+
+    for ch in truncated.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            _ => escaped.push(ch),
+        }
+    }
+
+    escaped.push('"');
+    escaped
+}
+
+fn truncate_name(raw: &str) -> String {
+    if raw.chars().count() < 200 {
+        return raw.to_string();
+    }
+
+    let prefix = raw
+        .char_indices()
+        .nth(199)
+        .map_or(raw, |(idx, _)| &raw[..idx]);
+    format!("{prefix}…")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_button(name: &str, ref_id: &str) -> AriaNode {
+        AriaNode {
+            role: "button".to_string(),
+            name: Some(name.to_string()),
+            states: AriaStates::default(),
+            ref_id: Some(ref_id.to_string()),
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children: Vec::new(),
+            omitted_children: 0,
+        }
+    }
+
+    fn node(role: &str, name: Option<&str>, children: Vec<AriaNode>) -> AriaNode {
+        AriaNode {
+            role: role.to_string(),
+            name: name.map(str::to_string),
+            states: AriaStates::default(),
+            ref_id: None,
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children,
+            omitted_children: 0,
+        }
+    }
+
+    #[test]
+    fn test_basic_node() {
+        let yaml = to_yaml(&make_button("Save", "e7"), None);
+        assert_eq!(yaml, "- button \"Save\" [ref=e7]:");
+    }
+
+    #[test]
+    fn test_empty_name() {
+        let yaml = to_yaml(
+            &AriaNode {
+                role: "main".to_string(),
+                name: None,
+                states: AriaStates::default(),
+                ref_id: Some("e1".to_string()),
+                url: None,
+                frame_id: None,
+                offscreen: false,
+                children: Vec::new(),
+                omitted_children: 0,
+            },
+            None,
+        );
+
+        assert_eq!(yaml, "- main \"\" [ref=e1]:");
+    }
+
+    #[test]
+    fn test_all_states() {
+        let yaml = to_yaml(
+            &AriaNode {
+                role: "tab".to_string(),
+                name: Some("Overview".to_string()),
+                states: AriaStates {
+                    disabled: true,
+                    checked: true,
+                    expanded: Some(false),
+                    pressed: Some(true),
+                    selected: true,
+                    level: Some(3),
+                    active: true,
+                    invalid: true,
+                },
+                ref_id: Some("e9".to_string()),
+                url: None,
+                frame_id: None,
+                offscreen: false,
+                children: Vec::new(),
+                omitted_children: 0,
+            },
+            None,
+        );
+
+        assert_eq!(
+            yaml,
+            "- tab \"Overview\" [active] [checked] [disabled] [expanded=false] [invalid] [level=3] [pressed=true] [selected] [ref=e9]:"
+        );
+    }
+
+    #[test]
+    fn test_link_with_url() {
+        let yaml = to_yaml(
+            &AriaNode {
+                role: "link".to_string(),
+                name: Some("Docs".to_string()),
+                states: AriaStates::default(),
+                ref_id: Some("e3".to_string()),
+                url: Some("https://example.com/docs".to_string()),
+                frame_id: None,
+                offscreen: false,
+                children: Vec::new(),
+                omitted_children: 0,
+            },
+            None,
+        );
+
+        assert_eq!(
+            yaml,
+            "- link \"Docs\" [ref=e3]:\n  /url: https://example.com/docs"
+        );
+    }
+
+    #[test]
+    fn test_escape_double_quote() {
+        let yaml = to_yaml(&make_button("Say \"hello\" world", "e1"), None);
+        assert_eq!(yaml, "- button \"Say \\\"hello\\\" world\" [ref=e1]:");
+    }
+
+    #[test]
+    fn test_escape_backslash() {
+        let yaml = to_yaml(&make_button(r"C:\Temp\file.txt", "e1"), None);
+        assert_eq!(yaml, "- button \"C:\\\\Temp\\\\file.txt\" [ref=e1]:");
+    }
+
+    #[test]
+    fn test_escape_newline() {
+        let yaml = to_yaml(&make_button("Line one\nLine two", "e1"), None);
+        assert_eq!(yaml, "- button \"Line one\\nLine two\" [ref=e1]:");
+    }
+
+    #[test]
+    fn test_emoji_passthrough() {
+        let yaml = to_yaml(&make_button("Hello 🌍 World", "e1"), None);
+        assert_eq!(yaml, "- button \"Hello 🌍 World\" [ref=e1]:");
+    }
+
+    #[test]
+    fn test_truncate_200_chars() {
+        let input = "a".repeat(250);
+        let expected = format!("- button \"{}…\" [ref=e1]:", "a".repeat(199));
+        assert_eq!(to_yaml(&make_button(&input, "e1"), None), expected);
+    }
+
+    #[test]
+    fn test_no_truncate_199_chars() {
+        let input = "a".repeat(199);
+        let expected = format!("- button \"{input}\" [ref=e1]:");
+        assert_eq!(to_yaml(&make_button(&input, "e1"), None), expected);
+    }
+
+    #[test]
+    fn test_truncate_200_exact() {
+        let input = "a".repeat(200);
+        let expected = format!("- button \"{}…\" [ref=e1]:", "a".repeat(199));
+        assert_eq!(to_yaml(&make_button(&input, "e1"), None), expected);
+    }
+
+    #[test]
+    fn test_depth_truncation() {
+        let tree = node(
+            "main",
+            Some(""),
+            vec![node(
+                "region",
+                Some("Level 1"),
+                vec![node(
+                    "region",
+                    Some("Level 2"),
+                    vec![node("button", Some("Deep"), Vec::new())],
+                )],
+            )],
+        );
+
+        let yaml = to_yaml(&tree, Some(2));
+        assert_eq!(
+            yaml,
+            "- main \"\":\n  - region \"Level 1\":\n    - region \"Level 2\":\n      - 1 children omitted"
+        );
+    }
+
+    #[test]
+    fn test_child_cap_50() {
+        let children = (1..=55)
+            .map(|idx| make_button(&format!("Button {idx}"), &format!("e{idx}")))
+            .collect();
+        let tree = node("main", Some(""), children);
+
+        let yaml = to_yaml(&tree, None);
+        let lines = yaml.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), 52);
+        assert_eq!(lines[0], "- main \"\":");
+        assert_eq!(lines[50], "  - button \"Button 50\" [ref=e50]:");
+        assert_eq!(lines[51], "  - 5 children omitted");
+    }
+
+    #[test]
+    fn test_text_node() {
+        let text = AriaNode {
+            role: "text".to_string(),
+            name: Some("Fast browser automation".to_string()),
+            states: AriaStates::default(),
+            ref_id: Some("e99".to_string()),
+            url: Some("https://example.com/ignored".to_string()),
+            frame_id: None,
+            offscreen: false,
+            children: vec![make_button("Ignored", "e2")],
+            omitted_children: 3,
+        };
+
+        assert_eq!(to_yaml(&text, None), "- text: \"Fast browser automation\"");
+    }
+
+    #[test]
+    fn test_nested_indentation() {
+        let tree = node(
+            "main",
+            Some(""),
+            vec![node(
+                "navigation",
+                Some("Primary"),
+                vec![AriaNode {
+                    role: "link".to_string(),
+                    name: Some("Pricing".to_string()),
+                    states: AriaStates::default(),
+                    ref_id: Some("e3".to_string()),
+                    url: Some("https://example.com/pricing".to_string()),
+                    frame_id: None,
+                    offscreen: false,
+                    children: vec![AriaNode {
+                        role: "text".to_string(),
+                        name: Some("Fast browser automation".to_string()),
+                        states: AriaStates::default(),
+                        ref_id: None,
+                        url: None,
+                        frame_id: None,
+                        offscreen: false,
+                        children: Vec::new(),
+                        omitted_children: 0,
+                    }],
+                    omitted_children: 0,
+                }],
+            )],
+        );
+
+        assert_eq!(
+            to_yaml(&tree, None),
+            "- main \"\":\n  - navigation \"Primary\":\n    - link \"Pricing\" [ref=e3]:\n      /url: https://example.com/pricing\n      - text: \"Fast browser automation\""
+        );
+    }
+}
