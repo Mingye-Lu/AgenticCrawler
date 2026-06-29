@@ -597,19 +597,22 @@ pub fn record_page_fingerprint(url: &str, _page_map: &Value, crawl_state: &mut C
     if !runtime::settings_get_page_fingerprinting(&settings) {
         return;
     }
-    // TODO T12: pass the real ARIA tree instead of the legacy page_map JSON.
-    let dummy_tree = crate::aria::AriaNode {
-        role: "main".to_string(),
-        name: None,
-        states: crate::aria::AriaStates::default(),
-        ref_id: None,
-        url: None,
-        frame_id: None,
-        offscreen: false,
-        children: vec![],
-        omitted_children: 0,
+    let fingerprint = if let Some(tree) = crawl_state.last_aria_tree.as_ref() {
+        PageFingerprint::compute(url, tree)
+    } else {
+        let empty = crate::aria::AriaNode {
+            role: "document".to_string(),
+            name: None,
+            states: crate::aria::AriaStates::default(),
+            ref_id: None,
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children: vec![],
+            omitted_children: 0,
+        };
+        PageFingerprint::compute(url, &empty)
     };
-    let fingerprint = PageFingerprint::compute(url, &dummy_tree);
     crawl_state.page_fingerprints.push(fingerprint);
 }
 

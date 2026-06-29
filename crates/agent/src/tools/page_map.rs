@@ -1,11 +1,17 @@
 use serde_json::{json, Value};
 
+use crate::aria::{assign_refs, parse_raw_tree, reconcile, to_yaml};
+use crate::page_fingerprint::PageFingerprint;
 use crate::semantic::{
     assemble_region_tree, compute_accessible_name, select_active_dialog, RawElementFacts,
     RegionCandidate,
 };
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
+
+/// Default ARIA-tree serialization depth when the caller does not request one.
+/// Matches the bridge's own internal default so the two stay in lock-step.
+const DEFAULT_TREE_DEPTH: usize = 5;
 
 const MAX_PAGE_MAP_LINKS: usize = 50;
 const MAX_PAGE_MAP_FORMS: usize = 10;
@@ -253,7 +259,7 @@ pub async fn execute(
     let settings = runtime::load_settings();
     let compound_enrichment = runtime::settings_get_compound_enrichment(&settings);
 
-    let mut result = browser
+    let result = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
@@ -261,56 +267,70 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    enrich_semantic_sections(&mut result);
+    if result.get("stale_ref").and_then(Value::as_bool) == Some(true) {
+        let message = result.get("error").and_then(Value::as_str).unwrap_or(
+            "Ref not found. The page may have changed. Call page_map to get fresh refs.",
+        );
+        return Ok(ToolEffect::Reply(message.to_string()));
+    }
+    if result.get("scope_not_found").and_then(Value::as_bool) == Some(true) {
+        let requested = result.get("scope").and_then(Value::as_str).unwrap_or("");
+        return Ok(ToolEffect::Reply(format!(
+            "scope not found: '{requested}'. Call page_map without a scope to map the full page."
+        )));
+    }
 
-    apply_page_map_caps(&mut result);
+    let mut tree = result.get("tree").and_then(parse_raw_tree).ok_or_else(|| {
+        ToolExecutionError::new("failed to parse ARIA tree from page_map bridge response")
+    })?;
+
+    let url = result
+        .get("url")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            result
+                .get("meta")
+                .and_then(|meta| meta.get("url"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("unknown")
+        .to_string();
+
+    let prev_tree = crawl_state.last_aria_tree.clone();
 
     if scope.is_none() {
-        let url = result
-            .get("meta")
-            .and_then(|m| m.get("url"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-
-        let cache_key = normalize_url(url).to_string();
-
-        if let Some(prev_url) = browser.snapshot_url() {
-            if prev_url != cache_key.as_str() {
-                browser.ref_map_mut().clear();
-            }
+        let cache_key = normalize_url(&url).to_string();
+        let url_changed = browser
+            .snapshot_url()
+            .is_some_and(|prev_url| prev_url != cache_key.as_str());
+        if url_changed {
+            browser.ref_map_mut().clear();
         }
-
-        // TODO T12: call aria::reconcile::assign_refs(tree, ref_map, None, &mut vec![]) here
-        annotate_refs(&mut result, browser);
+        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
         browser.set_page_snapshot(&cache_key, None, result.clone());
     } else {
-        annotate_refs(&mut result, browser);
+        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
+    }
+
+    if let Some(prev) = &prev_tree {
+        reconcile(prev, &mut tree, &mut Vec::new());
     }
 
     let fp_settings = runtime::load_settings();
     if runtime::settings_get_page_fingerprinting(&fp_settings) {
-        let url = result
-            .get("meta")
-            .and_then(|meta| meta.get("url"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        // TODO T12: pass the real ARIA tree instead of the legacy page_map JSON.
-        let dummy_tree = crate::aria::AriaNode {
-            role: "main".to_string(),
-            name: None,
-            states: crate::aria::AriaStates::default(),
-            ref_id: None,
-            url: None,
-            frame_id: None,
-            offscreen: false,
-            children: vec![],
-            omitted_children: 0,
-        };
-        let fingerprint = crate::page_fingerprint::PageFingerprint::compute(url, &dummy_tree);
+        let fingerprint = PageFingerprint::compute(&url, &tree);
         crawl_state.page_fingerprints.push(fingerprint);
     }
 
-    Ok(ToolEffect::reply_json(&result))
+    crawl_state.last_aria_tree = Some(tree.clone());
+
+    let depth = input
+        .get("depth")
+        .and_then(Value::as_u64)
+        .and_then(|requested| usize::try_from(requested).ok())
+        .unwrap_or(DEFAULT_TREE_DEPTH);
+
+    Ok(ToolEffect::Reply(to_yaml(&tree, Some(depth))))
 }
 
 #[cfg(test)]
@@ -1020,5 +1040,47 @@ mod tests {
             normalize_url("https://example.com/page"),
             "https://example.com/page"
         );
+    }
+
+    #[test]
+    fn page_map_tree_pipeline_parses_assigns_and_serializes() {
+        use browser::RefMap;
+
+        use crate::aria::{assign_refs, parse_raw_tree, to_yaml};
+
+        let bridge_result = json!({
+            "tree": {
+                "role": "document",
+                "name": "",
+                "states": {},
+                "refId": Value::Null,
+                "url": Value::Null,
+                "frameId": Value::Null,
+                "offscreen": false,
+                "omittedChildren": 0,
+                "children": [
+                    {
+                        "role": "button",
+                        "name": "Submit",
+                        "states": { "disabled": true },
+                        "refId": "e1",
+                        "offscreen": false,
+                        "omittedChildren": 0,
+                        "children": []
+                    }
+                ]
+            },
+            "url": "https://example.com"
+        });
+
+        let mut tree = parse_raw_tree(&bridge_result["tree"]).expect("tree should parse");
+        let mut ref_map = RefMap::new();
+        assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new());
+
+        let yaml = to_yaml(&tree, Some(super::DEFAULT_TREE_DEPTH));
+        assert!(yaml.starts_with("- document \"\""));
+        assert!(yaml.contains("button \"Submit\" [disabled]"));
+        assert!(tree.ref_id.is_some());
+        assert!(tree.children[0].ref_id.is_some());
     }
 }
