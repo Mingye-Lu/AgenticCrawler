@@ -985,8 +985,10 @@ fn handle_aria_snapshot(
 
     match result {
         Ok(value) => {
+            // Extract the actual JS return value from the evaluate response wrapper
+            let js_result = value.get("value").cloned().unwrap_or(Value::Null);
             let response = json!({
-                "content": [{ "type": "text", "text": value.to_string() }],
+                "content": [{ "type": "text", "text": js_result.to_string() }],
                 "isError": false,
             });
             send_response(&JsonRpcResponse {
