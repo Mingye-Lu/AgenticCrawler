@@ -96,7 +96,9 @@ async function resolveEditorSurface(pg, sel) {
         cur = cur.parentElement;
       }
       // Phase 2: sibling/cousin search within the nearest container
-      const searchRoot = el.closest('form, [class*="field"], [class*="editor"]') || el.parentElement;
+      // Deliberately excludes <form>: a form may contain many unrelated fields, and
+      // matching the first [contenteditable] in a form can write to the wrong field.
+      const searchRoot = el.closest('[class*="field"], [class*="form-group"], [class*="editor"]') || el.parentElement;
       if (!searchRoot) return null;
       const editorSels = [
         '.cm-editor .cm-content[contenteditable="true"]',
@@ -144,8 +146,10 @@ async function tryRichEditorFill(pg, sel, value) {
         ce = ce.parentElement;
       }
       if (!ce || ce === document.body) {
-        const root = el?.closest('form, [class*="editor"], [role="textbox"]') || document.body;
-        ce = root.querySelector('[contenteditable="true"]');
+        // Do not fall back to document.body — that would write to an unrelated editor.
+        if (!el) return false;
+        const root = el.closest('[class*="editor"], [role="textbox"]');
+        ce = root ? root.querySelector('[contenteditable="true"]') : null;
       }
       if (!ce || ce === document.body) return false;
       ce.focus();
@@ -165,13 +169,15 @@ async function tryRichEditorFill(pg, sel, value) {
         if (ce.getAttribute('contenteditable') === 'true') { ce.focus(); return true; }
         ce = ce.parentElement;
       }
-      const root = el?.closest('form, [class*="editor"]') || document.body;
-      const found = root.querySelector('[contenteditable="true"]');
-      if (found && found !== document.body) { found.focus(); return true; }
+      // Do not fall back to document.body — that would write to an unrelated editor.
+      if (!el) return false;
+      const root = el.closest('[class*="editor"]');
+      const found = root ? root.querySelector('[contenteditable="true"]') : null;
+      if (found) { found.focus(); return true; }
       return false;
     }, { s: sel });
     if (focused) {
-      await pg.keyboard.press('Control+a');
+      await pg.keyboard.press('ControlOrMeta+a'); // portable: Ctrl on Linux/Win, Cmd on macOS
       await pg.keyboard.type(value, { delay: 0 });
       return 'keyboard';
     }
