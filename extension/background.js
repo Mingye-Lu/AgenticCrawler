@@ -9,6 +9,7 @@ try {
     'commands/screenshot.js',
     'commands/execute_js.js',
     'commands/page_map.js',
+    'commands/extract_dom_snapshot.js',
     'commands/read_content.js',
     'commands/list_resources.js',
     'commands/hover.js',
@@ -17,7 +18,10 @@ try {
     'commands/wait.js',
     'commands/select_option.js',
     'commands/save_file.js',
-    'commands/cookies.js'
+    'commands/click_at.js',
+    'commands/cookies.js',
+    'commands/set_device.js',
+    'commands/poll_observations.js'
   );
 } catch (e) {
   console.error('Failed to import command scripts:', e);
@@ -34,6 +38,227 @@ let keepaliveInterval = null;
 const managedTabs = {};
 let nextPageIndex = 0;
 let activePageIndex = 0;
+
+// Observation buffers: tabId -> { events: [], currentBytes: 0 }
+const observationBuffers = new Map();
+const observationRequestMetadata = new Map();
+const observationEnabledTabs = new Set();
+const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024; // 2MB
+let currentObservationSeq = 0;
+
+function estimateEventBytes(event) {
+  return JSON.stringify(event).length;
+}
+
+function getTabIndexForObservation(tabId) {
+  const entry = Object.entries(managedTabs).find(([, id]) => id === tabId);
+  return entry ? Number(entry[0]) : 0;
+}
+
+function getObservationMetadataStore(tabId) {
+  let store = observationRequestMetadata.get(tabId);
+  if (!store) {
+    store = new Map();
+    observationRequestMetadata.set(tabId, store);
+  }
+  return store;
+}
+
+function bufferObservationEvent(tabId, event) {
+  event.seq_at_initiation = currentObservationSeq;
+
+  if (!observationBuffers.has(tabId)) {
+    observationBuffers.set(tabId, { events: [], currentBytes: 0 });
+  }
+  const buf = observationBuffers.get(tabId);
+  const eventBytes = estimateEventBytes(event);
+
+  buf.events.push(event);
+  buf.currentBytes += eventBytes;
+
+  // Evict oldest while over cap
+  while (buf.currentBytes > MAX_OBSERVATION_BYTES && buf.events.length > 0) {
+    const removed = buf.events.shift();
+    buf.currentBytes -= estimateEventBytes(removed);
+  }
+}
+
+function drainObservationBuffer(tabId) {
+  const buf = observationBuffers.get(tabId);
+  const events = buf ? [...buf.events] : [];
+  if (buf) {
+    buf.events = [];
+    buf.currentBytes = 0;
+  }
+  return events;
+}
+
+function clearObservationState(tabId) {
+  observationBuffers.delete(tabId);
+  observationRequestMetadata.delete(tabId);
+  observationEnabledTabs.delete(tabId);
+}
+
+async function ensureObservationEnabled(tabId) {
+  await ensureAttached(tabId);
+  if (observationEnabledTabs.has(tabId)) {
+    return;
+  }
+
+  // Enable CDP domains for observation
+  await cdp(tabId, 'Network.enable', {});
+  await cdp(tabId, 'Runtime.enable', {});
+  await cdp(tabId, 'Page.enable', {});
+  observationEnabledTabs.add(tabId);
+}
+
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  const tabId = source.tabId;
+  if (!tabId || !observationEnabledTabs.has(tabId)) {
+    return;
+  }
+
+  const tabIndex = getTabIndexForObservation(tabId);
+  const metadataStore = getObservationMetadataStore(tabId);
+
+  if (method === 'Network.requestWillBeSent') {
+    metadataStore.set(params.requestId, {
+      url: params.request?.url || '',
+      method: params.request?.method || '',
+      request_type: params.type || 'other',
+      initiator_type: params.initiator?.type || null,
+      from_service_worker: params.initiator?.type === 'script' && params.initiator?.url?.includes('sw.js'),
+      started_at: Date.now(),
+    });
+
+    bufferObservationEvent(tabId, {
+      type: 'NetworkRequest',
+      timestamp_ms: Date.now(),
+      tab_index: tabIndex,
+      request_id: params.requestId,
+      url: params.request?.url || '',
+      method: params.request?.method || '',
+      status: null,
+      state: 'Pending',
+      size_bytes: null,
+      duration_ms: null,
+      request_type: params.type || 'other',
+      from_service_worker: params.initiator?.type === 'script' && params.initiator?.url?.includes('sw.js'),
+      initiator_type: params.initiator?.type || null,
+      reason: null,
+    });
+    return;
+  }
+
+  if (method === 'Network.responseReceived') {
+    const metadata = metadataStore.get(params.requestId);
+    bufferObservationEvent(tabId, {
+      type: 'NetworkRequest',
+      timestamp_ms: Date.now(),
+      tab_index: tabIndex,
+      request_id: `${params.requestId}_response`,
+      url: params.response?.url || metadata?.url || '',
+      method: metadata?.method || 'GET',
+      status: params.response?.status ?? null,
+      state: 'Completed',
+      size_bytes: params.response?.encodedDataLength || null,
+      duration_ms: metadata?.started_at ? Math.max(0, Date.now() - metadata.started_at) : null,
+      request_type: params.type || metadata?.request_type || 'other',
+      from_service_worker: metadata?.from_service_worker || false,
+      initiator_type: metadata?.initiator_type || null,
+      reason: null,
+    });
+    metadataStore.delete(params.requestId);
+    return;
+  }
+
+  if (method === 'Network.loadingFailed') {
+    const metadata = metadataStore.get(params.requestId);
+    bufferObservationEvent(tabId, {
+      type: 'NetworkRequest',
+      timestamp_ms: Date.now(),
+      tab_index: tabIndex,
+      request_id: `${params.requestId}_failed`,
+      url: metadata?.url || '',
+      method: metadata?.method || '',
+      status: null,
+      state: params.canceled ? 'Aborted' : 'Failed',
+      size_bytes: null,
+      duration_ms: metadata?.started_at ? Math.max(0, Date.now() - metadata.started_at) : null,
+      request_type: params.type || metadata?.request_type || 'other',
+      from_service_worker: metadata?.from_service_worker || false,
+      initiator_type: metadata?.initiator_type || null,
+      reason: params.errorText || 'Unknown',
+    });
+    metadataStore.delete(params.requestId);
+    return;
+  }
+
+  if (method === 'Runtime.consoleAPICalled') {
+    const text = params.args?.map((arg) => arg.value ?? arg.description ?? '').join(' ') || '';
+    bufferObservationEvent(tabId, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: tabIndex,
+      level: params.type,
+      message_type: 'Console',
+      text,
+      source_url: params.stackTrace?.callFrames?.[0]?.url || null,
+      source_line: params.stackTrace?.callFrames?.[0]?.lineNumber || null,
+      source_column: params.stackTrace?.callFrames?.[0]?.columnNumber || null,
+      stack: null,
+    });
+    return;
+  }
+
+  if (method === 'Runtime.exceptionThrown') {
+    const details = params.exceptionDetails || {};
+    bufferObservationEvent(tabId, {
+      type: 'ConsoleMessage',
+      timestamp_ms: Date.now(),
+      tab_index: tabIndex,
+      level: 'error',
+      message_type: 'Exception',
+      text: details.exception?.description || details.text || 'Unknown error',
+      source_url: details.url || null,
+      source_line: details.lineNumber || null,
+      source_column: details.columnNumber || null,
+      stack: details.stackTrace?.callFrames?.map((frame) => `  at ${frame.functionName} (${frame.url}:${frame.lineNumber})`).join('\n') || null,
+    });
+    return;
+  }
+
+  if (method === 'Network.webSocketFrameReceived') {
+    const metadata = metadataStore.get(params.requestId);
+    bufferObservationEvent(tabId, {
+      type: 'WebSocketFrame',
+      timestamp_ms: Date.now(),
+      tab_index: tabIndex,
+      connection_id: params.requestId,
+      url: metadata?.url || '',
+      direction: 'received',
+      data: params.response?.payloadData || '',
+      size_bytes: params.response?.payloadData?.length || 0,
+      connection_status: 'open',
+    });
+    return;
+  }
+
+  if (method === 'Network.webSocketFrameSent') {
+    const metadata = metadataStore.get(params.requestId);
+    bufferObservationEvent(tabId, {
+      type: 'WebSocketFrame',
+      timestamp_ms: Date.now(),
+      tab_index: tabIndex,
+      connection_id: params.requestId,
+      url: metadata?.url || '',
+      direction: 'sent',
+      data: params.response?.payloadData || '',
+      size_bytes: params.response?.payloadData?.length || 0,
+      connection_status: 'open',
+    });
+  }
+});
 
 // ----------- Connection management -----------
 
@@ -250,6 +475,10 @@ async function handleCommand(cmd) {
       case 'close':
         result = await handleClose();
         break;
+      case 'set_seq':
+        currentObservationSeq = Number.isFinite(cmd.payload?.seq) ? cmd.payload.seq : 0;
+        result = {};
+        break;
 
       // Commands requiring an active tab
       default: {
@@ -258,6 +487,7 @@ async function handleCommand(cmd) {
           sendResponse(cmd.id, false, null, 'No active tab. Use new_page to open a tab first.');
           return;
         }
+        await ensureObservationEnabled(tabId);
         switch (cmd.action) {
           case 'navigate':
             result = await handleNavigate(tabId, cmd.payload || {});
@@ -268,17 +498,23 @@ async function handleCommand(cmd) {
           case 'click':
             result = await handleClick(tabId, cmd.payload || {});
             break;
+          case 'click_at':
+            result = await handleClickAt(tabId, cmd.payload || {});
+            break;
           case 'fill':
             result = await handleFill(tabId, cmd.payload || {});
             break;
           case 'screenshot':
-            result = await handleScreenshot(tabId);
+            result = await handleScreenshot(tabId, cmd.payload || {});
             break;
           case 'execute_js':
             result = await handleExecuteJs(tabId, cmd.payload || {});
             break;
           case 'page_map':
-            result = await handlePageMap(tabId);
+            result = await handlePageMap(tabId, cmd.payload || {});
+            break;
+          case 'extract_dom_snapshot':
+            result = await handleExtractDomSnapshot(tabId, cmd.payload || {});
             break;
           case 'read_content':
             result = await handleReadContent(tabId, cmd.payload || {});
@@ -315,6 +551,12 @@ async function handleCommand(cmd) {
             break;
           case 'import_local_storage':
             result = await handleImportLocalStorage(tabId, cmd.payload || {});
+            break;
+          case 'set_device':
+            result = await handleSetDevice(tabId, cmd.payload || {});
+            break;
+          case 'poll_observations':
+            result = await handlePollObservations(tabId, cmd.payload || {});
             break;
           default:
             sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
@@ -375,6 +617,7 @@ async function handleClosePage(payload) {
   const tabId = managedTabs[pageIndex];
   if (tabId) {
     await detachDebugger(tabId);
+    clearObservationState(tabId);
     await new Promise((resolve) => chrome.tabs.remove(tabId, resolve));
     delete managedTabs[pageIndex];
     await saveState();
@@ -401,6 +644,7 @@ async function handleClose() {
   const tabIds = Object.values(managedTabs);
   for (const tabId of tabIds) {
     await detachDebugger(tabId).catch(() => {});
+    clearObservationState(tabId);
   }
   for (const tabId of tabIds) {
     await new Promise((resolve) => chrome.tabs.remove(tabId, resolve)).catch(() => {});
@@ -428,6 +672,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   const entry = Object.entries(managedTabs).find(([, id]) => id === tabId);
   if (entry) {
     const [pageIndex] = entry;
+    clearObservationState(tabId);
     delete managedTabs[Number(pageIndex)];
     saveState();
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -442,6 +687,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.debugger.onDetach.addListener((source, reason) => {
   const tabId = source.tabId;
+  clearObservationState(tabId);
   const entry = Object.entries(managedTabs).find(([, id]) => id === tabId);
   if (entry) {
     if (ws && ws.readyState === WebSocket.OPEN) {

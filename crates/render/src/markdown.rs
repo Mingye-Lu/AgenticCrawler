@@ -858,10 +858,7 @@ pub fn strip_ansi(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        drain_safe_boundary, render_lines, strip_ansi, text_to_ansi, MarkdownStreamState, Spinner,
-        TerminalRenderer,
-    };
+    use super::*;
     use ratatui::style::{Color, Modifier, Style};
     use ratatui::text::{Line, Span};
 
@@ -980,6 +977,21 @@ mod tests {
     }
 
     #[test]
+    fn render_lines_preserves_very_long_lines() {
+        let long = "x".repeat(8_192);
+        let lines = render_lines(&long);
+        assert_eq!(lines.len(), 1, "expected a single rendered line");
+
+        let plain: String = lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(plain.len(), long.len());
+        assert_eq!(plain, long);
+    }
+
+    #[test]
     fn streaming_state_waits_for_complete_blocks() {
         let renderer = TerminalRenderer::new();
         let mut state = MarkdownStreamState::default();
@@ -997,6 +1009,46 @@ mod tests {
             .push(&renderer, "```\n")
             .expect("closed code fence flushes");
         assert!(strip_ansi(&code).contains("fn main()"));
+    }
+
+    #[test]
+    fn streaming_state_push_handles_incremental_content() {
+        let rndr = TerminalRenderer::new();
+        let mut state = MarkdownStreamState::default();
+
+        assert_eq!(state.push(&rndr, "# He"), None);
+        assert_eq!(state.push(&rndr, "ading"), None);
+        let heading = state
+            .push(&rndr, "\n\nPar")
+            .expect("completed heading should flush before partial paragraph");
+        assert!(strip_ansi(&heading).contains("Heading"), "got {heading:?}");
+
+        let output = state
+            .push(&rndr, "agraph with **bold** text\n")
+            .expect("newline should flush a complete chunk");
+        let plain = strip_ansi(&output);
+
+        assert!(plain.contains("Paragraph with bold text"), "got {plain:?}");
+        assert!(
+            output.contains("\u{1b}[1m"),
+            "expected bold styling in {output:?}"
+        );
+        assert!(
+            state.flush(&rndr).is_none(),
+            "no trailing content should remain"
+        );
+    }
+
+    #[test]
+    fn streaming_state_holds_partial_content_until_boundary() {
+        let rndr = TerminalRenderer::new();
+        let mut state = MarkdownStreamState::default();
+
+        assert_eq!(state.push(&rndr, "partial paragraph"), None);
+        assert_eq!(state.push(&rndr, " still pending"), None);
+
+        let flushed = state.flush(&rndr).expect("flush should emit pending text");
+        assert_eq!(strip_ansi(&flushed), "partial paragraph still pending");
     }
 
     #[test]

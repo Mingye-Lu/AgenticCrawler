@@ -162,6 +162,9 @@ pub struct McpToolCallResult {
     pub meta: Option<JsonValue>,
 }
 
+// MCP spec: resource support types — not yet used by our server but defined
+// for protocol compliance. Will be activated when resources/list and
+// resources/read handlers are added.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -1,0 +1,53 @@
+{
+  "manifest_version": "0.3",
+  "name": "acrawl",
+  "display_name": "acrawl",
+  "version": "0.8.2",
+  "description": "Autonomous LLM-powered web crawler. 17 browser tools + run_goal for fully autonomous multi-step crawling. Single binary, stealth browsing, 25 LLM providers.",
+  "long_description": "acrawl is an MCP server that gives your AI assistant real browser automation capabilities. Describe a goal in plain English and run_goal handles the entire crawl autonomously — or use 17 individual browser tools (navigate, click, fill forms, screenshot, etc.) for fine-grained control.\n\nKey features:\n- run_goal: delegate an entire multi-step web task in one tool call\n- page_map: structured page representation designed for LLM consumption\n- Smart HTTP→browser escalation (fast for static pages, headless Chromium when JS needed)\n- CloakBrowser stealth (bypasses bot detection)\n- No runtime dependencies — single compiled binary",
+  "author": {
+    "name": "Mingye Lu",
+    "url": "https://github.com/Mingye-Lu"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mingye-Lu/AgenticCrawler.git"
+  },
+  "homepage": "https://github.com/Mingye-Lu/AgenticCrawler",
+  "support": "https://github.com/Mingye-Lu/AgenticCrawler/issues",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/acrawl",
+    "mcp_config": {
+      "command": "${__dirname}/server/acrawl",
+      "args": ["mcp"],
+      "env": {}
+    }
+  },
+  "tools": [
+    { "name": "navigate", "description": "Navigate to a URL, returns structured page content" },
+    { "name": "click", "description": "Click an element by CSS selector" },
+    { "name": "click_at", "description": "Click at specific viewport coordinates" },
+    { "name": "fill_form", "description": "Fill form fields with values" },
+    { "name": "select_option", "description": "Select a dropdown option" },
+    { "name": "hover", "description": "Hover over an element" },
+    { "name": "press_key", "description": "Press a keyboard key" },
+    { "name": "execute_js", "description": "Run JavaScript in the page context" },
+    { "name": "page_map", "description": "Get structured page map (headings, forms, links, interactive elements)" },
+    { "name": "read_content", "description": "Extract text by heading or CSS selector" },
+    { "name": "list_resources", "description": "List all links, images, and forms on the page" },
+    { "name": "screenshot", "description": "Capture a page screenshot" },
+    { "name": "save_file", "description": "Download a URL to the output directory" },
+    { "name": "go_back", "description": "Navigate back" },
+    { "name": "scroll", "description": "Scroll the page up or down" },
+    { "name": "switch_tab", "description": "Switch to a different browser tab" },
+    { "name": "wait", "description": "Wait for an element or timeout" },
+    { "name": "run_goal", "description": "Execute a high-level crawl goal autonomously using an internal LLM agent" }
+  ],
+  "tools_generated": false,
+  "keywords": ["web-scraping", "browser-automation", "web-crawler", "llm", "mcp", "ai-agent", "headless-browser", "rust"],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"]
+  }
+}

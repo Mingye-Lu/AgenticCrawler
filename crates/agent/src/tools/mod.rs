@@ -1,29 +1,53 @@
+pub mod accessibility;
 pub mod cancel_subagent;
 pub mod click;
+pub mod click_at;
+pub mod coverage;
 pub mod feedback;
 pub mod fill_form;
 pub mod fork;
 pub mod go_back;
+pub mod html_diff;
+pub mod intercept_network;
 pub mod list_archive;
 pub mod navigate;
+pub mod network_activity;
 pub mod page_map;
 pub mod read_content;
 pub mod read_document;
 pub mod read_pdf;
 pub mod read_spreadsheet;
+pub mod ref_resolve;
+pub mod refresh;
 pub mod screenshot;
+pub mod seq;
 
 pub mod execute_js;
 pub mod hover;
 pub mod list_resources;
+pub mod page_logs;
+pub mod page_performance;
 pub mod press_key;
 pub mod save_file;
 pub mod scroll;
 pub mod select_option;
+pub mod storage_inspect;
 pub mod subagent_status;
 pub mod switch_tab;
 pub mod transcribe_media;
 pub mod view_image;
 pub mod wait;
-pub mod wait_for_human;
 pub mod wait_for_subagents;
+pub mod websocket_activity;
+
+#[cfg(test)]
+pub mod test_support;
+
+pub mod cancel_script;
+pub mod list_scripts;
+pub mod read_script;
+pub mod run_script;
+pub mod save_script;
+pub mod script_status;
+pub mod set_device;
+pub mod wait_for_scripts;

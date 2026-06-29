@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <strong>LLM-powered web crawler.</strong> Describe what you want in plain English — get structured data back.
+  <strong>Browser automation agent that acts and observes.</strong> Navigate, click, and extract — or inspect network traffic, debug console errors, profile performance, and audit accessibility. One Rust binary.
 </p>
 
 <p align="center">
@@ -20,39 +20,77 @@
 </p>
 
 <p align="center">
-  Single binary. No Python runtime. 27 tools. 25 LLM providers. MCP server built-in.
+  Single Rust binary. Full DevTools observability. 48 tools. 25 LLM providers. MCP server built-in.
 </p>
 
 ---
 
 ## Why acrawl?
 
-Most web scraping still means writing code: XPath selectors, pagination logic, retry handling, anti-bot workarounds. LLMs can read pages like humans do, but wiring one up to a browser is a project in itself.
+Most browser agents stop at navigate and click. acrawl goes further: the agent can also inspect network requests, analyze console errors, measure page performance, audit accessibility, and intercept network calls — the full DevTools surface, available as first-class agent tools.
 
-acrawl is that wiring, packaged as a single Rust binary. You describe a goal; the agent figures out which pages to visit, what to click, what to extract, and when it's done.
+It ships as a single Rust binary. No Python runtime, no Node runtime, no Docker. Drop it into any server or CI pipeline and describe a goal; the agent figures out what to visit, what to click, what to inspect, and when it's done.
 
-- **No code required.** Describe the goal in English. The agent plans and executes.
 - **One binary, zero runtimes.** `cargo build --release` produces a self-contained executable. No Python, no Node runtime — just Rust and a Chromium download for browser automation.
+- **Acts and observes.** The agent has the full DevTools surface as first-class tools: inspect network requests with timing, analyze and deduplicate console logs, stream WebSocket messages, measure page performance (TTFB, resource breakdown), audit cookies and browser storage, measure JS/CSS coverage, run axe-core WCAG accessibility audits, and intercept or mock network calls. No other agent framework exposes this.
+- **Deterministic where you can, AI where you must.** Define loops, conditionals, and parallel branches as JSON scripts — executed without any LLM calls. Fall back to the agent when pages behave unexpectedly. Best of both worlds.
+- **No code required.** Describe the goal in plain English. The agent plans, navigates, and extracts.
 - **Smart fetching.** Static pages are served over HTTP (fast). When JavaScript or interaction is needed, acrawl detects JS framework markers (`__next_data__`, `__nuxt`, `__vue`, `ng-app`, React roots), auth redirects, and short `<noscript>` bodies — then transparently escalates to a headless browser.
-- **27 tools, not a chatbot.** The agent has real tools — navigate, click, fill forms, run JS, take screenshots, manage tabs — plus a fork/join layer to spawn parallel sub-agents across multiple browser tabs.
+- **Sub-agent parallelism.** Fork child agents onto separate browser tabs with independent state and step budgets. A URL-claiming registry prevents siblings from crawling the same page twice.
+- **MCP client and server.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers. Or flip it: `acrawl mcp` exposes 38 browser and DevTools tools plus `run_goal` to Claude Code, Cursor, VS Code, Zed, and 13 other clients.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope, OpenRouter, and more. Or bring your own via any OpenAI-compatible endpoint.
-- **MCP client.** Extend the agent with custom tools via [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio, SSE, HTTP, WebSocket).
-- **MCP server.** `acrawl mcp` exposes all 16 browser tools plus an autonomous `run_goal` agent to any MCP-compatible client — Claude Code, Cursor, Windsurf, VS Code, Zed, JetBrains, TRAE, Gemini CLI, and more. Install with `acrawl mcp install`.
 
 ### How does it compare?
 
-| | acrawl | Scrapy | Playwright scripts | Browser-use |
-|---|:---:|:---:|:---:|:---:|
-| No code needed | Yes | No | No | Yes |
-| Single binary | Yes | No | No | No |
-| JS rendering | Yes | No | Yes | Yes |
-| LLM-powered | Yes | No | No | Yes |
-| No Python required | Yes | No | No | No |
-| Form filling / interaction | Yes | Limited | Yes | Yes |
-| Sub-agent parallelism | Yes | N/A | No | No |
-| 25 provider support | Yes | N/A | N/A | Limited |
-| MCP client (use external tools) | Yes | No | No | No |
-| MCP server (expose as tools) | Yes | No | No | No |
+#### vs. AI web agents and scraping tools
+
+| | acrawl | browser-use | Stagehand | Skyvern | Firecrawl | Playwright MCP | Scrapy | Playwright scripts |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| No code needed | Yes | No | No | Partial | No | No | No | No |
+| Single binary | Yes | No | No | No | No | No | No | No |
+| JS rendering | Yes | Yes | Yes | Yes | Yes | Yes | No | Yes |
+| LLM-powered navigation | Yes | Yes | Yes | Yes | Limited | No | No | No |
+| No Python / Node needed | Yes | No | No | No | No | No | No | No |
+| Form filling / interaction | Yes | Yes | Yes | Yes | No | Yes | No | Yes |
+| Sub-agent parallelism | Yes | No | No | Partial | Partial | No | Partial | No |
+| 25 LLM providers | Yes | Via LiteLLM | Partial | Partial | N/A | N/A | N/A | N/A |
+| MCP client (use tools) | Yes | No | No | No | No | No | No | No |
+| MCP server (expose as tools) | Yes | No | No | No | Yes | Yes | No | No |
+| Stealth browser built-in | Yes | Cloud only | Via Browserbase | Cloud only | No | No | No | No |
+| DevTools observability (network, console, perf, a11y) | Yes | No | No | No | No | No | No | No |
+| Deterministic script layer (zero LLM calls) | Yes | No | Partial | No | No | No | Yes | Yes |
+| Open source | Yes | Yes (MIT) | Yes (MIT) | Yes (Apache) | Engine only | Yes (MIT) | Yes (BSD) | Yes (Apache) |
+
+Notes:
+- **browser-use** (85k+ GitHub stars): Python + Playwright, DOM + screenshots, supports GPT/Claude/Gemini/Ollama via LiteLLM, 89.1% WebVoyager. No single binary — requires Python and `pip install`. Every action calls an LLM: 2-5s/step, ~$0.02-0.30/task. Cloud tier adds stealth; self-hosted is bare Playwright.
+- **Stagehand** (Browserbase, 21k+ stars): TypeScript + CDP (v3), mixes deterministic Playwright with AI primitives (`act()`, `extract()`, `observe()`). Action caching reuses successful clicks without re-calling the LLM. Requires Node and, for production, Browserbase cloud hosting.
+- **Skyvern** (21k+ stars, Apache 2.0): vision-first (screenshot-only, no DOM), handles legacy portals and government forms that DOM tools struggle with. No-code cloud UI available. Each step costs vision-model tokens — ~$0.10-0.50/task. 85.85% WebVoyager.
+- **Firecrawl** (82k+ stars): managed scraping API. Returns LLM-ready Markdown, JSON extraction, site-wide crawl. Not an agentic tool — minimal multi-step interaction. Ships an official MCP server. Per-page pricing from $19/month.
+- **Playwright MCP** (Microsoft, 29k+ stars): MCP server that exposes browser control via the accessibility tree. Sub-100ms actions, zero vision tokens. Drives an LLM client's browser rather than having its own reasoning — no autonomous goal navigation. Used in GitHub Copilot Agent.
+
+#### vs. native LLM provider browsing
+
+Most AI providers offer some form of browsing, but it is designed for **conversational information retrieval**, not programmatic web automation. Key constraints:
+
+| | acrawl | ChatGPT Agent | Claude Computer Use | Claude in Chrome | Gemini Deep Research | Copilot / Edge |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Real JS-rendered browser | Yes | Yes (sandboxed cloud VM) | Indirect (dev provides env) | Yes (your Chrome) | No (search API only) | Limited (Bing retrieval) |
+| Click / fill forms | Yes | Yes (requires user confirmation) | Yes | Yes | No | Limited |
+| Programmable / scriptable | Yes | No | Yes (API beta) | No | No | No |
+| Sub-agent parallelism | Yes | No | No | No | No | No |
+| MCP server (expose as tools) | Yes | No | No | No | No | No |
+| Returns structured data | Yes | No (text summaries) | No (screenshots) | No | No | No |
+| Stealth / anti-bot | Yes | No | No | No | No | No |
+| No vendor lock-in | Yes (25 providers) | OpenAI only | Anthropic only | Anthropic only | Google only | OpenAI / Bing only |
+| Runs without paid subscription | Yes (OSS; LLM key needed) | No (Plus/Pro/Business) | No (API cost) | No (Max plan) | Partial | Yes (free tier) |
+
+Notes:
+- **ChatGPT Agent** (OpenAI, July 2025): runs in a sandboxed cloud virtual machine with its own Chromium instance. Can browse, click, and fill forms but pauses for user confirmation on sensitive actions (purchases, logins). Uses two modes: a fast text browser for research queries and a visual browser for interaction. Cannot run code in the browser, install extensions, or access your local file system. Susceptible to prompt injection. Available to Plus/Pro/Business subscribers.
+- **ChatGPT Atlas** (OpenAI, October 2025): a full Chromium browser with ChatGPT integrated as a sidebar + agent. Agent mode drives the same sandboxed cloud VM as ChatGPT Agent; core limitations are identical.
+- **Claude Computer Use** (Anthropic API, beta since October 2024): screenshot + mouse/keyboard API for any desktop application, not just browsers. Vision-only — no DOM access. Developers must provide and manage the entire computing environment (typically a Docker container with Xvfb + Firefox). Not a ready-to-use binary. Requires significant infrastructure to operate in production.
+- **Claude in Chrome** (Anthropic Chrome extension, beta November 2025+): lets Claude operate within your existing Chrome session using your real cookies and logins. Available to Max plan subscribers. Not an open API — no programmatic control. Good for interactive personal tasks; not suitable for batch automation.
+- **Gemini / Deep Research** (Google): browsing is grounded via Google Search API calls, not a live browser session. Deep Research synthesizes across many searches but cannot interact with pages (click, fill forms, navigate dynamically). Project Mariner (experimental computer use) is a separate, limited research preview.
+- **Copilot / Edge** (Microsoft): Edge's Copilot Mode uses Bing retrieval with some ability to navigate pages. Real-world tests show high latency (6+ minutes for multi-page comparison tasks) and frequent interruptions for user confirmation. Not a developer API.
 
 ## Quick Start
 
@@ -167,38 +205,88 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 ## Features
 
-### 27-Tool Toolbox
+### 48-Tool Toolbox
 
 #### Navigation
 
 | Tool | Description |
 |------|-------------|
-| `navigate` | Go to a URL (supports `format`: markdown/text/html). Uses HTTP first, auto-escalates to browser when JS is detected. Returns structured content with a `page_map`. |
+| `navigate` | Go to a URL (supports `format`: markdown/text/html/fit_markdown). Uses HTTP first, auto-escalates to browser when JS is detected. Returns structured content with a `page_map`. `fit_markdown` prunes boilerplate DOM nodes before conversion, saving tokens. |
 | `go_back` | Browser back button. Returns `page_state` with the resulting page structure. |
 | `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
-| `wait` | Wait for a CSS selector to appear or a timeout (up to 300s). |
+| `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). Returns `page_state` after the condition is met. |
+| `refresh` | Reload the current page. Returns `page_state` after reload. Use after setting intercept rules to replay the page load with rules active. Seq counter increments for temporal observation queries. |
+
+#### Content Formats
+
+The `navigate` tool's `format` parameter controls how the page is returned:
+
+| Format | Description |
+|--------|-------------|
+| `markdown` | Full HTML → markdown conversion. All content preserved. |
+| `fit_markdown` | **Recommended.** Prunes boilerplate before conversion, saving 30-60% tokens on typical pages. |
+| `text` | Plain text, no markdown. |
+| `html` | Raw HTML. |
+
+`fit_markdown` works in two passes:
+
+1. **Hard-block removal**, elements whose `class` or `id` attribute contains any of these strings are removed immediately: `nav`, `footer`, `header`, `sidebar`, `ads`, `comment`, `promo`, `advert`, `social`, `share`.
+2. **Score-based pruning**, remaining elements are scored; anything below 0.48 is removed. The score is:
+
+   ```
+   0.4 × text_density
+   + 0.2 × (1 − link_density)
+   + 0.2 × tag_weight
+   + 0.1 × class_id_score
+   + 0.1 × ln(text_length + 1)
+   ```
+
+   Tag weights: `article` = 1.5 · `h1` = 1.2 · `h2` = 1.1 · `h3/p/section` = 1.0 · `h4` = 0.9 · `h5/table` = 0.8 · `h6` = 0.7 · `span` = 0.3 · `div/li/ul/ol` = 0.5.
+
+**Use `markdown` instead of `fit_markdown` when:** the page has important content inside elements named `sidebar`, `nav`, or similar, for example, metadata panels, related-article links, or author info stored in a sidebar div.
+
+If `fit_markdown` prunes all content (empty result), the tool automatically falls back to plain text.
 
 #### Interaction
 
 | Tool | Description |
 |------|-------------|
-| `click` | Click an element by CSS selector. Returns `page_state` after the click. |
-| `fill_form` | Fill form fields by selector or name, with optional auto-submit. Returns `page_state`. |
-| `select_option` | Select a dropdown option by value, label, or index. Returns `page_state`. |
+| `click` | Click an element by CSS selector, `@eN` ref, or visible label text. Use `text` (with optional `role`/`region`) to activate a button, tab, or link by its label — handy for SPA admin UIs and modals where CSS paths are fragile. Returns `page_state` after the click. |
+| `click_at` | Click at specific viewport coordinates (x, y). Use for canvas, maps, or SVGs. Returns `page_state`. |
+| `fill_form` | Fill form fields by selector, name, `@eN` ref, or visible label text — labels resolve page-wide, so fields in modals and div-based UIs without a `<form>` boundary work too. Optional auto-submit. Returns `page_state`. |
+| `select_option` | Select a dropdown option by value, label, or index. Works on native `<select>` and custom ARIA/portal dropdowns; omit value/label/index to list the available options without selecting. Returns `page_state`. |
 | `hover` | Hover over an element to reveal tooltips or menus. Returns `page_state`. |
 | `press_key` | Press a keyboard key (Enter, Escape, Tab, etc.), optionally targeting an element. Returns `page_state`. |
+| `set_device` | Switch browser device emulation (mobile/desktop). Supports 10 presets (iphone_15, pixel_7, ipad_pro, desktop, etc.) or custom viewport/UA/touch parameters. Returns differential `page_state` showing responsive layout changes. |
 | `execute_js` | Run arbitrary JavaScript in the page context and return the result. |
 
 #### Content Extraction
 
 | Tool | Description |
 |------|-------------|
-| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive element counts. |
+| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive elements (with selectors and state), plus a `regions` hierarchy (sidebar/main/dialog), the `active_dialog`, and non-form `controls`. `scope` accepts a CSS selector, a semantic token (`dialog`/`main`/`sidebar`), or a region handle (`@r1`) to query within a specific element (e.g. a modal). |
 | `read_content` | Extract text by heading name or CSS selector, with offset/limit pagination for large pages. |
 | `list_resources` | List all links, images, and forms on the current page. |
 | `screenshot` | Capture a full-page screenshot (base64 PNG). |
 | `save_file` | Download a URL to the output directory (path traversal protected). |
+
+#### DevTools & Observation
+
+| Tool | Description |
+|------|-------------|
+| `list_network_activity` | List observed network requests buffered during this browser session. Supports temporal filtering by seq window, request-state filters, URL substring filtering, and adjective-based sorting such as slowest/fastest or newest/oldest. Returns stable @rN refs for follow-up inspection with inspect_request. |
+| `inspect_request` | Inspect a previously listed network request by its @rN id from list_network_activity. Returns the captured request metadata, coarse timing summary, initiator type, and notes about unavailable headers/bodies. |
+| `list_page_logs` | List buffered console logs for the current page with optional level filtering and seq-based temporal filtering. Group by exact message text (default, deduplicated with @logN IDs), source, or level. |
+| `inspect_log` | Inspect a deduplicated console log group from list_page_logs and return concrete instances with timestamps, stack traces, and source locations. |
+| `list_websocket_activity` | Overview of WebSocket connections and message counts. Returns connections with @wsN IDs. Use inspect_websocket to see actual message content. |
+| `inspect_websocket` | Inspect actual WebSocket messages for a connection. Provide @wsN ID from list_websocket_activity. Supports direction filter, pattern search, and sort_by (newest/oldest). |
+| `get_page_performance` | Get page performance metrics using Navigation Timing and Resource Timing APIs. Returns TTFB, DOM timings, and a breakdown of the top 20 resources by transfer size. Works on both browsers and SPAs. |
+| `inspect_cookies` | Inspect cookies on the current page with security analysis. Returns all cookies with domain, path, expiry, secure/httponly flags, and detected security issues. Includes third-party detection and filtering options. |
+| `inspect_storage` | Inspect browser storage (localStorage and sessionStorage) on the current page. Returns all key-value pairs with size information. Supports filtering by storage type and key pattern. |
+| `measure_coverage` | Measure JavaScript and CSS code coverage on the current page. Returns per-file byte usage showing how much code was actually executed/applied versus total loaded. Useful for identifying unused bundles, oversized dependencies, and performance optimization opportunities. |
+| `audit_accessibility` | Run axe-core WCAG accessibility audit on the current page. Returns violations grouped by impact level with selectors and descriptions. Use scope to limit to a specific DOM subtree. |
+| `intercept_network` | Manage network interception rules. Block or mock requests matching URL glob patterns. Rules are additive — each call adds a rule. Use refresh() after adding rules to replay the page load with rules active. |
 
 #### Agent Control
 
@@ -206,7 +294,70 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 |------|-------------|
 | `fork` | Spawn a sub-agent on a new browser tab with its own goal and step budget. |
 | `wait_for_subagents` | Wait for specific or all sub-agents to finish and collect results. |
-| `done` | Signal task completion. Auto-waits for any active sub-agents and merges their data. |
+| `subagent_status` | Check the status and results of one or all active sub-agents without blocking. |
+| `cancel_subagent` | Cancel a running sub-agent by ID. |
+
+#### Script Management
+
+| Tool | Description |
+|------|-------------|
+| `run_script` | Execute a deterministic multi-step script (loops, conditionals, parallel branches) without per-step LLM calls. Returns a script_id for async tracking. |
+| `save_script` | Persist a script definition to disk for reuse across sessions. |
+| `list_scripts` | List all previously saved scripts with metadata. |
+| `read_script` | Read the full JSON definition of a saved script. |
+| `wait_for_scripts` | Block until one or more running scripts complete and return results. |
+| `script_status` | Check execution status of a running script without blocking. |
+| `cancel_script` | Abort a running script immediately. |
+
+#### page_state Reference
+
+Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_back`, `scroll`, `switch_tab`, `select_option`, `set_device`, `refresh`) all return a `page_state` object. There are two variants:
+
+**Full page_state**, returned after the first interaction on a URL, or when changes are too extensive to diff:
+
+```json
+{
+  "url": "https://example.com/page",
+  "title": "Page Title",
+  "page_map": {
+    "headings": [{ "level": 1, "text": "...", "id": "...", "selector": "...", "char_count": 0, "preview": "..." }],
+    "landmarks": [{ "tag": "nav", "role": "navigation", "id": "...", "selector": "...", "text_preview": "..." }],
+    "links": [{ "text": "...", "href": "...", "selector": "..." }],
+    "regions": [{ "kind": "Main", "label": "main panel", "handle": "@r1", "selector": "main", "visible": true, "children": [] }],
+    "active_dialog": null,
+    "meta": { "title": "...", "url": "...", "description": "..." },
+    "truncated_links": false,
+    "truncated_forms": false,
+    "truncated_landmarks": false,
+    "truncated_regions": false,
+    "truncated_controls": false
+  }
+}
+```
+
+**Diff page_state**, returned on subsequent interactions on the same URL, showing only what changed:
+
+```json
+{
+  "url": "https://example.com/page",
+  "title": "Page Title",
+  "changed": true,
+  "changes": {
+    "added_headings": [],
+    "removed_headings": [],
+    "added_links": [],
+    "removed_links": [],
+    "added_landmarks": [],
+    "removed_landmarks": [],
+    "added_interactive": [{ "selector": "...", "tag": "...", "text": "..." }],
+    "removed_interactive": [],
+    "modified_interactive": [{ "selector": "...", "tag": "...", "text": "...", "state_changes": { "aria_expanded": "true" } }]
+  }
+}
+```
+
+If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. The embedded `page_map` preserves `regions` and `active_dialog` but omits the verbose `forms`, `interactive`, and `controls` arrays to keep interaction responses concise — call the `page_map` tool to retrieve those. Caps: max 50 links, 20 landmarks per page_state.
+
 
 #### Resource Processing
 
@@ -231,6 +382,19 @@ The agent can fork child agents to crawl multiple pages concurrently. Each child
 | `fork_child_max_steps` | 15 | Step budget per child agent |
 | `fork_wait_timeout_secs` | 60 | Timeout waiting for sub-agents |
 
+#### URL Claiming
+
+Before a child agent is spawned, its scope is registered in a shared claim registry. This prevents two sibling agents from crawling the same URL simultaneously.
+
+**Rules:**
+- **First-claimer-wins**, if a second agent tries to claim a URL already claimed by a sibling, the fork fails immediately with a conflict message naming the owner agent. The parent LLM sees this conflict and can adjust scope.
+- **Three scope types:** `SinglePage` (exact URL), `UrlList` (all-or-nothing batch), `UrlPattern` (regex, checked for overlap with all existing claims).
+- **RAII lifetime**, a claim is held for the life of the child. When the child finishes, is cancelled, or its parent aborts setup, the claim is released automatically and the URL becomes available again.
+- **Cross-type checking**, an exact URL conflicts with any already-claimed regex that matches it, and a new regex conflicts with any already-claimed exact URL it would match.
+- **Intra-list deduplication**, if the same URL appears twice in a `UrlList`, it is silently deduplicated (the LLM sometimes produces duplicates).
+
+Claiming is **automatic**, it happens inside `fork` before the child starts, not inside `navigate`. The agent does not call it explicitly.
+
 ### Smart Fetch Routing
 
 Every `navigate` call goes through a two-tier fetch router:
@@ -241,6 +405,7 @@ Every `navigate` call goes through a two-tier fetch router:
    - JS framework markers: `__next_data__`, `__nuxt`, `__vue`, `ng-app`, `_react`, `data-reactroot`
    - Auth redirects: URLs containing `/login`, `/signin`, `/auth`, `/oauth`, `accounts.google.com`
    - Short response body (< 500 chars) with a `<noscript>` tag
+   - Empty SPA shell detection (multi-signal scoring): framework asset paths without embedded data (`/_next/static/`, `/_nuxt/`, `ng-version=`), empty mount-point divs, noscript "enable JavaScript" messages, bundler hash patterns, and structural signals (sparse visible text with no semantic elements). Pages with embedded data blobs (`__NEXT_DATA__`, `window.__NUXT__`, `data-reactroot`) are explicitly excluded — their content is already server-rendered.
 
 When `--no-headless` / `--headed` is set, all fetches go directly through the browser.
 
@@ -281,7 +446,66 @@ When `--no-headless` / `--headed` is set, all fetches go directly through the br
 <tr><td>Custom (OpenAI-compatible)</td><td>API key (optional)</td><td>—</td></tr>
 </table>
 
+#### Custom / Local Providers
+
+To use any OpenAI-compatible endpoint (Ollama, LMStudio, vLLM, a local proxy, etc.):
+
+```bash
+acrawl auth other
+```
+
+You'll be prompted for a base URL and an optional API key. Examples:
+
+| Setup | Base URL | Model string |
+|-------|----------|--------------|
+| Ollama (local) | `http://localhost:11434/v1` | `other/llama3.2` |
+| LMStudio | `http://localhost:1234/v1` | `other/local-model` |
+| vLLM | `http://localhost:8000/v1` | `other/meta-llama/Llama-3.1-8B` |
+| Any OpenAI-compatible API | Your endpoint | `other/<model-id>` |
+
+This creates a `credentials.json` entry with `auth_method: "api_key"` and your `base_url`. Leave the API key blank if your server doesn't require one.
+
+
 Models use the `provider/model-id` format: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, `amazon-bedrock/anthropic.claude-sonnet-4-6-20250514-v1:0`, etc.
+
+#### Providers With Non-Standard Auth
+
+**GitHub Copilot, device code flow:**
+
+```bash
+acrawl auth copilot
+```
+
+1. acrawl prints a URL (`https://github.com/login/device`) and an 8-character user code, and attempts to open your browser automatically.
+2. Paste the code at the GitHub page and authorize the app.
+3. acrawl polls GitHub until authorization completes, then exchanges the GitHub token for a short-lived Copilot API token, which is stored in `credentials.json`.
+
+No API key is needed, the entire flow is interactive. If authorization succeeds, credentials are stored automatically.
+
+**GitLab Duo, API key:**
+
+```bash
+acrawl auth gitlab
+```
+
+Prompts for a GitLab Personal Access Token (PAT). Paste your token and press Enter. No browser redirect required. Note: GitLab Duo does not support tool calling.
+
+**Amazon Bedrock, AWS credentials:**
+
+```bash
+acrawl auth amazon-bedrock
+```
+
+Prompts for AWS Access Key ID, AWS Secret Access Key, and region (default: `us-east-1`). These are stored directly in `credentials.json` and used to sign requests with AWS SigV4.
+
+**Azure OpenAI:**
+
+```bash
+acrawl auth azure
+```
+
+Prompts for Resource Name (e.g. `myresource`), Deployment Name (e.g. `gpt-4o`), and API key.
+
 
 ### Interactive TUI
 
@@ -314,7 +538,13 @@ Running `acrawl` without a TTY on stdout (e.g. piped or redirected) exits with a
 - **Auto-save** — sessions are saved automatically on exit.
 - **Resume** — `--resume session.json` reloads a conversation. Resume-safe slash commands (`/status`, `/compact`, `/cost`, `/config`, `/version`, `/export`, `/help`, `/clear`) can be appended to the command line.
 - **Export** — `/export [file]` writes a human-readable markdown transcript.
-- **Auto-compaction** — when context exceeds the token threshold (default 200K), acrawl summarizes older messages while preserving the most recent turns, unique tools used, and pending work items.
+- **Auto-compaction**, when cumulative input tokens exceed the threshold (default 200K), acrawl compacts the session:
+  - **Preserved verbatim:** the most recent ~80K tokens of messages (always at least 2 messages), with tool call pairs kept intact, no `ToolResult` is ever left without its matching `ToolUse`.
+  - **Preserved as metadata:** message counts, deduplicated tool list, last 3 user requests (160 chars each), pending work items (inferred from messages containing "todo", "next", "pending", "follow up", "remaining"), up to 10 key URLs, and the most recent non-empty message as "current work".
+  - **Tool output pruning:** tool outputs older than the innermost 40K-token window are truncated to 2,000 chars with a `[… output truncated from N chars]` marker before the preserved window is calculated.
+  - **Summary generation:** template-based by default (no LLM call). Opt in to LLM summarization via `compaction_llm_summarization: true` in `settings.json`, this sends the removed messages to the model and uses its output as the summary, with a fallback to the template if the LLM fails.
+  - **Continuation prompt:** the compacted session prepends a system message instructing the agent to resume directly without recapping or asking questions.
+  - **Browser state is unaffected**, compaction only modifies message history; the current browser tab, URL, cookies, and page state are unchanged.
 - **Multiple sessions** — `/session list` to browse, `/session switch <id>` to switch.
 
 ### Tool Allowlist
@@ -325,11 +555,11 @@ Use `--allowedTools` to restrict which tools the agent can invoke (comma-separat
 acrawl prompt "scrape titles" --allowedTools navigate,read_content,screenshot
 ```
 
-Omit `--allowedTools` to allow all 27 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
+Omit `--allowedTools` to allow all 48 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
 
 ### MCP Extensibility
 
-acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 21.
+acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 42.
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
@@ -337,10 +567,13 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 `acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, VS Code, Zed, JetBrains, TRAE, Gemini CLI, or any MCP-compatible client.
 
-The server provides **17 tools** in two modes:
+The server provides **39 tools** in three modes:
 
-**Direct browser tools (16)** — fine-grained control for clients that orchestrate themselves:
-`navigate`, `click`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`
+**Direct browser tools (31)** — fine-grained control for clients that orchestrate themselves:
+`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `set_device`, `refresh`, `list_network_activity`, `inspect_request`, `list_page_logs`, `inspect_log`, `list_websocket_activity`, `inspect_websocket`, `get_page_performance`, `inspect_cookies`, `inspect_storage`, `measure_coverage`, `audit_accessibility`, `intercept_network`
+
+**Script tools (7)** — deterministic multi-step automation without per-step LLM calls:
+`run_script`, `save_script`, `list_scripts`, `read_script`, `wait_for_scripts`, `script_status`, `cancel_script`
 
 **Autonomous agent (1)** — delegate a full crawl task:
 - **`run_goal`** — Execute a high-level crawl goal autonomously. The agent plans, navigates, and extracts data using its own LLM loop. Requires `~/.acrawl/credentials.json` configured with a model.
@@ -455,7 +688,7 @@ claude mcp add acrawl -- acrawl mcp
 
 The browser tools share a persistent session across calls. `run_goal` creates its own isolated agent and browser.
 
-**Requirements:** The 16 browser tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
+**Requirements:** The 38 browser and script tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
 
 ## Usage
 
@@ -491,18 +724,42 @@ Options:
 | `/compact` | Compact conversation history | Yes |
 | `/clear` | Start a fresh session | Yes |
 | `/cost` | Detailed cost breakdown | Yes |
-| `/session [list\|switch]` | List or switch sessions | No |
+| `/sessions` | Open the session picker (TUI) | No |
 | `/export [file]` | Export conversation to markdown | Yes |
-| `/resume <path>` | Load a saved session | No |
-| `/config [section]` | View acrawl config | Yes |
+| `/config [model]` | View acrawl config | Yes |
 | `/auth [provider]` | Configure credentials | No |
 | `/headed` | Switch to visible browser | No |
 | `/headless` | Switch to headless browser | No |
-| `/extension` | Start extension bridge server, show token | No |
+| `/extension [stop]` | Start/show the extension bridge, or stop it | No |
 | `/cloakbrowser` | Switch back to CloakBrowser mode | No |
-| `/debug` | Toggle raw tool output | No |
+| `/debug` | Show debug details for the last browser tool call | No |
 | `/version` | Version and build info | Yes |
 | `/exit` | Exit and save session | No |
+
+### Non-interactive / Agent use
+
+# Configure once
+acrawl auth anthropic --api-key sk-ant-...
+acrawl auth openai --api-key sk-...
+acrawl auth amazon-bedrock --access-key AKIA... --secret-key ... --region us-east-1
+acrawl auth other --base-url http://localhost:11434/v1  # Ollama, no key
+acrawl config set model anthropic/claude-sonnet-4-6
+
+# Verify setup
+acrawl auth status --check anthropic   # exits 0 if configured, 3 if not
+acrawl auth status --json              # full credential table (secrets masked)
+
+# Run
+acrawl prompt "scrape all titles from example.com" --output-format json
+
+# Settings
+acrawl config set headless false
+acrawl config set optimization.html_diff_mode true
+acrawl config get model --effective
+
+# MCP install
+acrawl mcp install --client opencode --scope user
+acrawl mcp install --all --yes
 
 ## Configuration
 
@@ -542,6 +799,29 @@ Created with defaults on first run.
 | `browser_backend` | `null` | Active browser backend: `"extension"` or `null` (CloakBrowser) |
 | `extension_bridge_port` | `19876` | Port for Chrome extension bridge WebSocket server |
 
+All fields are optional; omitting a field uses the default. The `optimization` block accepts a nested object with the following fields (all default to `false`/`0`/`null`, safe to omit entirely):
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `html_diff_mode` | `false` | On repeated visits to the same URL, returns only changed content sections with `[unchanged: N sections]` markers. 50 to 70% token reduction on multi-turn sessions. No behavior change on first visit. |
+| `content_aware_profiles` | `false` | Auto-selects a cleaning profile based on the task keyword: ReadingMode for extraction tasks, Minimal for interaction tasks, Aggressive for content > 50KB. |
+| `loop_detection` | `false` | Detects repeated identical actions and injects escalating nudges (soft, medium, strong). Also detects page stagnation. |
+| `loop_detection_window` | `20` | Rolling window size for action hash comparison. |
+| `loop_nudge_threshold` | `5` | Number of repeated actions before first nudge fires. |
+| `page_fingerprinting` | `false` | Enables lightweight page fingerprints used by loop detection and action caching. |
+| `failure_classification` | `false` | Classifies errors into 16 categories (SelectorNotFound, CaptchaDetected, RateLimited, etc.) using keyword matching. Zero LLM cost. |
+| `self_healing` | `false` | On SelectorNotFound/SelectorAmbiguous, fetches a fresh page_map and text-matches to a replacement element ref. Logs `[healed: @eOLD -> @eNEW]`. Zero LLM calls. |
+| `self_healing_max_retries` | `2` | Max healing attempts per failed action. |
+| `action_caching` | `false` | Caches results of read-only tools (`page_map`, `read_content`, `list_resources`, `execute_js`) keyed by tool + input + page fingerprint. Cache is invalidated when the page changes. |
+| `action_cache_ttl_secs` | `30` | Cache entry TTL in seconds. |
+| `planning_interval` | `0` | Every N steps, injects a planning checkpoint into the system prompt. 0 = disabled. |
+| `confidence_tracking` | `false` | Asks the LLM to self-report confidence after each action (`[confidence: HIGH/MEDIUM/LOW]`). Two consecutive LOWs trigger a stagnation alert. |
+| `compound_enrichment` | `false` | Adds `enrichment` metadata to complex form controls in page_map: date format hints, range min/max/value, select option lists (max 20 + overflow count), file accept types, textarea maxlength. Max 200 bytes per element. |
+| `budget_max_session_cost_usd` | `null` | Session cost limit in USD. Null = no limit. |
+| `budget_enforcement` | `null` | How to enforce the budget: `warn` injects a warning into the prompt; `block` terminates the session when the limit is reached. |
+| `budget_warn_threshold_pct` | `80` | Percentage of budget at which warnings start. |
+| `per_agent_cost_tracking` | `false` | When ON, `/cost` shows a per-child-agent cost breakdown. |
+
 ### Environment Variables
 
 | Variable | Description |
@@ -549,6 +829,58 @@ Created with defaults on first run.
 | `ACRAWL_CONFIG_HOME` | Override config directory (default: `~/.acrawl/`) |
 
 Provider-specific env vars (see [provider table](#24-llm-providers) above) are read as fallbacks when no `credentials.json` entry exists.
+
+### Performance Optimizations
+
+acrawl ships 14 vendor-derived optimizations (sourced from browser-use, Stagehand, crawl4ai, Skyvern, Spider, nanobrowser, and ZeroClaw). All are **disabled by default**, enable selectively via `settings.json`.
+
+Example `settings.json` with a cost-optimized profile:
+
+```json
+{
+  "optimization": {
+    "html_diff_mode": true,
+    "action_caching": true,
+    "page_fingerprinting": true,
+    "loop_detection": true,
+    "self_healing": true,
+    "budget_max_session_cost_usd": 0.50,
+    "budget_enforcement": "warn"
+  }
+}
+```
+
+| Optimization | Flag | Benefit |
+|--------------|------|---------|
+| **HTML Diff Mode** | `html_diff_mode` | Reduces tokens by 50 to 70% on repeated visits by returning only changed content. |
+| **Content-Aware Profiles** | `content_aware_profiles` | Auto-selects cleaning profiles (ReadingMode, Minimal, Aggressive) based on task. |
+| **Loop Detection** | `loop_detection` | Prevents infinite loops by detecting repeated actions and injecting nudges. |
+| **Page Fingerprinting** | `page_fingerprinting` | Generates lightweight page fingerprints for loop detection and action caching. |
+| **Failure Classification** | `failure_classification` | Classifies errors into 16 categories using keyword matching with zero LLM cost. |
+| **Self-Healing** | `self_healing` | Automatically heals broken selectors using text-matching with zero LLM calls. |
+| **Action Caching** | `action_caching` | Caches read-only tool results to avoid redundant LLM calls. |
+| **Planning Interval** | `planning_interval` | Injects periodic planning checkpoints to keep the agent focused. |
+| **Confidence Tracking** | `confidence_tracking` | Tracks LLM self-reported confidence to alert on stagnation. |
+| **Compound Enrichment** | `compound_enrichment` | Enriches complex form controls in the page map with metadata. |
+| **Budget Limit** | `budget_max_session_cost_usd` | Sets a hard session cost limit in USD to prevent runaway costs. |
+| **Budget Enforcement** | `budget_enforcement` | Controls whether to warn or block when the session budget is reached. |
+| **Budget Warning** | `budget_warn_threshold_pct` | Triggers warnings when a percentage of the budget is consumed. |
+| **Per-Agent Cost Tracking** | `per_agent_cost_tracking` | Breaks down costs per child agent in the `/cost` command. |
+
+## Known Limitations
+
+acrawl works well on most public web content, but some situations are outside what the agent can reliably handle:
+
+| Scenario | Behavior |
+|----------|----------|
+| **CAPTCHA / bot challenges** | CloakBrowser uses stealth techniques to avoid bot detection, but unsolvable CAPTCHAs (image puzzles, Cloudflare Turnstile requiring proof-of-work) will block progress. Use the real-browser extension (`/extension`) where your browser already has a trusted session. **reCAPTCHA v3** is invisible (no widget) — if a form submit produces no page change while v3 is present, acrawl heuristically detects the likely silent rejection and returns a `CaptchaDetected` error rather than a misleading success. This is a best-effort heuristic; acrawl cannot read the server-side score. The error message names the remedy: `acrawl config set headless false` (or `--headed`), or `/extension`. |
+| **SMS / TOTP 2FA** | The agent can fill in a 2FA code if you paste it into the REPL, but it cannot receive or generate codes itself. |
+| **Login-walled content** | For sites where you must be logged in, use the extension mode so the agent operates in your existing authenticated browser session. |
+| **Single-page apps that load content on scroll** | The agent can `scroll` to trigger lazy loading, but infinite-scroll feeds with no end condition may require explicit step limits. |
+| **PDF and binary file content** | `save_file` downloads any URL to disk. The agent cannot read the text content of a saved PDF, use `navigate` on a URL that serves HTML, or pipe the download through a text extractor externally. |
+| **WebGL / canvas fingerprinting** | Some anti-bot systems fingerprint the GPU via WebGL. CloakBrowser mitigates common checks but cannot spoof hardware-level fingerprints. |
+| **Sites that require a real mouse trajectory** | Bot-detection systems that analyse mouse movement patterns may flag headless browser interactions. Switch to extension mode for these sites. |
+
 
 ## How It Works
 
@@ -560,13 +892,13 @@ flowchart LR
     Extract --> Output([Output\nJSON / CSV])
 ```
 
-1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/crawler/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
-2. Each turn, it picks from its 27 tools based on what it observes on the page.
+1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/agent/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
+2. Each turn, it picks from its 48 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
 4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
-5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` or `done` merges results.
+5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` collects results; `cancel_subagent` aborts a running child; `subagent_status` polls without blocking.
 6. When context grows large, auto-compaction summarizes older messages while preserving recent turns, tool usage, and pending work items.
-7. The agent calls `done` when the goal is met, or stops when the step limit is reached.
+7. The agent stops when the goal is met and all sub-agents have finished, or when the step limit is reached.
 
 ## Architecture
 
@@ -575,18 +907,18 @@ crates/
   core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer
-  agent/        27 tools, agent loop, sub-agent fork/join, CrawlState
+  agent/        48 tools, agent loop, sub-agent fork/join, CrawlState
   processing/   PDF, document, spreadsheet, image, archive, transcription handlers (acrawl-processing)
   runtime/      ConversationRuntime, config, sessions, MCP client stack, OAuth PKCE
   render/       Markdown rendering, tool output formatting, OutputSink
   mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer
   tui/          Ratatui terminal UI (acrawl-tui)
-  cli/          Thin binary entry point, LiveCli orchestration, session management
+  ui/           Shared application layer (LiveCli, session management, tool executor, auth)
+  cli/          Thin binary entry point (main.rs, self_update.rs, uninstall.rs)
   commands/     17 slash commands with resume-safety annotations
-  crawler/      Transitional re-export shim (will be removed)
 ```
 
-11 crates, ~40K lines of Rust, 870 tests.
+12 crates, ~40K lines of Rust, 1,097 tests.
 
 ## Development
 

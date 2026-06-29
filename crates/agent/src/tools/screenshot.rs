@@ -31,11 +31,16 @@ fn validate_filename(filename: &str) -> Result<(), ToolExecutionError> {
     Ok(())
 }
 
-fn default_filename() -> String {
+fn default_filename(format: &str) -> String {
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis());
-    format!("screenshot_{ms}.png")
+    let ext = match format {
+        "jpeg" => "jpg",
+        "webp" => "webp",
+        _ => "png",
+    };
+    format!("screenshot_{ms}.{ext}")
 }
 
 pub async fn execute(
@@ -43,20 +48,41 @@ pub async fn execute(
     browser: &mut BrowserContext,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let save = input.get("save").and_then(Value::as_bool).unwrap_or(false);
+    let selector = input.get("selector").and_then(Value::as_str);
+    let format = input.get("format").and_then(Value::as_str);
+    let quality = input
+        .get("quality")
+        .and_then(Value::as_u64)
+        .map(|q| q.min(100) as u32);
+    let full_page = input
+        .get("full_page")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let opts = crate::ScreenshotOptions {
+        selector,
+        format,
+        quality,
+        full_page,
+    };
 
     let (screenshot_base64, size_bytes) = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .screenshot()
+        .screenshot(&opts)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     if !save {
-        return Ok(ToolEffect::reply_json(&serde_json::json!({
+        let mut result = serde_json::json!({
             "screenshot_base64": screenshot_base64,
             "size_bytes": size_bytes
-        })));
+        });
+        if let Some(fmt) = format {
+            result["format"] = serde_json::json!(fmt);
+        }
+        return Ok(ToolEffect::reply_json(&result));
     }
 
     let filename = match input.get("filename").and_then(|v| v.as_str()) {
@@ -64,7 +90,7 @@ pub async fn execute(
             validate_filename(name)?;
             name.to_string()
         }
-        None => default_filename(),
+        None => default_filename(format.unwrap_or("png")),
     };
 
     let settings = runtime::load_settings();
@@ -95,13 +121,12 @@ pub async fn execute(
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::OnceLock;
 
     use async_trait::async_trait;
 
-    use crate::{BridgeError, BrowserBackend, BrowserState, PageInfo, SharedBridge};
-
-    static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    use crate::{
+        BridgeError, BrowserBackend, BrowserState, PageInfo, ScreenshotOptions, SharedBridge,
+    };
 
     fn setup_temp_dir(suffix: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -152,6 +177,14 @@ mod tests {
 
     #[async_trait]
     impl BrowserBackend for MockBackend {
+        async fn poll_observations(
+            &mut self,
+        ) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+        async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
             unimplemented!()
         }
@@ -164,7 +197,11 @@ mod tests {
         async fn scroll(&mut self, _: &str, _: i64) -> Result<(), BridgeError> {
             Ok(())
         }
-        async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError> {
+        async fn page_map(
+            &mut self,
+            _scope: Option<&str>,
+            _compound_enrichment: bool,
+        ) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!({}))
         }
         async fn read_content(
@@ -176,7 +213,12 @@ mod tests {
         ) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!({}))
         }
-        async fn wait_for_selector(&mut self, _: &str, _: u64) -> Result<bool, BridgeError> {
+        async fn wait_for_selector(
+            &mut self,
+            _: &str,
+            _: u64,
+            _: Option<&str>,
+        ) -> Result<bool, BridgeError> {
             Ok(true)
         }
         async fn select_option(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {
@@ -209,16 +251,27 @@ mod tests {
         async fn list_resources(&mut self) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!([]))
         }
-        async fn save_file(&mut self, _: &str, _: &str) -> Result<String, BridgeError> {
+        async fn save_file(
+            &mut self,
+            _: &str,
+            _: &str,
+            _headers: Option<&std::collections::BTreeMap<String, String>>,
+        ) -> Result<String, BridgeError> {
             Ok(String::new())
         }
         async fn click(&mut self, _: &str) -> Result<(), BridgeError> {
             Ok(())
         }
+        async fn click_at(&mut self, _: f64, _: f64) -> Result<(), BridgeError> {
+            Ok(())
+        }
         async fn fill(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {
             Ok(())
         }
-        async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
+        async fn screenshot(
+            &mut self,
+            _options: &ScreenshotOptions<'_>,
+        ) -> Result<(String, usize), BridgeError> {
             match &self.screenshot_result {
                 Ok((b64, size)) => Ok((b64.clone(), *size)),
                 Err(_) => Err(BridgeError::Protocol("mock screenshot error".to_string())),
@@ -226,6 +279,12 @@ mod tests {
         }
         async fn go_back(&mut self) -> Result<String, BridgeError> {
             Ok(String::new())
+        }
+        async fn set_device(
+            &mut self,
+            _: &serde_json::Value,
+        ) -> Result<serde_json::Value, BridgeError> {
+            Ok(serde_json::json!({}))
         }
     }
 
@@ -260,7 +319,7 @@ mod tests {
 
     #[test]
     fn default_filename_has_png_extension() {
-        let name = default_filename();
+        let name = default_filename("png");
         assert!(name.starts_with("screenshot_"));
         assert!(Path::new(&name)
             .extension()
@@ -291,10 +350,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_writes_file_default_filename() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("default_fn");
         let output_dir = temp_dir.join("output");
 
@@ -336,10 +392,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_custom_filename() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("custom_fn");
         let output_dir = temp_dir.join("screenshots");
 
@@ -389,10 +442,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_invalid_base64_errors() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("bad_b64");
         let output_dir = temp_dir.join("output");
 
@@ -420,10 +470,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn execute_save_true_write_error_on_invalid_dir() {
-        let _lock = ENV_LOCK
-            .get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap();
+        let _lock = crate::test_async_env_lock().lock().await;
         let temp_dir = setup_temp_dir("write_err");
         // Point output_dir at a FILE, so create_dir_all will fail
         let blocker = temp_dir.join("blocked");
@@ -449,5 +496,49 @@ mod tests {
         assert!(err_msg.contains("output directory") || err_msg.contains("write"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn default_filename_uses_format_extension() {
+        let jpeg_name = default_filename("jpeg");
+        assert!(Path::new(&jpeg_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jpg")));
+
+        let webp_name = default_filename("webp");
+        assert!(Path::new(&webp_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("webp")));
+
+        let png_name = default_filename("png");
+        assert!(Path::new(&png_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png")));
+    }
+
+    #[tokio::test]
+    async fn execute_returns_format_in_response() {
+        let mut browser = make_browser(MockBackend::with_valid_screenshot());
+        let input = serde_json::json!({"format": "jpeg"});
+
+        let effect = execute(&input, &mut browser).await.unwrap();
+        let json_str = format!("{effect:?}");
+        assert!(json_str.contains("jpeg"));
+    }
+
+    #[tokio::test]
+    async fn execute_options_are_parsed_correctly() {
+        let mut browser = make_browser(MockBackend::with_valid_screenshot());
+        let input = serde_json::json!({
+            "selector": "#main",
+            "format": "webp",
+            "quality": 85,
+            "full_page": true
+        });
+
+        let effect = execute(&input, &mut browser).await.unwrap();
+        let json_str = format!("{effect:?}");
+        assert!(json_str.contains("screenshot_base64"));
+        assert!(json_str.contains("webp"));
     }
 }

@@ -1,15 +1,73 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use dialoguer::{theme::ColorfulTheme, MultiSelect, Select};
 use serde_json::{json, Value};
 
+struct IdeOutcome {
+    detail: String,
+    extra: Option<String>,
+}
+
+impl IdeOutcome {
+    fn simple(detail: impl Into<String>) -> Self {
+        IdeOutcome {
+            detail: detail.into(),
+            extra: None,
+        }
+    }
+
+    fn with_extra(detail: impl Into<String>, extra: impl Into<String>) -> Self {
+        IdeOutcome {
+            detail: detail.into(),
+            extra: Some(extra.into()),
+        }
+    }
+}
+
+/// Build terminal output lines for a successful IDE operation.
+///
+/// Returns one or more `String`s suitable for printing to stderr. When the
+/// outcome has `extra` content (e.g. a manual snippet for JetBrains/Goose)
+/// the returned vec is:
+///   `["  ✓ {name} — {detail}", "", "    {extra_line}", ..., ""]`
+fn format_success_lines(ide_name: &str, outcome: &IdeOutcome) -> Vec<String> {
+    let mut lines = vec![format!("  ✓ {ide_name} — {}", outcome.detail)];
+    if let Some(extra) = &outcome.extra {
+        lines.push(String::new());
+        for line in extra.lines() {
+            lines.push(format!("    {line}"));
+        }
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn format_error_line(ide_name: &str, error: &str) -> String {
+    format!("  ✗ {ide_name} — {error}")
+}
+
+fn format_skipped_line(ide_name: &str, scope_constraint: &str) -> String {
+    format!("  ⚠ {ide_name} — skipped ({scope_constraint})")
+}
+
+/// Build an [`io::Error`] for a failed CLI command, appending captured stderr
+/// when non-empty. The `base_msg` is used verbatim when stderr is empty.
+fn cli_error(base_msg: &str, output: &std::process::Output) -> io::Error {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        io::Error::other(base_msg.to_string())
+    } else {
+        io::Error::other(format!("{base_msg}: {stderr}"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Ide {
+pub enum Ide {
     ClaudeCode,
     Cursor,
     Windsurf,
@@ -72,6 +130,28 @@ impl Ide {
         }
     }
 
+    fn key(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-code",
+            Self::Cursor => "cursor",
+            Self::Windsurf => "windsurf",
+            Self::VsCode => "vscode",
+            Self::OpenCode => "opencode",
+            Self::ClaudeDesktop => "claude-desktop",
+            Self::JetBrains => "jetbrains",
+            Self::Trae => "trae",
+            Self::GeminiCli => "gemini-cli",
+            Self::QwenCode => "qwen-code",
+            Self::Crush => "crush",
+            Self::Zed => "zed",
+            Self::OpenClaw => "openclaw",
+            Self::CodexCli => "codex-cli",
+            Self::Hermes => "hermes",
+            Self::Goose => "goose",
+            Self::Aider => "aider",
+        }
+    }
+
     fn supports_project_scope(self) -> bool {
         !matches!(
             self,
@@ -93,7 +173,7 @@ impl Ide {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Scope {
+pub enum Scope {
     Global,
     Project,
 }
@@ -114,13 +194,52 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
-fn command_exists(name: &str) -> bool {
+fn resolve_command(name: &str) -> Option<PathBuf> {
     let check = if cfg!(windows) {
-        Command::new("where").arg(name).output()
+        Command::new("where.exe").arg(name).output()
     } else {
         Command::new("which").arg(name).output()
     };
-    check.is_ok_and(|o| o.status.success())
+    let output = check.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut candidates = stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from);
+
+    #[cfg(windows)]
+    {
+        let mut fallback = None;
+        for candidate in candidates.by_ref() {
+            if fallback.is_none() {
+                fallback = Some(candidate.clone());
+            }
+
+            let extension = candidate
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if matches!(extension.as_str(), "exe" | "cmd" | "bat" | "com") {
+                return Some(candidate);
+            }
+        }
+        fallback
+    }
+
+    #[cfg(not(windows))]
+    {
+        candidates.next()
+    }
+}
+
+fn command_exists(name: &str) -> bool {
+    resolve_command(name).is_some()
 }
 
 fn detect_ides() -> Vec<DetectedIde> {
@@ -306,11 +425,6 @@ fn appdata_dir() -> Option<PathBuf> {
     env::var_os("APPDATA").map(PathBuf::from)
 }
 
-#[cfg(not(windows))]
-fn appdata_dir() -> Option<PathBuf> {
-    None
-}
-
 fn claude_desktop_config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -395,14 +509,6 @@ fn uninstall_standard_json_config(path: &Path, root_key: &str) -> io::Result<Str
     } else {
         Ok(format!("not found in {}", path.display()))
     }
-}
-
-fn print_standard_json_snippet(acrawl_path: &str) {
-    let snippet = serde_json::to_string_pretty(&json!({
-        "acrawl": standard_entry(acrawl_path)
-    }))
-    .unwrap_or_else(|_| format!(r#"{{"acrawl":{{"command":"{acrawl_path}","args":["mcp"]}}}}"#));
-    eprintln!("{snippet}");
 }
 
 fn resolve_acrawl_path() -> String {
@@ -517,15 +623,30 @@ fn merge_json_config(
 
 fn install_claude_code_global(acrawl_path: &str) -> io::Result<String> {
     if command_exists("claude") {
-        // Always remove first (ignore errors — may not exist) to guarantee override.
+        // `--scope user` is required: `claude mcp add` defaults to `local`
+        // (current-directory-only) scope, which would silently downgrade a
+        // global install to per-directory. Remove from the same scope first.
         let _ = Command::new("claude")
-            .args(["mcp", "remove", "acrawl"])
+            .args(["mcp", "remove", "--scope", "user", "acrawl"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .output();
-        let status = Command::new("claude")
-            .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
-            .status()?;
-        if status.success() {
-            return Ok("configured via `claude mcp add`".to_string());
+        let output = Command::new("claude")
+            .args([
+                "mcp",
+                "add",
+                "--scope",
+                "user",
+                "acrawl",
+                "--",
+                acrawl_path,
+                "mcp",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()?;
+        if output.status.success() {
+            return Ok("configured via `claude mcp add --scope user`".to_string());
         }
     }
     let home = home_dir()
@@ -580,11 +701,12 @@ fn install_claude_desktop(acrawl_path: &str) -> io::Result<String> {
     install_standard_json_config(&config_path, "mcpServers", acrawl_path)
 }
 
-fn install_jetbrains(acrawl_path: &str) -> io::Result<String> {
-    eprintln!("Add this server in JetBrains Settings > Tools > MCP Server:");
-    print_standard_json_snippet(acrawl_path);
-    io::stderr().flush()?;
-    Ok("printed config to terminal (paste in JetBrains Settings > Tools > MCP Server)".to_string())
+fn install_jetbrains(acrawl_path: &str) -> IdeOutcome {
+    let snippet = serde_json::to_string_pretty(&json!({ "acrawl": standard_entry(acrawl_path) }))
+        .unwrap_or_else(|_| {
+            format!(r#"{{"acrawl":{{"command":"{acrawl_path}","args":["mcp"]}}}}"#)
+        });
+    IdeOutcome::with_extra("add in JetBrains Settings › Tools › MCP Server", snippet)
 }
 
 fn install_trae(acrawl_path: &str) -> io::Result<String> {
@@ -669,38 +791,44 @@ fn install_openclaw(acrawl_path: &str) -> io::Result<String> {
 }
 
 fn install_codex_cli(acrawl_path: &str) -> io::Result<String> {
-    if !command_exists("codex") {
-        return Err(io::Error::new(
+    let codex = resolve_command("codex").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "codex CLI not found on PATH; run `codex mcp add acrawl -- <path-to-acrawl> mcp` manually",
-        ));
-    }
+        )
+    })?;
 
-    let _ = Command::new("codex")
+    let _ = Command::new(&codex)
         .args(["mcp", "remove", "acrawl"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .output();
-    let status = Command::new("codex")
+    let output = Command::new(&codex)
         .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
-        .status()?;
-    if status.success() {
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if output.status.success() {
         Ok("configured via `codex mcp add`".to_string())
     } else {
-        Err(io::Error::other("`codex mcp add` failed"))
+        Err(cli_error("`codex mcp add` failed", &output))
     }
 }
 
 fn install_hermes(acrawl_path: &str) -> io::Result<String> {
-    if !command_exists("hermes") {
-        return Err(io::Error::new(
+    let hermes = resolve_command("hermes").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "hermes CLI not found on PATH; add acrawl manually in Hermes MCP settings",
-        ));
-    }
+        )
+    })?;
 
-    let _ = Command::new("hermes")
+    let _ = Command::new(&hermes)
         .args(["mcp", "remove", "acrawl"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .output();
-    let status = Command::new("hermes")
+    let output = Command::new(&hermes)
         .args([
             "mcp",
             "add",
@@ -710,23 +838,23 @@ fn install_hermes(acrawl_path: &str) -> io::Result<String> {
             "--args",
             "mcp",
         ])
-        .status()?;
-    if status.success() {
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if output.status.success() {
         Ok("configured via `hermes mcp add`".to_string())
     } else {
-        Err(io::Error::other("`hermes mcp add` failed"))
+        Err(cli_error("`hermes mcp add` failed", &output))
     }
 }
 
-fn install_goose(acrawl_path: &str) -> io::Result<String> {
-    eprintln!("Add this server to {}:", goose_config_path().display());
-    eprintln!("mcp_servers:");
-    eprintln!("  acrawl:");
-    eprintln!("    command: {acrawl_path}");
-    eprintln!("    args:");
-    eprintln!("      - mcp");
-    io::stderr().flush()?;
-    Ok("printed config snippet (add to ~/.config/goose/config.yaml)".to_string())
+fn install_goose(acrawl_path: &str) -> IdeOutcome {
+    let path = goose_config_path();
+    let snippet = format!(
+        "Add to {}:\nmcp_servers:\n  acrawl:\n    command: {acrawl_path}\n    args:\n      - mcp",
+        path.display()
+    );
+    IdeOutcome::with_extra("manual config required", snippet)
 }
 
 fn install_aider(acrawl_path: &str) -> io::Result<String> {
@@ -755,28 +883,29 @@ fn install_opencode(acrawl_path: &str, scope: Scope) -> io::Result<String> {
     Ok(format!("wrote {}", config_path.display()))
 }
 
-fn install_for_ide(ide: Ide, scope: Scope, acrawl_path: &str) -> io::Result<String> {
+fn install_for_ide(ide: Ide, scope: Scope, acrawl_path: &str) -> io::Result<IdeOutcome> {
+    let s = |r: io::Result<String>| r.map(IdeOutcome::simple);
     match ide {
         Ide::ClaudeCode => match scope {
-            Scope::Global => install_claude_code_global(acrawl_path),
-            Scope::Project => install_claude_code_project(acrawl_path),
+            Scope::Global => s(install_claude_code_global(acrawl_path)),
+            Scope::Project => s(install_claude_code_project(acrawl_path)),
         },
-        Ide::Cursor => install_cursor(acrawl_path, scope),
-        Ide::Windsurf => install_windsurf(acrawl_path),
-        Ide::VsCode => install_vscode(acrawl_path, scope),
-        Ide::OpenCode => install_opencode(acrawl_path, scope),
-        Ide::ClaudeDesktop => install_claude_desktop(acrawl_path),
-        Ide::JetBrains => install_jetbrains(acrawl_path),
-        Ide::Trae => install_trae(acrawl_path),
-        Ide::GeminiCli => install_gemini_cli(acrawl_path),
-        Ide::QwenCode => install_qwen_code(acrawl_path, scope),
-        Ide::Crush => install_crush(acrawl_path),
-        Ide::Zed => install_zed(acrawl_path),
-        Ide::OpenClaw => install_openclaw(acrawl_path),
-        Ide::CodexCli => install_codex_cli(acrawl_path),
-        Ide::Hermes => install_hermes(acrawl_path),
-        Ide::Goose => install_goose(acrawl_path),
-        Ide::Aider => install_aider(acrawl_path),
+        Ide::Cursor => s(install_cursor(acrawl_path, scope)),
+        Ide::Windsurf => s(install_windsurf(acrawl_path)),
+        Ide::VsCode => s(install_vscode(acrawl_path, scope)),
+        Ide::OpenCode => s(install_opencode(acrawl_path, scope)),
+        Ide::ClaudeDesktop => s(install_claude_desktop(acrawl_path)),
+        Ide::JetBrains => Ok(install_jetbrains(acrawl_path)),
+        Ide::Trae => s(install_trae(acrawl_path)),
+        Ide::GeminiCli => s(install_gemini_cli(acrawl_path)),
+        Ide::QwenCode => s(install_qwen_code(acrawl_path, scope)),
+        Ide::Crush => s(install_crush(acrawl_path)),
+        Ide::Zed => s(install_zed(acrawl_path)),
+        Ide::OpenClaw => s(install_openclaw(acrawl_path)),
+        Ide::CodexCli => s(install_codex_cli(acrawl_path)),
+        Ide::Hermes => s(install_hermes(acrawl_path)),
+        Ide::Goose => Ok(install_goose(acrawl_path)),
+        Ide::Aider => s(install_aider(acrawl_path)),
     }
 }
 
@@ -804,11 +933,13 @@ fn remove_json_config(path: &Path, root_key: &str, server_name: &str) -> io::Res
 
 fn uninstall_claude_code_global() -> io::Result<String> {
     if command_exists("claude") {
-        let status = Command::new("claude")
-            .args(["mcp", "remove", "acrawl"])
-            .status()?;
-        if status.success() {
-            return Ok("removed via `claude mcp remove`".to_string());
+        let output = Command::new("claude")
+            .args(["mcp", "remove", "--scope", "user", "acrawl"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()?;
+        if output.status.success() {
+            return Ok("removed via `claude mcp remove --scope user`".to_string());
         }
     }
     let home = home_dir()
@@ -878,12 +1009,10 @@ fn uninstall_claude_desktop() -> io::Result<String> {
     uninstall_standard_json_config(&config_path, "mcpServers")
 }
 
-fn uninstall_jetbrains() -> io::Result<String> {
-    eprintln!("Remove the `acrawl` MCP server from JetBrains Settings > Tools > MCP Server.");
-    io::stderr().flush()?;
-    Ok(
-        "printed removal instructions (remove from JetBrains Settings > Tools > MCP Server)"
-            .to_string(),
+fn uninstall_jetbrains() -> IdeOutcome {
+    IdeOutcome::with_extra(
+        "manual removal required",
+        "Remove the acrawl server from: Settings › Tools › MCP Server",
     )
 }
 
@@ -947,76 +1076,82 @@ fn uninstall_openclaw() -> io::Result<String> {
 }
 
 fn uninstall_codex_cli() -> io::Result<String> {
-    if !command_exists("codex") {
-        return Err(io::Error::new(
+    let codex = resolve_command("codex").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "codex CLI not found on PATH; run `codex mcp remove acrawl` manually",
-        ));
-    }
+        )
+    })?;
 
-    let status = Command::new("codex")
+    let output = Command::new(&codex)
         .args(["mcp", "remove", "acrawl"])
-        .status()?;
-    if status.success() {
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if output.status.success() {
         Ok("removed via `codex mcp remove`".to_string())
     } else {
-        Err(io::Error::other("`codex mcp remove` failed"))
+        Err(cli_error("`codex mcp remove` failed", &output))
     }
 }
 
 fn uninstall_hermes() -> io::Result<String> {
-    if !command_exists("hermes") {
-        return Err(io::Error::new(
+    let hermes = resolve_command("hermes").ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::NotFound,
             "hermes CLI not found on PATH; remove acrawl manually in Hermes MCP settings",
-        ));
-    }
+        )
+    })?;
 
-    let status = Command::new("hermes")
+    let output = Command::new(&hermes)
         .args(["mcp", "remove", "acrawl"])
-        .status()?;
-    if status.success() {
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if output.status.success() {
         Ok("removed via `hermes mcp remove`".to_string())
     } else {
-        Err(io::Error::other("`hermes mcp remove` failed"))
+        Err(cli_error("`hermes mcp remove` failed", &output))
     }
 }
 
-fn uninstall_goose() -> io::Result<String> {
-    eprintln!(
-        "Remove the `acrawl` block manually from {}.",
-        goose_config_path().display()
-    );
-    io::stderr().flush()?;
-    Ok("printed removal instructions (remove from ~/.config/goose/config.yaml)".to_string())
+fn uninstall_goose() -> IdeOutcome {
+    IdeOutcome::with_extra(
+        "manual removal required",
+        format!(
+            "Remove the `acrawl` block manually from {}.",
+            goose_config_path().display()
+        ),
+    )
 }
 
 fn uninstall_aider() -> io::Result<String> {
     uninstall_claude_code_project()
 }
 
-fn uninstall_for_ide(ide: Ide, scope: Scope) -> io::Result<String> {
+fn uninstall_for_ide(ide: Ide, scope: Scope) -> io::Result<IdeOutcome> {
+    let s = |r: io::Result<String>| r.map(IdeOutcome::simple);
     match ide {
         Ide::ClaudeCode => match scope {
-            Scope::Global => uninstall_claude_code_global(),
-            Scope::Project => uninstall_claude_code_project(),
+            Scope::Global => s(uninstall_claude_code_global()),
+            Scope::Project => s(uninstall_claude_code_project()),
         },
-        Ide::Cursor => uninstall_cursor(scope),
-        Ide::Windsurf => uninstall_windsurf(),
-        Ide::VsCode => uninstall_vscode(scope),
-        Ide::OpenCode => uninstall_opencode(scope),
-        Ide::ClaudeDesktop => uninstall_claude_desktop(),
-        Ide::JetBrains => uninstall_jetbrains(),
-        Ide::Trae => uninstall_trae(),
-        Ide::GeminiCli => uninstall_gemini_cli(),
-        Ide::QwenCode => uninstall_qwen_code(scope),
-        Ide::Crush => uninstall_crush(),
-        Ide::Zed => uninstall_zed(),
-        Ide::OpenClaw => uninstall_openclaw(),
-        Ide::CodexCli => uninstall_codex_cli(),
-        Ide::Hermes => uninstall_hermes(),
-        Ide::Goose => uninstall_goose(),
-        Ide::Aider => uninstall_aider(),
+        Ide::Cursor => s(uninstall_cursor(scope)),
+        Ide::Windsurf => s(uninstall_windsurf()),
+        Ide::VsCode => s(uninstall_vscode(scope)),
+        Ide::OpenCode => s(uninstall_opencode(scope)),
+        Ide::ClaudeDesktop => s(uninstall_claude_desktop()),
+        Ide::JetBrains => Ok(uninstall_jetbrains()),
+        Ide::Trae => s(uninstall_trae()),
+        Ide::GeminiCli => s(uninstall_gemini_cli()),
+        Ide::QwenCode => s(uninstall_qwen_code(scope)),
+        Ide::Crush => s(uninstall_crush()),
+        Ide::Zed => s(uninstall_zed()),
+        Ide::OpenClaw => s(uninstall_openclaw()),
+        Ide::CodexCli => s(uninstall_codex_cli()),
+        Ide::Hermes => s(uninstall_hermes()),
+        Ide::Goose => Ok(uninstall_goose()),
+        Ide::Aider => s(uninstall_aider()),
     }
 }
 
@@ -1037,28 +1172,17 @@ pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
 
     let scope = prompt_scope()?;
 
-    eprintln!("\nRemoving acrawl MCP server configuration...\n");
-
-    let mut success_count = 0u32;
-    for ide in &selected {
-        if scope == Scope::Global && !ide.supports_global_scope() {
-            eprintln!("  ⚠ {} — skipped (project-level config only)", ide.name());
-            continue;
-        }
-        if scope == Scope::Project && !ide.supports_project_scope() {
-            eprintln!("  ⚠ {} — skipped (global config only)", ide.name());
-            continue;
-        }
-        match uninstall_for_ide(*ide, scope) {
-            Ok(detail) => {
-                eprintln!("  ✓ {} — {detail}", ide.name());
-                success_count += 1;
-            }
-            Err(e) => {
-                eprintln!("  ✗ {} — error: {e}", ide.name());
-            }
-        }
-    }
+    let report = run_uninstall_for(&selected, scope, false);
+    let success_count = report
+        .results
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.status,
+                ClientStatus::Removed | ClientStatus::NotFound | ClientStatus::ManualInstructions
+            )
+        })
+        .count();
 
     if success_count > 0 {
         eprintln!(
@@ -1069,6 +1193,210 @@ pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("\nNo configurations were removed.");
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum ClientStatus {
+    Configured,
+    Removed,
+    NotFound,
+    SkippedScope,
+    ManualInstructions,
+    Error(String),
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ClientResult {
+    pub key: String,
+    pub display_name: String,
+    pub status: ClientStatus,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct InstallReport {
+    pub results: Vec<ClientResult>,
+}
+
+const CLIENT_KEYS: &[(&str, &str)] = &[
+    ("claude-code", "Claude Code"),
+    ("cursor", "Cursor"),
+    ("windsurf", "Windsurf"),
+    ("vscode", "VS Code (Copilot)"),
+    ("opencode", "OpenCode"),
+    ("claude-desktop", "Claude Desktop"),
+    ("jetbrains", "JetBrains IDEs"),
+    ("trae", "TRAE"),
+    ("gemini-cli", "Gemini CLI"),
+    ("qwen-code", "Qwen Code"),
+    ("crush", "Crush"),
+    ("zed", "Zed"),
+    ("openclaw", "OpenClaw"),
+    ("codex-cli", "Codex CLI"),
+    ("hermes", "Hermes"),
+    ("goose", "Goose"),
+    ("aider", "Aider"),
+];
+
+#[must_use]
+pub fn all_client_keys() -> &'static [(&'static str, &'static str)] {
+    CLIENT_KEYS
+}
+
+#[must_use]
+pub fn client_from_key(key: &str) -> Option<Ide> {
+    let needle = key.to_ascii_lowercase();
+    Ide::ALL.iter().copied().find(|ide| ide.key() == needle)
+}
+
+pub fn list_clients(json: bool) {
+    if json {
+        let arr: Vec<Value> = all_client_keys()
+            .iter()
+            .map(|(key, name)| json!({ "key": key, "display_name": name }))
+            .collect();
+        let out =
+            serde_json::to_string_pretty(&Value::Array(arr)).unwrap_or_else(|_| "[]".to_string());
+        println!("{out}");
+    } else {
+        println!("Supported MCP clients ({} total):", all_client_keys().len());
+        for (key, name) in all_client_keys() {
+            println!("  {key:<14} {name}");
+        }
+    }
+}
+
+fn classify_install_status(ide: Ide) -> ClientStatus {
+    if matches!(ide, Ide::JetBrains | Ide::Goose) {
+        ClientStatus::ManualInstructions
+    } else {
+        ClientStatus::Configured
+    }
+}
+
+fn classify_uninstall_status(ide: Ide, detail: &str) -> ClientStatus {
+    if matches!(ide, Ide::JetBrains | Ide::Goose) {
+        ClientStatus::ManualInstructions
+    } else if detail.starts_with("not found") {
+        ClientStatus::NotFound
+    } else {
+        ClientStatus::Removed
+    }
+}
+
+fn skipped_for_scope(ide: Ide, scope: Scope, json: bool) -> bool {
+    if scope == Scope::Global && !ide.supports_global_scope() {
+        if !json {
+            eprintln!(
+                "{}",
+                format_skipped_line(ide.name(), "project-level config only")
+            );
+        }
+        return true;
+    }
+    if scope == Scope::Project && !ide.supports_project_scope() {
+        if !json {
+            eprintln!("{}", format_skipped_line(ide.name(), "global config only"));
+        }
+        return true;
+    }
+    false
+}
+
+fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) -> ClientResult {
+    let key = ide.key().to_string();
+    let display_name = ide.name().to_string();
+
+    if skipped_for_scope(ide, scope, json) {
+        return ClientResult {
+            key,
+            display_name,
+            status: ClientStatus::SkippedScope,
+        };
+    }
+
+    let status = match install_for_ide(ide, scope, acrawl_path) {
+        Ok(outcome) => {
+            if !json {
+                for line in format_success_lines(ide.name(), &outcome) {
+                    eprintln!("{line}");
+                }
+            }
+            classify_install_status(ide)
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("{}", format_error_line(ide.name(), &e.to_string()));
+            }
+            ClientStatus::Error(e.to_string())
+        }
+    };
+
+    ClientResult {
+        key,
+        display_name,
+        status,
+    }
+}
+
+fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
+    let key = ide.key().to_string();
+    let display_name = ide.name().to_string();
+
+    if skipped_for_scope(ide, scope, json) {
+        return ClientResult {
+            key,
+            display_name,
+            status: ClientStatus::SkippedScope,
+        };
+    }
+
+    let status = match uninstall_for_ide(ide, scope) {
+        Ok(outcome) => {
+            if !json {
+                for line in format_success_lines(ide.name(), &outcome) {
+                    eprintln!("{line}");
+                }
+            }
+            classify_uninstall_status(ide, &outcome.detail)
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("{}", format_error_line(ide.name(), &e.to_string()));
+            }
+            ClientStatus::Error(e.to_string())
+        }
+    };
+
+    ClientResult {
+        key,
+        display_name,
+        status,
+    }
+}
+
+#[must_use]
+pub fn run_install_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+    let acrawl_path = resolve_acrawl_path();
+    if !json {
+        eprintln!("\nInstalling acrawl MCP server (binary: {acrawl_path})...\n");
+    }
+    let results = clients
+        .iter()
+        .map(|ide| install_client_result(*ide, scope, &acrawl_path, json))
+        .collect();
+    InstallReport { results }
+}
+
+#[must_use]
+pub fn run_uninstall_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+    if !json {
+        eprintln!("\nRemoving acrawl MCP server configuration...\n");
+    }
+    let results = clients
+        .iter()
+        .map(|ide| uninstall_client_result(*ide, scope, json))
+        .collect();
+    InstallReport { results }
 }
 
 pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
@@ -1087,30 +1415,18 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let scope = prompt_scope()?;
-    let acrawl_path = resolve_acrawl_path();
 
-    eprintln!("\nInstalling acrawl MCP server (binary: {acrawl_path})...\n");
-
-    let mut success_count = 0u32;
-    for ide in &selected {
-        if scope == Scope::Global && !ide.supports_global_scope() {
-            eprintln!("  ⚠ {} — skipped (project-level config only)", ide.name());
-            continue;
-        }
-        if scope == Scope::Project && !ide.supports_project_scope() {
-            eprintln!("  ⚠ {} — skipped (global config only)", ide.name());
-            continue;
-        }
-        match install_for_ide(*ide, scope, &acrawl_path) {
-            Ok(detail) => {
-                eprintln!("  ✓ {} — {detail}", ide.name());
-                success_count += 1;
-            }
-            Err(e) => {
-                eprintln!("  ✗ {} — error: {e}", ide.name());
-            }
-        }
-    }
+    let report = run_install_for(&selected, scope, false);
+    let success_count = report
+        .results
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.status,
+                ClientStatus::Configured | ClientStatus::ManualInstructions
+            )
+        })
+        .count();
 
     if success_count > 0 {
         eprintln!(
@@ -1127,6 +1443,136 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn client_keys_match_expected_kebab_set() {
+        let expected = [
+            "claude-code",
+            "claude-desktop",
+            "cursor",
+            "windsurf",
+            "vscode",
+            "opencode",
+            "zed",
+            "trae",
+            "jetbrains",
+            "gemini-cli",
+            "qwen-code",
+            "codex-cli",
+            "hermes",
+            "openclaw",
+            "goose",
+            "crush",
+            "aider",
+        ];
+        assert_eq!(all_client_keys().len(), 17);
+        let mut actual: Vec<&str> = all_client_keys().iter().map(|(k, _)| *k).collect();
+        actual.sort_unstable();
+        let mut expected_sorted = expected.to_vec();
+        expected_sorted.sort_unstable();
+        assert_eq!(actual, expected_sorted);
+    }
+
+    #[test]
+    fn all_client_keys_matches_ide_all_order() {
+        let pairs: Vec<(&str, &str)> = Ide::ALL.iter().map(|ide| (ide.key(), ide.name())).collect();
+        assert_eq!(pairs.as_slice(), all_client_keys());
+    }
+
+    #[test]
+    fn client_from_key_is_case_insensitive_and_round_trips() {
+        for (key, _name) in all_client_keys() {
+            let ide = client_from_key(key).expect("known key should resolve");
+            assert_eq!(ide.key(), *key);
+            assert_eq!(client_from_key(&key.to_uppercase()), Some(ide));
+        }
+        assert_eq!(client_from_key("nonexistent"), None);
+        assert_eq!(client_from_key(""), None);
+        assert_eq!(client_from_key("vs-code"), None);
+    }
+
+    #[test]
+    fn classify_install_status_marks_manual_clients() {
+        assert_eq!(
+            classify_install_status(Ide::JetBrains),
+            ClientStatus::ManualInstructions
+        );
+        assert_eq!(
+            classify_install_status(Ide::Goose),
+            ClientStatus::ManualInstructions
+        );
+        assert_eq!(
+            classify_install_status(Ide::Cursor),
+            ClientStatus::Configured
+        );
+        assert_eq!(
+            classify_install_status(Ide::ClaudeCode),
+            ClientStatus::Configured
+        );
+    }
+
+    #[test]
+    fn classify_uninstall_status_distinguishes_outcomes() {
+        assert_eq!(
+            classify_uninstall_status(Ide::Cursor, "removed from /tmp/x"),
+            ClientStatus::Removed
+        );
+        assert_eq!(
+            classify_uninstall_status(Ide::Cursor, "not found in /tmp/x"),
+            ClientStatus::NotFound
+        );
+        assert_eq!(
+            classify_uninstall_status(Ide::JetBrains, "printed removal instructions"),
+            ClientStatus::ManualInstructions
+        );
+        assert_eq!(
+            classify_uninstall_status(Ide::Goose, "anything"),
+            ClientStatus::ManualInstructions
+        );
+    }
+
+    #[test]
+    fn run_install_for_skips_incompatible_scope_without_writing() {
+        let report = run_install_for(&[Ide::Trae], Scope::Global, true);
+        assert_eq!(report.results.len(), 1);
+        assert_eq!(report.results[0].key, "trae");
+        assert_eq!(report.results[0].display_name, "TRAE");
+        assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
+
+        let report = run_install_for(&[Ide::Windsurf], Scope::Project, true);
+        assert_eq!(report.results[0].key, "windsurf");
+        assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
+    }
+
+    #[test]
+    fn run_uninstall_for_skips_incompatible_scope() {
+        let report = run_uninstall_for(&[Ide::Crush], Scope::Global, true);
+        assert_eq!(report.results.len(), 1);
+        assert_eq!(report.results[0].key, "crush");
+        assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
+    }
+
+    #[test]
+    fn install_report_serializes_to_json() {
+        let report = InstallReport {
+            results: vec![
+                ClientResult {
+                    key: "cursor".to_string(),
+                    display_name: "Cursor".to_string(),
+                    status: ClientStatus::Configured,
+                },
+                ClientResult {
+                    key: "jetbrains".to_string(),
+                    display_name: "JetBrains IDEs".to_string(),
+                    status: ClientStatus::Error("boom".to_string()),
+                },
+            ],
+        };
+        let value = serde_json::to_value(&report).expect("report serializes");
+        assert_eq!(value["results"][0]["key"], "cursor");
+        assert_eq!(value["results"][0]["status"], "Configured");
+        assert_eq!(value["results"][1]["status"]["Error"], "boom");
+    }
 
     #[test]
     fn resolve_acrawl_path_returns_non_empty() {
@@ -1335,5 +1781,73 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn format_success_lines_no_extra() {
+        let outcome = IdeOutcome::simple("wrote /path/to/config.json");
+        let lines = format_success_lines("Cursor", &outcome);
+        assert_eq!(lines, ["  ✓ Cursor — wrote /path/to/config.json"]);
+    }
+
+    #[test]
+    fn format_success_lines_single_line_extra() {
+        let outcome = IdeOutcome::with_extra(
+            "manual removal required",
+            "Remove the acrawl server from: Settings › Tools › MCP Server",
+        );
+        let lines = format_success_lines("JetBrains IDEs", &outcome);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], "  ✓ JetBrains IDEs — manual removal required");
+        assert_eq!(lines[1], "");
+        assert_eq!(
+            lines[2],
+            "    Remove the acrawl server from: Settings › Tools › MCP Server"
+        );
+        assert_eq!(lines[3], "");
+    }
+
+    #[test]
+    fn format_success_lines_multiline_extra() {
+        let outcome = IdeOutcome::with_extra("manual config required", "line one\nline two");
+        let lines = format_success_lines("Goose", &outcome);
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[0], "  ✓ Goose — manual config required");
+        assert_eq!(lines[1], "");
+        assert_eq!(lines[2], "    line one");
+        assert_eq!(lines[3], "    line two");
+        assert_eq!(lines[4], "");
+    }
+
+    #[test]
+    fn format_skipped_line_project_only() {
+        assert_eq!(
+            format_skipped_line("TRAE", "project-level config only"),
+            "  ⚠ TRAE — skipped (project-level config only)"
+        );
+    }
+
+    #[test]
+    fn format_skipped_line_global_only() {
+        assert_eq!(
+            format_skipped_line("Windsurf", "global config only"),
+            "  ⚠ Windsurf — skipped (global config only)"
+        );
+    }
+
+    #[test]
+    fn format_error_line_plain() {
+        assert_eq!(
+            format_error_line("Codex CLI", "`codex mcp add` failed"),
+            "  ✗ Codex CLI — `codex mcp add` failed"
+        );
+    }
+
+    #[test]
+    fn format_error_line_with_detail() {
+        assert_eq!(
+            format_error_line("Hermes", "`hermes mcp add` failed: permission denied"),
+            "  ✗ Hermes — `hermes mcp add` failed: permission denied"
+        );
     }
 }

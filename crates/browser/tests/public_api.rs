@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,6 +27,12 @@ impl MockBrowserBackend {
 
 #[async_trait]
 impl BrowserBackend for MockBrowserBackend {
+    async fn poll_observations(&mut self) -> Result<Vec<browser::ObservationEvent>, BridgeError> {
+        Ok(Vec::new())
+    }
+    async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+        Ok(())
+    }
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         self.navigate_count += 1;
         Ok(PageInfo {
@@ -46,7 +53,11 @@ impl BrowserBackend for MockBrowserBackend {
         Ok(())
     }
 
-    async fn page_map(&mut self) -> Result<serde_json::Value, BridgeError> {
+    async fn page_map(
+        &mut self,
+        _scope: Option<&str>,
+        _compound_enrichment: bool,
+    ) -> Result<serde_json::Value, BridgeError> {
         Ok(serde_json::json!({"headings": []}))
     }
 
@@ -64,6 +75,7 @@ impl BrowserBackend for MockBrowserBackend {
         &mut self,
         _selector: &str,
         _timeout_ms: u64,
+        _state: Option<&str>,
     ) -> Result<bool, BridgeError> {
         Ok(true)
     }
@@ -113,7 +125,12 @@ impl BrowserBackend for MockBrowserBackend {
         Ok(serde_json::json!({"links": [], "images": []}))
     }
 
-    async fn save_file(&mut self, _url: &str, _path: &str) -> Result<String, BridgeError> {
+    async fn save_file(
+        &mut self,
+        _url: &str,
+        _path: &str,
+        _headers: Option<&BTreeMap<String, String>>,
+    ) -> Result<String, BridgeError> {
         Ok("saved.txt".to_string())
     }
 
@@ -121,16 +138,30 @@ impl BrowserBackend for MockBrowserBackend {
         Ok(())
     }
 
+    async fn click_at(&mut self, _x: f64, _y: f64) -> Result<(), BridgeError> {
+        Ok(())
+    }
+
     async fn fill(&mut self, _selector: &str, _value: &str) -> Result<(), BridgeError> {
         Ok(())
     }
 
-    async fn screenshot(&mut self) -> Result<(String, usize), BridgeError> {
+    async fn screenshot(
+        &mut self,
+        _options: &browser::ScreenshotOptions<'_>,
+    ) -> Result<(String, usize), BridgeError> {
         Ok(("base64data".to_string(), 100))
     }
 
     async fn go_back(&mut self) -> Result<String, BridgeError> {
         Ok("about:blank".to_string())
+    }
+
+    async fn set_device(
+        &mut self,
+        _options: &serde_json::Value,
+    ) -> Result<serde_json::Value, BridgeError> {
+        Ok(serde_json::json!({"success": true}))
     }
 }
 
@@ -223,6 +254,7 @@ fn fetched_page_struct_fields() {
         text: "Example text".to_string(),
         markdown: "# Example".to_string(),
         fetched_via_browser: false,
+        redirect_chain: None,
     };
     assert_eq!(page.url, "https://example.com");
     assert_eq!(page.title.as_deref(), Some("Example"));

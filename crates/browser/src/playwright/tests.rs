@@ -304,3 +304,48 @@ fn browser_state_empty_cookies_round_trips() {
     let parsed: BrowserState = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed.url, "");
 }
+
+#[test]
+fn classify_io_error_maps_broken_pipe_to_child_closed() {
+    let err = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+    assert!(matches!(classify_io_error(err), BridgeError::ChildClosed));
+}
+
+#[test]
+fn classify_io_error_maps_windows_pipe_closing_to_child_closed() {
+    let err = std::io::Error::from_raw_os_error(232);
+    assert!(matches!(classify_io_error(err), BridgeError::ChildClosed));
+}
+
+#[test]
+fn classify_io_error_preserves_unrelated_errors() {
+    let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    assert!(matches!(classify_io_error(err), BridgeError::Io(_)));
+}
+
+#[test]
+fn normalize_intercept_pattern_promotes_single_star_to_double() {
+    let (pattern, is_regex) = normalize_intercept_pattern("*.ads.com/*");
+    assert_eq!(pattern, "**.ads.com/**");
+    assert!(!is_regex);
+}
+
+#[test]
+fn normalize_intercept_pattern_collapses_star_runs() {
+    let (pattern, _) = normalize_intercept_pattern("**/api/b*");
+    assert_eq!(pattern, "**/api/b**");
+}
+
+#[test]
+fn normalize_intercept_pattern_detects_regex_prefix() {
+    let (pattern, is_regex) = normalize_intercept_pattern("re:api/v[0-9]+");
+    assert_eq!(pattern, "api/v[0-9]+");
+    assert!(is_regex);
+}
+
+#[test]
+fn normalize_intercept_pattern_leaves_starless_literals_untouched() {
+    let (pattern, is_regex) = normalize_intercept_pattern("https://example.com/api/v2");
+    assert_eq!(pattern, "https://example.com/api/v2");
+    assert!(!is_regex);
+}

@@ -22,8 +22,13 @@ impl CliOutputFormat {
 
 pub mod app;
 pub mod auth;
+pub mod config_runner;
 pub mod display_width;
 pub mod error;
 pub mod events;
 pub mod output_sink;
 pub mod session_mgr;
+
+pub use auth::configure::{run_auth_configure, AuthFlags};
+pub use auth::status::{run_auth_list, run_auth_status};
+pub use config_runner::{run_config, ConfigAction};

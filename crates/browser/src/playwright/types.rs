@@ -44,6 +44,8 @@ pub enum BridgeError {
     ExtensionTimeout {
         timeout: Duration,
     },
+    /// The operation is not supported by this backend.
+    Unsupported(String),
 }
 
 impl fmt::Display for BridgeError {
@@ -87,6 +89,7 @@ impl fmt::Display for BridgeError {
                 "Extension did not respond within {} seconds. The browser may be busy.",
                 timeout.as_secs()
             ),
+            Self::Unsupported(message) => write!(f, "Operation not supported: {message}"),
         }
     }
 }
@@ -104,7 +107,8 @@ impl std::error::Error for BridgeError {
             | Self::ShutdownTimeout { .. }
             | Self::CommandTimeout { .. }
             | Self::ExtensionDisconnected
-            | Self::ExtensionTimeout { .. } => None,
+            | Self::ExtensionTimeout { .. }
+            | Self::Unsupported(_) => None,
         }
     }
 }

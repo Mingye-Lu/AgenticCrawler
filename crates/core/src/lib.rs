@@ -6,6 +6,7 @@ pub mod event;
 pub mod message;
 pub mod observer;
 pub mod outcome;
+pub mod script_types;
 pub mod tool_spec;
 pub mod traits;
 
@@ -19,5 +20,9 @@ pub use event::AssistantEvent;
 pub use message::{ContentBlock, ConversationMessage, MessageRole, TokenUsage};
 pub use observer::RuntimeObserver;
 pub use outcome::ToolOutcome;
+pub use script_types::{
+    ScriptCancelSpec, ScriptLimits, ScriptResult, ScriptState, ScriptStatus, ScriptStatusSpec,
+    ScriptTask, ScriptWaitSpec,
+};
 pub use tool_spec::ToolSpec;
 pub use traits::ToolExecutor;

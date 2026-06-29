@@ -499,7 +499,19 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
                     }
                 }
             }
-            MessageRole::Tool | MessageRole::System => {}
+            MessageRole::Tool => {}
+            MessageRole::System => {
+                for block in &message.blocks {
+                    if let ContentBlock::Text { text } = block {
+                        for row in wrap_plain_text(text, width) {
+                            text_out.push(row.clone());
+                            out.push(ListItem::new(Line::from(Span::styled(row, system_style))));
+                        }
+                        out.push(ListItem::new(Line::from(" ")));
+                        text_out.push(" ".to_string());
+                    }
+                }
+            }
         }
     }
 
@@ -1049,7 +1061,6 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
     };
 
     let status_text = match &tab.status {
-        super::child_tabs::ChildTabStatus::Paused { reason } => format!("PAUSED: {reason}"),
         super::child_tabs::ChildTabStatus::Running => {
             if let Some(ref tool) = tab.tool_in_progress {
                 format!("running {tool} -- step {}/{}", tab.step, tab.max_steps)
@@ -1065,7 +1076,6 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
 
     let status_color = match &tab.status {
         super::child_tabs::ChildTabStatus::Running => ratatui::style::Color::Cyan,
-        super::child_tabs::ChildTabStatus::Paused { .. } => ratatui::style::Color::Yellow,
         super::child_tabs::ChildTabStatus::Done => ratatui::style::Color::Green,
         super::child_tabs::ChildTabStatus::Error(_) => ratatui::style::Color::Red,
     };
@@ -1096,9 +1106,6 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
     );
 
     let border_color = match &tab.status {
-        super::child_tabs::ChildTabStatus::Paused { .. } => {
-            ratatui::style::Color::Rgb(180, 140, 30)
-        }
         super::child_tabs::ChildTabStatus::Running => ratatui::style::Color::Rgb(40, 80, 110),
         super::child_tabs::ChildTabStatus::Done => ratatui::style::Color::Rgb(40, 100, 60),
         super::child_tabs::ChildTabStatus::Error(_) => ratatui::style::Color::Rgb(140, 40, 40),
@@ -1284,9 +1291,7 @@ pub(super) fn draw_chat(
 
     draw_header(frame, header_area, header);
 
-    let transcript_border_color = if state.paused {
-        Color::Rgb(180, 140, 30)
-    } else if state.busy {
+    let transcript_border_color = if state.busy {
         Color::Rgb(40, 80, 110)
     } else {
         Color::Rgb(50, 65, 90)
@@ -1327,40 +1332,16 @@ pub(super) fn draw_chat(
     frame.render_stateful_widget(list, main_inner, &mut state.list_state);
 
     if has_children {
-        // Check for paused children first (higher priority indicator)
-        let paused_child = state.child_tab_panel.tabs.iter().find(|t| {
-            matches!(
-                t.status,
-                crate::tui::child_tabs::ChildTabStatus::Paused { .. }
-            )
-        });
-
-        let hint_line = if let Some(tab) = paused_child {
-            let reason = match &tab.status {
-                crate::tui::child_tabs::ChildTabStatus::Paused { reason } => reason.as_str(),
-                _ => "",
-            };
-            Line::from(vec![
-                Span::styled(
-                    format!("PAUSED Child {}: {reason} ", tab.child_id),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("— Ctrl+X to view", Style::default().fg(Color::Yellow)),
-            ])
-        } else {
-            let running_count = state
-                .child_tab_panel
-                .tabs
-                .iter()
-                .filter(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Running))
-                .count();
-            Line::from(Span::styled(
-                format!("Ctrl+X view children ({running_count} running)"),
-                Style::default().fg(Color::DarkGray),
-            ))
-        };
+        let running_count = state
+            .child_tab_panel
+            .tabs
+            .iter()
+            .filter(|t| matches!(t.status, crate::tui::child_tabs::ChildTabStatus::Running))
+            .count();
+        let hint_line = Line::from(Span::styled(
+            format!("Ctrl+X view children ({running_count} running)"),
+            Style::default().fg(Color::DarkGray),
+        ));
         frame.render_widget(Paragraph::new(hint_line), hint_area);
     }
 
@@ -1455,9 +1436,7 @@ pub(super) fn draw_chat(
     }
 
     // --- Footer / input block (rounded) ---
-    let footer_title = if state.paused {
-        format!(" PAUSED: {} -- press Enter to resume ", state.pause_reason)
-    } else if state.cancelling {
+    let footer_title = if state.cancelling {
         let s = state.spinner_char();
         format!(" {s} Interrupting… ")
     } else if let Some(ref tool) = state.current_tool {
@@ -1472,19 +1451,13 @@ pub(super) fn draw_chat(
         format!(" Input · {} ", header.model)
     };
 
-    let footer_title_style = if state.paused {
-        Style::default()
-            .fg(Color::Rgb(255, 200, 50))
-            .add_modifier(Modifier::BOLD)
-    } else if state.busy {
+    let footer_title_style = if state.busy {
         Style::default().fg(Color::LightCyan)
     } else {
         Style::default().fg(Color::Rgb(100, 140, 180))
     };
 
-    let footer_border_color = if state.paused {
-        Color::Rgb(180, 140, 30)
-    } else if state.busy {
+    let footer_border_color = if state.busy {
         Color::Rgb(30, 70, 100)
     } else {
         Color::Rgb(50, 70, 100)

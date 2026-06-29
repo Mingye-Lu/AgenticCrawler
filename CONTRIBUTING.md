@@ -50,16 +50,16 @@ Small, well-scoped PRs are reviewed faster than large ones.
 ```
 crates/
   core/         Shared types, traits, error hierarchy (acrawl-core)
-  api/          LLM provider clients (Anthropic, OpenAI, Codex)
+  api/          LLM provider clients (Anthropic, OpenAI, Gemini, Bedrock, Azure, and 21 more)
   browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext
-  agent/        Browser tools, agent loop, sub-agent fork/join
+  agent/        42 browser/DevTools tools, agent loop, sub-agent fork/join
   runtime/      ConversationRuntime, config, sessions, MCP client
   render/       Markdown rendering, tool output formatting
   mcp-server/   Built-in MCP server, IDE installer
   tui/          Ratatui terminal UI (acrawl-tui)
   cli/          Thin binary entry point, orchestration
   commands/     Slash command registry
-  crawler/      Transitional re-export shim (will be removed)
+  ui/           Shared application layer (LiveCli, session management, tool executor)
 ```
 
 ## License

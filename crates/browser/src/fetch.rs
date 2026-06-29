@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ pub struct FetchedPage {
     pub text: String,
     pub markdown: String,
     pub fetched_via_browser: bool,
+    pub redirect_chain: Option<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -88,6 +90,162 @@ const AUTH_REDIRECT_PATTERNS: &[&str] = &[
 
 const MIN_BODY_LENGTH: usize = 500;
 
+/// Minimum HTML size before we bother running structural analysis.
+const MIN_HTML_FOR_SPA_CHECK: usize = 100;
+
+/// Minimum visible text length — pages below this threshold get a structural
+/// score boost. Also used by the Playwright bridge script's hydration wait.
+const MIN_VISIBLE_CHARS_THRESHOLD: usize = 200;
+
+/// Score threshold for SPA shell detection. Signals are accumulated and
+/// compared against this value.
+const SPA_SHELL_SCORE_THRESHOLD: f32 = 0.60;
+
+/// Detect whether an HTTP response body looks like an empty SPA/CSR shell that
+/// needs browser rendering to produce meaningful content.
+///
+/// Uses multi-signal scoring rather than a single binary check:
+/// - **Negative signals** (data already present → return false immediately):
+///   `__NEXT_DATA__`, `window.__NUXT__`, `data-server-rendered`, `data-reactroot`
+/// - **High-weight signals**: framework asset paths without embedded data,
+///   Angular empty root, noscript "enable JavaScript" messages
+/// - **Medium-weight signals**: empty mount-point divs, Vite/CRA bundle hashes
+/// - **Low-weight structural signals**: sparse visible text, absence of semantic
+///   HTML elements (`<h1>`, `<article>`, `<main>`, `<p>`)
+///
+/// Escalates to browser only when accumulated score ≥ 0.60, which requires
+/// at least one framework/structural signal beyond just "low text content".
+fn looks_like_empty_spa_shell(body: &str) -> bool {
+    if body.len() < MIN_HTML_FOR_SPA_CHECK {
+        return false;
+    }
+
+    let lower = body.to_ascii_lowercase();
+
+    // ── Negative signals: data already embedded, no browser needed ──
+    // These indicate SSR/SSG worked — content is in the HTML already.
+    if lower.contains("__next_data__")
+        || lower.contains("window.__nuxt__")
+        || lower.contains("window.__nuxt_data__")
+        || lower.contains("window.__remixcontext")
+        || lower.contains("data-server-rendered=\"true\"")
+        || lower.contains("data-reactroot")
+        || lower.contains("data-reactid")
+    {
+        return false;
+    }
+
+    let mut score: f32 = 0.0;
+
+    // ── High: framework asset paths WITHOUT embedded data (already excluded above) ──
+    if lower.contains("/_next/static/") {
+        score += 0.70;
+    }
+    if lower.contains("/_nuxt/") {
+        score += 0.65;
+    }
+    if lower.contains("ng-version=") {
+        score += 0.80;
+    }
+    if lower.contains("data-sveltekit") || lower.contains("__sveltekit") {
+        score += 0.55;
+    }
+
+    // ── High: noscript "enable JavaScript" messages (Vue CLI / CRA template) ──
+    if lower.contains("enable javascript")
+        || lower.contains("doesn't work properly without javascript")
+        || lower.contains("requires javascript")
+    {
+        score += 0.55;
+    }
+
+    // ── Medium: empty mount-point elements (framework root with no children) ──
+    // Match any element type: <div id="root"></div>, <section id="root"></section>, etc.
+    if lower.contains("id=\"root\"></")
+        || lower.contains("id=\"app\"></")
+        || lower.contains("id=\"__next\"></")
+        || lower.contains("id=\"__nuxt\"></")
+        || lower.contains("<app-root></app-root>")
+        || lower.contains("<app-root />")
+    {
+        score += 0.45;
+    }
+
+    // ── Medium: bundler hash patterns (Vite/CRA output) ──
+    if has_bundler_hash_pattern(&lower) {
+        score += 0.30;
+    }
+
+    // ── Low-medium: "bundle" keyword in script src (Webpack/Parcel without hash) ──
+    if lower.contains("src=\"") && lower.contains("bundle") && lower.contains(".js") {
+        score += 0.20;
+    }
+
+    // ── Low: structural signals (modifiers, not sufficient alone) ──
+    let visible_len = extract_text(body).trim().len();
+    if visible_len < MIN_VISIBLE_CHARS_THRESHOLD {
+        score += 0.35;
+    }
+
+    let has_semantic = lower.contains("<h1")
+        || lower.contains("<article")
+        || lower.contains("<main>")
+        || lower.contains("<p>");
+    if !has_semantic {
+        score += 0.20;
+    }
+
+    score >= SPA_SHELL_SCORE_THRESHOLD
+}
+
+/// Check for Vite/Rollup/Webpack hash patterns in script src attributes.
+/// These patterns (`index-XXXXXXXX.js`, `main.XXXXXXXX.chunk.js`) are
+/// characteristic of bundled SPA builds.
+#[allow(clippy::case_sensitive_file_extension_comparisons)] // input is pre-lowercased
+fn has_bundler_hash_pattern(lower_html: &str) -> bool {
+    for segment in lower_html.split("src=\"") {
+        if let Some(path) = segment.split('"').next() {
+            if (path.ends_with(".js") || path.ends_with(".mjs")) && has_hash_segment(path) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Returns true if the path contains a segment of 8+ alphanumeric characters
+/// (with at least 2 digits) immediately preceded by `-` or `.`.
+/// Matches Vite (base62), Webpack/CRA (hex) hash patterns.
+fn has_hash_segment(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        if bytes[i] == b'-' || bytes[i] == b'.' {
+            let start = i + 1;
+            let mut j = start;
+            let mut digit_count = 0u32;
+            while j < len && bytes[j].is_ascii_alphanumeric() {
+                if bytes[j].is_ascii_digit() {
+                    digit_count += 1;
+                }
+                j += 1;
+            }
+            let seg_len = j - start;
+            // 8+ alphanumeric chars with at least 2 digits distinguishes
+            // hashes (e.g. "d9lvttp6") from English words (e.g. "loader")
+            if seg_len >= 8 && digit_count >= 2 && j < len && (bytes[j] == b'.' || bytes[j] == b'/')
+            {
+                return true;
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// Hard cap on a single HTTP response body. A page that is much larger than
 /// this is almost never useful to the agent (and is almost certainly a binary
 /// dump, generated content, or an attack) — and without a cap, reqwest's
@@ -121,7 +279,143 @@ fn needs_escalation(status: StatusCode, body: &str) -> bool {
         }
     }
 
+    if looks_like_cdn_block_page(body) {
+        return true;
+    }
+
     false
+}
+
+/// Sum the byte lengths of all content inside `<style>...</style>` blocks.
+fn style_blocks_length(html: &str) -> usize {
+    let lower = html.to_ascii_lowercase();
+    let mut total = 0;
+    let mut cursor = 0;
+
+    while cursor < html.len() {
+        let Some(rel_start) = lower[cursor..].find("<style") else {
+            break;
+        };
+        let abs_start = cursor + rel_start;
+        let Some(rel_gt) = lower[abs_start..].find('>') else {
+            break;
+        };
+        let content_start = abs_start + rel_gt + 1;
+        let Some(rel_end) = lower[content_start..].find("</style>") else {
+            break;
+        };
+        total += rel_end;
+        cursor = content_start + rel_end + "</style>".len();
+    }
+
+    total
+}
+
+/// Detect CDN/security block pages (Cloudflare challenges, Akamai blocks,
+/// Reddit "You have been blocked by network security", etc.).
+///
+/// Uses a multi-tier approach to avoid false positives:
+/// - **CSS-dominated** (tier 0): any-size pages that are >60% `<style>` content
+///   with <300 chars of visible text → walled-garden/CSS-only response.
+/// - **CDN signatures** (tier 1): strong single signals → return true immediately.
+/// - **Text + structural** (tier 2): text pattern hit AND sparse HTML structure
+///   must both be present, preventing legitimate pages that mention "security"
+///   from triggering escalation.
+fn looks_like_cdn_block_page(body: &str) -> bool {
+    if body.len() < 50 {
+        return false;
+    }
+
+    // Normalize common HTML entities so pattern matching works regardless of
+    // how the server encodes characters (e.g. "you&#39;ve been blocked").
+    // `str::replace` allocates a fresh String even on zero matches, and this
+    // runs on every successful HTTP fetch — so only pay that cost when an
+    // entity is actually present.
+    let normalized: Cow<'_, str> = if body.contains('&') {
+        Cow::Owned(
+            body.replace("&#39;", "'")
+                .replace("&apos;", "'")
+                .replace("&#x27;", "'")
+                .replace("&quot;", "\"")
+                .replace("&#34;", "\"")
+                .replace("&nbsp;", " "),
+        )
+    } else {
+        Cow::Borrowed(body)
+    };
+    let body = normalized.as_ref();
+
+    // Measured *after* normalization so the CSS ratio below compares
+    // like-for-like against `style_blocks_length`, which also runs on `body`.
+    let len = body.len();
+
+    // ── Tier 0: CSS-dominated body (any size) ──
+    // Pages that are >60% <style> content with <300 chars of visible text are
+    // walled-garden responses (e.g. Reddit returning 32 KB of CSS variables).
+    let css_len = style_blocks_length(body);
+    if css_len > 0 {
+        // css_len / len > 0.6  ⇔  css_len * 10 > len * 6  (no float cast)
+        if css_len.saturating_mul(10) > len.saturating_mul(6)
+            && extract_text(body).trim().len() < 300
+        {
+            return true;
+        }
+    }
+
+    let lower = body.to_ascii_lowercase();
+
+    // ── Tier 1: CDN HTML signatures — escalate immediately ──
+    if lower.contains("__cf_chl_")
+        || lower.contains("cf-browser-verification")
+        || lower.contains("cf-challenge")
+    {
+        return true;
+    }
+    if lower.contains("akamai") && (lower.contains("blocked") || lower.contains("access denied")) {
+        return true;
+    }
+
+    // ── Tier 2: HTML block page with block text but no real content ──
+    // Require an HTML document shell first: a tag-less JSON/plain-text body
+    // (e.g. an API returning `{"error":"too many requests"}`) is not a block
+    // page and gains nothing from a browser re-fetch. Signature-based blocks
+    // are already handled by tier 1 regardless of structure.
+    if !lower.contains("<html") && !lower.contains("<body") {
+        return false;
+    }
+
+    let has_text_pattern = lower.contains("you've been blocked")
+        || lower.contains("you have been blocked")
+        || (lower.contains("blocked")
+            && (lower.contains("network security") || lower.contains("access denied")))
+        || lower.contains("captcha")
+        || lower.contains("recaptcha")
+        || lower.contains("hcaptcha")
+        || lower.contains("verify you are human")
+        || lower.contains("are you a robot")
+        || lower.contains("checking your browser")
+        || lower.contains("ddos protection")
+        || lower.contains("ddos attack")
+        || lower.contains("rate limited")
+        || lower.contains("too many requests");
+
+    if !has_text_pattern {
+        return false;
+    }
+
+    // Sparse structure: no semantic content elements present. Both `<p>` and
+    // `<p ` are checked — an attribute-less paragraph is still real content
+    // and must not be mistaken for a sparse block page.
+    let has_semantic = lower.contains("<p>")
+        || lower.contains("<p ")
+        || lower.contains("<h1")
+        || lower.contains("<h2")
+        || lower.contains("<h3")
+        || lower.contains("<a href")
+        || lower.contains("<main>")
+        || lower.contains("<article");
+
+    !has_semantic
 }
 
 fn extract_charset(content_type: &str) -> Option<&str> {
@@ -422,14 +716,18 @@ impl FetchRouter {
 
         match http_result {
             Ok(resp) => {
-                if needs_escalation(resp.status, &resp.body) {
-                    if let Some(ctx) = browser {
+                // Only run the escalation heuristics when a browser is actually
+                // available to escalate to — otherwise they are pure waste, and
+                // `needs_escalation` now scans the body several times.
+                if let Some(ctx) = browser {
+                    if needs_escalation(resp.status, &resp.body)
+                        || looks_like_empty_spa_shell(&resp.body)
+                    {
                         return Self::fetch_via_browser(ctx, url).await;
                     }
+                    return Ok(http_response_to_page(resp));
                 }
-                if (resp.status.is_server_error() || resp.status.is_client_error())
-                    && browser.is_none()
-                {
+                if resp.status.is_server_error() || resp.status.is_client_error() {
                     return Err(FetchError::StatusError {
                         status: resp.status.as_u16(),
                         url: url.to_string(),
@@ -474,6 +772,7 @@ impl FetchRouter {
             text,
             markdown,
             fetched_via_browser: true,
+            redirect_chain: None,
         })
     }
 }
@@ -489,6 +788,7 @@ fn http_response_to_page(resp: HttpResponse) -> FetchedPage {
         text,
         markdown,
         fetched_via_browser: false,
+        redirect_chain: None,
     }
 }
 
@@ -837,8 +1137,325 @@ mod tests {
             text: String::new(),
             markdown: String::new(),
             fetched_via_browser: false,
+            redirect_chain: None,
         };
         // Compile-time check: the markdown field exists and is a String
         let _: &String = &page.markdown;
+    }
+
+    #[test]
+    fn spa_shell_detected_next_js_csr() {
+        // Next.js CSR: has /_next/static/ assets but no __NEXT_DATA__ blob
+        let body = r#"<html><head></head><body>
+            <div id="__next"></div>
+            <script src="/_next/static/chunks/main-a1b2c3d4.js"></script>
+            <script src="/_next/static/chunks/pages/_app-e5f6a7b8.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_next_js_ssr() {
+        // Next.js SSR: has __NEXT_DATA__ → data is embedded, no browser needed
+        let body = r#"<html><head></head><body>
+            <div id="__next"><h1>Server Rendered Page</h1><p>Content here</p></div>
+            <script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>
+            <script src="/_next/static/chunks/main-a1b2c3d4.js"></script>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_angular_empty_root() {
+        let body = r#"<html><head></head><body>
+            <app-root ng-version="17.3.0"></app-root>
+            <script src="/main.a1b2c3d4e5f6.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_vue_cli_noscript() {
+        let body = r#"<html><head></head><body>
+            <noscript><strong>We're sorry but this app doesn't work properly without JavaScript enabled.</strong></noscript>
+            <div id="app"></div>
+            <script src="/js/app.a1b2c3d4.js"></script>
+            <script src="/js/chunk-vendors.e5f6a7b8.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_empty_root_with_vite_bundle() {
+        // Generic Vite SPA: empty #root + hashed bundle
+        let body = r#"<html><head></head><body>
+            <div id="root"></div>
+            <script type="module" src="/assets/index-D9LVtTP6.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_contentful_page() {
+        let mut body = String::from("<html><body><main>");
+        for _ in 0..50 {
+            body.push_str("<p>This is a paragraph with meaningful content for users.</p>");
+        }
+        body.push_str("</main></body></html>");
+        assert!(!looks_like_empty_spa_shell(&body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_nuxt_ssr() {
+        // Nuxt SSR: has window.__NUXT__ → data present
+        let body = r#"<html><head></head><body>
+            <div id="__nuxt"><div id="__layout"><h1>Hello</h1></div></div>
+            <script>window.__NUXT__={data:{},state:{}}</script>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_react_ssr() {
+        // React SSR: has data-reactroot → content was server-rendered
+        let body = r#"<html><head></head><body>
+            <div id="root" data-reactroot=""><h1>Hello</h1><p>Content</p></div>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_skips_small_pages() {
+        let body = "<html><body>OK</body></html>";
+        assert!(body.len() < MIN_HTML_FOR_SPA_CHECK);
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_sparse_but_legitimate_page() {
+        // A sparse login page: has <p> and <h1>, no framework signals
+        let body = r#"<html><head><title>Login</title></head><body>
+            <h1>Sign In</h1>
+            <form action="/login" method="post">
+                <input type="email" name="email" />
+                <input type="password" name="pass" />
+                <button type="submit">Log in</button>
+            </form>
+            <p>Forgot your password?</p>
+        </body></html>"#;
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_low_text_alone_not_sufficient() {
+        // Large HTML with scripts but no framework signals — should NOT trigger
+        // because low text alone (score 0.35) is below the 0.60 threshold
+        let mut body = String::from("<html><body><div>");
+        for _ in 0..200 {
+            body.push_str("<script>var x = 1;</script>");
+        }
+        body.push_str("<p>tiny</p></div></body></html>");
+        assert!(body.len() > MIN_HTML_FOR_SPA_CHECK);
+        assert!(!looks_like_empty_spa_shell(&body));
+    }
+
+    #[test]
+    fn bundler_hash_detection_vite() {
+        assert!(has_hash_segment("/assets/index-a1b2c3d4.js"));
+        assert!(has_hash_segment("/assets/vendor-e5f6a7b8c9d0.js"));
+    }
+
+    #[test]
+    fn bundler_hash_detection_no_false_positive() {
+        assert!(!has_hash_segment("/js/app.js"));
+        assert!(!has_hash_segment("/main.js"));
+        assert!(!has_hash_segment("/assets/short-abc.js"));
+    }
+
+    #[test]
+    fn spa_shell_detected_gitee_vite_empty_body() {
+        // Gitee search: Vite SPA with bundler hash + completely empty body
+        let body = r#"<!DOCTYPE html><html><head>
+            <title>Gitee Search</title>
+            <link rel="stylesheet" href="/assets/index-abc12345.css">
+        </head><body data-bs-theme="light">
+            <script type="module" crossorigin src="/assets/index-8b837856.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_detected_todomvc_section_mount() {
+        // TodoMVC React: <section> mount-point (not <div>) + bundle.js
+        let body = r#"<!DOCTYPE html><html><head>
+            <title>TodoMVC</title>
+        </head><body>
+            <section class="todoapp" id="root"></section>
+            <script defer="defer" src="app.bundle.js"></script>
+        </body></html>"#;
+        assert!(looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn spa_shell_not_triggered_small_content_page_with_paragraphs() {
+        // Small page with real content — has <p> tags, should NOT trigger
+        let body = "<html><body>\n\
+            <h1>404 Not Found</h1>\n\
+            <p>The page you requested could not be found.</p>\n\
+        </body></html>";
+        assert!(!looks_like_empty_spa_shell(body));
+    }
+
+    #[test]
+    fn cdn_block_reddit_style() {
+        let body = "<html><head><title>Blocked</title></head><body>\
+            <div>You have been blocked by network security.</div>\
+            <div>Reference ID: abc123</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_cloudflare_challenge() {
+        let body = "<html><head></head><body>\
+            <form id=\"cf-challenge-form\" action=\"/cdn-cgi/l/chk_jschl\">\
+            <input name=\"__cf_chl_jschl_tk__\" value=\"abc\"/>\
+            </form></body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_legitimate_security_page() {
+        // Legitimate page mentioning "security" with real semantic content
+        let body = "<html><head><title>Security Policy</title></head><body>\
+            <h1>Our Security Practices</h1>\
+            <p>We take security seriously at our company.</p>\
+            <a href=\"/contact\">Contact us</a>\
+        </body></html>";
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_too_small() {
+        let body = "<html><body>Blocked</body></html>";
+        assert!(body.len() < 50);
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_large_body_still_detected() {
+        // The 5000-char upper bound is removed: large pages with block patterns
+        // should still be detected.
+        let mut body = String::from("<html><body><div>You have been blocked by network security. ");
+        while body.len() <= 5000 {
+            body.push_str("padding ");
+        }
+        body.push_str("</div></body></html>");
+        assert!(body.len() > 5000);
+        assert!(looks_like_cdn_block_page(body.as_str()));
+    }
+
+    #[test]
+    fn cdn_block_css_dominated_walled_garden() {
+        // Large page that is >60% <style> content with no real text — Reddit-style
+        // CSS-variable dump returned instead of actual page content.
+        let mut css_vars = String::new();
+        for i in 0..500 {
+            use std::fmt::Write;
+            let _ = write!(css_vars, "--color-{i}: #aabbcc; --spacing-{i}: {i}px; ");
+        }
+        let body = format!(
+            "<html><head><style>{css_vars}</style></head>\
+             <body><div>Loading…</div></body></html>"
+        );
+        assert!(
+            body.len() > 5000,
+            "body must be large to test the any-size path"
+        );
+        assert!(looks_like_cdn_block_page(&body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_css_with_real_content() {
+        // A page with significant CSS but also substantial visible text should
+        // NOT be flagged — the css_ratio check requires <300 chars of visible text.
+        let mut css_vars = String::new();
+        for i in 0..200 {
+            use std::fmt::Write;
+            let _ = write!(css_vars, "--color-{i}: #aabbcc; ");
+        }
+        let mut paragraphs = String::new();
+        for i in 0..20 {
+            use std::fmt::Write;
+            let _ = write!(
+                paragraphs,
+                "<p>This is real paragraph number {i} with meaningful content for users browsing the site.</p>"
+            );
+        }
+        let body = format!(
+            "<html><head><style>{css_vars}</style></head>\
+             <body><h1>Welcome</h1>{paragraphs}</body></html>"
+        );
+        assert!(!looks_like_cdn_block_page(&body));
+    }
+
+    #[test]
+    fn cdn_block_captcha_sparse_page() {
+        let body = "<html><head><title>Security Check</title></head><body>\
+            <div>Please complete the captcha to continue.</div>\
+            <div id=\"recaptcha-container\"></div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_akamai_access_denied() {
+        let body = "<html><head></head><body>\
+            <div>Access Denied</div>\
+            <div>Akamai Reference #18.abc123</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_html_entity_encoded_apostrophe() {
+        // Reddit-style block page uses &#39; for apostrophes in "You've been blocked".
+        // Entity normalization must happen before pattern matching.
+        let body = "<html><head><title>Blocked</title></head><body>\
+            <div>You&#39;ve been blocked by network security.</div>\
+            <div>Reference ID: xyz789</div>\
+        </body></html>";
+        assert!(looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_plain_paragraph() {
+        // An attribute-less <p> is still real content: a legit page that
+        // mentions a trigger phrase must not be escalated just because the
+        // paragraph has no attributes ("<p>" vs "<p ").
+        let body = "<html><body><p>Our API returns HTTP 429 when you send \
+            too many requests in a short window.</p></body></html>";
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn cdn_block_not_triggered_json_error_body() {
+        // A tag-less JSON error body is not an HTML block page; a browser
+        // re-fetch would just render the same JSON.
+        let body = "{\"error\":\"too many requests\",\"message\":\"please slow \
+            down and retry after a short delay has elapsed\"}";
+        assert!(body.len() >= 50);
+        assert!(!looks_like_cdn_block_page(body));
+    }
+
+    #[test]
+    fn style_blocks_length_sums_multiple_blocks() {
+        assert_eq!(style_blocks_length("no style tags here at all"), 0);
+        assert_eq!(style_blocks_length("<style>abcde</style>"), 5);
+        // "abc" (3) + "de" (2) across two separate blocks = 5
+        assert_eq!(
+            style_blocks_length("<style>abc</style>middle<style>de</style>"),
+            5
+        );
     }
 }

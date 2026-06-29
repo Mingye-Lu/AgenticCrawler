@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
 use serde_json::{json, Value};
@@ -9,6 +10,7 @@ pub struct SaveFileInput {
     pub url: String,
     pub filename: String,
     pub subdir: Option<String>,
+    pub headers: Option<BTreeMap<String, String>>,
 }
 
 pub fn parse_input(input: &Value) -> Result<SaveFileInput, CrawlError> {
@@ -32,10 +34,28 @@ pub fn parse_input(input: &Value) -> Result<SaveFileInput, CrawlError> {
         validate_relative_path("subdir", subdir)?;
     }
 
+    let headers = match input.get("headers").and_then(|v| v.as_object()) {
+        Some(obj) if !obj.is_empty() => {
+            let mut map = BTreeMap::new();
+            for (key, value) in obj {
+                if let Some(value) = value.as_str() {
+                    map.insert(key.clone(), value.to_string());
+                }
+            }
+            if map.is_empty() {
+                None
+            } else {
+                Some(map)
+            }
+        }
+        _ => None,
+    };
+
     Ok(SaveFileInput {
         url,
         filename,
         subdir,
+        headers,
     })
 }
 
@@ -122,7 +142,7 @@ pub async fn execute(
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .save_file(&parsed.url, &path_str)
+        .save_file(&parsed.url, &path_str, parsed.headers.as_ref())
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -136,6 +156,11 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use std::collections::BTreeMap;
+
+    use crate::tools::test_support::{
+        browser_with_save_file_header_recorder, take_recorded_save_file_headers,
+    };
 
     use super::*;
 
@@ -175,11 +200,69 @@ mod tests {
     }
 
     #[test]
+    fn parse_input_reads_headers() {
+        let input = json!({
+            "url": "https://example.com/file.mp4",
+            "headers": { "Referer": "https://www.bilibili.com", "X-Test": "42" }
+        });
+
+        let parsed = parse_input(&input).unwrap();
+        let headers = parsed.headers.unwrap();
+
+        assert_eq!(
+            headers.get("Referer").map(std::string::String::as_str),
+            Some("https://www.bilibili.com")
+        );
+        assert_eq!(
+            headers.get("X-Test").map(std::string::String::as_str),
+            Some("42")
+        );
+    }
+
+    #[test]
+    fn parse_input_empty_headers_yields_none() {
+        let input = json!({ "url": "https://example.com/file.mp4", "headers": {} });
+        let parsed = parse_input(&input).unwrap();
+        assert!(parsed.headers.is_none());
+    }
+
+    #[test]
     fn rejects_path_traversal() {
         let input = json!({"url": "https://example.com/file.txt", "filename": "../file.txt"});
         assert!(parse_input(&input).is_err());
 
         let input = json!({"url": "https://example.com/file.txt", "filename": "file.txt", "subdir": "../outside"});
         assert!(parse_input(&input).is_err());
+    }
+
+    #[tokio::test]
+    async fn save_file_forwards_headers_to_backend() {
+        let (mut browser, recorder) = browser_with_save_file_header_recorder(vec![]);
+
+        execute(
+            &json!({
+                "url": "https://example.com/file.mp4",
+                "headers": {
+                    "Referer": "https://www.bilibili.com",
+                    "X-Test": "42"
+                }
+            }),
+            &mut browser,
+        )
+        .await
+        .expect("save_file should succeed");
+
+        let headers = take_recorded_save_file_headers(&recorder)
+            .await
+            .expect("backend should record forwarded headers");
+
+        let expected = BTreeMap::from([
+            (
+                "Referer".to_string(),
+                "https://www.bilibili.com".to_string(),
+            ),
+            ("X-Test".to_string(), "42".to_string()),
+        ]);
+        assert_eq!(headers, expected);
     }
 }

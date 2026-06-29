@@ -2,16 +2,21 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
+
+use super::feedback::InteractionKind;
 
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 const MAX_TIMEOUT_SECONDS: f64 = 300.0;
 
+#[derive(Debug)]
 pub struct WaitInput {
     pub selector: Option<String>,
     pub timeout_ms: u64,
+    pub state: Option<String>,
 }
 
 pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
@@ -22,6 +27,26 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
 
     let timeout_ms = parse_timeout_ms(input)?;
 
+    let state = input
+        .get("state")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    if let Some(ref s) = state {
+        let valid = ["visible", "hidden", "attached", "detached"];
+        if !valid.contains(&s.as_str()) {
+            return Err(CrawlError::new(format!(
+                "wait state must be one of: visible, hidden, attached, detached (got: {s})"
+            )));
+        }
+    }
+
+    if state.is_some() && selector.is_none() {
+        return Err(CrawlError::new(
+            "wait state requires a selector (state has no effect with a time-only wait)",
+        ));
+    }
+
     if selector.is_none() && timeout_ms == 0 {
         return Err(CrawlError::new(
             "wait requires either a selector or a positive timeout",
@@ -31,6 +56,7 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
     Ok(WaitInput {
         selector,
         timeout_ms,
+        state,
     })
 }
 
@@ -71,6 +97,7 @@ fn parse_timeout_ms(input: &Value) -> Result<u64, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
@@ -79,22 +106,42 @@ pub async fn execute(
             .acquire_bridge()
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?
-            .wait_for_selector(selector, parsed.timeout_ms)
+            .wait_for_selector(selector, parsed.timeout_ms, parsed.state.as_deref())
             .await
             .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+
+        let page_state = super::feedback::post_action_page_state(
+            browser,
+            crawl_state,
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await?;
 
         Ok(ToolEffect::reply_json(&json!({
             "success": true,
             "found": found,
             "selector": selector,
-            "timeout_ms": parsed.timeout_ms
+            "timeout_ms": parsed.timeout_ms,
+            "page_state": page_state
         })))
     } else {
         tokio::time::sleep(Duration::from_millis(parsed.timeout_ms)).await;
 
+        let page_state = super::feedback::post_action_page_state(
+            browser,
+            crawl_state,
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await?;
+
         Ok(ToolEffect::reply_json(&json!({
             "success": true,
-            "waited_ms": parsed.timeout_ms
+            "waited_ms": parsed.timeout_ms,
+            "page_state": page_state
         })))
     }
 }
@@ -142,5 +189,37 @@ mod tests {
 
         let input = json!({"seconds": 301.0});
         assert!(parse_input(&input).is_err());
+    }
+
+    #[test]
+    fn parses_valid_state() {
+        for state in &["visible", "hidden", "attached", "detached"] {
+            let input = json!({"selector": "div", "state": state});
+            let parsed = parse_input(&input).unwrap();
+            assert_eq!(parsed.state.as_deref(), Some(*state));
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_state() {
+        let input = json!({"selector": "div", "state": "bogus"});
+        let err = parse_input(&input).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("visible, hidden, attached, detached"));
+    }
+
+    #[test]
+    fn rejects_state_without_selector() {
+        let input = json!({"seconds": 5, "state": "visible"});
+        let err = parse_input(&input).unwrap_err();
+        assert!(err.to_string().contains("state requires a selector"));
+    }
+
+    #[test]
+    fn state_none_when_omitted() {
+        let input = json!({"selector": "#btn"});
+        let parsed = parse_input(&input).unwrap();
+        assert!(parsed.state.is_none());
     }
 }

@@ -12,6 +12,7 @@ members = [
     "crates/processing",
     "crates/tui",
     "crates/ui",
+    "crates/script",
 ]
 resolver = "2"
 
@@ -21,7 +22,7 @@ mcp-server = { path = "crates/mcp-server" }
 render = { path = "crates/render" }
 
 [workspace.package]
-version = "0.7.6"
+version = "0.12.5"
 edition = "2021"
 license = "MIT"
 publish = false

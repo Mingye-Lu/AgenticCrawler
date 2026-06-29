@@ -1,0 +1,6 @@
+# Exclude everything except what's needed in the bundle
+*
+!manifest.json
+!server/
+!server/acrawl
+!server/acrawl.exe

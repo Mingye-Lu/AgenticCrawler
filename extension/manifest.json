@@ -16,7 +16,7 @@
     },
     "default_title": "acrawl Bridge"
   },
-  "permissions": ["debugger", "tabs", "activeTab", "storage", "alarms"],
+  "permissions": ["debugger", "tabs", "activeTab", "storage", "alarms", "declarativeNetRequest"],
   "host_permissions": ["http://127.0.0.1/*", "https://*/*", "http://*/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

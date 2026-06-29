@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
+
+use super::feedback::InteractionKind;
 
 pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
     let direction = input
@@ -28,6 +31,7 @@ pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let (direction, pixels) = parse_input(input)?;
 
@@ -39,9 +43,18 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let seq = super::seq::increment_seq(crawl_state, browser).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::Passive,
+        None,
+        false,
+    )
+    .await?;
 
     Ok(ToolEffect::reply_json(&json!({
+        "seq": seq,
         "success": true,
         "message": format!("Scrolled {direction} {pixels}px"),
         "page_state": page_state

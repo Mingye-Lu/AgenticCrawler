@@ -1039,11 +1039,6 @@ impl ReplTuiState {
     }
 
     pub(super) fn handle_tool_call_start(&mut self, name: String, input: &str) {
-        if name == "wait_for_human" {
-            self.last_wait_for_human_reason = serde_json::from_str::<serde_json::Value>(input)
-                .ok()
-                .and_then(|v| v.get("reason").and_then(|r| r.as_str()).map(String::from));
-        }
         let input_summary = tool_input_summary(&name, input);
         self.ui_state = AppUiState::ChatMode;
         self.current_tool = Some(name.clone());

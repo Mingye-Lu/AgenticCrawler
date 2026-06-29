@@ -90,51 +90,6 @@ impl CrawlerAgent {
         Ok(())
     }
 
-    pub async fn pause_browser_switch(&mut self) -> Result<(), ToolError> {
-        if self.extension_mode {
-            return Ok(());
-        }
-
-        let active_children = {
-            let manager = self.agent_manager.lock().await;
-            if manager.contains(&self.agent_id) {
-                manager.get_active_children(&self.agent_id).len()
-            } else {
-                0
-            }
-        };
-
-        if active_children > 0 {
-            return Err(ToolError::new(
-                "Cannot pause while sub-agents are running because they share the browser bridge.",
-            ));
-        }
-
-        let is_headless = std::env::var("HEADLESS").map_or(true, |value| value != "false");
-        if !is_headless {
-            return Ok(());
-        }
-
-        let page_index = self.browser.as_ref().map_or(0, BrowserContext::page_index);
-        let browser_state = self.export_browser_state().await;
-        eprintln!(
-            "Switching to headed mode. Note: JS runtime state (timers, WebSocket connections) will be lost."
-        );
-
-        std::env::set_var("HEADLESS", "false");
-        self.reset_browser();
-        self.ensure_browser().await?;
-        if let Some(browser) = self.browser.as_mut() {
-            browser.set_page_index(page_index);
-        }
-
-        if let Some(state) = browser_state {
-            self.restore_browser_state(&state).await;
-        }
-
-        Ok(())
-    }
-
     pub async fn export_browser_state(&self) -> Option<BrowserState> {
         let state_result = if let Some(browser) = self.browser.as_ref() {
             let mut browser = browser.clone();
@@ -207,17 +162,13 @@ impl CrawlerAgent {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, OnceLock};
+    use std::sync::Arc;
 
+    use serde_json::Value;
     use tokio::sync::Mutex;
 
     use super::*;
     use crate::registry::ToolRegistry;
-
-    fn env_lock() -> &'static tokio::sync::Mutex<()> {
-        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-    }
 
     async fn test_bridge() -> SharedBridge {
         Arc::new(Mutex::new(Box::new(
@@ -225,6 +176,29 @@ mod tests {
                 .await
                 .expect("bridge should initialize for lifecycle test"),
         ) as Box<dyn BrowserBackend + Send>))
+    }
+
+    async fn respond_ok(
+        command_rx: &mut tokio::sync::mpsc::Receiver<(
+            crate::BridgeCommand,
+            tokio::sync::oneshot::Sender<crate::ws_server::BridgeResponse>,
+        )>,
+        expected_action: &str,
+        result: Option<Value>,
+    ) {
+        let (cmd, resp_tx) = command_rx
+            .recv()
+            .await
+            .unwrap_or_else(|| panic!("extension should receive {expected_action}"));
+        assert_eq!(cmd.action, expected_action);
+        resp_tx
+            .send(crate::ws_server::BridgeResponse {
+                id: cmd.id,
+                ok: true,
+                result,
+                error: None,
+            })
+            .unwrap();
     }
 
     #[tokio::test]
@@ -262,14 +236,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_lifecycle_state_transitions() {
-        let _env_guard = env_lock().lock().await;
+        let _env_guard = crate::test_async_env_lock().lock().await;
         std::env::set_var("HEADLESS", "true");
         let mut agent = CrawlerAgent::new_for_testing(ToolRegistry::new());
 
-        agent
-            .ensure_browser()
-            .await
-            .expect("first initialization should succeed");
+        match agent.ensure_browser().await {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("not installed") => {
+                eprintln!("skipping test: CloakBrowser not installed");
+                return;
+            }
+            Err(e) => panic!("unexpected error: {e}"),
+        }
         let first_bridge = agent.shared_bridge.clone().expect("bridge should exist");
 
         agent
@@ -286,10 +264,14 @@ mod tests {
         assert!(agent.browser.is_none());
         assert!(agent.shared_bridge.is_none());
 
-        agent
-            .ensure_browser()
-            .await
-            .expect("reinitialization after reset should succeed");
+        match agent.ensure_browser().await {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("not installed") => {
+                eprintln!("skipping test: CloakBrowser unavailable after reset");
+                return;
+            }
+            Err(e) => panic!("reinitialization after reset failed: {e}"),
+        }
         let second_bridge = agent
             .shared_bridge
             .clone()
@@ -362,7 +344,6 @@ mod tests {
 
     #[tokio::test]
     async fn tool_execution_routes_commands_through_extension_bridge() {
-        use crate::ws_server::BridgeResponse;
         use acrawl_core::ToolExecutor;
         use serde_json::json;
 
@@ -386,70 +367,41 @@ mod tests {
             );
 
         // acquire_bridge() calls switch_tab first
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive switch_tab");
-        assert_eq!(cmd.action, "switch_tab");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: Some(json!({"url": "about:blank", "title": ""})),
-                error: None,
-            })
-            .unwrap();
+        respond_ok(
+            &mut command_rx,
+            "switch_tab",
+            Some(json!({"url": "about:blank", "title": ""})),
+        )
+        .await;
 
         // Then click
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive click");
-        assert_eq!(cmd.action, "click");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: None,
-                error: None,
-            })
-            .unwrap();
+        respond_ok(&mut command_rx, "click", None).await;
+
+        // increment_seq pushes the current seq to the extension bridge so
+        // buffered observations are tagged for temporal filtering.
+        respond_ok(&mut command_rx, "set_seq", None).await;
 
         // post_action_page_state: acquire_bridge (switch_tab) + page_map
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive second switch_tab");
-        assert_eq!(cmd.action, "switch_tab");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: Some(json!({"url": "about:blank", "title": ""})),
-                error: None,
-            })
-            .unwrap();
-
-        let (cmd, resp_tx) = command_rx
-            .recv()
-            .await
-            .expect("extension should receive page_map");
-        assert_eq!(cmd.action, "page_map");
-        resp_tx
-            .send(BridgeResponse {
-                id: cmd.id,
-                ok: true,
-                result: Some(json!({
-                    "headings": [],
-                    "landmarks": [],
-                    "forms": [],
-                    "links": [],
-                    "interactive": {},
-                    "meta": {"url": "https://test.com", "title": "Test Page", "description": ""}
-                })),
-                error: None,
-            })
-            .unwrap();
+        respond_ok(
+            &mut command_rx,
+            "switch_tab",
+            Some(json!({"url": "about:blank", "title": ""})),
+        )
+        .await;
+        respond_ok(&mut command_rx, "execute_js", Some(json!(null))).await;
+        respond_ok(
+            &mut command_rx,
+            "page_map",
+            Some(json!({
+                "headings": [],
+                "landmarks": [],
+                "forms": [],
+                "links": [],
+                "interactive": {},
+                "meta": {"url": "https://test.com", "title": "Test Page", "description": ""}
+            })),
+        )
+        .await;
 
         let result = handle.await.expect("task should complete");
         let output = result.expect("click should succeed through extension bridge");

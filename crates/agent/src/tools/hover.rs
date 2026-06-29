@@ -1,35 +1,60 @@
 use serde_json::{json, Value};
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
-pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
-    input
+use super::feedback::InteractionKind;
+
+pub struct HoverInput {
+    selector: String,
+    widen: bool,
+}
+
+pub fn parse_input(input: &Value) -> Result<HoverInput, CrawlError> {
+    let selector = input
         .get("selector")
         .and_then(|v| v.as_str())
         .map(String::from)
-        .ok_or_else(|| CrawlError::new("hover requires 'selector' field"))
+        .ok_or_else(|| CrawlError::new("hover requires 'selector' field"))?;
+
+    Ok(HoverInput {
+        selector,
+        widen: input.get("widen").and_then(Value::as_bool).unwrap_or(false),
+    })
 }
 
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
-    let selector = parse_input(input)?;
+    let params = parse_input(input)?;
+    let resolved = super::ref_resolve::resolve_selector(&params.selector, browser.ref_map())
+        .map_err(ToolExecutionError::new)?;
 
     browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .hover(&selector)
+        .hover(&resolved)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let seq = super::seq::increment_seq(crawl_state, browser).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::Passive,
+        Some(&resolved),
+        params.widen,
+    )
+    .await?;
 
     Ok(ToolEffect::reply_json(&json!({
+        "seq": seq,
         "success": true,
-        "message": format!("Hovered over: {selector}"),
+        "message": format!("Hovered over: {}", params.selector),
         "page_state": page_state
     })))
 }
@@ -43,8 +68,9 @@ mod tests {
     #[test]
     fn parses_selector() {
         let input = json!({"selector": ".menu-item"});
-        let selector = parse_input(&input).unwrap();
-        assert_eq!(selector, ".menu-item");
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.selector, ".menu-item");
+        assert!(!parsed.widen);
     }
 
     #[test]

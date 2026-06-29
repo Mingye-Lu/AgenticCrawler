@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **6 resource-processing tools** — new `crates/processing/` crate with pure-Rust format handlers and 6 new agent tools, raising the total from 21 to 27:
+- **6 resource-processing tools** — new `crates/processing/` crate with pure-Rust format handlers and 6 new agent tools:
   - **`read_pdf`** — text extraction from PDFs with page-range selection (`"3"`, `"1-5"`, `"10-"`), metadata mode, and 100 MB file cap.
   - **`read_document`** — plain-text extraction from DOCX, PPTX, EPUB, RTF, and ODT via ZIP+XML parsing (no native dependencies).
   - **`read_spreadsheet`** — XLSX, CSV, and ODS reading with sheet selection, cell-range filtering (`"headers"`, `"first_100"`, `"A1:D10"`), and configurable row limits (default 1 000).
@@ -17,8 +17,287 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`transcribe_media`** — Whisper-based audio transcription (MP3/WAV/FLAC/OGG/AAC); gated behind the optional `transcription` Cargo feature (requires cmake). Returns helpful guidance when the model or feature is unavailable.
   - **`list_archive`** — lists ZIP/TAR archive contents and supports single-entry safe extraction (zip-slip and zip-bomb protection, 1 GB decompressed limit).
 - **`acrawl model` subcommand** — manages Whisper models: `acrawl model download tiny|small|large-turbo` (downloads from HuggingFace with a progress bar), `acrawl model list` (shows download status), `acrawl model path`.
-- **MCP server unchanged** — all 6 new tools are internal agent tools, excluded from the MCP surface. MCP still exposes exactly 17 tools (16 browser + `run_goal`).
+- **MCP server unchanged** — all 6 new tools are internal agent tools, excluded from the MCP surface.
 - **CI: cmake support** — release workflow installs cmake/g++ on all targets; a new `test-transcription` job validates `--features transcription` compilation.
+
+## [0.12.5] - 2026-06-28
+
+### Added
+
+- **reCAPTCHA v3 silent-submission detection**: when any interaction tool (`click`, `fill_form`, `press_key`, etc.) submits a form that reCAPTCHA v3 silently rejects (submit request sent, page unchanged, v3 present), acrawl now returns a `CaptchaDetected` error with a hypothesis-worded message and `NoRetry` strategy instead of a misleading success `page_state`. Detection is a heuristic — acrawl cannot read the server-side score. The error instructs the agent to report and stop, and names the remedy (`headless false` / `--headed` / `/extension`). Detection lives at the single shared interaction chokepoint (`feedback::post_action_page_state`) and covers all current and future interaction tools automatically.
+
+### Fixed
+
+- **Codex CLI MCP installer on Windows**: the `mcp install` command now correctly installs for the Codex CLI client on Windows, resolving path and shim handling issues in the installer.
+
+### Changed
+
+- **`fill_form`, `click`, and other interaction tools — MCP/script contract**: these tools may now return a `CaptchaDetected` error instead of a success `page_state` when a submit-capable interaction is followed by no page change while reCAPTCHA v3 is present. MCP clients and `run_script` consumers that assume interaction tools always succeed on the happy path should handle this error. The change is fail-open: passive actions (hover, scroll, switch_tab, go_back, refresh, wait, select_option) and interactions where the page changes or navigates are unaffected.
+
+## [0.12.4] - 2026-06-26
+
+### Fixed
+
+- **`mcp install` (Claude Code)**: selecting **Global** scope now installs the MCP server at Claude Code's `user` scope instead of silently falling back to `local` (current-directory-only) scope. `claude mcp add` / `claude mcp remove` are now invoked with `--scope user`, so a global install updates the user-wide config (`~/.claude.json` top-level `mcpServers`) and applies across all projects rather than only the directory the installer happened to run from.
+
+## [0.12.3] - 2026-06-25
+
+### Added
+
+- **`list_network_activity` — richer filters and inline content type**: `filter='media'` selects audio/video responses (not images); `method` filters by HTTP verb (case-insensitive); `min_size_kb`/`max_size_kb` bound requests by response size (unknown-size requests are excluded when a size filter is active); `unique_urls=true` collapses duplicate URLs to the representative with the **largest** response size (other fields including `inspect_request(@rN)` reflect that same request), with a `request_count`; every row now includes an inline `content_type` field.
+- **`save_file` — custom request headers**: new `headers` map parameter passes arbitrary HTTP request headers with the download request. Browser-restricted headers (`Referer`, `Origin`, `User-Agent`, etc.) are injected at the network layer via `declarativeNetRequest` in the Chrome-extension backend, rather than relying on the Fetch API which cannot set them. Non-restricted headers are passed directly to `fetch`. Works across both CloakBrowser and Chrome-extension backends.
+
+## [0.12.2] - 2026-06-23
+
+### Added
+
+- **`page_map` — semantic region tree and active dialog detection**: emits a `regions` tree with ephemeral `@rN` handles and human-readable labels (`sidebar`, `main panel`, `admin modal`); `active_dialog` points to the topmost visible overlay; non-`<form>` controls (div-based modal inputs) surface with accessible names. `scope` now also accepts semantic tokens (`"dialog"`, `"main"`, `"sidebar"`) and `@rN` handles in addition to raw CSS selectors.
+- **`fill_form` — page-wide label resolution**: field keys resolve by visible label text page-wide without a `<form>` boundary, enabling fill in modal/admin UIs built from divs. Falls back to fuzzy matching via `crate::semantic::match_text`.
+- **`select_option` — portal-aware custom dropdown engine**: handles ARIA combobox/listbox and div-based dropdowns whose option list renders in a portal outside the trigger's DOM subtree. Detects open state via four signals (aria-expanded flip, new listbox/menu, new options, new floating panel), locates the option container via aria-controls/owns then document-wide search, and selects keyboard-first with a click fallback. Omitting `value`/`label`/`index` opens and enumerates available options without selecting (list-options mode).
+- **`click` — text + role + region activation**: new `text` parameter activates elements by visible label, including `<label for=id>` and wrapping `<label>` resolution. Optional `role` filter (supports semantic ARIA roles for native elements) and `region` filter (`@rN` handle or `"dialog"`/`"main"`/`"sidebar"` token). `selector` and `text` are mutually exclusive.
+
+### Changed
+
+- Post-action diffs auto-scope to the interacted container or active dialog by default; pass `widen: true` to any interaction tool to restore the full-page diff.
+- Diff computation consolidated to Rust (`feedback.rs`); the Chrome extension's JS-side `computePageMapDiff` / `pageMapCache` removed — both backends flow through a single diff path.
+- `@rN` region handles now resolve from the last full-page `page_map` snapshot rather than the most-recently-stored snapshot, so handles remain stable after container-scoped interactions.
+
+### Fixed
+
+- **click**: `@rN` region handle not in snapshot now hard-fails instead of silently widening scope to full page
+- **click**: remove `|| document` JS fallback; scoped IIFE throws if the scope element is missing from the DOM
+- **click, fill_form**: `aria-labelledby` now correctly resolved as a whitespace-separated id list
+- **fill_form**: `submit` no longer reports success when no `<form>` matched the selector (`form_not_found` outcome now surfaces as an error)
+- **select_option**: popup closure alone no longer counts as verified selection; only trigger-text change or `aria-selected` qualify
+- **browser/playwright**: `isVisible` in DOM-snapshot extraction now uses `getBoundingClientRect()` matching the extension backend, fixing false-invisible on `position:fixed` portal overlays
+- **feedback**: post-action snapshots now enriched before caching, so `@rN` region handles remain valid after interactions; bare-tag diff-scope selectors (`section`, `article`, `form`) replaced with id-based or role-scoped selectors to prevent anchoring to the wrong container
+
+## [0.12.1] - 2026-06-21
+
+### Added
+
+- **Non-interactive CLI for agent/CI use** — all credential and configuration management is now scriptable without a TTY, enabling headless CI pipelines and agent-driven setup.
+  - `acrawl auth <provider> --api-key <key>` (and provider-specific flags: `--access-key`/`--secret-key`/`--region` for Bedrock, `--resource-name`/`--deployment-name` for Azure, `--base-url` for custom endpoints) writes credentials non-interactively; `--json` emits a machine-readable result.
+  - `acrawl auth status [--check <provider>] [--json]` reports configured providers with masked secrets; `--check` exits 0 if the provider is ready or 3 if not configured — suitable as a CI gate.
+  - `acrawl auth list [--json]` lists all 25 supported providers with their env-var names.
+  - `acrawl config get [key] [--effective] [--all] [--json]` and `acrawl config set <key> <value>` / `acrawl config unset <key>` read and write `settings.json` using dot-notation keys (e.g. `optimization.html_diff_mode`).
+  - `acrawl mcp install --client <id,...> | --all [--scope user|project] [--yes] [--json]` and `acrawl mcp uninstall` equivalents run without prompts when non-interactive flags are supplied; `--list-clients --json` enumerates the 17 supported IDE clients.
+- **Exit-code taxonomy** — all subcommands now follow a consistent contract: `0` = success, `1` = runtime error, `2` = usage / configuration error, `3` = provider not configured.
+- **REPL TTY guard** — `acrawl` (bare invocation) now checks both `stdin` and `stdout` for TTY before launching the interactive REPL; non-TTY environments receive exit code `2` and a message pointing at `acrawl prompt` and `acrawl --resume`.
+
+## [0.12.0] - 2026-06-21
+
+### Added
+
+- **Browser observation & DevTools toolset** — 13 new tools grow the toolbox from 29 to 42, giving the agent DevTools-style visibility into live page activity. All work across both the CloakBrowser and Chrome-extension backends and are built on a temporal observation system: every action bumps a monotonic `seq`, and the observation tools accept `since`/`until` windows so they can query "since the last action" (`BrowserBackend` gains `poll_observations` / `set_seq`).
+  - **Network** — `list_network_activity` (requests with status, type, size, and duration; filtering and adjective-based sorting) and `inspect_request` (per-request detail: request/response headers, request/response bodies gated on `include_body`, and a per-phase timing breakdown — DNS, connect, TLS, TTFB, download).
+  - **Console** — `list_page_logs` (console messages and uncaught exceptions/rejections, grouped by message/source/level, reporting verbatim console levels) and `inspect_log` (individual occurrences with stack traces).
+  - **WebSocket** — `list_websocket_activity` and `inspect_websocket` (sent/received frames).
+  - **Performance** — `get_page_performance` (Navigation/Resource Timing metrics plus the top resources by transfer size).
+  - **Coverage** — `measure_coverage` (JS/CSS used-vs-total bytes, persisted across navigations).
+  - **Storage** — `inspect_cookies` (security analysis with RFC 6265 third-party detection) and `inspect_storage` (local/session storage).
+  - **Accessibility** — `audit_accessibility` (axe-core WCAG audit: wcag2a / wcag2aa / wcag21aa / wcag22aa, using cumulative tag sets).
+  - **Network interception** — `intercept_network` (block or mock requests by glob or regex pattern).
+  - **Navigation** — `refresh` (reload the current page).
+
+## [0.11.1] - 2026-06-19
+
+### Added
+
+- **CDN block page detection** — the smart-fetch router now recognizes CDN/security block pages served over HTTP (Cloudflare challenges, Akamai access-denied pages, "you have been blocked by network security" interstitials, captcha gates) and auto-escalates them to the headless browser. A three-tier heuristic keeps false positives low: CSS-dominated walled-garden responses (>60% `<style>` content with <300 chars of visible text, e.g. Reddit's 32 KB CSS-variable dump), strong CDN HTML signatures (`__cf_chl_`, `cf-challenge`, Akamai markers), and a text-pattern-plus-structural-sparseness check gated behind an HTML-document shell so tag-less JSON/text error bodies are never escalated. HTML entities are normalized before matching, and normalization only allocates when an entity is actually present so the per-fetch hot path stays cheap. The escalation heuristics are also skipped entirely when no browser is available to escalate to.
+
+## [0.11.0] - 2026-06-17
+
+### Added
+
+- **Device Emulation** (`set_device` tool) — switch between mobile and desktop browser emulation mid-session. 10 built-in presets (iphone_15, iphone_se, iphone_15_pro_max, pixel_7, galaxy_s24, ipad_pro, ipad, galaxy_tab_s9, desktop, desktop_hd) or custom viewport/UA/touch/scale parameters. Cookies and localStorage are preserved across switches. Returns a differential `page_state` showing responsive layout changes (collapsed navs, hidden elements, breakpoint shifts) rather than the full page_map. Cannot be used while sub-agents are running.
+
+## [0.10.1] - 2026-06-17
+
+### Fixed
+
+- **Empty SPA shell detection** — replaced the naive "large HTML + sparse text" heuristic with a multi-signal scoring function that accumulates confidence from framework asset paths (`/_next/static/`, `/_nuxt/`, `ng-version=`), empty mount-point divs, noscript "enable JavaScript" messages, and bundler hash patterns. Pages with embedded data blobs (`__NEXT_DATA__`, `window.__NUXT__`, `data-reactroot`) now correctly skip browser escalation since their content is already server-rendered. Eliminates false positives on legitimate sparse pages (login forms, image-heavy landing pages).
+- **SPA hydration wait** — after browser navigation, polls for visible text content (up to 3s in 300ms intervals) before capturing, so async-rendered SPAs like Gitee search have time to hydrate.
+
+## [0.10.0] - 2026-06-11
+
+### Added
+
+- **HTML Diff Mode** (`optimization.html_diff_mode`) — on repeated visits to the same URL, only changed content sections are returned with `[unchanged: N sections]` markers, reducing token usage 50–70% on multi-turn sessions. Also active in MCP direct-tool mode (the server now maintains a persistent `CrawlState` across calls).
+- **Action Loop Detection** (`optimization.loop_detection`) — rolling-window action hash detects repeated identical actions with escalating nudges (soft at 5, medium at 8, strong at 12 repeats); page stagnation detection after 5 consecutive identical page fingerprints.
+- **Page Fingerprinting** (`optimization.page_fingerprinting`) — lightweight FNV-1a fingerprint (url + element_count + first-1000-char text hash) stored in CrawlState; used by loop detection and action caching for cache invalidation.
+- **Planning Interval** (`optimization.planning_interval`) — every N steps injects planning-checkpoint or execution-mode guidance into the dynamic prompt; disabled by default (interval=0).
+- **Failure Classification** (`optimization.failure_classification`) — 16-category keyword-based error taxonomy (zero LLM cost); `classify()` maps error messages to SelectorNotFound, CaptchaDetected, RateLimited, etc.; `retry_strategy()` returns RetryWithHealing, RetryWithDelay, NoRetry, or ResetAndRetry per category.
+- **Self-Healing Selectors** (`optimization.self_healing`) — on SelectorNotFound/SelectorAmbiguous, fetches a fresh page_map and text-matches to the correct element ref; logs `[healed: @eOLD → @eNEW]`; zero LLM calls; max retries configurable (default 2).
+- **Action Caching** (`optimization.action_caching`) — in-memory SHA-256 keyed cache for read-only tools (`page_map`, `read_content`, `list_resources`); invalidated on page fingerprint change; TTL-based expiry (default 30s). `execute_js` is intentionally excluded as it may have side effects.
+- **Confidence Tracking** (`optimization.confidence_tracking`) — parses `[confidence: HIGH/MEDIUM/LOW]` from assistant responses; 2+ consecutive LOWs triggers stagnation alert via DynamicPromptContext; advisory only, never blocks.
+- **Compound Component Enrichment** (`optimization.compound_enrichment`) — extends interactive element JSON with an `enrichment` field for complex form controls: date format hints, range min/max/step/value, number bounds, select option lists (max 20 + overflow count), file accept types, textarea maxlength. Max 200 bytes/element.
+- **Content-Aware Cleaning Profiles** (`optimization.content_aware_profiles`) — `CleaningProfile` enum (Default/Minimal/Aggressive/ReadingMode) auto-selected by task keyword and content size; `select_profile()` picks ReadingMode for extraction tasks, Minimal for interaction tasks, Aggressive for content > 50KB.
+- **Budget Enforcement** (`optimization.budget_max_session_cost_usd`, `optimization.budget_enforcement`) — `BudgetEnforcer` with Warn/Block modes; Warn injects budget warning into the dynamic prompt at configurable threshold (default 80%); Block terminates the agent loop cleanly when the cost limit is reached.
+- **Per-Agent Cost Attribution** (`optimization.per_agent_cost_tracking`) — `build_cost_breakdown()` walks flat child sessions and reconstructs per-child cost via UsageTracker; `/cost` command shows per-agent breakdown when flag is ON.
+- **Dynamic System Prompt Infrastructure** — `DynamicPromptContext` struct with four optional fields (stagnation_alert, planning_guidance, budget_warning, loop_nudge); injected as section 9 of the system prompt via a shared `Arc<Mutex<>>` slot; all optimizations write to this slot, runtime picks up on the next iteration.
+- **Optimization Settings Schema** — nested `OptimizationSettings` struct in `Settings` with 18 fields, all `Option<T>` and defaulting to OFF for backward compatibility; 18 `settings_get_*` getter functions.
+
+## [0.9.1] - 2026-06-10
+
+### Changed
+
+- **`navigate` defaults to `fit_markdown`** — the `format` parameter now defaults to `fit_markdown` instead of `markdown`, saving 30–40% tokens on typical pages. Pass `format: "markdown"` explicitly to restore full output.
+- **`wait` returns `page_state`** — both the selector-based and fixed-duration wait branches now return a `page_state` diff (URL, title, added/removed/modified elements) after the condition resolves, consistent with all other action tools (`click`, `fill_form`, `press_key`, `scroll`, etc.). Eliminates the extra `page_map` call previously needed to observe what changed.
+
+### Fixed
+
+- **Script tools missing from `ToolRegistry`** — `run_script`, `wait_for_scripts`, `script_status`, `cancel_script`, `save_script`, `list_scripts`, and `read_script` were parsed and validated correctly but not dispatched by the agent loop. All 7 script tools are now registered.
+
+### Improved
+
+- **MCP tool descriptions** — all 28 tool descriptions and parameter schemas enriched with concrete examples, edge-case guidance, and clearer return-value documentation for better LLM tool selection and Glama TDQS scoring.
+
+## [0.9.0] - 2026-06-09
+
+### Added
+
+- **Autonomous Script Protocol** — a new deterministic execution layer that lets the LLM run multi-step browser automation without per-step LLM round-trips. Write scripts once, execute them in tight loops — dramatically faster and cheaper for repetitive page patterns (pagination, form filling, bulk extraction).
+
+- **New `crates/script/` crate** — standalone grammar, parser, and persistence layer:
+  - AST types: `ScriptDefinition`, `ScriptNode` (10 node kinds), `Expression` (5 expression kinds)
+  - `parse_script` + `validate_script` with comprehensive error reporting (unknown tools, undefined variables, excessive nesting, oversized scripts)
+  - Disk persistence: `save_script_to_disk`, `load_script_from_disk`, `list_scripts_on_disk`
+
+- **7 new script tools** (available in the agent loop, MCP server, and via `run_goal`):
+  - `run_script` — execute an inline script or load a saved one by `name`; returns `script_id` immediately (non-blocking). Accepts `save_as` to persist the script after execution and `limits` to override defaults.
+  - `wait_for_scripts` — block until script(s) complete and collect full `ScriptResult` (extracted_data, yielded_data, steps_executed, elapsed_secs, error)
+  - `script_status` — non-blocking poll returning live state (step, items_collected, current_url, elapsed_secs, errors_caught)
+  - `cancel_script` — abort a running script via cooperative cancellation token
+  - `save_script` — persist a script definition to `~/.acrawl/scripts/<name>.json`
+  - `list_scripts` — list all saved scripts with ISO 8601 UTC timestamps (`modified_at`) and file sizes
+  - `read_script` — read back a full script definition from disk
+
+- **Script execution engine** (`crates/agent/src/script_executor/`):
+  - Supported nodes: `tool_call`, `assign`, `collect`, `yield`, `for_loop`, `for_each`, `while_loop`, `if_else`, `try_catch` (with `catch`/`finally`/`error_var`), `parallel`
+  - Limits enforced at runtime: `max_steps`, `max_timeout_secs`, `per_step_timeout_secs`, `max_output_bytes`, `max_parallel_branches`, `max_nesting_depth`
+  - `parallel` branches each get their own browser page; share a global step counter and cancellation token; `errors_caught` and `output_bytes` are propagated back to the parent executor on completion
+  - `collect` accumulates to `extracted_data`; `yield` writes to a shared `Arc<RwLock<Vec<Value>>>` readable via `script_status` mid-execution
+  - Variable substitution: `$varname` strings in tool inputs are replaced with their current values
+
+### Fixed
+
+- **`Expression` serde deserialization** — changed from internally-tagged (`#[serde(tag="kind")]`) to adjacently-tagged (`#[serde(tag="kind", content="value")]`). The old tag caused `Literal`, `Variable`, and `JsEval` newtype variants to fail deserialization from JSON — meaning no user-submitted script with variables or literals would parse.
+- **MCP server `run_script` panic** — `spawn_script` calls `tokio::task::spawn` internally but was invoked outside any `block_on` context, causing an immediate `"no reactor running"` panic that killed the server process. Wrapped in `rt.block_on(async { … })`.
+- **`cleanup_completed` result race** — `spawn_script` called `cleanup_completed()` before checking concurrency limits, silently evicting just-completed scripts from the map. `wait_for_scripts` would then return `NotFound` for fast-completing scripts. Removed the premature cleanup.
+- **`max_output_bytes` not enforced** — the limit was stored and validated but never checked during execution. `push_extracted` and `push_yielded` now track accumulated byte count and return `ScriptExecutionError` on overflow.
+- **`validate_script_name` duplicated with inconsistent rules** — three separate implementations in `save_script.rs`, `read_script.rs`, and `persistence.rs`. Consolidated into `persistence::validate_script_name` with the strictest ruleset (rejects leading dash, dots, path separators, non-normal path components).
+- **`list_scripts` timestamp format** — `modified_at` previously returned a raw Unix epoch integer (e.g. `"1780991949"`). Now returns ISO 8601 UTC (e.g. `"2026-06-09T13:39:09Z"`) via `time::OffsetDateTime + Rfc3339`.
+
+## [0.8.7] - 2026-06-08
+
+### Added
+
+- **`page_map_depth` parameter for navigate** — new `page_map_depth` option (`full`, `slim`, `none`, default: `slim`) controls how much structural data is returned inline with navigation responses. `slim` strips CSS selectors from links/headings/landmarks and caps link text at 60 chars, reducing token usage while preserving `@eN` refs for interaction. `none` omits the page_map entirely. Full page_map is still cached internally for differential feedback.
+- **MCP server unit tests** — 18 tests covering `parse_run_goal_request`, `validate_tool_names`, `normalize_tool_name`, `filtered_tool_specs`, `execute_run_goal`, and framed/line-delimited protocol detection.
+- **Render crate unit tests** — tests for `MarkdownStreamState` push/flush, incremental streaming, partial content boundaries, and long-line handling.
+
+### Changed
+
+- **`mvp_tool_specs()` refactored** — the 376-line monolithic tool specification function is now split into `navigation_tools()`, `interaction_tools()`, `extraction_tools()`, and `agent_control_tools()` helpers. Public API unchanged.
+
+### Fixed
+
+- **CloakBrowser-dependent tests skip gracefully** — tests requiring PlaywrightBridge now detect `PlaywrightNotInstalled` and return early instead of panicking, eliminating 3 false failures on machines without Node.js/CloakBrowser.
+
+## [0.8.6] - 2026-06-08
+
+### Added
+
+- **`fit_markdown` format for navigate** — new `format="fit_markdown"` option that prunes boilerplate DOM nodes (ads, navs, sidebars, footers) before markdown conversion, dramatically reducing token consumption on noisy pages. Scores elements by text density, descendant link density, semantic tag weight, and class/id signals. Falls back to plain text when pruning removes all content. Tool instructions now recommend `fit_markdown` as the preferred default format.
+
+## [0.8.5] - 2026-06-07
+
+### Added
+
+- **Stable `@eN` element references** — `page_map` now assigns short, stable handles (`@e1`, `@e2`, …) to each interactive element. Interaction tools (`click`, `hover`, `fill_form`, `press_key`, `select_option`) accept `@eN` in their selector fields, resolving them to the underlying CSS selector. This eliminates the need to copy long, fragile CSS paths — the LLM can just say `click @e3`.
+- **RefMap data structure** (`crates/browser/src/ref_map.rs`) — maps integer IDs to CSS selectors with stable reuse (same selector always gets the same ref) and lifecycle management (clear on navigation).
+- **Ref resolution module** (`crates/agent/src/tools/ref_resolve.rs`) — centralized `@eN` → CSS selector resolution shared across all interaction tools. Plain CSS selectors pass through unchanged for full backward compatibility.
+- **Navigate embedded refs** — the `page_map` returned inline with `navigate` responses now includes `@eN` annotations, so the first page view the LLM sees already has stable handles (no extra `page_map` call needed).
+- **Scoped `page_map` refs** — `page_map` with a `scope` parameter (e.g. modals/dialogs) now also annotates interactive elements with refs.
+- **`NopBridge` test utility** (`crates/browser/src/testing.rs`) — no-op `BrowserBackend` implementation for unit testing `BrowserContext` without launching a real browser.
+- **Glama MCP registry verification** — added `glama.json` for Glama marketplace discovery.
+
+### Fixed
+
+- **Ref invalidation on navigation** — `navigate`, `go_back`, and `switch_tab` now clear the ref map immediately, preventing stale refs from resolving against a different page and clicking wrong elements.
+- **Bridge script launch on Windows** — the CloakBrowser bridge script is now written to `~/.acrawl/bridge.cjs` and executed via `node <path>` instead of `node -e <script>`, fixing the Windows command-line length limit (OS error 206) that prevented all browser features from working.
+- **URL normalization deduplication** — consolidated duplicate URL-normalization helpers into a single shared `normalize_url` function used by both `page_map` and `feedback`.
+
+## [0.8.4] - 2026-06-04
+
+### Added
+
+- **Differential page_map feedback** — interaction tools (click, fill_form, select_option, hover, press_key) now return a differential page state showing exactly what changed instead of a full page dump. Includes added/removed headings, links, landmarks, and interactive elements, plus state changes (disabled, checked, value, aria-expanded, aria-pressed, aria-selected). Falls back to full page_map when changes exceed the previous element count.
+- **Interactive element value tracking** — page_map now captures the current `value` of select, input, and textarea elements (truncated to 60 chars). For selects, reports the selected option's display text.
+- **Smithery MCP marketplace listing** — added `smithery.yaml` for Smithery discovery.
+- **Dockerfile for MCP server introspection** — enables Glama verification and container-based deployment.
+- **Smithery MCPB publish step** — release workflow now publishes to Smithery marketplace.
+
+### Fixed
+
+- **Navigate seeds page snapshot cache** — the first interaction after `navigate` now produces a differential response instead of falling back to a full page_map.
+- **Hash-route fragment preservation** — cache keys now preserve `#/path` and `#!/path` fragments (hash-routed SPAs) while still stripping simple in-page anchors like `#section`.
+- **Multiset-aware structural diff** — duplicate headings/links/landmarks are now correctly counted (previously collapsed by set-based comparison).
+
+## [0.8.3] - 2026-06-04
+
+### Added
+
+- **MCPB bundles in releases** — each release now includes platform-specific `.mcpb` archives (ZIP of manifest.json + binary) for single-click installation in Claude Desktop and other MCP hosts. Five bundles: linux-x64, linux-arm64, macos-x64, macos-arm64, windows-x64.
+- **Automated MCP Registry publishing** — the release workflow now automatically publishes acrawl to `registry.modelcontextprotocol.io` via GitHub OIDC after each release, making it discoverable in the MCP ecosystem.
+
+## [0.8.2] - 2026-06-03
+
+### Added
+
+- **`page_map` interactive elements** — the `interactive` section now returns up to 30 actual elements with `text`, `selector`, `tag`, `type`, and ARIA state (`aria-pressed`, `aria-expanded`, `aria-selected`, `disabled`, `checked`, `role`). Covers buttons, inputs, selects, textareas, and ARIA widgets (role=button/tab/menuitem/option/switch/checkbox). Flat count keys (`buttons`, `inputs`, `selects`, `textareas`) preserved at root level for backward compatibility.
+- **`page_map` scope parameter** — optional `scope` CSS selector restricts all queries to a container element (e.g. `scope: "[role='dialog']"` for modal-only content). Returns `scope_not_found: true` with empty sections if the selector doesn't match.
+- **`wait` state parameter** — optional `state` field accepts `visible`, `hidden`, `attached`, or `detached`. Enables waiting for elements to become visible (not just exist in DOM) or disappear (e.g. loading spinners). Errors if `state` is provided without a `selector`.
+
+### Changed
+
+- `BrowserBackend::page_map()` trait method now accepts `scope: Option<&str>`.
+- `BrowserBackend::wait_for_selector()` trait method now accepts `state: Option<&str>`.
+- Extension backend visibility checks use `getComputedStyle` + `getBoundingClientRect` to match Playwright's stricter semantics.
+
+## [0.8.1] - 2026-06-03
+
+### Added
+
+- **`click_at` tool** — new tool (#21) that dispatches real mouse clicks at specific viewport coordinates via Playwright's `page.mouse.click(x, y)`. Enables interaction with canvas elements, maps, SVGs, and UI components that lack stable CSS selectors. Schema is OpenAI strict-mode compatible (all properties required, no nullable optionals). Both CloakBrowser and Chrome extension backends supported.
+- **`screenshot` element & format options** — the screenshot tool now accepts:
+  - `selector` — screenshot a specific element (auto-scrolls into view, crops to element bounds)
+  - `format` — `png`, `jpeg`, or `webp` output (JPEG/WebP produce 5-10x smaller files)
+  - `quality` — compression level 0-100 for lossy formats
+  - `full_page` — capture the entire scrollable page, not just the viewport
+  - Saved filenames now use the correct extension (`.jpg`, `.webp`, `.png`) based on format
+  - MCP server returns the correct `media_type` (`image/jpeg`, `image/webp`) instead of hardcoded `image/png`
+
+### Changed
+
+- Tool count is now 21 (17 browser + 4 agent-control). MCP server exposes 18 tools (17 browser + `run_goal`).
+- `BrowserBackend::screenshot()` trait method now accepts a `ScreenshotOptions` struct instead of no arguments.
+
+## [0.8.0] - 2026-06-03
+
+### Added
+
+- **MCP installer: 17 supported clients** — expanded `acrawl mcp install` to support 12 additional IDE/agent clients: OpenCode, Zed, TRAE, JetBrains IDEs, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, and Aider. Interactive installer auto-detects installed IDEs and writes per-client config.
+
+### Removed
+
+- **`wait_for_human` tool** — the human-in-the-loop pause tool and all supporting infrastructure (pause/resume state machine, `ChildLifecycle::Paused` variant, `RuntimeObserver` pause hooks, `ToolEffect::Pause`, TUI escalation UI) have been removed. Tool count is now 20. The agent no longer has a mechanism to pause and request user intervention.
+
+### Fixed
+
+- **Stale `paused` state in `subagent_status`** — the LLM-facing tool instructions incorrectly listed "paused" as a valid child state after its removal.
+- **Dead code on Linux** — removed an unused `appdata_dir()` stub that was gated behind `#[cfg(not(windows))]` but never called (only used inside `#[cfg(windows)]` blocks).
 
 ## [0.7.6] - 2026-06-01
 
@@ -553,6 +832,26 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.12.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.5
+[0.12.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.4
+[0.12.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.3
+[0.12.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.2
+[0.12.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.1
+[0.12.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.0
+[0.11.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.1
+[0.11.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.11.0
+[0.10.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.1
+[0.10.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.10.0
+[0.9.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.1
+[0.9.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.9.0
+[0.8.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.7
+[0.8.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.6
+[0.8.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.5
+[0.8.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.4
+[0.8.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.3
+[0.8.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.2
+[0.8.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.1
+[0.8.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.8.0
 [0.7.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.6
 [0.7.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.5
 [0.7.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.7.4

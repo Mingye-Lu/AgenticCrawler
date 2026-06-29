@@ -1,13 +1,19 @@
 use serde_json::Value;
 
+use crate::state::CrawlState;
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
+
+use super::feedback::InteractionKind;
 
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
+    crawl_state: &CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
+
+    browser.ref_map_mut().clear();
 
     let url = browser
         .acquire_bridge()
@@ -17,9 +23,18 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    let page_state = super::feedback::post_action_page_state(browser).await;
+    let seq = super::seq::increment_seq(crawl_state, browser).await;
+    let page_state = super::feedback::post_action_page_state(
+        browser,
+        crawl_state,
+        InteractionKind::Passive,
+        None,
+        false,
+    )
+    .await?;
 
     Ok(ToolEffect::reply_json(&serde_json::json!({
+        "seq": seq,
         "success": true,
         "url": url,
         "page_state": page_state

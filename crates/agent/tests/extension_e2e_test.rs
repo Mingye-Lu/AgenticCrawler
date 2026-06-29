@@ -85,8 +85,11 @@ async fn extension_bridge_e2e_tool_routes_through_websocket() {
     // Respond to commands as the fake extension
     respond_to_command(&mut ws, "switch_tab", Some(json!({"url": "", "title": ""}))).await;
     respond_to_command(&mut ws, "click", None).await;
-    // post_action_page_state: switch_tab + page_map
+    // increment_seq pushes the current seq to the extension bridge
+    respond_to_command(&mut ws, "set_seq", None).await;
+    // post_action_page_state: switch_tab + execute_js scope probe + page_map
     respond_to_command(&mut ws, "switch_tab", Some(json!({"url": "", "title": ""}))).await;
+    respond_to_command(&mut ws, "execute_js", Some(json!(null))).await;
     respond_to_command(
         &mut ws,
         "page_map",

@@ -2,19 +2,25 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
-use crate::BrowserContext;
+use crate::{BrowserContext, CrawlState};
 use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: &[&str] = &[
+const ASYNC_TOOLS: [&str; 37] = [
     "navigate",
     "click",
+    "click_at",
     "fill_form",
     "page_map",
     "read_content",
+    "list_network_activity",
+    "inspect_request",
+    "list_websocket_activity",
+    "inspect_websocket",
     "screenshot",
     "go_back",
+    "refresh",
     "scroll",
     "wait",
     "select_option",
@@ -23,7 +29,16 @@ const ASYNC_TOOLS: &[&str] = &[
     "press_key",
     "switch_tab",
     "list_resources",
+    "list_page_logs",
+    "inspect_log",
     "save_file",
+    "set_device",
+    "get_page_performance",
+    "inspect_cookies",
+    "inspect_storage",
+    "measure_coverage",
+    "audit_accessibility",
+    "intercept_network",
     "read_pdf",
     "read_document",
     "read_spreadsheet",
@@ -45,15 +60,8 @@ impl ToolRegistry {
 
     #[must_use]
     pub fn new_with_core_tools() -> Self {
-        Self::new_with_options(true)
-    }
-
-    /// Create a registry with all 27 core tools.
-    /// `is_interactive` controls whether `wait_for_human` is allowed to pause.
-    #[must_use]
-    pub fn new_with_options(is_interactive: bool) -> Self {
         let mut registry = Self::new();
-        for &name in ASYNC_TOOLS {
+        for name in ASYNC_TOOLS {
             let tool_name = name.to_string();
             registry.register(
                 name,
@@ -73,39 +81,33 @@ impl ToolRegistry {
             "subagent_status",
             Box::new(crate::tools::subagent_status::execute),
         );
+        // Script management tools (sync, no browser needed)
+        registry.register("run_script", Box::new(crate::tools::run_script::execute));
+        registry.register("save_script", Box::new(crate::tools::save_script::execute));
         registry.register(
-            "wait_for_human",
-            Box::new(move |input| crate::tools::wait_for_human::execute(input, is_interactive)),
+            "list_scripts",
+            Box::new(crate::tools::list_scripts::execute),
+        );
+        registry.register("read_script", Box::new(crate::tools::read_script::execute));
+        registry.register(
+            "script_status",
+            Box::new(crate::tools::script_status::execute),
+        );
+        registry.register(
+            "wait_for_scripts",
+            Box::new(crate::tools::wait_for_scripts::execute),
+        );
+        registry.register(
+            "cancel_script",
+            Box::new(crate::tools::cancel_script::execute),
         );
         registry
     }
 
-    /// Create a registry for child/sub-agents — excludes `wait_for_human`
-    /// since children cannot request human intervention.
+    /// Create a registry for child/sub-agents (same tool set as parent).
     #[must_use]
     pub fn new_for_child() -> Self {
-        let mut registry = Self::new();
-        for &name in ASYNC_TOOLS {
-            let tool_name = name.to_string();
-            registry.register(
-                name,
-                Box::new(move |_| Err(ToolExecutionError::requires_async(tool_name.clone()))),
-            );
-        }
-        registry.register("fork", Box::new(crate::tools::fork::execute));
-        registry.register(
-            "wait_for_subagents",
-            Box::new(crate::tools::wait_for_subagents::execute),
-        );
-        registry.register(
-            "cancel_subagent",
-            Box::new(crate::tools::cancel_subagent::execute),
-        );
-        registry.register(
-            "subagent_status",
-            Box::new(crate::tools::subagent_status::execute),
-        );
-        registry
+        Self::new_with_core_tools()
     }
 
     pub fn register(&mut self, name: impl Into<String>, handler: ToolHandler) {
@@ -142,24 +144,66 @@ impl ToolRegistry {
         name: &str,
         input: &Value,
         browser: &mut BrowserContext,
+        crawl_state: &mut CrawlState,
     ) -> Result<ToolEffect, ToolExecutionError> {
         match name {
-            "navigate" => crate::tools::navigate::execute(input, browser).await,
-            "click" => crate::tools::click::execute(input, browser).await,
-            "fill_form" => crate::tools::fill_form::execute(input, browser).await,
-            "page_map" => crate::tools::page_map::execute(input, browser).await,
-            "read_content" => crate::tools::read_content::execute(input, browser).await,
+            "navigate" => crate::tools::navigate::execute(input, browser, crawl_state).await,
+            "click" => crate::tools::click::execute(input, browser, crawl_state).await,
+            "click_at" => crate::tools::click_at::execute(input, browser, crawl_state).await,
+            "fill_form" => crate::tools::fill_form::execute(input, browser, crawl_state).await,
+            "page_map" => crate::tools::page_map::execute(input, browser, crawl_state).await,
+            "read_content" => {
+                crate::tools::read_content::execute(input, browser, crawl_state).await
+            }
+            "list_network_activity" => {
+                crate::tools::network_activity::list_network_activity(input, browser, crawl_state)
+                    .await
+            }
+            "inspect_request" => {
+                crate::tools::network_activity::inspect_request(input, browser, crawl_state)
+            }
+            "list_websocket_activity" => {
+                crate::tools::websocket_activity::list_websocket_activity(
+                    input,
+                    browser,
+                    crawl_state,
+                )
+                .await
+            }
+            "inspect_websocket" => {
+                crate::tools::websocket_activity::inspect_websocket(input, browser, crawl_state)
+            }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
-            "go_back" => crate::tools::go_back::execute(input, browser).await,
-            "scroll" => crate::tools::scroll::execute(input, browser).await,
-            "wait" => crate::tools::wait::execute(input, browser).await,
-            "select_option" => crate::tools::select_option::execute(input, browser).await,
-            "execute_js" => crate::tools::execute_js::execute(input, browser).await,
-            "hover" => crate::tools::hover::execute(input, browser).await,
-            "press_key" => crate::tools::press_key::execute(input, browser).await,
-            "switch_tab" => crate::tools::switch_tab::execute(input, browser).await,
+            "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
+            "refresh" => crate::tools::refresh::execute(input, browser, crawl_state).await,
+            "scroll" => crate::tools::scroll::execute(input, browser, crawl_state).await,
+            "wait" => crate::tools::wait::execute(input, browser, crawl_state).await,
+            "select_option" => {
+                crate::tools::select_option::execute(input, browser, crawl_state).await
+            }
+            "execute_js" => crate::tools::execute_js::execute(input, browser, crawl_state).await,
+            "hover" => crate::tools::hover::execute(input, browser, crawl_state).await,
+            "press_key" => crate::tools::press_key::execute(input, browser, crawl_state).await,
+            "switch_tab" => crate::tools::switch_tab::execute(input, browser, crawl_state).await,
             "list_resources" => crate::tools::list_resources::execute(input, browser).await,
+            "list_page_logs" => {
+                crate::tools::page_logs::execute_list_page_logs(input, browser, crawl_state).await
+            }
+            "inspect_log" => crate::tools::page_logs::execute_inspect_log(input, crawl_state),
             "save_file" => crate::tools::save_file::execute(input, browser).await,
+            "set_device" => crate::tools::set_device::execute(input, browser, crawl_state).await,
+            "get_page_performance" => crate::tools::page_performance::execute(input, browser).await,
+            "inspect_cookies" => {
+                crate::tools::storage_inspect::inspect_cookies(input, browser).await
+            }
+            "inspect_storage" => {
+                crate::tools::storage_inspect::inspect_storage(input, browser).await
+            }
+            "measure_coverage" => crate::tools::coverage::execute(input, browser).await,
+            "audit_accessibility" => crate::tools::accessibility::execute(input, browser).await,
+            "intercept_network" => {
+                crate::tools::intercept_network::execute(input, browser, crawl_state).await
+            }
             "read_pdf" => crate::tools::read_pdf::execute(input, browser).await,
             "read_document" => crate::tools::read_document::execute(input, browser).await,
             "read_spreadsheet" => crate::tools::read_spreadsheet::execute(input, browser).await,
@@ -182,28 +226,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_twenty_seven() {
+    fn new_with_core_tools_registers_all_forty_eight() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
             "wait_for_subagents",
             "cancel_subagent",
             "subagent_status",
-            "wait_for_human",
         ];
-        assert_eq!(registry.len(), 27);
-        for &name in ASYNC_TOOLS.iter().chain(effect_tools.iter()) {
+        let script_tools = [
+            "run_script",
+            "save_script",
+            "list_scripts",
+            "read_script",
+            "script_status",
+            "wait_for_scripts",
+            "cancel_script",
+        ];
+        assert_eq!(registry.len(), 48);
+        for &name in ASYNC_TOOLS
+            .iter()
+            .chain(effect_tools.iter())
+            .chain(script_tools.iter())
+        {
             assert!(registry.contains(name), "missing core tool: {name}");
         }
     }
 
     #[test]
-    fn new_for_child_excludes_wait_for_human() {
+    fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 20);
-        assert!(!registry.contains("wait_for_human"));
+        assert_eq!(registry.len(), 48);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
+        assert!(registry.contains("list_scripts"));
     }
 
     #[test]

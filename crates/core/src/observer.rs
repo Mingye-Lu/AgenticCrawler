@@ -7,12 +7,6 @@ pub trait RuntimeObserver: Send {
         let _ = text;
     }
 
-    fn on_pause_started(&mut self, reason: &str) {
-        let _ = reason;
-    }
-
-    fn on_pause_ended(&mut self) {}
-
     fn on_tool_call_start(&mut self, id: &str, name: &str, input: &str) {
         let _ = (id, name, input);
     }

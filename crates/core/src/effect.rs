@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use crate::script_types::{ScriptCancelSpec, ScriptStatusSpec, ScriptTask, ScriptWaitSpec};
+
 /// Control-flow instruction returned by a tool handler.
 #[derive(Debug, Clone)]
 pub enum ToolEffect {
@@ -16,8 +18,14 @@ pub enum ToolEffect {
     /// Tool requests a read-only snapshot of running sub-agents. Never joins
     /// or cancels — safe to call between steps.
     Status(StatusSpec),
-    /// Tool requests pausing execution for human intervention.
-    Pause { reason: String },
+    /// Tool requests running a script with the given task specification.
+    RunScript(ScriptTask),
+    /// Tool requests waiting for scripts to finish.
+    ScriptWait(ScriptWaitSpec),
+    /// Tool requests cancelling a running script.
+    ScriptCancel(ScriptCancelSpec),
+    /// Tool requests a read-only snapshot of script status.
+    ScriptStatus(ScriptStatusSpec),
 }
 
 impl ToolEffect {
@@ -100,17 +108,6 @@ mod tests {
         match effect {
             ToolEffect::Reply(s) => assert_eq!(s, "null"),
             _ => panic!("expected Reply variant"),
-        }
-    }
-
-    #[test]
-    fn pause_variant_has_reason() {
-        let effect = ToolEffect::Pause {
-            reason: "test reason".to_string(),
-        };
-        match effect {
-            ToolEffect::Pause { reason } => assert_eq!(reason, "test reason"),
-            _ => panic!("expected Pause variant"),
         }
     }
 }

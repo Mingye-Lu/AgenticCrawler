@@ -7,6 +7,7 @@ use acrawl_core::{
     ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage, MessageRole,
     RuntimeError, TokenUsage, ToolEffect, ToolSpec,
 };
+use agent::script_manager::ScriptManager;
 use agent::{mvp_tool_specs, ToolRegistry};
 use agent::{CrawlResult, CrawlerAgent};
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
@@ -32,13 +33,22 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "wait_for_subagents",
     "cancel_subagent",
     "subagent_status",
-    "wait_for_human",
     "read_pdf",
     "read_document",
     "read_spreadsheet",
     "view_image",
     "transcribe_media",
     "list_archive",
+];
+
+const SCRIPT_TOOLS: &[&str] = &[
+    "run_script",
+    "script_status",
+    "wait_for_scripts",
+    "cancel_script",
+    "save_script",
+    "list_scripts",
+    "read_script",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,14 +253,110 @@ fn execute_browser_tool(
     registry: &ToolRegistry,
     browser: &mut BrowserContext,
     rt: &tokio::runtime::Runtime,
+    crawl_state: &mut agent::state::CrawlState,
 ) -> Result<String, String> {
     rt.block_on(async {
-        match registry.execute_async(name, input, browser).await {
+        match registry
+            .execute_async(name, input, browser, crawl_state)
+            .await
+        {
             Ok(ToolEffect::Reply(output)) => Ok(output),
             Ok(_) => Err(format!("tool `{name}` returned unsupported effect")),
             Err(e) => Err(e.to_string()),
         }
     })
+}
+
+fn execute_script_tool(
+    name: &str,
+    input: &Value,
+    script_manager: &mut ScriptManager,
+    browser: &mut Option<BrowserContext>,
+    rt: &tokio::runtime::Runtime,
+) -> Result<String, String> {
+    match name {
+        "save_script" => match agent::tools::save_script::execute(input) {
+            Ok(ToolEffect::Reply(output)) => Ok(output),
+            Ok(_) => Err("save_script returned unexpected effect".to_string()),
+            Err(e) => Err(e.to_string()),
+        },
+        "list_scripts" => match agent::tools::list_scripts::execute(input) {
+            Ok(ToolEffect::Reply(output)) => Ok(output),
+            Ok(_) => Err("list_scripts returned unexpected effect".to_string()),
+            Err(e) => Err(e.to_string()),
+        },
+        "read_script" => match agent::tools::read_script::execute(input) {
+            Ok(ToolEffect::Reply(output)) => Ok(output),
+            Ok(_) => Err("read_script returned unexpected effect".to_string()),
+            Err(e) => Err(e.to_string()),
+        },
+        "run_script" => {
+            let task = match agent::tools::run_script::execute(input) {
+                Ok(ToolEffect::RunScript(task)) => task,
+                Ok(_) => return Err("run_script returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+
+            // Ensure browser is initialized for script execution
+            if browser.is_none() {
+                match rt.block_on(PlaywrightBridge::new()) {
+                    Ok(bridge) => {
+                        let shared = std::sync::Arc::new(tokio::sync::Mutex::new(
+                            Box::new(bridge) as Box<dyn BrowserBackend + Send>
+                        ));
+                        *browser = Some(BrowserContext::new(shared));
+                    }
+                    Err(e) => {
+                        return Err(format!("failed to launch browser for script: {e}"));
+                    }
+                }
+            }
+
+            let browser_ctx = browser.as_ref().unwrap().clone();
+            match rt.block_on(async { script_manager.spawn_script(task, browser_ctx) }) {
+                Ok(script_id) => Ok(json!({"script_id": script_id}).to_string()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        "script_status" => {
+            let spec = match agent::tools::script_status::execute(input) {
+                Ok(ToolEffect::ScriptStatus(spec)) => spec,
+                Ok(_) => return Err("script_status returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+            match script_manager.get_status(&spec.script_id) {
+                Ok(state) => serde_json::to_string(&state)
+                    .map_err(|e| format!("failed to serialize script state: {e}")),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        "wait_for_scripts" => {
+            let spec = match agent::tools::wait_for_scripts::execute(input) {
+                Ok(ToolEffect::ScriptWait(spec)) => spec,
+                Ok(_) => return Err("wait_for_scripts returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+            rt.block_on(async {
+                match script_manager.wait_for_scripts(spec.script_ids).await {
+                    Ok(results) => serde_json::to_string(&results)
+                        .map_err(|e| format!("failed to serialize script results: {e}")),
+                    Err(e) => Err(e.to_string()),
+                }
+            })
+        }
+        "cancel_script" => {
+            let spec = match agent::tools::cancel_script::execute(input) {
+                Ok(ToolEffect::ScriptCancel(spec)) => spec,
+                Ok(_) => return Err("cancel_script returned unexpected effect".to_string()),
+                Err(e) => return Err(e.to_string()),
+            };
+            match script_manager.cancel_script(&spec.script_id) {
+                Ok(()) => Ok(format!("Script '{}' cancelled", spec.script_id)),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        _ => Err(format!("unknown script tool: {name}")),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,7 +450,7 @@ fn filtered_tool_specs(allowed_tools: &[String]) -> Vec<ToolSpec> {
 }
 
 fn build_run_goal_system_prompt(allowed_tools: &[String]) -> Vec<String> {
-    agent::build_system_prompt(&filtered_tool_specs(allowed_tools))
+    agent::build_system_prompt(&filtered_tool_specs(allowed_tools), None)
 }
 
 fn parse_run_goal_request(arguments: &Value) -> Result<RunGoalRequest, RunGoalOutcome> {
@@ -521,11 +627,17 @@ impl CrawlApiClient {
                                     if let Some(b64) =
                                         val.get("screenshot_base64").and_then(Value::as_str)
                                     {
+                                        let media_type =
+                                            match val.get("format").and_then(Value::as_str) {
+                                                Some("jpeg") => "image/jpeg",
+                                                Some("webp") => "image/webp",
+                                                _ => "image/png",
+                                            };
                                         let blocks = vec![
                                             api::ToolResultContentBlock::Image {
                                                 source: ImageSource {
                                                     source_type: "base64".to_string(),
-                                                    media_type: "image/png".to_string(),
+                                                    media_type: media_type.to_string(),
                                                     data: b64.to_string(),
                                                 },
                                             },
@@ -758,7 +870,7 @@ impl GoalExecutor for RealGoalExecutor {
             CrawlApiClient::new(provider, &request.model, request.allowed_tools.clone());
         let system_prompt = build_run_goal_system_prompt(&request.allowed_tools);
 
-        let registry = ToolRegistry::new_with_options(false);
+        let registry = ToolRegistry::new_with_core_tools();
         let mut agent = CrawlerAgent::new_lazy(registry);
         if !request.allowed_tools.is_empty() {
             agent = agent.with_allowed_tools(request.allowed_tools.iter().cloned().collect());
@@ -798,12 +910,15 @@ fn handle_run_goal(id: Option<Value>, arguments: Value) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_tools_call(
     id: Option<Value>,
     params: Option<Value>,
     registry: &ToolRegistry,
     browser: &mut Option<BrowserContext>,
+    script_manager: &mut ScriptManager,
     rt: &tokio::runtime::Runtime,
+    crawl_state: &mut agent::state::CrawlState,
 ) {
     let Some(params) = params else {
         send_error(id, -32602, "missing params".to_string());
@@ -841,6 +956,36 @@ fn handle_tools_call(
         return;
     }
 
+    if SCRIPT_TOOLS.contains(&name) {
+        match execute_script_tool(name, &arguments, script_manager, browser, rt) {
+            Ok(output) => {
+                let result = json!({
+                    "content": [{ "type": "text", "text": output }],
+                    "isError": false,
+                });
+                send_response(&JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(result),
+                    error: None,
+                });
+            }
+            Err(message) => {
+                let result = json!({
+                    "content": [{ "type": "text", "text": format!("Error: {message}") }],
+                    "isError": true,
+                });
+                send_response(&JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(result),
+                    error: None,
+                });
+            }
+        }
+        return;
+    }
+
     if browser.is_none() {
         match rt.block_on(PlaywrightBridge::new()) {
             Ok(bridge) => {
@@ -865,7 +1010,14 @@ fn handle_tools_call(
         }
     }
 
-    match execute_browser_tool(name, &arguments, registry, browser.as_mut().unwrap(), rt) {
+    match execute_browser_tool(
+        name,
+        &arguments,
+        registry,
+        browser.as_mut().unwrap(),
+        rt,
+        crawl_state,
+    ) {
         Ok(output) => {
             let result = json!({
                 "content": [{ "type": "text", "text": output }],
@@ -902,7 +1054,11 @@ pub fn run_mcp_server() {
         .expect("failed to create tokio runtime");
 
     let mut browser: Option<BrowserContext> = None;
-    let registry = ToolRegistry::new_with_options(false);
+    let mut crawl_state = agent::state::CrawlState::default();
+    let registry = ToolRegistry::new_with_core_tools();
+    let settings = runtime::load_settings();
+    let script_settings = settings.script.unwrap_or_default();
+    let mut script_manager = ScriptManager::new(script_settings);
 
     let stdin = io::stdin().lock();
     let mut reader = BufReader::new(stdin);
@@ -941,7 +1097,15 @@ pub fn run_mcp_server() {
             "notifications/initialized" => {}
             "tools/list" => tools_list_response(request.id),
             "tools/call" => {
-                handle_tools_call(request.id, request.params, &registry, &mut browser, &rt);
+                handle_tools_call(
+                    request.id,
+                    request.params,
+                    &registry,
+                    &mut browser,
+                    &mut script_manager,
+                    &rt,
+                    &mut crawl_state,
+                );
             }
             method => {
                 send_error(request.id, -32601, format!("method not found: {method}"));
@@ -955,6 +1119,31 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    fn with_transport_mode_lock<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = JOB_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        set_output_mode(TransportMode::Framed);
+        f()
+    }
+
+    fn assert_jsonrpc_error(
+        outcome: Result<RunGoalRequest, RunGoalOutcome>,
+        expected_code: i32,
+        expected_message: &str,
+    ) {
+        match outcome {
+            Err(RunGoalOutcome::JsonRpcError { code, message }) => {
+                assert_eq!(code, expected_code);
+                assert!(
+                    message.contains(expected_message),
+                    "expected `{message}` to contain `{expected_message}`"
+                );
+            }
+            other => panic!("expected JsonRpcError, got {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_standard_content_length_frame() {
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
@@ -966,22 +1155,40 @@ mod tests {
 
     #[test]
     fn read_protocol_message_accepts_json_line_mode() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-        let data = format!("{body}\n").into_bytes();
-        let mut cursor = Cursor::new(data);
-        let parsed =
-            read_protocol_message(&mut cursor).expect("line-delimited request should parse");
-        assert_eq!(parsed, body.as_bytes());
+        with_transport_mode_lock(|| {
+            let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+            let data = format!("{body}\n").into_bytes();
+            let mut cursor = Cursor::new(data);
+            let parsed =
+                read_protocol_message(&mut cursor).expect("line-delimited request should parse");
+            assert_eq!(parsed, body.as_bytes());
+            assert_eq!(output_mode(), TransportMode::LineDelimited);
+        });
     }
 
     #[test]
     fn read_protocol_message_skips_leading_whitespace_before_json() {
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-        let data = format!("\r\n  {body}\n").into_bytes();
-        let mut cursor = Cursor::new(data);
-        let parsed =
-            read_protocol_message(&mut cursor).expect("leading whitespace should be drained");
-        assert_eq!(parsed, body.as_bytes());
+        with_transport_mode_lock(|| {
+            let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+            let data = format!("\r\n  {body}\n").into_bytes();
+            let mut cursor = Cursor::new(data);
+            let parsed =
+                read_protocol_message(&mut cursor).expect("leading whitespace should be drained");
+            assert_eq!(parsed, body.as_bytes());
+            assert_eq!(output_mode(), TransportMode::LineDelimited);
+        });
+    }
+
+    #[test]
+    fn read_protocol_message_accepts_framed_mode() {
+        with_transport_mode_lock(|| {
+            let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+            let framed = encode_mcp_frame(body.as_bytes());
+            let mut cursor = Cursor::new(framed);
+            let parsed = read_protocol_message(&mut cursor).expect("framed request should parse");
+            assert_eq!(parsed, body.as_bytes());
+            assert_eq!(output_mode(), TransportMode::Framed);
+        });
     }
 
     #[test]
@@ -996,19 +1203,26 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_16_browser_tools_plus_run_goal() {
+    fn tools_list_has_38_nonexcluded_tools_plus_run_goal() {
         let browser_specs: Vec<_> = mvp_tool_specs()
             .into_iter()
             .filter(|spec| !EXCLUDED_TOOLS.contains(&spec.name))
             .collect();
-        assert_eq!(browser_specs.len(), 16);
+        assert_eq!(browser_specs.len(), 38);
         let names: BTreeSet<&str> = browser_specs.iter().map(|s| s.name).collect();
         assert!(names.contains("navigate"));
         assert!(names.contains("click"));
         assert!(names.contains("screenshot"));
+        assert!(names.contains("run_script"));
+        assert!(names.contains("script_status"));
+        assert!(names.contains("wait_for_scripts"));
+        assert!(names.contains("cancel_script"));
+        assert!(names.contains("save_script"));
+        assert!(names.contains("list_scripts"));
+        assert!(names.contains("read_script"));
+        assert!(names.contains("set_device"));
         assert!(!names.contains("fork"));
         assert!(!names.contains("wait_for_subagents"));
-        assert!(!names.contains("wait_for_human"));
     }
 
     #[test]
@@ -1029,31 +1243,155 @@ mod tests {
     }
 
     #[test]
-    fn validate_tool_names_rejects_unknown_tool() {
-        let names = vec!["nonexistent_tool".to_string()];
-        let err = validate_tool_names(&names).unwrap_err();
-        assert!(err.contains("unknown tool"));
+    fn validate_tool_names_accepts_empty_list() {
+        assert!(validate_tool_names(&[]).is_ok());
     }
 
     #[test]
-    fn parse_run_goal_request_normalizes_allowed_tools() {
+    fn validate_tool_names_rejects_unknown_tool() {
+        let names = vec!["nonexistent-tool".to_string()];
+        let err = validate_tool_names(&names).unwrap_err();
+        assert!(err.contains("unknown tool"));
+        assert!(err.contains("nonexistent-tool"));
+    }
+
+    #[test]
+    fn normalize_tool_name_replaces_dashes_and_lowercases() {
+        assert_eq!(normalize_tool_name("Read-Content"), "read_content");
+        assert_eq!(normalize_tool_name("SAVE_FILE"), "save_file");
+    }
+
+    #[test]
+    fn normalize_tool_names_deduplicates_names() {
+        let names = vec![
+            "read-content".to_string(),
+            "read_content".to_string(),
+            "Read-Content".to_string(),
+            "navigate".to_string(),
+        ];
+
+        assert_eq!(
+            normalize_tool_names(&names),
+            vec!["navigate", "read_content"]
+        );
+    }
+
+    #[test]
+    fn filtered_tool_specs_with_empty_allowed_list_returns_all_tools() {
+        let filtered = filtered_tool_specs(&[]);
+
+        assert_eq!(filtered.len(), mvp_tool_specs().len());
+        assert_eq!(
+            filtered.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            mvp_tool_specs()
+                .iter()
+                .map(|spec| spec.name)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn filtered_tool_specs_with_specific_allowed_list_returns_subset() {
+        let filtered = filtered_tool_specs(&["navigate".to_string(), "click".to_string()]);
+
+        assert_eq!(
+            filtered.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            vec!["navigate", "click"]
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_accepts_valid_input() {
         let request = parse_run_goal_request(&json!({
             "goal": "Collect product titles",
             "model": "anthropic/claude-sonnet-4-6",
             "allowed_tools": ["read-content", "navigate", "read_content"],
-            "max_steps": 7
+            "max_steps": 200
         }))
         .expect("request should parse");
 
         assert_eq!(request.goal, "Collect product titles");
+        assert_eq!(request.model, "anthropic/claude-sonnet-4-6");
         assert_eq!(request.allowed_tools, vec!["navigate", "read_content"]);
-        assert_eq!(request.max_steps, Some(7));
+        assert_eq!(request.max_steps, Some(200));
     }
 
     #[test]
-    fn parse_run_goal_request_rejects_blank_goal() {
-        let outcome = parse_run_goal_request(&json!({"goal": "  ", "model": "x/y"}));
-        assert!(outcome.is_err());
+    fn parse_run_goal_request_rejects_missing_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({})),
+            -32602,
+            "missing required parameter: goal",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_empty_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({"goal": "", "model": "x/y"})),
+            -32602,
+            "missing required parameter: goal",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_whitespace_only_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({"goal": "  ", "model": "x/y"})),
+            -32602,
+            "missing required parameter: goal",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_oversized_goal() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "x".repeat(100_001),
+                "model": "anthropic/claude-sonnet-4-6"
+            })),
+            -32602,
+            "goal exceeds maximum length",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_invalid_allowed_tools() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "Collect product titles",
+                "model": "anthropic/claude-sonnet-4-6",
+                "allowed_tools": ["totally-fake-tool"]
+            })),
+            -32602,
+            "unknown tool `totally-fake-tool`",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_max_steps_below_range() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "Collect product titles",
+                "model": "anthropic/claude-sonnet-4-6",
+                "max_steps": 0
+            })),
+            -32602,
+            "max_steps must be between 1 and 200, got 0",
+        );
+    }
+
+    #[test]
+    fn parse_run_goal_request_rejects_max_steps_above_range() {
+        assert_jsonrpc_error(
+            parse_run_goal_request(&json!({
+                "goal": "Collect product titles",
+                "model": "anthropic/claude-sonnet-4-6",
+                "max_steps": 201
+            })),
+            -32602,
+            "max_steps must be between 1 and 200, got 201",
+        );
     }
 
     #[derive(Debug, Clone)]
@@ -1075,6 +1413,7 @@ mod tests {
                 extracted_data: vec![json!({"title": "Example"})],
                 steps_executed: 3,
                 messages: Vec::new(),
+                model: Some("anthropic/claude-sonnet-4-6".to_string()),
             }),
         };
 
@@ -1088,6 +1427,7 @@ mod tests {
         };
         assert_eq!(result["isError"], false);
         assert_eq!(result["structuredContent"]["steps_executed"], 3);
+        assert_eq!(result["structuredContent"]["goal"], "Collect titles");
     }
 
     #[test]
@@ -1105,6 +1445,83 @@ mod tests {
             panic!("expected tool error result");
         };
         assert_eq!(result["isError"], true);
+        assert_eq!(result["content"][0]["text"], "Crawl failed: blocked");
+    }
+
+    #[test]
+    fn execute_run_goal_internal_error_returns_jsonrpc_error() {
+        let executor = FakeGoalExecutor {
+            result: Err(RunGoalExecutionError::Internal(
+                "provider exploded".to_string(),
+            )),
+        };
+
+        let outcome = execute_run_goal(
+            &executor,
+            &json!({"goal": "Collect titles", "model": "anthropic/claude-sonnet-4-6"}),
+        );
+
+        assert_eq!(
+            outcome,
+            RunGoalOutcome::JsonRpcError {
+                code: -32603,
+                message: "provider exploded".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn build_run_goal_success_response_returns_expected_json_structure() {
+        let request = RunGoalRequest {
+            goal: "Collect titles".to_string(),
+            model: "anthropic/claude-sonnet-4-6".to_string(),
+            allowed_tools: vec!["navigate".to_string(), "read_content".to_string()],
+            max_steps: Some(5),
+        };
+        let result = CrawlResult {
+            summary: "Finished crawl".to_string(),
+            extracted_data: vec![json!({"title": "Example"})],
+            steps_executed: 3,
+            messages: Vec::new(),
+            model: Some("anthropic/claude-sonnet-4-6".to_string()),
+        };
+
+        let response = build_run_goal_success_response(&request, &result);
+
+        assert_eq!(response["isError"], false);
+        assert_eq!(response["content"][0]["type"], "text");
+        assert!(response["content"][0]["text"]
+            .as_str()
+            .expect("text content")
+            .contains("Crawl completed in 3 steps."));
+        assert_eq!(response["structuredContent"]["summary"], "Finished crawl");
+        assert_eq!(
+            response["structuredContent"]["extracted_data"][0]["title"],
+            "Example"
+        );
+        assert_eq!(response["structuredContent"]["steps_executed"], 3);
+        assert_eq!(
+            response["structuredContent"]["model_used"],
+            "anthropic/claude-sonnet-4-6"
+        );
+        assert_eq!(
+            response["structuredContent"]["allowed_tools"],
+            json!(["navigate", "read_content"])
+        );
+        assert_eq!(response["structuredContent"]["goal"], "Collect titles");
+    }
+
+    #[test]
+    fn build_run_goal_failure_response_returns_expected_error_structure() {
+        let response = build_run_goal_failure_response("blocked");
+
+        assert_eq!(
+            response,
+            json!({
+                "content": [{"type": "text", "text": "Crawl failed: blocked"}],
+                "isError": true,
+            })
+        );
     }
 
     #[test]
@@ -1113,60 +1530,5 @@ mod tests {
             serde_json::from_str(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).unwrap();
         assert_eq!(req.jsonrpc, "2.0");
         assert_eq!(req.method, "tools/list");
-    }
-
-    #[test]
-    fn parse_run_goal_rejects_empty_goal() {
-        let args = serde_json::json!({"goal": ""});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_rejects_whitespace_only_goal() {
-        let args = serde_json::json!({"goal": "   "});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_rejects_oversized_goal() {
-        let huge = "x".repeat(100_001);
-        let args = serde_json::json!({"goal": huge});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_accepts_max_length_goal() {
-        let max_goal = "x".repeat(100_000);
-        let args = serde_json::json!({
-            "goal": max_goal,
-            "model": "anthropic/claude-sonnet-4-6"
-        });
-        let result = parse_run_goal_request(&args);
-        if let Err(RunGoalOutcome::JsonRpcError { message, .. }) = result {
-            assert!(
-                !message.contains("length"),
-                "should not reject on length: {message}"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_run_goal_missing_goal_field() {
-        let args = serde_json::json!({});
-        let result = parse_run_goal_request(&args);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_run_goal_non_string_allowed_tools_uses_default() {
-        let args = serde_json::json!({
-            "goal": "test",
-            "model": "anthropic/claude-sonnet-4-6",
-            "allowed_tools": 123
-        });
-        let _ = parse_run_goal_request(&args);
     }
 }

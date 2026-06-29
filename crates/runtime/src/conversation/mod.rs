@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
+use crate::budget::{new_cost_counter, usd_to_millicents, SharedCostCounter};
 use crate::compact::{
     compact_session, estimate_session_tokens, CompactionConfig, CompactionResult,
 };
@@ -8,8 +10,9 @@ use crate::config::RuntimeFeatureConfig;
 use crate::control::ControlState;
 use crate::observer::RuntimeObserver;
 use crate::session::{ContentBlock, ConversationMessage, Session};
-use crate::usage::{TokenUsage, UsageTracker};
-use tokio::time::{sleep, Duration};
+use crate::usage::{
+    estimate_cost_usd_with_pricing, pricing_for_model, ModelPricing, TokenUsage, UsageTracker,
+};
 
 pub use acrawl_core::error::{RuntimeError, ToolError};
 pub use acrawl_core::event::AssistantEvent;
@@ -43,6 +46,9 @@ pub struct ConversationRuntime<C, T> {
     usage_tracker: UsageTracker,
     auto_compaction_input_tokens_threshold: u32,
     control_state: Arc<ControlState>,
+    prompt_override: Arc<Mutex<Option<Vec<String>>>>,
+    last_assistant_text: Arc<Mutex<Option<String>>>,
+    cumulative_cost: SharedCostCounter,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -56,12 +62,16 @@ where
         api_client: C,
         tool_executor: T,
         system_prompt: Vec<String>,
+        prompt_override: Arc<Mutex<Option<Vec<String>>>>,
+        last_assistant_text: Arc<Mutex<Option<String>>>,
     ) -> Self {
         Self::new_with_features(
             session,
             api_client,
             tool_executor,
             system_prompt,
+            prompt_override,
+            last_assistant_text,
             &RuntimeFeatureConfig::default(),
         )
     }
@@ -72,9 +82,24 @@ where
         api_client: C,
         tool_executor: T,
         system_prompt: Vec<String>,
+        prompt_override: Arc<Mutex<Option<Vec<String>>>>,
+        last_assistant_text: Arc<Mutex<Option<String>>>,
         _feature_config: &RuntimeFeatureConfig,
     ) -> Self {
         let usage_tracker = UsageTracker::from_session(&session);
+        let cumulative_cost = new_cost_counter();
+        let pricing = session
+            .model
+            .as_deref()
+            .and_then(pricing_for_model)
+            .unwrap_or_else(ModelPricing::default_sonnet_tier);
+        cumulative_cost.store(
+            usd_to_millicents(
+                estimate_cost_usd_with_pricing(usage_tracker.cumulative_usage(), pricing)
+                    .total_cost_usd(),
+            ),
+            Ordering::Relaxed,
+        );
         Self {
             session,
             api_client,
@@ -85,6 +110,9 @@ where
             usage_tracker,
             auto_compaction_input_tokens_threshold: auto_compaction_threshold_from_env(),
             control_state: Arc::new(ControlState::default()),
+            prompt_override,
+            last_assistant_text,
+            cumulative_cost,
         }
     }
 
@@ -134,38 +162,11 @@ where
         self.control_state.request_cancel();
     }
 
-    async fn check_pause(&mut self) -> Result<(), RuntimeError> {
-        if !self.control_state.is_paused() {
-            return Ok(());
-        }
-
-        if let Some(ref mut observer) = self.observer {
-            observer.on_pause_started("Paused by user");
-        }
-
-        loop {
-            tokio::select! {
-                () = self.control_state.wait_for_resume() => {
-                    break;
-                }
-                () = sleep(Duration::from_millis(100)) => {
-                    if !self.control_state.is_paused() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if let Some(ref mut observer) = self.observer {
-            observer.on_pause_ended();
-        }
-
+    fn check_cancel(&self) -> Result<(), RuntimeError> {
         if self.control_state.is_cancelled() {
             self.control_state.reset();
             return Err(RuntimeError::new("interrupted by user"));
         }
-
-        self.control_state.reset();
         Ok(())
     }
 
@@ -181,7 +182,7 @@ where
             let mut iterations = 0;
 
             loop {
-                iterations = self.prepare_iteration(iterations).await?;
+                iterations = self.prepare_iteration(iterations)?;
 
                 let assistant_message = self.stream_assistant_message()?;
                 let pending_tool_uses = collect_pending_tool_uses(&assistant_message);
@@ -195,7 +196,7 @@ where
                 self.execute_pending_tool_uses(&pending_tool_uses, &mut tool_results)
                     .await?;
 
-                self.check_pause().await?;
+                self.check_cancel()?;
             }
 
             let auto_compaction = self.maybe_auto_compact();
@@ -247,15 +248,29 @@ where
         &mut self.tool_executor
     }
 
+    #[must_use]
+    pub fn cumulative_cost_counter(&self) -> SharedCostCounter {
+        Arc::clone(&self.cumulative_cost)
+    }
+
     fn push_user_message(&mut self, user_input: String) {
         self.session
             .messages
             .push(ConversationMessage::user_text(user_input));
     }
 
-    async fn prepare_iteration(&mut self, iterations: usize) -> Result<usize, RuntimeError> {
+    fn prepare_iteration(&mut self, iterations: usize) -> Result<usize, RuntimeError> {
         self.fail_if_cancelled()?;
-        self.check_pause().await?;
+        self.check_cancel()?;
+
+        if let Some(new_prompt) = self
+            .prompt_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            self.system_prompt = new_prompt;
+        }
 
         let next_iterations = iterations + 1;
         if next_iterations > self.max_iterations {
@@ -280,8 +295,24 @@ where
         let events = self.api_client.stream(self.build_api_request())?;
         notify_observer_about_events(&mut self.observer, &events);
         let (assistant_message, usage) = build_assistant_message(events)?;
+        let assistant_text = assistant_text_from_message(&assistant_message);
+        *self
+            .last_assistant_text
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(assistant_text);
         if let Some(usage) = usage {
             self.usage_tracker.record(usage);
+            let pricing = self
+                .session
+                .model
+                .as_deref()
+                .and_then(pricing_for_model)
+                .unwrap_or_else(ModelPricing::default_sonnet_tier);
+            let cumulative_cost_usd =
+                estimate_cost_usd_with_pricing(self.usage_tracker.cumulative_usage(), pricing)
+                    .total_cost_usd();
+            self.cumulative_cost
+                .store(usd_to_millicents(cumulative_cost_usd), Ordering::Relaxed);
         }
 
         Ok(assistant_message)
@@ -658,6 +689,19 @@ fn build_assistant_message(
         ConversationMessage::assistant_with_usage(blocks, usage),
         usage,
     ))
+}
+
+fn assistant_text_from_message(message: &ConversationMessage) -> String {
+    message
+        .blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            ContentBlock::ToolUse { .. }
+            | ContentBlock::ToolResult { .. }
+            | ContentBlock::Reasoning { .. } => None,
+        })
+        .collect()
 }
 
 fn notify_observer_about_events(

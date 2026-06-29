@@ -202,6 +202,7 @@ impl CrawlerAgent {
         child_agent.shared_bridge = Some(shared_bridge);
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
+        child_agent.cumulative_cost_slot = self.cumulative_cost_slot.clone();
 
         let child_objective = task.objective.clone();
         let join_handle = tokio::spawn(async move {
@@ -305,6 +306,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: crawl_result.model,
                             goal: sub_goal,
                             messages: crawl_result.messages,
                         });
@@ -340,6 +342,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: None,
                             goal: sub_goal,
                             messages: Vec::new(),
                         });
@@ -368,6 +371,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: None,
                             goal: sub_goal,
                             messages: Vec::new(),
                         });
@@ -449,6 +453,7 @@ impl CrawlerAgent {
                         .captured_child_sessions
                         .push(runtime::ChildSession {
                             id: child_id.clone(),
+                            model: None,
                             goal: sub_goal.clone(),
                             messages: Vec::new(),
                         });
@@ -748,7 +753,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_forks_on_same_url_second_is_rejected() {
-        let _env_guard = env_lock().lock().await;
+        let _env_guard = crate::test_async_env_lock().lock().await;
         std::env::set_var("HEADLESS", "true");
         let manager = super::super::default_agent_manager();
         manager.lock().await.register_root("root");
@@ -784,12 +789,6 @@ mod tests {
         for (_, (_, handle, _)) in agent.child_tasks.drain() {
             handle.abort();
         }
-    }
-
-    fn env_lock() -> &'static tokio::sync::Mutex<()> {
-        use std::sync::OnceLock;
-        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
     #[tokio::test]
@@ -1174,6 +1173,7 @@ mod tests {
             extracted_data: vec![serde_json::json!({"key": "value"})],
             steps_executed: 1,
             messages: child_messages.clone(),
+            model: Some("anthropic/claude-sonnet-4-6".to_string()),
         };
         let handle: tokio::task::JoinHandle<Option<CrawlResult>> =
             tokio::spawn(async move { Some(child_result) });

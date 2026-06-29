@@ -117,6 +117,7 @@ jobs:
           sparse-checkout: |
             CHANGELOG.md
             extension
+            mcpb
           sparse-checkout-cone-mode: false
 
       - name: Download all artifacts
@@ -145,9 +146,51 @@ jobs:
           cp artifacts/acrawl-windows-x64.exe/acrawl-windows-x64.exe release/
           cp acrawl-extension.zip release/
 
+      - name: Build MCPB bundles
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Update version in manifest.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" mcpb/manifest.json
+
+          # Linux x64
+          mkdir -p mcpb-linux-x64/server
+          cp mcpb/manifest.json mcpb-linux-x64/
+          cp artifacts/acrawl-linux-x64/acrawl-linux-x64 mcpb-linux-x64/server/acrawl
+          chmod +x mcpb-linux-x64/server/acrawl
+          (cd mcpb-linux-x64 && zip -r ../release/acrawl-mcp-linux-x64.mcpb manifest.json server/)
+
+          # Linux arm64
+          mkdir -p mcpb-linux-arm64/server
+          cp mcpb/manifest.json mcpb-linux-arm64/
+          cp artifacts/acrawl-linux-arm64/acrawl-linux-arm64 mcpb-linux-arm64/server/acrawl
+          chmod +x mcpb-linux-arm64/server/acrawl
+          (cd mcpb-linux-arm64 && zip -r ../release/acrawl-mcp-linux-arm64.mcpb manifest.json server/)
+
+          # macOS x64
+          mkdir -p mcpb-macos-x64/server
+          cp mcpb/manifest.json mcpb-macos-x64/
+          cp artifacts/acrawl-macos-x64/acrawl-macos-x64 mcpb-macos-x64/server/acrawl
+          chmod +x mcpb-macos-x64/server/acrawl
+          (cd mcpb-macos-x64 && zip -r ../release/acrawl-mcp-macos-x64.mcpb manifest.json server/)
+
+          # macOS arm64
+          mkdir -p mcpb-macos-arm64/server
+          cp mcpb/manifest.json mcpb-macos-arm64/
+          cp artifacts/acrawl-macos-arm64/acrawl-macos-arm64 mcpb-macos-arm64/server/acrawl
+          chmod +x mcpb-macos-arm64/server/acrawl
+          (cd mcpb-macos-arm64 && zip -r ../release/acrawl-mcp-macos-arm64.mcpb manifest.json server/)
+
+          # Windows x64
+          mkdir -p mcpb-windows-x64/server
+          # Windows manifest needs .exe in mcp_config command
+          sed 's|"command": "${__dirname}/server/acrawl"|"command": "${__dirname}/server/acrawl.exe"|' mcpb/manifest.json > mcpb-windows-x64/manifest.json
+          cp artifacts/acrawl-windows-x64.exe/acrawl-windows-x64.exe mcpb-windows-x64/server/acrawl.exe
+          (cd mcpb-windows-x64 && zip -r ../release/acrawl-mcp-windows-x64.mcpb manifest.json server/)
+
       - name: Generate checksums
         working-directory: release
-        run: sha256sum acrawl-linux-x64 acrawl-linux-arm64 acrawl-macos-x64 acrawl-macos-arm64 acrawl-windows-x64.exe acrawl-extension.zip > checksums.sha256
+        run: sha256sum acrawl-linux-x64 acrawl-linux-arm64 acrawl-macos-x64 acrawl-macos-arm64 acrawl-windows-x64.exe acrawl-extension.zip acrawl-mcp-linux-x64.mcpb acrawl-mcp-linux-arm64.mcpb acrawl-mcp-macos-x64.mcpb acrawl-mcp-macos-arm64.mcpb acrawl-mcp-windows-x64.mcpb > checksums.sha256
 
       - name: Extract release notes from CHANGELOG
         id: notes
@@ -183,4 +226,98 @@ jobs:
             release/acrawl-macos-arm64
             release/acrawl-windows-x64.exe
             release/acrawl-extension.zip
+            release/acrawl-mcp-linux-x64.mcpb
+            release/acrawl-mcp-linux-arm64.mcpb
+            release/acrawl-mcp-macos-x64.mcpb
+            release/acrawl-mcp-macos-arm64.mcpb
+            release/acrawl-mcp-windows-x64.mcpb
             release/checksums.sha256
+
+  publish-mcp:
+    name: Publish to MCP Registry
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: mcpb
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Install mcp-publisher
+        run: |
+          git clone --depth 1 https://github.com/modelcontextprotocol/registry /tmp/mcp-registry
+          cd /tmp/mcp-registry
+          make publisher
+          sudo cp bin/mcp-publisher /usr/local/bin/
+
+      - name: Download MCPB artifact for checksum
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Download the linux-x64 mcpb from the just-created release to compute its SHA256
+          curl -sL "https://github.com/Mingye-Lu/AgenticCrawler/releases/download/${GITHUB_REF_NAME}/acrawl-mcp-linux-x64.mcpb" -o acrawl-mcp.mcpb
+          SHA256=$(sha256sum acrawl-mcp.mcpb | cut -d' ' -f1)
+          echo "MCPB_SHA256=${SHA256}" >> "$GITHUB_ENV"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Generate server.json
+        run: |
+          cat > server.json <<EOF
+          {
+            "\$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+            "name": "io.github.Mingye-Lu/acrawl",
+            "title": "acrawl",
+            "description": "Autonomous web crawler. 17 browser tools + goal-driven run_goal agent. Single binary, stealth.",
+            "repository": {
+              "url": "https://github.com/Mingye-Lu/AgenticCrawler",
+              "source": "github"
+            },
+            "version": "${VERSION}",
+            "packages": [
+              {
+                "registryType": "mcpb",
+                "identifier": "https://github.com/Mingye-Lu/AgenticCrawler/releases/download/v${VERSION}/acrawl-mcp-linux-x64.mcpb",
+                "fileSha256": "${MCPB_SHA256}",
+                "transport": {
+                  "type": "stdio"
+                }
+              }
+            ]
+          }
+          EOF
+
+      - name: Authenticate with MCP Registry (OIDC)
+        run: mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: mcp-publisher publish server.json
+
+  publish-smithery:
+    name: Publish to Smithery
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download MCPB artifact
+        run: |
+          curl -sL "https://github.com/Mingye-Lu/AgenticCrawler/releases/download/${GITHUB_REF_NAME}/acrawl-mcp-linux-x64.mcpb" -o acrawl-mcp.mcpb
+
+      - name: Publish to Smithery
+        continue-on-error: true
+        env:
+          SMITHERY_API_KEY: ${{ secrets.SMITHERY_API_KEY }}
+        run: |
+          curl -sf -X PUT \
+            "https://api.smithery.ai/servers/mingyel2%2Facrawl/releases" \
+            -H "Authorization: Bearer ${SMITHERY_API_KEY}" \
+            -F 'payload={"type":"stdio"}' \
+            -F 'bundle=@./acrawl-mcp.mcpb'

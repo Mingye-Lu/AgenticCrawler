@@ -22,7 +22,7 @@ use crate::tui::repl_render::{
 use crate::tui::session_modal::SessionModalEntry;
 use crate::tui::ReplTuiEvent;
 use acrawl_core::message::{ContentBlock, ConversationMessage, MessageRole};
-use agent::{ChildControlRegistry, ChildEvent, ChildEventKind};
+use agent::{ChildControlRegistry, ChildEvent};
 use browser::{BrowserState, SharedBridge};
 use commands::{slash_command_specs, SlashCommand};
 use crossterm::cursor::SetCursorStyle;
@@ -174,9 +174,6 @@ pub(super) struct ReplTuiState {
     pub(super) slash_overlay: Option<SlashOverlay>,
     pub(super) last_slash_overlay_rect: Option<Rect>,
     pub(super) cached_header: HeaderSnapshot,
-    pub(super) paused: bool,
-    pub(super) pause_reason: String,
-    last_wait_for_human_reason: Option<String>,
     spinner_tick: u8,
     spinner_deadline: Instant,
     pub(super) typewriter: TypewriterState,
@@ -241,9 +238,6 @@ impl ReplTuiState {
             slash_overlay: None,
             last_slash_overlay_rect: None,
             cached_header: HeaderSnapshot::default(),
-            paused: false,
-            pause_reason: String::new(),
-            last_wait_for_human_reason: None,
             spinner_tick: 0,
             spinner_deadline: Instant::now() + Duration::from_millis(120),
             typewriter: TypewriterState {

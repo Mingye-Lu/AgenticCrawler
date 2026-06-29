@@ -5,9 +5,143 @@ use std::path::PathBuf;
 
 use acrawl_core::config_home_dir as core_config_home_dir;
 
+/// Script resource limits and configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptSettings {
+    /// Maximum number of script execution steps (default: 200)
+    #[serde(default)]
+    pub max_steps: Option<usize>,
+
+    /// Maximum timeout in seconds for script execution (default: 300)
+    #[serde(default)]
+    pub max_timeout_secs: Option<u64>,
+
+    /// Maximum output size in bytes (default: `10_485_760` = 10MB)
+    #[serde(default)]
+    pub max_output_bytes: Option<usize>,
+
+    /// Maximum number of parallel branches (default: 10)
+    #[serde(default)]
+    pub max_parallel_branches: Option<usize>,
+
+    /// Maximum number of concurrent scripts (default: 5)
+    #[serde(default)]
+    pub max_concurrent_scripts: Option<usize>,
+
+    /// Timeout in seconds per individual step (default: 30)
+    #[serde(default)]
+    pub per_step_timeout_secs: Option<u64>,
+
+    /// Maximum script size in bytes (default: `1_048_576` = 1MB)
+    #[serde(default)]
+    pub max_script_size_bytes: Option<usize>,
+
+    /// Maximum nesting depth for script calls (default: 10)
+    #[serde(default)]
+    pub max_nesting_depth: Option<usize>,
+
+    /// Directory for storing scripts (default: ~/.acrawl/scripts/)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts_dir: Option<PathBuf>,
+}
+
+impl Default for ScriptSettings {
+    fn default() -> Self {
+        Self {
+            max_steps: Some(200),
+            max_timeout_secs: Some(300),
+            max_output_bytes: Some(10_485_760),
+            max_parallel_branches: Some(10),
+            max_concurrent_scripts: Some(5),
+            per_step_timeout_secs: Some(30),
+            max_script_size_bytes: Some(1_048_576),
+            max_nesting_depth: Some(10),
+            scripts_dir: Some(core_config_home_dir().join("scripts")),
+        }
+    }
+}
+
+/// Optimization settings for advanced crawl behavior.
+/// All fields are optional; unset fields use safe defaults (false/0).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct OptimizationSettings {
+    /// Enable HTML diff mode for page change detection (default: false)
+    #[serde(default)]
+    pub html_diff_mode: Option<bool>,
+
+    /// Enable loop detection (default: false)
+    #[serde(default)]
+    pub loop_detection: Option<bool>,
+
+    /// Loop detection window size in steps (default: 20)
+    #[serde(default)]
+    pub loop_detection_window: Option<usize>,
+
+    /// Loop nudge threshold (default: 5)
+    #[serde(default)]
+    pub loop_nudge_threshold: Option<usize>,
+
+    /// Enable page fingerprinting (default: false)
+    #[serde(default)]
+    pub page_fingerprinting: Option<bool>,
+
+    /// Planning interval in steps; 0 = disabled (default: 0)
+    #[serde(default)]
+    pub planning_interval: Option<usize>,
+
+    /// Enable failure classification (default: false)
+    #[serde(default)]
+    pub failure_classification: Option<bool>,
+
+    /// Enable self-healing (default: false)
+    #[serde(default)]
+    pub self_healing: Option<bool>,
+
+    /// Max retries for self-healing (default: 2)
+    #[serde(default)]
+    pub self_healing_max_retries: Option<usize>,
+
+    /// Enable action caching (default: false)
+    #[serde(default)]
+    pub action_caching: Option<bool>,
+
+    /// Action cache TTL in seconds (default: 30)
+    #[serde(default)]
+    pub action_cache_ttl_secs: Option<u64>,
+
+    /// Enable confidence tracking (default: false)
+    #[serde(default)]
+    pub confidence_tracking: Option<bool>,
+
+    /// Enable compound enrichment (default: false)
+    #[serde(default)]
+    pub compound_enrichment: Option<bool>,
+
+    /// Enable content-aware profiles (default: false)
+    #[serde(default)]
+    pub content_aware_profiles: Option<bool>,
+
+    /// Budget: max session cost in USD (default: None = unlimited)
+    #[serde(default)]
+    pub budget_max_session_cost_usd: Option<f64>,
+
+    /// Budget enforcement mode: "warn" | "block" | "`route_down`" (default: None)
+    #[serde(default)]
+    pub budget_enforcement: Option<String>,
+
+    /// Budget warning threshold as percentage (default: 80)
+    #[serde(default)]
+    pub budget_warn_threshold_pct: Option<u32>,
+
+    /// Enable per-agent cost tracking (default: false)
+    #[serde(default)]
+    pub per_agent_cost_tracking: Option<bool>,
+}
+
 /// Settings loaded from settings.json configuration file.
 /// All fields are optional with serde defaults to support partial JSON files.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Settings {
     /// Run browser in headless mode (default: true)
     #[serde(default)]
@@ -88,6 +222,14 @@ pub struct Settings {
     /// Compaction: enable LLM-powered summarization (default: false)
     #[serde(default)]
     pub compaction_llm_summarization: Option<bool>,
+
+    /// Script resource limits and configuration
+    #[serde(default)]
+    pub script: Option<ScriptSettings>,
+
+    /// Optimization settings for advanced crawl behavior
+    #[serde(default)]
+    pub optimization: Option<OptimizationSettings>,
 }
 
 impl Default for Settings {
@@ -113,6 +255,8 @@ impl Default for Settings {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
+            optimization: None,
         }
     }
 }
@@ -303,6 +447,166 @@ pub fn settings_get_compaction_llm_summarization(s: &Settings) -> bool {
     s.compaction_llm_summarization.unwrap_or(false)
 }
 
+/// Get `html_diff_mode` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_html_diff_mode(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.html_diff_mode)
+        .unwrap_or(false)
+}
+
+/// Get `loop_detection` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_loop_detection(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.loop_detection)
+        .unwrap_or(false)
+}
+
+/// Get `loop_detection_window` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_loop_detection_window(s: &Settings) -> usize {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.loop_detection_window)
+        .unwrap_or(20)
+}
+
+/// Get `loop_nudge_threshold` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_loop_nudge_threshold(s: &Settings) -> usize {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.loop_nudge_threshold)
+        .unwrap_or(5)
+}
+
+/// Get `page_fingerprinting` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_page_fingerprinting(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.page_fingerprinting)
+        .unwrap_or(false)
+}
+
+/// Get `planning_interval` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_planning_interval(s: &Settings) -> usize {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.planning_interval)
+        .unwrap_or(0)
+}
+
+/// Get `failure_classification` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_failure_classification(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.failure_classification)
+        .unwrap_or(false)
+}
+
+/// Get `self_healing` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_self_healing(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.self_healing)
+        .unwrap_or(false)
+}
+
+/// Get `self_healing_max_retries` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_self_healing_max_retries(s: &Settings) -> usize {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.self_healing_max_retries)
+        .unwrap_or(2)
+}
+
+/// Get `action_caching` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_action_caching(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.action_caching)
+        .unwrap_or(false)
+}
+
+/// Get `action_cache_ttl_secs` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_action_cache_ttl_secs(s: &Settings) -> u64 {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.action_cache_ttl_secs)
+        .unwrap_or(30)
+}
+
+/// Get `confidence_tracking` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_confidence_tracking(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.confidence_tracking)
+        .unwrap_or(false)
+}
+
+/// Get `compound_enrichment` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_compound_enrichment(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.compound_enrichment)
+        .unwrap_or(false)
+}
+
+/// Get `content_aware_profiles` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_content_aware_profiles(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.content_aware_profiles)
+        .unwrap_or(false)
+}
+
+/// Get `budget_max_session_cost_usd` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_budget_max_session_cost_usd(s: &Settings) -> Option<f64> {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.budget_max_session_cost_usd)
+}
+
+/// Get `budget_enforcement` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_budget_enforcement(s: &Settings) -> Option<String> {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.budget_enforcement.clone())
+}
+
+/// Get `budget_warn_threshold_pct` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_budget_warn_threshold_pct(s: &Settings) -> u32 {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.budget_warn_threshold_pct)
+        .unwrap_or(80)
+}
+
+/// Get `per_agent_cost_tracking` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_per_agent_cost_tracking(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.per_agent_cost_tracking)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +693,8 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
+            optimization: None,
         };
 
         save_settings(&original).expect("Failed to save settings");
@@ -594,6 +900,8 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
+            optimization: None,
         })
         .expect("save settings");
 
@@ -656,6 +964,8 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: Some(ScriptSettings::default()),
+            optimization: None,
         };
 
         save_settings(&original).expect("Failed to save settings");
@@ -718,6 +1028,8 @@ mod tests {
             compaction_preserve_recent_messages_floor: None,
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
+            script: None,
+            optimization: None,
         };
 
         assert_eq!(settings_get_max_concurrent_per_parent(&settings), 5);
@@ -797,6 +1109,110 @@ mod tests {
         let loaded = load_settings();
         assert_eq!(loaded.compaction_prune_protect_tokens, Some(30_000));
         assert_eq!(loaded.compaction_llm_summarization, Some(true));
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn test_optimization_settings_backward_compat_no_optimization_field() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        // Write JSON WITHOUT "optimization" field (old settings.json)
+        let settings_path = temp_dir.join("settings.json");
+        fs::write(&settings_path, r#"{"headless": true, "max_steps": 50}"#)
+            .expect("Failed to write test settings");
+
+        let settings = load_settings();
+
+        // All bool getters should return false
+        assert!(!settings_get_html_diff_mode(&settings));
+        assert!(!settings_get_loop_detection(&settings));
+        assert!(!settings_get_page_fingerprinting(&settings));
+        assert!(!settings_get_failure_classification(&settings));
+        assert!(!settings_get_self_healing(&settings));
+        assert!(!settings_get_action_caching(&settings));
+        assert!(!settings_get_confidence_tracking(&settings));
+        assert!(!settings_get_compound_enrichment(&settings));
+        assert!(!settings_get_content_aware_profiles(&settings));
+        assert!(!settings_get_per_agent_cost_tracking(&settings));
+
+        // All numeric getters should return their defaults
+        assert_eq!(settings_get_loop_detection_window(&settings), 20);
+        assert_eq!(settings_get_loop_nudge_threshold(&settings), 5);
+        assert_eq!(settings_get_planning_interval(&settings), 0);
+        assert_eq!(settings_get_self_healing_max_retries(&settings), 2);
+        assert_eq!(settings_get_action_cache_ttl_secs(&settings), 30);
+        assert_eq!(settings_get_budget_warn_threshold_pct(&settings), 80);
+
+        // Option getters should return None
+        assert_eq!(settings_get_budget_max_session_cost_usd(&settings), None);
+        assert_eq!(settings_get_budget_enforcement(&settings), None);
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn test_optimization_settings_parse_with_values() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        // Write JSON WITH "optimization" field containing some values
+        let settings_path = temp_dir.join("settings.json");
+        fs::write(
+            &settings_path,
+            r#"{
+                "headless": true,
+                "max_steps": 50,
+                "optimization": {
+                    "html_diff_mode": true,
+                    "loop_detection": true,
+                    "loop_detection_window": 25,
+                    "page_fingerprinting": true,
+                    "self_healing": true,
+                    "self_healing_max_retries": 5,
+                    "action_caching": true,
+                    "action_cache_ttl_secs": 60,
+                    "budget_max_session_cost_usd": 10.5,
+                    "budget_enforcement": "block",
+                    "budget_warn_threshold_pct": 75
+                }
+            }"#,
+        )
+        .expect("Failed to write test settings");
+
+        let settings = load_settings();
+
+        // Set values should be returned
+        assert!(settings_get_html_diff_mode(&settings));
+        assert!(settings_get_loop_detection(&settings));
+        assert_eq!(settings_get_loop_detection_window(&settings), 25);
+        assert!(settings_get_page_fingerprinting(&settings));
+        assert!(settings_get_self_healing(&settings));
+        assert_eq!(settings_get_self_healing_max_retries(&settings), 5);
+        assert!(settings_get_action_caching(&settings));
+        assert_eq!(settings_get_action_cache_ttl_secs(&settings), 60);
+        assert_eq!(
+            settings_get_budget_max_session_cost_usd(&settings),
+            Some(10.5)
+        );
+        assert_eq!(
+            settings_get_budget_enforcement(&settings),
+            Some("block".to_string())
+        );
+        assert_eq!(settings_get_budget_warn_threshold_pct(&settings), 75);
+
+        // Unset values should use defaults
+        assert_eq!(settings_get_loop_nudge_threshold(&settings), 5);
+        assert!(!settings_get_failure_classification(&settings));
+        assert!(!settings_get_confidence_tracking(&settings));
+        assert!(!settings_get_compound_enrichment(&settings));
+        assert!(!settings_get_content_aware_profiles(&settings));
+        assert!(!settings_get_per_agent_cost_tracking(&settings));
 
         cleanup_temp_dir(&temp_dir);
     }
