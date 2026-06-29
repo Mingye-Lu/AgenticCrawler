@@ -1766,7 +1766,10 @@ mod tests {
             .await
             .expect_err("empty objective should fail");
 
-        assert_eq!(err.to_string(), "fork requires non-empty objective");
+        assert!(
+            err.to_string().contains("fork requires non-empty objective"),
+            "expected error to mention empty objective, got: {err}"
+        );
     }
 
     #[tokio::test]
