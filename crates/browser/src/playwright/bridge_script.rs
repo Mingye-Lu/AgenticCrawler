@@ -65,6 +65,56 @@ async function resolveFillSelector(pg, raw) {
   return raw;
 }
 
+async function resolveEditorSurface(pg, sel) {
+  try {
+    const redirected = await pg.evaluate((s) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) { return null; }
+      if (!el) return null;
+      const tag = el.tagName.toLowerCase();
+      if (tag !== 'textarea' && tag !== 'input') return null;
+      const rect = el.getBoundingClientRect();
+      if (rect.width >= 4 && rect.height >= 4) return null; // visible; no redirect needed
+      function selectorOf(node) {
+        if (node.id) return '#' + CSS.escape(node.id);
+        const path = [];
+        let cur = node;
+        while (cur && cur.parentElement) {
+          if (cur.id) { path.unshift('#' + CSS.escape(cur.id)); break; }
+          const parent = cur.parentElement;
+          const t = cur.tagName.toLowerCase();
+          const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+          path.unshift(same.length > 1 ? `${t}:nth-of-type(${same.indexOf(cur) + 1})` : t);
+          cur = parent;
+        }
+        return path.join(' > ');
+      }
+      // Phase 1: walk ancestors for any contenteditable
+      let cur = el.parentElement;
+      while (cur && cur !== document.body) {
+        if (cur.getAttribute('contenteditable') === 'true') return selectorOf(cur);
+        cur = cur.parentElement;
+      }
+      // Phase 2: sibling/cousin search within the nearest container
+      const searchRoot = el.closest('form, [class*="field"], [class*="editor"]') || el.parentElement;
+      if (!searchRoot) return null;
+      const editorSels = [
+        '.cm-editor .cm-content[contenteditable="true"]',
+        '.ProseMirror[contenteditable="true"]',
+        '.ql-editor[contenteditable="true"]',
+        '[contenteditable="true"]',
+      ];
+      for (const esel of editorSels) {
+        const surface = searchRoot.querySelector(esel);
+        if (surface) return selectorOf(surface);
+      }
+      return null;
+    }, sel);
+    if (redirected) return redirected;
+  } catch (_) {}
+  return sel;
+}
+
 const observationBuffers = new Map();
 const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
 let currentSeq = 0;
@@ -684,7 +734,8 @@ async function bootstrap() {
 
     if (command.action === 'fill') {
       try {
-        const sel = await resolveFillSelector(page, command.selector);
+        let sel = await resolveFillSelector(page, command.selector);
+        sel = await resolveEditorSurface(page, sel);
         await page.fill(sel, command.value, { timeout: 5000 });
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
       } catch (mainError) {
@@ -1749,3 +1800,24 @@ bootstrap().catch((error) => {
   process.exit(1);
 });
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::PLAYWRIGHT_BRIDGE_NODE_SCRIPT;
+
+    #[test]
+    fn bridge_has_editor_surface_redirect() {
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("resolveEditorSurface"),
+            "Missing resolveEditorSurface function"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(".cm-editor .cm-content"),
+            "Missing CM6 surface selector in redirect"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(".ProseMirror"),
+            "Missing ProseMirror surface selector in redirect"
+        );
+    }
+}
