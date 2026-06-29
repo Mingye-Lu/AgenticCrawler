@@ -1,0 +1,23 @@
+<!-- Fixture (h): Long accessible names — tests 200-char truncation with ellipsis -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Long Name Test</title>
+</head>
+<body>
+
+  <main>
+    <h1>Long Name Test</h1>
+    <p>Three buttons with aria-labels of 250, 200, and 199 characters respectively.</p>
+
+    <button type="button" aria-label="This accessible name is exactly two hundred and fifty characters long which means it must be truncated by the serializer with an ellipsis appended at the two-hundred character mark abcdefghijklmnopqrstuvwxyz12abcdefghijklmnopqrstuvwxyzabcdefghijklmno">Button with 250-char name</button>
+
+    <button type="button" aria-label="This accessible name is exactly two hundred characters long and sits right at the truncation boundary so it should be truncated abcdefghijklmnopqrstuvwxyz123abcdefghijklmnopqrstuvwxyzabcdefghijklmnopq">Button with 200-char name</button>
+
+    <button type="button" aria-label="This accessible name is exactly one hundred and ninety-nine characters long and is just under the limit so it must not be truncated abcdefghijklmnopqabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx">Button with 199-char name</button>
+  </main>
+
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!-- Fixture (a): Nested regions/landmarks for ARIA tree serializer testing -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nested Regions</title>
+</head>
+<body>
+
+  <header>
+    <h1>My Site Title</h1>
+  </header>
+
+  <nav aria-label="Primary">
+    <a href="/home">Home</a>
+    <a href="/about">About</a>
+    <a href="/contact">Contact</a>
+  </nav>
+
+  <main>
+    <nav aria-label="Breadcrumb">
+      <a href="/">Root</a>
+      <a href="/section">Section</a>
+    </nav>
+
+    <section aria-label="Content">
+      <article>
+        <h2>Article Heading</h2>
+        <p>This is a paragraph of article content demonstrating nested landmark regions within a main element.</p>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <p>&copy; 2024 My Site. All rights reserved.</p>
+  </footer>
+
+</body>
+</html>

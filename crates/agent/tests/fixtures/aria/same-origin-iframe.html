@@ -1,0 +1,27 @@
+<!-- Fixture (c): Same-origin iframe — should be stitched in ARIA tree -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Same-Origin Iframe Test</title>
+</head>
+<body>
+
+  <main>
+    <h1>Same-Origin Iframe Test</h1>
+    <p>The iframe below embeds a same-origin fixture. The ARIA tree serializer should stitch its content inline.</p>
+
+    <iframe
+      id="same-origin-frame"
+      src="nested-regions.html"
+      title="Nested Regions"
+      width="600"
+      height="400">
+    </iframe>
+
+    <button type="button">Interact</button>
+  </main>
+
+</body>
+</html>

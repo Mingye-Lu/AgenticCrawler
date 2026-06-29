@@ -1,0 +1,42 @@
+<!-- Fixture (b): Modal dialog with disabled control for state testing -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Modal Dialog</title>
+</head>
+<body>
+
+  <main>
+    <h1>Modal Dialog Test Page</h1>
+    <p>Click the button below to open a modal dialog.</p>
+    <button id="open-btn" onclick="document.getElementById('modal-dialog').showModal()">Open Modal</button>
+  </main>
+
+  <dialog id="modal-dialog">
+    <h2>Dialog Title</h2>
+    <p>This is the dialog description. It contains interactive controls including a disabled button.</p>
+
+    <form method="dialog">
+      <label for="dialog-input">Your name:</label>
+      <input type="text" id="dialog-input" name="dialog-input" placeholder="Enter name">
+    </form>
+
+    <button id="ok-btn" onclick="document.getElementById('modal-dialog').close('ok')">OK</button>
+    <button id="cancel-btn" disabled>Cancel</button>
+  </dialog>
+
+  <script>
+    var dialog = document.getElementById('modal-dialog');
+    var openBtn = document.getElementById('open-btn');
+    openBtn.addEventListener('click', function () {
+      dialog.showModal();
+    });
+    document.getElementById('ok-btn').addEventListener('click', function () {
+      dialog.close('ok');
+    });
+  </script>
+
+</body>
+</html>

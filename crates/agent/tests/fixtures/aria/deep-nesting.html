@@ -1,0 +1,33 @@
+<!-- Fixture (i): Deep nesting — tests depth truncation with "N children omitted" marker -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deep Nesting</title>
+</head>
+<body>
+
+  <main>
+    <section aria-label="Level 1">
+      <section aria-label="Level 2">
+        <section aria-label="Level 3">
+          <button type="button">Shallow Button</button>
+          <section aria-label="Level 4">
+            <section aria-label="Level 5">
+              <section aria-label="Level 6">
+                <section aria-label="Level 7">
+                  <section aria-label="Level 8">
+                    <button type="button">Deep Button</button>
+                  </section>
+                </section>
+              </section>
+            </section>
+          </section>
+        </section>
+      </section>
+    </section>
+  </main>
+
+</body>
+</html>
