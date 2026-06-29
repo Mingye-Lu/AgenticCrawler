@@ -821,7 +821,7 @@ mod tests {
 
         let mut map = RefMap::new();
         map.assign_or_reuse("#email-input", "textbox", "Email");
-        // @e1 should resolve to "#email-input"
+        // Legacy selector-backed refs still resolve to the stored CSS selector.
         let resolved = resolve_selector("@e1", &map).unwrap();
         assert_eq!(resolved, "#email-input");
     }
@@ -834,8 +834,10 @@ mod tests {
 
         let map = RefMap::new(); // empty map
         let err = resolve_selector("@e999", &map).unwrap_err();
-        assert!(err.contains("Unknown element ref"));
-        assert!(err.contains("page_map"));
+        assert_eq!(
+            err,
+            "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
+        );
     }
 
     #[test]
@@ -982,7 +984,10 @@ mod tests {
         ctx.ref_map_mut().clear();
 
         let err = resolve_selector("@e1", ctx.ref_map()).unwrap_err();
-        assert!(err.contains("Unknown element ref"));
+        assert_eq!(
+            err,
+            "Ref '@e1' not found. The page may have changed. Call page_map to get fresh refs."
+        );
 
         let mut value2 = json!({
             "interactive": {

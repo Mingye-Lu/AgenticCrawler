@@ -1408,8 +1408,21 @@ async function bootstrap() {
       try {
         await page.selectOption(command.selector, command.value);
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true } }) + '\n');
-      } catch (error) {
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'select_option_failed', message: String(error) } }) + '\n');
+      } catch (mainError) {
+        let selectedInFrame = false;
+        for (const frame of page.frames()) {
+          if (frame === page.mainFrame()) continue;
+          try {
+            await frame.selectOption(command.selector, command.value);
+            selectedInFrame = true;
+            break;
+          } catch (_) {}
+        }
+        if (selectedInFrame) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true, frame: true } }) + '\n');
+        } else {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'select_option_failed', message: String(mainError) } }) + '\n');
+        }
       }
       continue;
     }
@@ -1428,8 +1441,21 @@ async function bootstrap() {
       try {
         await page.hover(command.selector);
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true } }) + '\n');
-      } catch (error) {
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'hover_failed', message: String(error) } }) + '\n');
+      } catch (mainError) {
+        let hoveredInFrame = false;
+        for (const frame of page.frames()) {
+          if (frame === page.mainFrame()) continue;
+          try {
+            await frame.hover(command.selector);
+            hoveredInFrame = true;
+            break;
+          } catch (_) {}
+        }
+        if (hoveredInFrame) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true, frame: true } }) + '\n');
+        } else {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'hover_failed', message: String(mainError) } }) + '\n');
+        }
       }
       continue;
     }
@@ -1441,8 +1467,24 @@ async function bootstrap() {
         }
         await page.keyboard.press(command.key);
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true } }) + '\n');
-      } catch (error) {
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'press_key_failed', message: String(error) } }) + '\n');
+      } catch (mainError) {
+        let pressedInFrame = false;
+        if (command.selector) {
+          for (const frame of page.frames()) {
+            if (frame === page.mainFrame()) continue;
+            try {
+              await frame.focus(command.selector);
+              await page.keyboard.press(command.key);
+              pressedInFrame = true;
+              break;
+            } catch (_) {}
+          }
+        }
+        if (pressedInFrame) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { success: true, frame: true } }) + '\n');
+        } else {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'press_key_failed', message: String(mainError) } }) + '\n');
+        }
       }
       continue;
     }

@@ -1,16 +1,78 @@
-use browser::{parse_ref, RefMap};
+use browser::{parse_ref, ref_map::Resolution, RefMap};
 
-/// Resolve an @eN ref or bare eN ref to its CSS selector.
+use crate::BrowserContext;
+
+const STALE_REF_SUFFIX: &str =
+    " not found. The page may have changed. Call page_map to get fresh refs.";
+const CONTAINER_REF_SUFFIX: &str =
+    " is a container node. Target a specific child element within it.";
+
+fn canonical_ref(input: &str) -> String {
+    parse_ref(input).map_or_else(|| input.to_string(), |ref_id| format!("@{ref_id}"))
+}
+
+fn stale_ref_error(input: &str) -> String {
+    format!("Ref '{}'{}", canonical_ref(input), STALE_REF_SUFFIX)
+}
+
+fn container_ref_error(input: &str) -> String {
+    format!("Ref '{}'{}", canonical_ref(input), CONTAINER_REF_SUFFIX)
+}
+
+fn is_actionable_role(role: &str) -> bool {
+    matches!(
+        role,
+        "button"
+            | "link"
+            | "textbox"
+            | "checkbox"
+            | "radio"
+            | "combobox"
+            | "slider"
+            | "switch"
+            | "tab"
+            | "menuitem"
+            | "option"
+            | "treeitem"
+    )
+}
+
+fn validate_actionable_ref(input: &str, ref_map: &RefMap, ref_id: &str) -> Result<(), String> {
+    let entry = ref_map.get(ref_id).ok_or_else(|| stale_ref_error(input))?;
+    if matches!(entry.resolution, Resolution::Attr(_)) && !is_actionable_role(&entry.role) {
+        return Err(container_ref_error(input));
+    }
+    Ok(())
+}
+
+/// Resolve a ref string (e.g. "@e5" or "e5") to its owning frame and action query.
+///
+/// Returns `(None, selector)` for raw CSS inputs and `(frame_id, dom_query)` for refs.
+pub fn resolve_to_action_query(
+    ref_input: &str,
+    context: &BrowserContext,
+) -> Result<(Option<String>, String), String> {
+    if let Some(ref_id) = parse_ref(ref_input) {
+        let ref_map = context.ref_map();
+        validate_actionable_ref(ref_input, ref_map, &ref_id)?;
+        return ref_map
+            .resolve(&ref_id)
+            .ok_or_else(|| stale_ref_error(ref_input));
+    }
+
+    Ok((None, ref_input.to_string()))
+}
+
+/// Resolve an @eN ref or bare eN ref to its DOM action query.
 /// If input is a CSS selector (not a ref), returns it unchanged.
 /// Returns Err if input looks like a ref but is not found in the map.
 pub fn resolve_selector(input: &str, ref_map: &RefMap) -> Result<String, String> {
     if let Some(ref_id) = parse_ref(input) {
-        match ref_map.get(&ref_id) {
-            Some(entry) => Ok(entry.selector.clone()),
-            None => Err(format!(
-                "Unknown element ref @{ref_id}. Call page_map to refresh."
-            )),
-        }
+        validate_actionable_ref(input, ref_map, &ref_id)?;
+        ref_map
+            .resolve(&ref_id)
+            .map(|(_, query)| query)
+            .ok_or_else(|| stale_ref_error(input))
     } else {
         Ok(input.to_string())
     }
@@ -18,9 +80,18 @@ pub fn resolve_selector(input: &str, ref_map: &RefMap) -> Result<String, String>
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use browser::RefMap;
+    use tokio::sync::Mutex;
 
     use super::*;
+
+    fn test_context() -> crate::BrowserContext {
+        let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
+            Arc::new(Mutex::new(Box::new(browser::NopBridge)));
+        crate::BrowserContext::new(bridge)
+    }
 
     #[test]
     fn css_selector_passes_through() {
@@ -49,8 +120,10 @@ mod tests {
     fn unknown_ref_returns_error() {
         let map = RefMap::new();
         let err = resolve_selector("@e999", &map).unwrap_err();
-        assert!(err.contains("Unknown element ref"));
-        assert!(err.contains("@e999"));
+        assert_eq!(
+            err,
+            "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
+        );
     }
 
     #[test]
@@ -65,5 +138,56 @@ mod tests {
         let map = RefMap::new();
         let result = resolve_selector("", &map).unwrap();
         assert_eq!(result, "");
+    }
+
+    #[test]
+    fn stamped_ref_resolves_to_attr_query() {
+        let mut map = RefMap::new();
+        let ref_id = map.assign_by_identity(
+            "button|Submit|",
+            "button",
+            "Submit",
+            Some("f1"),
+            Resolution::Attr(String::new()),
+        );
+
+        let result = resolve_selector(&format!("@{ref_id}"), &map).unwrap();
+        assert_eq!(result, format!("[data-acrawl-ref='{ref_id}']"));
+    }
+
+    #[test]
+    fn container_ref_returns_guidance_error() {
+        let mut map = RefMap::new();
+        let ref_id = map.assign_by_identity(
+            "navigation|Primary|",
+            "navigation",
+            "Primary",
+            None,
+            Resolution::Attr(String::new()),
+        );
+
+        let err = resolve_selector(&format!("@{ref_id}"), &map).unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "Ref '@{ref_id}' is a container node. Target a specific child element within it."
+            )
+        );
+    }
+
+    #[test]
+    fn action_query_returns_frame_and_query() {
+        let mut context = test_context();
+        let ref_id = context.ref_map_mut().assign_by_identity(
+            "button|Submit|",
+            "button",
+            "Submit",
+            Some("f7"),
+            Resolution::Attr(String::new()),
+        );
+
+        let (frame_id, query) = resolve_to_action_query(&format!("@{ref_id}"), &context).unwrap();
+        assert_eq!(frame_id, Some("f7".to_string()));
+        assert_eq!(query, format!("[data-acrawl-ref='{ref_id}']"));
     }
 }
