@@ -457,7 +457,19 @@ fn cache_page_map_snapshot(
 
     let fp_settings = runtime::load_settings();
     if runtime::settings_get_page_fingerprinting(&fp_settings) {
-        let fp = crate::page_fingerprint::PageFingerprint::compute(page_url, page_map);
+        // TODO T12: pass the real ARIA tree captured during navigation.
+        let dummy_tree = crate::aria::AriaNode {
+            role: "main".to_string(),
+            name: None,
+            states: crate::aria::AriaStates::default(),
+            ref_id: None,
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children: vec![],
+            omitted_children: 0,
+        };
+        let fp = crate::page_fingerprint::PageFingerprint::compute(page_url, &dummy_tree);
         crawl_state.page_fingerprints.push(fp);
     }
 }

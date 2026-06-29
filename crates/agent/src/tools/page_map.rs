@@ -293,7 +293,19 @@ pub async fn execute(
             .and_then(|meta| meta.get("url"))
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        let fingerprint = crate::page_fingerprint::PageFingerprint::compute(url, &result);
+        // TODO T12: pass the real ARIA tree instead of the legacy page_map JSON.
+        let dummy_tree = crate::aria::AriaNode {
+            role: "main".to_string(),
+            name: None,
+            states: crate::aria::AriaStates::default(),
+            ref_id: None,
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children: vec![],
+            omitted_children: 0,
+        };
+        let fingerprint = crate::page_fingerprint::PageFingerprint::compute(url, &dummy_tree);
         crawl_state.page_fingerprints.push(fingerprint);
     }
 

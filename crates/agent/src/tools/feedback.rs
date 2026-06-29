@@ -592,12 +592,24 @@ async fn audit_silent_submission(
 
 /// Record a page fingerprint into `CrawlState` if the `page_fingerprinting`
 /// optimization flag is enabled in settings.
-pub fn record_page_fingerprint(url: &str, page_map: &Value, crawl_state: &mut CrawlState) {
+pub fn record_page_fingerprint(url: &str, _page_map: &Value, crawl_state: &mut CrawlState) {
     let settings = runtime::load_settings();
     if !runtime::settings_get_page_fingerprinting(&settings) {
         return;
     }
-    let fingerprint = PageFingerprint::compute(url, page_map);
+    // TODO T12: pass the real ARIA tree instead of the legacy page_map JSON.
+    let dummy_tree = crate::aria::AriaNode {
+        role: "main".to_string(),
+        name: None,
+        states: crate::aria::AriaStates::default(),
+        ref_id: None,
+        url: None,
+        frame_id: None,
+        offscreen: false,
+        children: vec![],
+        omitted_children: 0,
+    };
+    let fingerprint = PageFingerprint::compute(url, &dummy_tree);
     crawl_state.page_fingerprints.push(fingerprint);
 }
 
