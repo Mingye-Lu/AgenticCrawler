@@ -207,60 +207,79 @@ async fn fill_fields(
     Ok(())
 }
 
+const FIELD_DISCOVERY_JS: &str = r#"(() => {
+    function selectorOf(el) {
+        if (el.id) return '#' + CSS.escape(el.id);
+        const path = [];
+        let cur = el;
+        while (cur && cur.parentElement) {
+            if (cur.id) { path.unshift('#' + CSS.escape(cur.id)); break; }
+            const parent = cur.parentElement;
+            const tag = cur.tagName.toLowerCase();
+            const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+            path.unshift(same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(cur) + 1) + ')' : tag);
+            cur = parent;
+        }
+        return path.join(' > ');
+    }
+    const results = [];
+    const controls = document.querySelectorAll(
+        'input:not([type="hidden"]), textarea, select, ' +
+        '[role="checkbox"], [role="switch"], [role="combobox"], [role="textbox"], ' +
+        '[contenteditable="true"][role="textbox"], ' +
+        '.cm-editor .cm-content[contenteditable="true"], ' +
+        '.ql-editor[contenteditable="true"], ' +
+        '.ProseMirror[contenteditable="true"]'
+    );
+    for (const el of controls) {
+        let label = '';
+        // 1. label[for=id]
+        if (el.id) {
+            const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+            if (lbl) label = lbl.innerText.trim();
+        }
+        // 2. parent <label>
+        if (!label) {
+            const parent = el.closest('label');
+            if (parent) label = parent.innerText.replace(el.value || '', '').trim();
+        }
+        // 3. aria-label
+        if (!label) label = el.getAttribute('aria-label') || '';
+        // 4. aria-labelledby (space-separated list of ids per spec)
+        if (!label) {
+            const lblById = el.getAttribute('aria-labelledby');
+            if (lblById) label = lblById.split(/\s+/).filter(Boolean)
+                .map(id => document.getElementById(id)?.innerText?.trim() || '')
+                .filter(Boolean).join(' ').trim();
+        }
+        // 5. placeholder / title / name
+        if (!label) label = el.placeholder || el.title || el.name || '';
+        // 6. sibling textarea label — for rich editors that replaced a <textarea>
+        if (!label && el.getAttribute('contenteditable') === 'true') {
+            const group = el.closest('form, [class*="field"], [class*="form-group"]') || el.parentElement;
+            if (group) {
+                const sibling = group.querySelector('textarea');
+                if (sibling) {
+                    if (sibling.id) {
+                        const lbl = document.querySelector(`label[for="${CSS.escape(sibling.id)}"]`);
+                        if (lbl) label = lbl.innerText.trim();
+                    }
+                    if (!label) label = sibling.getAttribute('aria-label') || '';
+                }
+            }
+        }
+        if (label) {
+            results.push([label.slice(0, 80), selectorOf(el)]);
+        }
+    }
+    return results;
+})()"#;
+
 async fn resolve_field_by_label(
     browser: &mut BrowserContext,
     label_query: &str,
 ) -> Result<Option<String>, ToolExecutionError> {
-    let script = r#"(() => {
-        function selectorOf(el) {
-            if (el.id) return '#' + CSS.escape(el.id);
-            const path = [];
-            let cur = el;
-            while (cur && cur.parentElement) {
-                if (cur.id) { path.unshift('#' + CSS.escape(cur.id)); break; }
-                const parent = cur.parentElement;
-                const tag = cur.tagName.toLowerCase();
-                const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
-                path.unshift(same.length > 1 ? tag + ':nth-of-type(' + (same.indexOf(cur) + 1) + ')' : tag);
-                cur = parent;
-            }
-            return path.join(' > ');
-        }
-        const results = [];
-        const controls = document.querySelectorAll(
-            'input:not([type="hidden"]), textarea, select, ' +
-            '[role="checkbox"], [role="switch"], [role="combobox"], [role="textbox"]'
-        );
-        for (const el of controls) {
-            let label = '';
-            // 1. label[for=id]
-            if (el.id) {
-                const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-                if (lbl) label = lbl.innerText.trim();
-            }
-            // 2. parent <label>
-            if (!label) {
-                const parent = el.closest('label');
-                if (parent) label = parent.innerText.replace(el.value || '', '').trim();
-            }
-            // 3. aria-label
-            if (!label) label = el.getAttribute('aria-label') || '';
-            // 4. aria-labelledby (space-separated list of ids per spec)
-            if (!label) {
-                const lblById = el.getAttribute('aria-labelledby');
-                if (lblById) label = lblById.split(/\s+/).filter(Boolean)
-                    .map(id => document.getElementById(id)?.innerText?.trim() || '')
-                    .filter(Boolean).join(' ').trim();
-            }
-            // 5. placeholder / title / name
-            if (!label) label = el.placeholder || el.title || el.name || '';
-
-            if (label) {
-                results.push([label.slice(0, 80), selectorOf(el)]);
-            }
-        }
-        return results;
-    })()"#;
+    let script = FIELD_DISCOVERY_JS;
 
     let raw = browser
         .acquire_bridge()
@@ -404,5 +423,25 @@ mod tests {
         let (best, alternatives) = crate::semantic::match_text("Name", &candidates, None).unwrap();
         assert_eq!(best, "#name-1");
         assert_eq!(alternatives, vec!["#name-2".to_string()]);
+    }
+
+    #[test]
+    fn field_discovery_js_includes_editor_surfaces() {
+        assert!(
+            FIELD_DISCOVERY_JS.contains(r#".cm-editor .cm-content[contenteditable="true"]"#),
+            "Missing CM6 selector"
+        );
+        assert!(
+            FIELD_DISCOVERY_JS.contains(r#".ProseMirror[contenteditable="true"]"#),
+            "Missing ProseMirror selector"
+        );
+        assert!(
+            FIELD_DISCOVERY_JS.contains(r#".ql-editor[contenteditable="true"]"#),
+            "Missing Quill selector"
+        );
+        assert!(
+            FIELD_DISCOVERY_JS.contains(r#"group.querySelector('textarea')"#),
+            "Missing sibling textarea label fallback"
+        );
     }
 }
