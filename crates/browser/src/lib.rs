@@ -1,4 +1,5 @@
 mod browser_backend;
+pub mod aria;
 pub mod context;
 pub mod extension;
 pub mod fetch;

@@ -218,6 +218,31 @@ fn run_goal_tool_schema() -> Value {
     })
 }
 
+fn aria_snapshot_tool_schema() -> Value {
+    json!({
+        "name": "aria_snapshot",
+        "description": "Capture the browser's accessibility tree as a structured JSON snapshot. Returns a hierarchical tree with ARIA roles, accessible names, element states (disabled/checked/expanded), and stable [ref=eN] references for use with click/type tools. The tree is 5-10x smaller than raw HTML while preserving all interactive semantics. Use to understand page structure, find elements by role, and plan interactions. This complements page_map (which provides structured data) and fit_markdown (which provides readable content).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "description": "CSS selector to scope the tree to a specific element (e.g. '[role=dialog]' for modal content, '#main-content' for main area). If omitted, walks the entire document body."
+                },
+                "depth": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 20,
+                    "default": 10,
+                    "description": "Maximum nesting depth for the tree (default: 10). Use lower values for token efficiency; use 0 to capture only the root element."
+                }
+            },
+            "required": [],
+            "additionalProperties": false
+        }
+    })
+}
+
 fn tools_list_response(id: Option<Value>) {
     let mut tools: Vec<Value> = mvp_tool_specs()
         .into_iter()
@@ -232,6 +257,7 @@ fn tools_list_response(id: Option<Value>) {
         .collect();
 
     tools.push(run_goal_tool_schema());
+    tools.push(aria_snapshot_tool_schema());
 
     send_response(&JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
@@ -904,6 +930,87 @@ fn handle_run_goal(id: Option<Value>, arguments: Value) {
     }
 }
 
+fn handle_aria_snapshot(
+    id: Option<Value>,
+    arguments: Value,
+    browser: &mut Option<BrowserContext>,
+    rt: &tokio::runtime::Runtime,
+) {
+    let scope = arguments
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    let depth: u32 = arguments
+        .get("depth")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(10)
+        .min(20) as u32;
+
+    // Ensure browser is initialized
+    if browser.is_none() {
+        match rt.block_on(PlaywrightBridge::new()) {
+            Ok(bridge) => {
+                let shared = std::sync::Arc::new(tokio::sync::Mutex::new(
+                    Box::new(bridge) as Box<dyn BrowserBackend + Send>,
+                ));
+                *browser = Some(BrowserContext::new(shared));
+            }
+            Err(e) => {
+                let result = json!({
+                    "content": [{ "type": "text", "text": format!("Error: failed to launch browser — {e}") }],
+                    "isError": true,
+                });
+                send_response(&JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id,
+                    result: Some(result),
+                    error: None,
+                });
+                return;
+            }
+        }
+    }
+
+    // Build the ARIA snapshot JavaScript
+    let script = browser::aria::build_aria_snapshot_script(scope, depth);
+
+    // Execute through the browser bridge
+    let result = rt.block_on(async {
+        let browser_ctx = browser.as_mut().unwrap();
+        match browser_ctx.acquire_bridge().await {
+            Ok(mut bridge) => bridge.evaluate(&script).await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        }
+    });
+
+    match result {
+        Ok(value) => {
+            let response = json!({
+                "content": [{ "type": "text", "text": value.to_string() }],
+                "isError": false,
+            });
+            send_response(&JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(response),
+                error: None,
+            });
+        }
+        Err(message) => {
+            let result = json!({
+                "content": [{ "type": "text", "text": format!("Error: {message}") }],
+                "isError": true,
+            });
+            send_response(&JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(result),
+                error: None,
+            });
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)]
 fn handle_tools_call(
     id: Option<Value>,
@@ -928,6 +1035,11 @@ fn handle_tools_call(
 
     if name == "run_goal" {
         handle_run_goal(id, arguments);
+        return;
+    }
+
+    if name == "aria_snapshot" {
+        handle_aria_snapshot(id, arguments, browser, rt);
         return;
     }
 
