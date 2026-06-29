@@ -280,6 +280,7 @@ pub async fn execute(
             }
         }
 
+        // TODO T12: call aria::reconcile::assign_refs(tree, ref_map, None, &mut vec![]) here
         annotate_refs(&mut result, browser);
         browser.set_page_snapshot(&cache_key, None, result.clone());
     } else {
