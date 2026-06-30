@@ -226,10 +226,7 @@ const FIELD_DISCOVERY_JS: &str = r#"(() => {
     const controls = document.querySelectorAll(
         'input:not([type="hidden"]), textarea, select, ' +
         '[role="checkbox"], [role="switch"], [role="combobox"], [role="textbox"], ' +
-        '[contenteditable="true"][role="textbox"], ' +
-        '.cm-editor .cm-content[contenteditable="true"], ' +
-        '.ql-editor[contenteditable="true"], ' +
-        '.ProseMirror[contenteditable="true"]'
+        '[contenteditable="true"]'
     );
     for (const el of controls) {
         let label = '';
@@ -428,16 +425,8 @@ mod tests {
     #[test]
     fn field_discovery_js_includes_editor_surfaces() {
         assert!(
-            FIELD_DISCOVERY_JS.contains(r#".cm-editor .cm-content[contenteditable="true"]"#),
-            "Missing CM6 selector"
-        );
-        assert!(
-            FIELD_DISCOVERY_JS.contains(r#".ProseMirror[contenteditable="true"]"#),
-            "Missing ProseMirror selector"
-        );
-        assert!(
-            FIELD_DISCOVERY_JS.contains(r#".ql-editor[contenteditable="true"]"#),
-            "Missing Quill selector"
+            FIELD_DISCOVERY_JS.contains(r#"[contenteditable="true"]"#),
+            "Missing contenteditable selector"
         );
         assert!(
             FIELD_DISCOVERY_JS.contains(r#"group.querySelector('textarea')"#),

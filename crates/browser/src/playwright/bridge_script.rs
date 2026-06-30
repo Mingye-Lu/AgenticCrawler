@@ -95,22 +95,29 @@ async function resolveEditorSurface(pg, sel) {
         if (cur.getAttribute('contenteditable') === 'true') return selectorOf(cur);
         cur = cur.parentElement;
       }
-      // Phase 2: sibling/cousin search within the nearest container
-      // Deliberately excludes <form>: a form may contain many unrelated fields, and
-      // matching the first [contenteditable] in a form can write to the wrong field.
-      const immediate = el.parentElement;
-      const searchRoot = el.closest('[class*="field"], [class*="form-group"], [class*="editor"]')
-                         || (immediate && immediate.tagName.toLowerCase() !== 'form' ? immediate : null);
-      if (!searchRoot) return null;
-      const editorSels = [
-        '.cm-editor .cm-content[contenteditable="true"]',
-        '.ProseMirror[contenteditable="true"]',
-        '.ql-editor[contenteditable="true"]',
-        '[contenteditable="true"]',
-      ];
-      for (const esel of editorSels) {
-        const surface = searchRoot.querySelector(esel);
-        if (surface) return selectorOf(surface);
+      // Phase 2: proximity walk — expand outward from el's parent until we find
+      // the smallest container holding exactly one visible interactive element.
+      // Framework-agnostic: handles CM5 (sibling <textarea>), CM6/ProseMirror/
+      // Quill (contenteditable cousin), and any editor we haven't seen yet.
+      let container = el.parentElement;
+      while (container && container !== document.body) {
+        const candidates = Array.from(container.querySelectorAll(
+          '[contenteditable="true"], textarea, input:not([type="hidden"])'
+        )).filter(c => {
+          if (c === el) return false;
+          const r = c.getBoundingClientRect();
+          return r.width >= 4 && r.height >= 4;
+        });
+        if (candidates.length === 1) return selectorOf(candidates[0]);
+        if (candidates.length > 1) {
+          // Prefer contenteditable — more likely to be the editor surface than
+          // a sibling input/textarea that belongs to a different field.
+          const ce = candidates.filter(c => c.getAttribute('contenteditable') === 'true');
+          if (ce.length === 1) return selectorOf(ce[0]);
+          // Ambiguous: multiple candidates with no clear winner; don't guess.
+          return null;
+        }
+        container = container.parentElement;
       }
       return null;
     }, sel);
@@ -1916,12 +1923,12 @@ mod tests {
             "Missing resolveEditorSurface function"
         );
         assert!(
-            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(".cm-editor .cm-content"),
-            "Missing CM6 surface selector in redirect"
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("getBoundingClientRect"),
+            "Missing visibility check in proximity walk"
         );
         assert!(
-            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(".ProseMirror"),
-            "Missing ProseMirror surface selector in redirect"
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(r#"[contenteditable="true"], textarea"#),
+            "Missing contenteditable candidate search in proximity walk"
         );
     }
 }
