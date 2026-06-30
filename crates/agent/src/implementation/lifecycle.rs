@@ -388,7 +388,6 @@ mod tests {
             Some(json!({"url": "about:blank", "title": ""})),
         )
         .await;
-        respond_ok(&mut command_rx, "execute_js", Some(json!(null))).await;
         respond_ok(
             &mut command_rx,
             "page_map",

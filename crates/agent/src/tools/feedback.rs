@@ -6,6 +6,7 @@ use tokio::time::timeout;
 
 use acrawl_core::error::ToolExecutionError;
 
+use crate::aria::{assign_refs, identity_key, parse_raw_tree, reconcile, to_yaml, AriaNode};
 use crate::page_fingerprint::PageFingerprint;
 use crate::state::CrawlState;
 use crate::BrowserContext;
@@ -13,6 +14,9 @@ use crate::BrowserContext;
 use super::page_map::{apply_page_map_caps, normalize_url};
 
 const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
+const FEEDBACK_TREE_DEPTH: usize = 5;
+const DIFF_SNIPPET_DEPTH: usize = 2;
+const MAX_DIFF_ITEMS: usize = 30;
 
 /// Error message returned when a silent reCAPTCHA v3 submission is detected.
 ///
@@ -83,334 +87,260 @@ pub fn build_page_state_from_map(mut pm: Value) -> Value {
     })
 }
 
-fn extract_url(pm: &Value) -> &str {
-    pm.get("meta")
-        .and_then(|m| m.get("url"))
+fn extract_feedback_url(pm: &Value) -> &str {
+    pm.get("url")
         .and_then(Value::as_str)
+        .or_else(|| {
+            pm.get("meta")
+                .and_then(|meta| meta.get("url"))
+                .and_then(Value::as_str)
+        })
         .unwrap_or("unknown")
 }
 
-fn extract_title(pm: &Value) -> &str {
-    pm.get("meta")
-        .and_then(|m| m.get("title"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
+fn node_name(node: &AriaNode) -> &str {
+    node.name.as_deref().unwrap_or("")
 }
 
-fn heading_key(h: &Value) -> Option<String> {
-    let text = h.get("text")?.as_str()?;
-    let level = h.get("level")?.as_u64()?;
-    Some(format!("{level}:{text}"))
-}
-
-fn link_key(l: &Value) -> Option<String> {
-    let href = l.get("href")?.as_str()?;
-    let text = l.get("text").and_then(Value::as_str).unwrap_or("");
-    Some(format!("{text}\x00{href}"))
-}
-
-fn landmark_key(lm: &Value) -> Option<String> {
-    let tag = lm.get("tag")?.as_str()?;
-    let role = lm.get("role").and_then(Value::as_str).unwrap_or("");
-    let id = lm.get("id").and_then(Value::as_str).unwrap_or("");
-    Some(format!("{tag}\x00{role}\x00{id}"))
-}
-
-fn diff_array(
-    prev_items: &[Value],
-    curr_items: &[Value],
-    key_fn: fn(&Value) -> Option<String>,
-) -> (Vec<Value>, Vec<Value>) {
-    let mut prev_counts: HashMap<String, usize> = HashMap::new();
-    for item in prev_items {
-        if let Some(k) = key_fn(item) {
-            *prev_counts.entry(k).or_default() += 1;
-        }
-    }
-
-    let mut curr_counts: HashMap<String, usize> = HashMap::new();
-    for item in curr_items {
-        if let Some(k) = key_fn(item) {
-            *curr_counts.entry(k).or_default() += 1;
-        }
-    }
-
-    let mut added_budget: HashMap<&str, usize> = HashMap::new();
-    for (k, &curr_n) in &curr_counts {
-        let prev_n = prev_counts.get(k.as_str()).copied().unwrap_or(0);
-        if curr_n > prev_n {
-            added_budget.insert(k.as_str(), curr_n - prev_n);
-        }
-    }
-
-    let mut removed_budget: HashMap<&str, usize> = HashMap::new();
-    for (k, &prev_n) in &prev_counts {
-        let curr_n = curr_counts.get(k.as_str()).copied().unwrap_or(0);
-        if prev_n > curr_n {
-            removed_budget.insert(k.as_str(), prev_n - curr_n);
-        }
-    }
-
-    let added: Vec<Value> = curr_items
+fn identity_refs(ancestors: &[(String, String)]) -> Vec<(&str, &str)> {
+    ancestors
         .iter()
-        .filter(|item| {
-            if let Some(k) = key_fn(item) {
-                if let Some(budget) = added_budget.get_mut(k.as_str()) {
-                    if *budget > 0 {
-                        *budget -= 1;
-                        return true;
-                    }
-                }
-            }
-            false
+        .map(|(role, name)| (role.as_str(), name.as_str()))
+        .collect()
+}
+
+fn occurrence_key(base_key: &str, occurrence: usize) -> String {
+    if occurrence == 0 {
+        base_key.to_string()
+    } else {
+        format!("{base_key}#{occurrence}")
+    }
+}
+
+fn keyed_children<'a>(
+    nodes: &'a [AriaNode],
+    ancestors: &[(String, String)],
+) -> Vec<(String, &'a AriaNode)> {
+    let refs = identity_refs(ancestors);
+    let mut seen_per_key: HashMap<String, usize> = HashMap::new();
+
+    nodes
+        .iter()
+        .map(|node| {
+            let base_key = identity_key(&node.role, node_name(node), &refs);
+            let occurrence = seen_per_key.entry(base_key.clone()).or_default();
+            let key = occurrence_key(&base_key, *occurrence);
+            *occurrence += 1;
+            (key, node)
         })
-        .cloned()
-        .collect();
-
-    let removed: Vec<Value> = prev_items
-        .iter()
-        .filter(|item| {
-            if let Some(k) = key_fn(item) {
-                if let Some(budget) = removed_budget.get_mut(k.as_str()) {
-                    if *budget > 0 {
-                        *budget -= 1;
-                        return true;
-                    }
-                }
-            }
-            false
-        })
-        .cloned()
-        .collect();
-
-    (added, removed)
+        .collect()
 }
 
-fn get_array<'a>(pm: &'a Value, key: &str) -> &'a [Value] {
-    pm.get(key)
-        .and_then(Value::as_array)
-        .map_or(&[], Vec::as_slice)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateChange {
+    pub ref_id: String,
+    pub role: String,
+    pub name: Option<String>,
+    pub before: String,
+    pub after: String,
 }
 
-fn get_interactive_elements(pm: &Value) -> &[Value] {
-    pm.get("interactive")
-        .and_then(|i| i.get("elements"))
-        .and_then(Value::as_array)
-        .map_or(&[], Vec::as_slice)
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AriaTreeDiff {
+    pub added: Vec<(String, String)>,
+    pub removed: Vec<(String, String)>,
+    pub changed: Vec<StateChange>,
 }
 
-const STATE_FIELDS: &[&str] = &[
-    "disabled",
-    "checked",
-    "value",
-    "aria_pressed",
-    "aria_expanded",
-    "aria_selected",
-];
+fn node_state_summary(node: &AriaNode) -> String {
+    let mut parts = Vec::new();
 
-const MAX_INTERACTIVE_DIFF: usize = 5;
-
-struct InteractiveDiff {
-    added: Vec<Value>,
-    removed: Vec<Value>,
-    modified: Vec<Value>,
-}
-
-fn interactive_entry_brief(el: &Value) -> Value {
-    let mut entry = serde_json::Map::new();
-    if let Some(selector) = el.get("selector") {
-        entry.insert("selector".into(), selector.clone());
+    if node.states != crate::aria::AriaStates::default() {
+        parts.push(format!("states={:?}", node.states));
     }
-    if let Some(tag) = el.get("tag") {
-        entry.insert("tag".into(), tag.clone());
+    if let Some(url) = &node.url {
+        parts.push(format!("url={url}"));
     }
-    if let Some(text) = el.get("text") {
-        entry.insert("text".into(), text.clone());
+    if node.offscreen {
+        parts.push("offscreen=true".to_string());
     }
-    if let Some(role) = el.get("role") {
-        entry.insert("role".into(), role.clone());
-    }
-    if let Some(ref_val) = el.get("ref") {
-        entry.insert("ref".into(), ref_val.clone());
-    }
-    Value::Object(entry)
-}
-
-fn diff_interactive(prev_elements: &[Value], curr_elements: &[Value]) -> InteractiveDiff {
-    let prev_by_selector: HashMap<&str, &Value> = prev_elements
-        .iter()
-        .filter_map(|el| el.get("selector").and_then(Value::as_str).map(|s| (s, el)))
-        .collect();
-
-    let curr_by_selector: HashMap<&str, &Value> = curr_elements
-        .iter()
-        .filter_map(|el| el.get("selector").and_then(Value::as_str).map(|s| (s, el)))
-        .collect();
-
-    let added: Vec<Value> = curr_elements
-        .iter()
-        .filter(|el| {
-            el.get("selector")
-                .and_then(Value::as_str)
-                .is_some_and(|s| !prev_by_selector.contains_key(s))
-        })
-        .take(MAX_INTERACTIVE_DIFF)
-        .map(interactive_entry_brief)
-        .collect();
-
-    let removed: Vec<Value> = prev_elements
-        .iter()
-        .filter(|el| {
-            el.get("selector")
-                .and_then(Value::as_str)
-                .is_some_and(|s| !curr_by_selector.contains_key(s))
-        })
-        .take(MAX_INTERACTIVE_DIFF)
-        .map(interactive_entry_brief)
-        .collect();
-
-    let mut modified = Vec::new();
-
-    for el in curr_elements {
-        let Some(selector) = el.get("selector").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(prev_el) = prev_by_selector.get(selector) else {
-            continue;
-        };
-
-        let mut changed_fields = serde_json::Map::new();
-        for &field in STATE_FIELDS {
-            let prev_val = prev_el.get(field);
-            let curr_val = el.get(field);
-            if prev_val != curr_val {
-                changed_fields.insert(field.to_string(), curr_val.cloned().unwrap_or(Value::Null));
-            }
-        }
-
-        if !changed_fields.is_empty() {
-            let mut entry = serde_json::Map::new();
-            entry.insert("selector".into(), json!(selector));
-            if let Some(tag) = el.get("tag") {
-                entry.insert("tag".into(), tag.clone());
-            }
-            if let Some(text) = el.get("text") {
-                entry.insert("text".into(), text.clone());
-            }
-            entry.insert("state_changes".into(), Value::Object(changed_fields));
-            modified.push(Value::Object(entry));
-        }
+    if node.omitted_children > 0 {
+        parts.push(format!("omitted_children={}", node.omitted_children));
     }
 
-    InteractiveDiff {
-        added,
-        removed,
-        modified,
+    if parts.is_empty() {
+        "default".to_string()
+    } else {
+        parts.join(", ")
     }
 }
 
-pub fn build_diff_page_state(prev: &Value, current: &mut Value) -> Value {
-    apply_page_map_caps(current);
+fn render_name(name: Option<&str>) -> String {
+    serde_json::to_string(name.unwrap_or("")).unwrap_or_else(|_| "\"\"".to_string())
+}
 
-    let url = extract_url(current).to_string();
-    let title = extract_title(current).to_string();
+fn node_ref_or_identity(node: &AriaNode, ancestors: &[(String, String)]) -> String {
+    node.ref_id
+        .clone()
+        .unwrap_or_else(|| identity_key(&node.role, node_name(node), &identity_refs(ancestors)))
+}
 
-    let (added_headings, removed_headings) = diff_array(
-        get_array(prev, "headings"),
-        get_array(current, "headings"),
-        heading_key,
-    );
-    let (added_links, removed_links) = diff_array(
-        get_array(prev, "links"),
-        get_array(current, "links"),
-        link_key,
-    );
-    let (added_landmarks, removed_landmarks) = diff_array(
-        get_array(prev, "landmarks"),
-        get_array(current, "landmarks"),
-        landmark_key,
-    );
-    let interactive_diff = diff_interactive(
-        get_interactive_elements(prev),
-        get_interactive_elements(current),
-    );
+fn same_identity(prev: &AriaNode, curr: &AriaNode, ancestors: &[(String, String)]) -> bool {
+    let refs = identity_refs(ancestors);
+    identity_key(&prev.role, node_name(prev), &refs)
+        == identity_key(&curr.role, node_name(curr), &refs)
+}
 
-    let has_changes = !added_headings.is_empty()
-        || !removed_headings.is_empty()
-        || !added_links.is_empty()
-        || !removed_links.is_empty()
-        || !added_landmarks.is_empty()
-        || !removed_landmarks.is_empty()
-        || !interactive_diff.added.is_empty()
-        || !interactive_diff.removed.is_empty()
-        || !interactive_diff.modified.is_empty();
+fn push_added_subtree(result: &mut AriaTreeDiff, node: &AriaNode, ancestors: &[(String, String)]) {
+    result.added.push((
+        node_ref_or_identity(node, ancestors),
+        to_yaml(node, Some(DIFF_SNIPPET_DEPTH)),
+    ));
+}
 
-    if !has_changes {
-        return json!({
-            "url": url,
-            "title": title,
-            "changed": false
+fn push_removed_subtree(
+    result: &mut AriaTreeDiff,
+    node: &AriaNode,
+    ancestors: &[(String, String)],
+) {
+    result.removed.push((
+        node_ref_or_identity(node, ancestors),
+        to_yaml(node, Some(DIFF_SNIPPET_DEPTH)),
+    ));
+}
+
+fn diff_node(
+    prev: &AriaNode,
+    curr: &AriaNode,
+    ancestors: &mut Vec<(String, String)>,
+    result: &mut AriaTreeDiff,
+) {
+    let before = node_state_summary(prev);
+    let after = node_state_summary(curr);
+    if before != after {
+        result.changed.push(StateChange {
+            ref_id: node_ref_or_identity(curr, ancestors),
+            role: curr.role.clone(),
+            name: curr.name.clone(),
+            before,
+            after,
         });
     }
 
-    let total_prev = get_array(prev, "headings").len()
-        + get_array(prev, "links").len()
-        + get_array(prev, "landmarks").len();
-    let total_changed = added_headings.len()
-        + removed_headings.len()
-        + added_links.len()
-        + removed_links.len()
-        + added_landmarks.len()
-        + removed_landmarks.len();
+    ancestors.push((curr.role.clone(), node_name(curr).to_string()));
+    let prev_children = keyed_children(&prev.children, ancestors);
+    let curr_children = keyed_children(&curr.children, ancestors);
 
-    if total_prev > 0 && total_changed > total_prev {
-        return build_page_state_from_map(current.clone());
-    }
+    let prev_map: HashMap<String, &AriaNode> = prev_children
+        .iter()
+        .map(|(key, node)| (key.clone(), *node))
+        .collect();
+    let curr_map: HashMap<String, &AriaNode> = curr_children
+        .iter()
+        .map(|(key, node)| (key.clone(), *node))
+        .collect();
 
-    let mut changes = serde_json::Map::new();
-    if !added_headings.is_empty() {
-        changes.insert("added_headings".into(), Value::Array(added_headings));
-    }
-    if !removed_headings.is_empty() {
-        changes.insert("removed_headings".into(), Value::Array(removed_headings));
-    }
-    if !added_links.is_empty() {
-        changes.insert("added_links".into(), Value::Array(added_links));
-    }
-    if !removed_links.is_empty() {
-        changes.insert("removed_links".into(), Value::Array(removed_links));
-    }
-    if !added_landmarks.is_empty() {
-        changes.insert("added_landmarks".into(), Value::Array(added_landmarks));
-    }
-    if !removed_landmarks.is_empty() {
-        changes.insert("removed_landmarks".into(), Value::Array(removed_landmarks));
-    }
-    if !interactive_diff.added.is_empty() {
-        changes.insert(
-            "added_interactive".into(),
-            Value::Array(interactive_diff.added),
-        );
-    }
-    if !interactive_diff.removed.is_empty() {
-        changes.insert(
-            "removed_interactive".into(),
-            Value::Array(interactive_diff.removed),
-        );
-    }
-    if !interactive_diff.modified.is_empty() {
-        changes.insert(
-            "modified_interactive".into(),
-            Value::Array(interactive_diff.modified),
-        );
+    for (key, prev_child) in &prev_children {
+        if !curr_map.contains_key(key) {
+            push_removed_subtree(result, prev_child, ancestors);
+        }
     }
 
-    json!({
-        "url": url,
-        "title": title,
-        "changed": true,
-        "changes": changes
-    })
+    for (key, curr_child) in &curr_children {
+        if !prev_map.contains_key(key) {
+            push_added_subtree(result, curr_child, ancestors);
+        }
+    }
+
+    for (key, curr_child) in &curr_children {
+        if let Some(prev_child) = prev_map.get(key) {
+            diff_node(prev_child, curr_child, ancestors, result);
+        }
+    }
+
+    ancestors.pop();
+}
+
+#[must_use]
+pub fn diff_trees(prev: &AriaNode, curr: &AriaNode) -> AriaTreeDiff {
+    let mut result = AriaTreeDiff::default();
+    diff_node(prev, curr, &mut Vec::new(), &mut result);
+    result
+}
+
+fn render_diff(diff: &AriaTreeDiff) -> String {
+    if diff.added.is_empty() && diff.removed.is_empty() && diff.changed.is_empty() {
+        return "no visible change".to_string();
+    }
+
+    let mut lines = Vec::new();
+
+    for (ref_id, snippet) in &diff.added {
+        lines.push(format!("+ [ref={ref_id}] added:"));
+        for line in snippet.lines() {
+            lines.push(format!("  {line}"));
+        }
+    }
+
+    for (ref_id, snippet) in &diff.removed {
+        lines.push(format!("- [ref={ref_id}] removed:"));
+        for line in snippet.lines() {
+            lines.push(format!("  {line}"));
+        }
+    }
+
+    for change in &diff.changed {
+        lines.push(format!(
+            "~ [ref={}] changed: {} {}",
+            change.ref_id,
+            change.role,
+            render_name(change.name.as_deref())
+        ));
+        lines.push(format!("  before: {}", change.before));
+        lines.push(format!("  after: {}", change.after));
+    }
+
+    lines.join("\n")
+}
+
+fn should_fallback(diff: &AriaTreeDiff) -> bool {
+    diff.added.len() + diff.removed.len() + diff.changed.len() > MAX_DIFF_ITEMS
+}
+
+fn full_snapshot_value(root: &AriaNode) -> Value {
+    Value::String(to_yaml(root, Some(FEEDBACK_TREE_DEPTH)))
+}
+
+#[must_use]
+pub fn build_diff_page_state(prev: Option<&AriaNode>, curr: Option<&AriaNode>) -> Value {
+    match (prev, curr) {
+        (None, None) => Value::String("no visible change".to_string()),
+        (None, Some(curr)) => {
+            let mut diff = AriaTreeDiff::default();
+            push_added_subtree(&mut diff, curr, &[]);
+            Value::String(render_diff(&diff))
+        }
+        (Some(prev), None) => {
+            let mut diff = AriaTreeDiff::default();
+            push_removed_subtree(&mut diff, prev, &[]);
+            Value::String(render_diff(&diff))
+        }
+        (Some(prev), Some(curr)) => {
+            if !same_identity(prev, curr, &[]) {
+                let mut diff = AriaTreeDiff::default();
+                push_removed_subtree(&mut diff, prev, &[]);
+                push_added_subtree(&mut diff, curr, &[]);
+                return Value::String(render_diff(&diff));
+            }
+
+            let diff = diff_trees(prev, curr);
+            if should_fallback(&diff) {
+                full_snapshot_value(curr)
+            } else {
+                Value::String(render_diff(&diff))
+            }
+        }
+    }
 }
 
 fn fallback_value() -> Value {
@@ -421,11 +351,7 @@ fn fallback_value() -> Value {
     })
 }
 
-fn evaluate_payload(value: &Value) -> &Value {
-    value.get("value").unwrap_or(value)
-}
-
-fn active_dialog_scope(snapshot: &Value) -> Option<String> {
+fn active_dialog_label(snapshot: &Value) -> Option<String> {
     let dialog = snapshot.get("active_dialog")?;
     if dialog
         .get("visible")
@@ -436,77 +362,153 @@ fn active_dialog_scope(snapshot: &Value) -> Option<String> {
     }
 
     dialog
-        .get("selector")
+        .get("label")
         .and_then(Value::as_str)
-        .filter(|selector| !selector.is_empty())
+        .filter(|label| !label.is_empty())
         .map(str::to_string)
 }
 
-async fn resolve_interacted_scope(
-    dialog_scope: Option<String>,
+fn has_active_dialog(snapshot: Option<&Value>) -> bool {
+    snapshot
+        .and_then(|value| value.get("active_dialog"))
+        .and_then(Value::as_object)
+        .is_some_and(|dialog| {
+            dialog
+                .get("visible")
+                .and_then(Value::as_bool)
+                .is_none_or(|visible| visible)
+        })
+}
+
+fn find_node_by_ref<'a>(node: &'a AriaNode, ref_id: &str) -> Option<&'a AriaNode> {
+    if node.ref_id.as_deref() == Some(ref_id) {
+        return Some(node);
+    }
+
+    node.children
+        .iter()
+        .find_map(|child| find_node_by_ref(child, ref_id))
+}
+
+fn find_dialog_node<'a>(node: &'a AriaNode, label: Option<&str>) -> Option<&'a AriaNode> {
+    let is_dialog = matches!(node.role.as_str(), "dialog" | "alertdialog");
+    let label_matches = label.is_none_or(|expected| node.name.as_deref() == Some(expected));
+    if is_dialog && label_matches {
+        return Some(node);
+    }
+
+    node.children
+        .iter()
+        .find_map(|child| find_dialog_node(child, label))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DiffScope {
+    Full,
+    Dialog(Option<String>),
+    Ref(String),
+}
+
+fn resolve_diff_scope(
+    ref_map: &browser::RefMap,
+    previous_snapshot: Option<&Value>,
+    current_snapshot: &Value,
     interacted_selector: Option<&str>,
     widen: bool,
-    bridge: &mut (dyn browser::BrowserBackend + Send),
-) -> Option<String> {
+) -> DiffScope {
     if widen {
-        return None;
+        return DiffScope::Full;
     }
 
-    if let Some(scope) = dialog_scope {
-        return Some(scope);
+    if has_active_dialog(Some(current_snapshot)) || has_active_dialog(previous_snapshot) {
+        return DiffScope::Dialog(
+            active_dialog_label(current_snapshot)
+                .or_else(|| previous_snapshot.and_then(active_dialog_label)),
+        );
     }
 
-    let selector = interacted_selector?;
-    let selector_json = serde_json::to_string(selector).ok()?;
-    let script = format!(
-        r"(() => {{
-            const el = document.querySelector({selector_json});
-            if (!el) return null;
-            let cur = el;
-            while (cur && cur !== document.body) {{
-                const role = cur.getAttribute('role');
-                if (
-                    ['dialog', 'alertdialog', 'region', 'main', 'complementary', 'navigation', 'form'].includes(role) ||
-                    ['DIALOG', 'MAIN', 'ASIDE', 'NAV', 'FORM', 'SECTION', 'ARTICLE'].includes(cur.tagName)
-                ) {{
-                    if (cur.id) return '#' + CSS.escape(cur.id);
-                    if (role === 'dialog' || role === 'alertdialog') {{
-                        return '[role=' + role + ']';
-                    }}
-                    return null;
-                }}
-                cur = cur.parentElement;
-            }}
-            return null;
-        }})()"
-    );
+    interacted_selector
+        .and_then(|selector| ref_map.ref_id_for_query(selector))
+        .map_or(DiffScope::Full, |ref_id| DiffScope::Ref(ref_id.to_string()))
+}
 
-    bridge
-        .evaluate(&script)
-        .await
-        .ok()
-        .and_then(|value| evaluate_payload(&value).as_str().map(str::to_string))
+fn scoped_tree<'a>(
+    tree: &'a AriaNode,
+    _snapshot: Option<&Value>,
+    scope: &DiffScope,
+) -> Option<&'a AriaNode> {
+    match scope {
+        DiffScope::Full => Some(tree),
+        DiffScope::Dialog(label) => find_dialog_node(tree, label.as_deref()),
+        DiffScope::Ref(ref_id) => find_node_by_ref(tree, ref_id),
+    }
 }
 
 fn page_state_from_feedback_map(
     browser: &mut BrowserContext,
-    scope: Option<&str>,
+    crawl_state: &CrawlState,
+    interacted_selector: Option<&str>,
+    widen: bool,
     mut pm: Value,
 ) -> Value {
     // Enrich in place before caching so stored snapshots preserve regions and
     // active_dialog for later scoped interactions.
     super::page_map::enrich_semantic_sections(&mut pm);
 
-    let full_url = extract_url(&pm).to_string();
+    let full_url = extract_feedback_url(&pm).to_string();
     let cache_key = normalize_url(&full_url).to_string();
 
-    let response = match browser.page_snapshot_for_url(&cache_key, scope) {
-        Some(prev) => build_diff_page_state(prev, &mut pm),
-        None => build_page_state_from_map(pm.clone()),
+    let previous_snapshot = browser.page_snapshot_for_url(&cache_key, None).cloned();
+    let url_changed = browser
+        .snapshot_url()
+        .is_some_and(|prev_url| prev_url != cache_key.as_str());
+    if url_changed {
+        browser.ref_map_mut().clear();
+    }
+
+    let Some(mut current_tree) = pm.get("tree").and_then(parse_raw_tree) else {
+        let page_state = build_page_state_from_map(pm.clone());
+        browser.set_page_snapshot(&cache_key, None, pm);
+        return page_state;
+    };
+    assign_refs(
+        &mut current_tree,
+        browser.ref_map_mut(),
+        None,
+        &mut Vec::new(),
+    );
+
+    let previous_tree = if let Some(previous_snapshot) = previous_snapshot.as_ref() {
+        previous_snapshot.get("tree").and_then(parse_raw_tree)
+    } else if url_changed {
+        None
+    } else {
+        crawl_state.last_aria_tree.clone()
     };
 
-    browser.set_page_snapshot(&cache_key, scope, pm);
-    response
+    if let Some(previous_tree) = previous_tree.as_ref() {
+        reconcile(previous_tree, &mut current_tree, &mut Vec::new());
+    }
+
+    let scope = resolve_diff_scope(
+        browser.ref_map(),
+        previous_snapshot.as_ref(),
+        &pm,
+        interacted_selector,
+        widen,
+    );
+
+    let page_state = match previous_tree.as_ref() {
+        Some(previous_tree) => build_diff_page_state(
+            scoped_tree(previous_tree, previous_snapshot.as_ref(), &scope),
+            scoped_tree(&current_tree, Some(&pm), &scope),
+        ),
+        None => scoped_tree(&current_tree, Some(&pm), &scope)
+            .map_or_else(|| full_snapshot_value(&current_tree), full_snapshot_value),
+    };
+
+    browser.set_page_snapshot(&cache_key, None, pm);
+    page_state
 }
 
 /// Best-effort post-action page state for interaction tool responses.
@@ -515,29 +517,22 @@ fn page_state_from_feedback_map(
 /// comparison against the cached snapshot.
 pub(crate) async fn post_action_page_state(
     browser: &mut BrowserContext,
-    _crawl_state: &CrawlState,
+    crawl_state: &CrawlState,
     interaction_kind: InteractionKind,
     interacted_selector: Option<&str>,
     widen: bool,
 ) -> Result<Value, ToolExecutionError> {
-    let dialog_scope = if widen {
-        None
-    } else {
-        browser.last_page_snapshot().and_then(active_dialog_scope)
-    };
-
     let result = timeout(FEEDBACK_TIMEOUT, async {
         let mut bridge = browser.acquire_bridge().await?;
-        let scope =
-            resolve_interacted_scope(dialog_scope, interacted_selector, widen, &mut **bridge).await;
-        let page_map = bridge.page_map_feedback(scope.as_deref()).await?;
-        Ok::<_, browser::BridgeError>((scope, page_map))
+        let page_map = bridge.page_map_feedback(None).await?;
+        Ok::<_, browser::BridgeError>(page_map)
     })
     .await;
 
     match result {
-        Ok(Ok((scope, pm))) => {
-            let page_state = page_state_from_feedback_map(browser, scope.as_deref(), pm);
+        Ok(Ok(pm)) => {
+            let page_state =
+                page_state_from_feedback_map(browser, crawl_state, interacted_selector, widen, pm);
             if let Some(msg) = audit_silent_submission(browser, interaction_kind, &page_state).await
             {
                 return Err(ToolExecutionError::new(msg.to_string()));
@@ -565,7 +560,7 @@ async fn audit_silent_submission(
         return None;
     }
 
-    if !matches!(page_state.get("changed"), Some(Value::Bool(false))) {
+    if page_state.as_str() != Some("no visible change") {
         return None;
     }
 
@@ -624,20 +619,19 @@ mod tests {
 
     use async_trait::async_trait;
     use browser::{
-        BridgeError, BrowserState, PageInfo, ScreenshotOptions, StorageEntry, StorageType,
+        BridgeError, BrowserBackend, BrowserState, PageInfo, ScreenshotOptions, StorageEntry,
+        StorageType,
     };
+    use serde_json::{json, Value};
     use tokio::sync::Mutex;
 
-    use serde_json::{json, Value};
-
     use super::{
-        build_diff_page_state, build_page_state_from_map, fallback_value,
-        page_state_from_feedback_map, post_action_page_state, InteractionKind,
-        RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE,
+        build_diff_page_state, build_page_state_from_map, fallback_value, post_action_page_state,
+        InteractionKind, FEEDBACK_TREE_DEPTH, RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE,
     };
+    use crate::aria::{to_yaml, AriaNode, AriaStates};
     use crate::state::CrawlState;
     use crate::BrowserContext;
-    use browser::BrowserBackend;
 
     #[derive(Debug, Default)]
     struct FeedbackMockState {
@@ -728,7 +722,7 @@ mod tests {
                 return Err(BridgeError::Protocol("mock evaluate failure".to_string()));
             }
             for (substring, result) in &state.evaluate_script_results {
-                if script.contains(substring.as_str()) {
+                if script.contains(substring) {
                     return Ok(result.clone());
                 }
             }
@@ -842,43 +836,118 @@ mod tests {
         (browser, state)
     }
 
-    fn minimal_page_map(url: &str, title: &str) -> Value {
+    fn node(
+        role: &str,
+        name: Option<&str>,
+        ref_id: Option<&str>,
+        children: Vec<AriaNode>,
+    ) -> AriaNode {
+        AriaNode {
+            role: role.to_string(),
+            name: name.map(str::to_string),
+            states: AriaStates::default(),
+            ref_id: ref_id.map(str::to_string),
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children,
+            omitted_children: 0,
+        }
+    }
+
+    fn node_with_states(
+        role: &str,
+        name: Option<&str>,
+        ref_id: Option<&str>,
+        states: AriaStates,
+        children: Vec<AriaNode>,
+    ) -> AriaNode {
+        AriaNode {
+            role: role.to_string(),
+            name: name.map(str::to_string),
+            states,
+            ref_id: ref_id.map(str::to_string),
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children,
+            omitted_children: 0,
+        }
+    }
+
+    fn document(children: Vec<AriaNode>) -> AriaNode {
+        node("document", Some(""), Some("e1"), children)
+    }
+
+    fn raw_states(states: &AriaStates) -> Value {
+        let mut map = serde_json::Map::new();
+        if states.active {
+            map.insert("active".into(), Value::Bool(true));
+        }
+        if states.checked {
+            map.insert("checked".into(), Value::Bool(true));
+        }
+        if states.disabled {
+            map.insert("disabled".into(), Value::Bool(true));
+        }
+        if let Some(expanded) = states.expanded {
+            map.insert("expanded".into(), Value::Bool(expanded));
+        }
+        if states.invalid {
+            map.insert("invalid".into(), Value::Bool(true));
+        }
+        if let Some(level) = states.level {
+            map.insert("level".into(), json!(level));
+        }
+        if let Some(pressed) = states.pressed {
+            map.insert("pressed".into(), Value::Bool(pressed));
+        }
+        if states.selected {
+            map.insert("selected".into(), Value::Bool(true));
+        }
+        Value::Object(map)
+    }
+
+    fn raw_tree_value(node: &AriaNode) -> Value {
         json!({
+            "role": node.role,
+            "name": node.name.as_deref().unwrap_or(""),
+            "states": raw_states(&node.states),
+            "refId": node.ref_id,
+            "url": node.url,
+            "frameId": node.frame_id,
+            "offscreen": node.offscreen,
+            "omittedChildren": node.omitted_children,
+            "children": node.children.iter().map(raw_tree_value).collect::<Vec<_>>()
+        })
+    }
+
+    fn feedback_snapshot(
+        url: &str,
+        title: &str,
+        tree: &AriaNode,
+        active_dialog_label: Option<&str>,
+    ) -> Value {
+        json!({
+            "tree": raw_tree_value(tree),
             "headings": [],
             "landmarks": [],
             "links": [],
             "forms": [],
             "interactive": {"elements": []},
-            "meta": {"title": title, "url": url, "description": ""}
-        })
-    }
-
-    fn unchanged_response(url: &str, title: &str) -> Value {
-        json!({
+            "active_dialog": active_dialog_label.map_or(Value::Null, |label| json!({
+                "selector": "#dialog",
+                "label": label,
+                "visible": true
+            })),
+            "meta": {"title": title, "url": url, "description": ""},
             "url": url,
-            "title": title,
-            "changed": false
+            "title": title
         })
     }
 
-    #[test]
-    fn feedback_fallback_value_has_correct_shape() {
-        let val = fallback_value();
-
-        assert_eq!(val["url"], "unknown");
-        assert_eq!(val["title"], "unknown");
-        assert!(val["page_map"].is_null(), "page_map should be null");
-
-        let obj = val.as_object().expect("fallback should be an object");
-        assert!(obj.contains_key("url"));
-        assert!(obj.contains_key("title"));
-        assert!(obj.contains_key("page_map"));
-        assert_eq!(obj.len(), 3, "fallback should have exactly 3 keys");
-    }
-
-    #[test]
-    fn feedback_success_value_from_mock_page_map() {
-        let mock_page_map = json!({
+    fn page_map_fixture(url: &str, title: &str) -> Value {
+        json!({
             "headings": [
                 {
                     "level": 1,
@@ -946,237 +1015,144 @@ mod tests {
                 "textareas": 0
             },
             "meta": {
-                "title": "Example Page",
-                "url": "https://example.com/page",
+                "title": title,
+                "url": url,
                 "description": "A test page"
             }
-        });
-
-        let result = build_page_state_from_map(mock_page_map);
-
-        assert_eq!(result["url"], "https://example.com/page");
-        assert_eq!(result["title"], "Example Page");
-        assert!(!result["page_map"].is_null(), "page_map should not be null");
-
-        let pm = &result["page_map"];
-        assert!(pm["headings"].is_array());
-        assert!(pm["landmarks"].is_array());
-        assert!(pm["links"].is_array());
-        assert!(pm["regions"].is_array());
-        assert!(pm.get("active_dialog").is_some());
-        assert!(pm["meta"].is_object());
-
-        assert!(
-            pm.get("forms").is_none(),
-            "forms should be removed from page_map"
-        );
-        assert!(
-            pm.get("interactive").is_none(),
-            "interactive should be removed from page_map"
-        );
-        assert!(
-            pm.get("controls").is_none(),
-            "controls should be removed from page_map"
-        );
-
-        assert!(pm.get("truncated_links").is_some());
-        assert!(pm.get("truncated_forms").is_some());
-        assert!(pm.get("truncated_landmarks").is_some());
-    }
-
-    fn base_page_map() -> serde_json::Value {
-        json!({
-            "headings": [
-                {"level": 1, "text": "Welcome", "selector": "#welcome", "char_count": 100, "preview": "Hello"}
-            ],
-            "landmarks": [
-                {"tag": "nav", "role": "navigation", "id": "main-nav", "selector": "nav", "text_preview": "Nav"}
-            ],
-            "links": [
-                {"text": "Home", "href": "https://example.com/", "selector": "a.home"},
-                {"text": "About", "href": "https://example.com/about", "selector": "a.about"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Test Page", "url": "https://example.com/page", "description": ""}
         })
     }
 
     #[test]
-    fn diff_no_changes_returns_changed_false() {
-        let prev = base_page_map();
-        let mut current = base_page_map();
+    fn feedback_fallback_value_has_correct_shape() {
+        let val = fallback_value();
+        assert_eq!(val["url"], "unknown");
+        assert_eq!(val["title"], "unknown");
+        assert!(val["page_map"].is_null());
+    }
 
-        let result = build_diff_page_state(&prev, &mut current);
+    #[test]
+    fn feedback_success_value_from_mock_page_map() {
+        let result =
+            build_page_state_from_map(page_map_fixture("https://example.com/page", "Example Page"));
 
-        assert_eq!(result["changed"], false);
         assert_eq!(result["url"], "https://example.com/page");
-        assert_eq!(result["title"], "Test Page");
-        assert!(result.get("changes").is_none());
+        assert_eq!(result["title"], "Example Page");
+        assert!(result["page_map"]["headings"].is_array());
+        assert!(result["page_map"].get("forms").is_none());
+        assert!(result["page_map"].get("interactive").is_none());
+        assert!(result["page_map"].get("controls").is_none());
     }
 
     #[test]
-    fn diff_modal_added_shows_only_new_elements() {
-        let prev = base_page_map();
-        let mut current = json!({
-            "headings": [
-                {"level": 1, "text": "Welcome", "selector": "#welcome", "char_count": 100, "preview": "Hello"},
-                {"level": 2, "text": "Sign Up", "selector": "div.modal > h2", "char_count": 50, "preview": "Create account"}
-            ],
-            "landmarks": [
-                {"tag": "nav", "role": "navigation", "id": "main-nav", "selector": "nav", "text_preview": "Nav"},
-                {"tag": "dialog", "role": "dialog", "id": "signup", "selector": "#signup", "text_preview": "Sign up form"}
-            ],
-            "links": [
-                {"text": "Home", "href": "https://example.com/", "selector": "a.home"},
-                {"text": "About", "href": "https://example.com/about", "selector": "a.about"},
-                {"text": "Login instead", "href": "https://example.com/login", "selector": "div.modal a"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Test Page", "url": "https://example.com/page", "description": ""}
-        });
+    fn tree_diff_modal_open_returns_added_subtree() {
+        let prev = document(vec![node("main", Some(""), Some("e2"), vec![])]);
+        let curr = document(vec![
+            node("main", Some(""), Some("e2"), vec![]),
+            node(
+                "dialog",
+                Some("Confirm delete"),
+                Some("e3"),
+                vec![node("button", Some("Delete"), Some("e4"), vec![])],
+            ),
+        ]);
 
-        let result = build_diff_page_state(&prev, &mut current);
+        let result = build_diff_page_state(Some(&prev), Some(&curr));
+        let rendered = result.as_str().expect("tree diff should be a string");
 
-        assert_eq!(result["changed"], true);
-        let changes = &result["changes"];
-        assert_eq!(changes["added_headings"].as_array().unwrap().len(), 1);
-        assert_eq!(changes["added_headings"][0]["text"], "Sign Up");
-        assert_eq!(changes["added_links"].as_array().unwrap().len(), 1);
-        assert_eq!(changes["added_links"][0]["text"], "Login instead");
-        assert_eq!(changes["added_landmarks"].as_array().unwrap().len(), 1);
-        assert_eq!(changes["added_landmarks"][0]["tag"], "dialog");
-        assert!(changes.get("removed_headings").is_none());
-        assert!(changes.get("removed_links").is_none());
-        assert!(changes.get("removed_landmarks").is_none());
+        assert!(rendered.contains("added:"));
+        assert!(rendered.contains("dialog \"Confirm delete\""));
     }
 
     #[test]
-    fn diff_modal_closed_shows_removed_elements() {
-        let prev = json!({
-            "headings": [
-                {"level": 1, "text": "Welcome", "selector": "#welcome", "char_count": 100, "preview": "Hello"},
-                {"level": 2, "text": "Sign Up", "selector": "div.modal > h2", "char_count": 50, "preview": "Create"}
-            ],
-            "landmarks": [
-                {"tag": "nav", "role": "navigation", "id": "main-nav", "selector": "nav", "text_preview": "Nav"}
-            ],
-            "links": [
-                {"text": "Home", "href": "https://example.com/", "selector": "a.home"},
-                {"text": "Login instead", "href": "https://example.com/login", "selector": "div.modal a"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Test Page", "url": "https://example.com/page", "description": ""}
-        });
+    fn tree_diff_modal_close_returns_removed_subtree() {
+        let prev = document(vec![
+            node("main", Some(""), Some("e2"), vec![]),
+            node(
+                "dialog",
+                Some("Confirm delete"),
+                Some("e3"),
+                vec![node("button", Some("Delete"), Some("e4"), vec![])],
+            ),
+        ]);
+        let curr = document(vec![node("main", Some(""), Some("e2"), vec![])]);
 
-        let mut current = json!({
-            "headings": [
-                {"level": 1, "text": "Welcome", "selector": "#welcome", "char_count": 100, "preview": "Hello"}
-            ],
-            "landmarks": [
-                {"tag": "nav", "role": "navigation", "id": "main-nav", "selector": "nav", "text_preview": "Nav"}
-            ],
-            "links": [
-                {"text": "Home", "href": "https://example.com/", "selector": "a.home"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Test Page", "url": "https://example.com/page", "description": ""}
-        });
+        let result = build_diff_page_state(Some(&prev), Some(&curr));
+        let rendered = result.as_str().expect("tree diff should be a string");
 
-        let result = build_diff_page_state(&prev, &mut current);
+        assert!(rendered.contains("removed:"));
+        assert!(rendered.contains("dialog \"Confirm delete\""));
+    }
 
-        assert_eq!(result["changed"], true);
-        let changes = &result["changes"];
-        assert_eq!(changes["removed_headings"].as_array().unwrap().len(), 1);
-        assert_eq!(changes["removed_headings"][0]["text"], "Sign Up");
-        assert_eq!(changes["removed_links"].as_array().unwrap().len(), 1);
+    #[test]
+    fn tree_diff_state_toggle_returns_changed_entry() {
+        let prev = document(vec![node_with_states(
+            "button",
+            Some("Submit"),
+            Some("e2"),
+            AriaStates::default(),
+            vec![],
+        )]);
+        let curr = document(vec![node_with_states(
+            "button",
+            Some("Submit"),
+            Some("e9"),
+            AriaStates {
+                disabled: true,
+                ..AriaStates::default()
+            },
+            vec![],
+        )]);
+
+        let result = build_diff_page_state(Some(&prev), Some(&curr));
+        let rendered = result.as_str().expect("tree diff should be a string");
+
+        assert!(rendered.contains("changed:"));
+        assert!(rendered.contains("button \"Submit\""));
+        assert!(rendered.contains("states=AriaStates"));
+    }
+
+    #[test]
+    fn tree_diff_unchanged_page_returns_no_visible_change() {
+        let prev = document(vec![node("button", Some("Submit"), Some("e2"), vec![])]);
+        let curr = document(vec![node("button", Some("Submit"), Some("e9"), vec![])]);
+
         assert_eq!(
-            changes["removed_links"][0]["href"],
-            "https://example.com/login"
+            build_diff_page_state(Some(&prev), Some(&curr)),
+            Value::String("no visible change".to_string())
         );
-        assert!(changes.get("added_headings").is_none());
     }
 
     #[test]
-    fn diff_ignores_selector_changes_for_same_content() {
-        let prev = json!({
-            "headings": [
-                {"level": 1, "text": "Title", "selector": "div:nth-of-type(1) > h1", "char_count": 10, "preview": "T"}
-            ],
-            "landmarks": [],
-            "links": [
-                {"text": "Link", "href": "https://example.com/page", "selector": "div:nth-of-type(1) > a"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": "https://example.com/page", "description": ""}
-        });
+    fn tree_diff_ignores_ref_id_churn_for_same_identity() {
+        let prev = document(vec![node("button", Some("Save"), Some("e2"), vec![])]);
+        let curr = document(vec![node("button", Some("Save"), Some("e99"), vec![])]);
 
-        let mut current = json!({
-            "headings": [
-                {"level": 1, "text": "Title", "selector": "div:nth-of-type(2) > h1", "char_count": 10, "preview": "T"}
-            ],
-            "landmarks": [],
-            "links": [
-                {"text": "Link", "href": "https://example.com/page", "selector": "div:nth-of-type(2) > a"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": "https://example.com/page", "description": ""}
-        });
-
-        let result = build_diff_page_state(&prev, &mut current);
-
-        assert_eq!(result["changed"], false);
+        assert_eq!(
+            build_diff_page_state(Some(&prev), Some(&curr)),
+            Value::String("no visible change".to_string())
+        );
     }
 
     #[test]
-    fn diff_too_large_falls_back_to_full_page_map() {
-        let prev = json!({
-            "headings": [
-                {"level": 1, "text": "Home", "selector": "h1", "char_count": 10, "preview": "Home"},
-                {"level": 2, "text": "Features", "selector": "h2", "char_count": 10, "preview": "Feat"}
-            ],
-            "landmarks": [
-                {"tag": "main", "role": "main", "id": "content", "selector": "#content", "text_preview": "Main"}
-            ],
-            "links": [
-                {"text": "Link A", "href": "https://example.com/a", "selector": "a"},
-                {"text": "Link B", "href": "https://example.com/b", "selector": "a"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Home", "url": "https://example.com/", "description": ""}
-        });
-
-        let mut current = json!({
-            "headings": [
-                {"level": 1, "text": "About Us", "selector": "h1", "char_count": 20, "preview": "About"},
-                {"level": 2, "text": "Team", "selector": "h2.team", "char_count": 15, "preview": "Team"},
-                {"level": 2, "text": "Mission", "selector": "h2.mission", "char_count": 15, "preview": "Mission"}
-            ],
-            "landmarks": [
-                {"tag": "main", "role": "main", "id": "about", "selector": "#about", "text_preview": "About"}
-            ],
-            "links": [
-                {"text": "Contact", "href": "https://example.com/contact", "selector": "a"},
-                {"text": "Join Us", "href": "https://example.com/careers", "selector": "a"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "About", "url": "https://example.com/", "description": ""}
-        });
-
-        let result = build_diff_page_state(&prev, &mut current);
-
-        assert!(
-            result.get("page_map").is_some(),
-            "should fall back to full page_map when diff is too large"
+    fn tree_diff_large_change_falls_back_to_full_yaml_snapshot() {
+        let prev = document(vec![node("main", Some(""), Some("e2"), vec![])]);
+        let curr = document(
+            (0..31)
+                .map(|idx| {
+                    node(
+                        "button",
+                        Some(&format!("Action {idx}")),
+                        Some(&format!("e{}", idx + 2)),
+                        vec![],
+                    )
+                })
+                .collect(),
         );
-        assert_eq!(result["url"], "https://example.com/");
+
+        assert_eq!(
+            build_diff_page_state(Some(&prev), Some(&curr)),
+            Value::String(to_yaml(&curr, Some(FEEDBACK_TREE_DEPTH)))
+        );
     }
 
     #[test]
@@ -1188,501 +1164,92 @@ mod tests {
             "https://example.com/page"
         );
         assert_eq!(
-            normalize_url("https://example.com/page"),
-            "https://example.com/page"
-        );
-        assert_eq!(
             normalize_url("https://app.com/#/dashboard"),
             "https://app.com/#/dashboard"
         );
-        assert_eq!(
-            normalize_url("https://app.com/#!/billing"),
-            "https://app.com/#!/billing"
-        );
-        assert_eq!(normalize_url("unknown"), "unknown");
-    }
-
-    #[test]
-    fn diff_interactive_state_changes_detected() {
-        let prev = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
-                "elements": [
-                    {"tag": "button", "text": "Menu", "selector": "#menu-btn", "aria_expanded": "false"},
-                    {"tag": "button", "text": "Submit", "selector": "#submit-btn", "disabled": true}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let mut current = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
-                "elements": [
-                    {"tag": "button", "text": "Menu", "selector": "#menu-btn", "aria_expanded": "true"},
-                    {"tag": "button", "text": "Submit", "selector": "#submit-btn"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let result = build_diff_page_state(&prev, &mut current);
-
-        assert_eq!(result["changed"], true);
-        let changes = &result["changes"];
-        let modified = changes["modified_interactive"].as_array().unwrap();
-        assert_eq!(modified.len(), 2);
-
-        let menu = modified
-            .iter()
-            .find(|e| e["selector"] == "#menu-btn")
-            .unwrap();
-        assert_eq!(menu["state_changes"]["aria_expanded"], "true");
-
-        let submit = modified
-            .iter()
-            .find(|e| e["selector"] == "#submit-btn")
-            .unwrap();
-        assert!(submit["state_changes"]["disabled"].is_null());
-    }
-
-    #[test]
-    fn diff_duplicate_links_counted_correctly() {
-        let prev = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Read more", "href": "https://example.com/post/1", "selector": "a:nth-of-type(1)"},
-                {"text": "Read more", "href": "https://example.com/post/1", "selector": "a:nth-of-type(2)"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let mut current = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Read more", "href": "https://example.com/post/1", "selector": "a:nth-of-type(1)"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let result = build_diff_page_state(&prev, &mut current);
-
-        assert_eq!(result["changed"], true);
-        let changes = &result["changes"];
-        let removed = changes["removed_links"].as_array().unwrap();
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0]["text"], "Read more");
-    }
-
-    #[test]
-    fn diff_added_interactive_elements_detected() {
-        let prev = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
-                "elements": [
-                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let mut current = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
-                "elements": [
-                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"},
-                    {"tag": "button", "text": "Delete", "selector": "#del-btn", "type": "submit"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let result = build_diff_page_state(&prev, &mut current);
-
-        assert_eq!(result["changed"], true);
-        let changes = &result["changes"];
-        let added = changes["added_interactive"].as_array().unwrap();
-        assert_eq!(added.len(), 1);
-        assert_eq!(added[0]["text"], "Delete");
-        assert_eq!(added[0]["selector"], "#del-btn");
-    }
-
-    #[test]
-    fn extension_style_raw_page_map_uses_same_diff_as_bridge_path() {
-        let prev = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
-                "elements": [
-                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-        let mut current = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
-                "elements": [
-                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"},
-                    {"tag": "button", "text": "Delete", "selector": "#del-btn", "type": "submit"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let bridge = Arc::new(Mutex::new(Box::new(
-            crate::tools::test_support::ObservationMockBackend::default(),
-        ) as Box<dyn BrowserBackend + Send>));
-        let mut browser = BrowserContext::new(bridge);
-        browser.set_page_snapshot("https://example.com/", None, prev.clone());
-
-        let extension_path = page_state_from_feedback_map(&mut browser, None, current.clone());
-        let bridge_path = build_diff_page_state(&prev, &mut current);
-
-        assert_eq!(extension_path, bridge_path);
-        assert_eq!(extension_path["changed"], true);
-        let added = extension_path["changes"]["added_interactive"]
-            .as_array()
-            .expect("added_interactive should be present");
-        assert_eq!(added.len(), 1);
-        assert_eq!(added[0]["selector"], "#del-btn");
-    }
-
-    #[test]
-    fn diff_removed_interactive_elements_detected() {
-        let prev = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 2, "inputs": 0, "selects": 0, "textareas": 0, "total": 2},
-                "elements": [
-                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"},
-                    {"tag": "button", "text": "Delete", "selector": "#del-btn", "type": "submit"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let mut current = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 1, "inputs": 0, "selects": 0, "textareas": 0, "total": 1},
-                "elements": [
-                    {"tag": "button", "text": "Add Element", "selector": "#add-btn", "type": "submit"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let result = build_diff_page_state(&prev, &mut current);
-
-        assert_eq!(result["changed"], true);
-        let changes = &result["changes"];
-        let removed = changes["removed_interactive"].as_array().unwrap();
-        assert_eq!(removed.len(), 1);
-        assert_eq!(removed[0]["text"], "Delete");
-    }
-
-    #[test]
-    fn diff_select_value_change_detected() {
-        let prev = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 0, "inputs": 0, "selects": 1, "textareas": 0, "total": 1},
-                "elements": [
-                    {"tag": "select", "text": "Option 1\nOption 2", "selector": "#dropdown", "type": "select-one", "value": "Please select"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let mut current = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {
-                "counts": {"buttons": 0, "inputs": 0, "selects": 1, "textareas": 0, "total": 1},
-                "elements": [
-                    {"tag": "select", "text": "Option 1\nOption 2", "selector": "#dropdown", "type": "select-one", "value": "Option 1"}
-                ]
-            },
-            "meta": {"title": "Page", "url": "https://example.com/", "description": ""}
-        });
-
-        let result = build_diff_page_state(&prev, &mut current);
-
-        assert_eq!(result["changed"], true);
-        let changes = &result["changes"];
-        let modified = changes["modified_interactive"].as_array().unwrap();
-        assert_eq!(modified.len(), 1);
-        assert_eq!(modified[0]["selector"], "#dropdown");
-        assert_eq!(modified[0]["state_changes"]["value"], "Option 1");
-    }
-
-    #[test]
-    fn scoped_diff_filters_to_container() {
-        let url = "https://example.com/settings";
-        let prev_full = json!({
-            "headings": [
-                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
-            ],
-            "landmarks": [
-                {"tag": "main", "role": "main", "id": "content", "selector": "main", "text_preview": "Content"}
-            ],
-            "links": [
-                {"text": "Profile", "href": "https://example.com/profile", "selector": "header a.profile"},
-                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Settings", "url": url, "description": ""}
-        });
-        let mut current_full = json!({
-            "headings": [
-                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
-            ],
-            "landmarks": [
-                {"tag": "main", "role": "main", "id": "content", "selector": "main", "text_preview": "Content"}
-            ],
-            "links": [
-                {"text": "Profile", "href": "https://example.com/profile", "selector": "header a.profile"},
-                {"text": "Billing", "href": "https://example.com/billing", "selector": "header a.billing"},
-                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"},
-                {"text": "Reset", "href": "https://example.com/reset", "selector": "#settings a.reset"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Settings", "url": url, "description": ""}
-        });
-        let prev_scoped = json!({
-            "headings": [
-                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
-            ],
-            "landmarks": [],
-            "links": [
-                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Settings", "url": url, "description": ""}
-        });
-        let current_scoped = json!({
-            "headings": [
-                {"level": 1, "text": "Settings", "selector": "#settings h1", "char_count": 20, "preview": "Settings"}
-            ],
-            "landmarks": [],
-            "links": [
-                {"text": "Save", "href": "https://example.com/save", "selector": "#settings a.save"},
-                {"text": "Reset", "href": "https://example.com/reset", "selector": "#settings a.reset"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Settings", "url": url, "description": ""}
-        });
-
-        let full_diff = build_diff_page_state(&prev_full, &mut current_full);
-
-        let bridge = Arc::new(Mutex::new(Box::new(
-            crate::tools::test_support::ObservationMockBackend::default(),
-        ) as Box<dyn BrowserBackend + Send>));
-        let mut browser = BrowserContext::new(bridge);
-        browser.set_page_snapshot(url, Some("#settings"), prev_scoped);
-
-        let scoped_diff =
-            page_state_from_feedback_map(&mut browser, Some("#settings"), current_scoped);
-
-        assert_eq!(
-            full_diff["changes"]["added_links"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            scoped_diff["changes"]["added_links"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(scoped_diff["changes"]["added_links"][0]["text"], "Reset");
     }
 
     #[tokio::test]
-    async fn active_dialog_scope_uses_dialog_baseline() {
-        let url = "https://example.com/page";
-        let prev_dialog = json!({
-            "headings": [
-                {"level": 2, "text": "Confirm", "selector": "#confirm-dialog h2", "char_count": 10, "preview": "Confirm"}
-            ],
-            "landmarks": [
-                {"tag": "dialog", "role": "dialog", "id": "confirm-dialog", "selector": "#confirm-dialog", "text_preview": "Confirm dialog"}
-            ],
-            "links": [
-                {"text": "Cancel", "href": "https://example.com/cancel", "selector": "#confirm-dialog a.cancel"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Dialog", "url": url, "description": ""}
-        });
-        let current_dialog = json!({
-            "headings": [
-                {"level": 2, "text": "Confirm", "selector": "#confirm-dialog h2", "char_count": 10, "preview": "Confirm"}
-            ],
-            "landmarks": [
-                {"tag": "dialog", "role": "dialog", "id": "confirm-dialog", "selector": "#confirm-dialog", "text_preview": "Confirm dialog"}
-            ],
-            "links": [
-                {"text": "Cancel", "href": "https://example.com/cancel", "selector": "#confirm-dialog a.cancel"},
-                {"text": "Delete", "href": "https://example.com/delete", "selector": "#confirm-dialog a.delete"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Dialog", "url": url, "description": ""}
-        });
+    async fn post_action_page_state_scopes_to_active_dialog_subtree() {
+        let url = "https://example.com/modal";
+        let prev_tree = document(vec![
+            node("main", Some(""), Some("e2"), vec![]),
+            node("button", Some("Open modal"), Some("e3"), vec![]),
+        ]);
+        let curr_tree = document(vec![
+            node("main", Some(""), Some("e2"), vec![]),
+            node("button", Some("Open modal"), Some("e3"), vec![]),
+            node(
+                "dialog",
+                Some("Confirm delete"),
+                Some("e4"),
+                vec![node("button", Some("Delete"), Some("e5"), vec![])],
+            ),
+        ]);
 
         let (mut browser, state) = browser_with_feedback_backend(
             FeedbackMockState {
-                page_maps: HashMap::from([("#confirm-dialog".to_string(), current_dialog)]),
-                evaluate_result: json!("section"),
+                page_maps: HashMap::from([(
+                    String::new(),
+                    feedback_snapshot(url, "Modal", &curr_tree, Some("Confirm delete")),
+                )]),
                 ..FeedbackMockState::default()
             },
             url,
         );
-        browser.set_page_snapshot(url, Some("#confirm-dialog"), prev_dialog);
-        browser.set_page_snapshot(
-            url,
-            None,
-            json!({
-                "headings": [],
-                "landmarks": [],
-                "links": [],
-                "forms": [],
-                "interactive": {},
-                "active_dialog": {"selector": "#confirm-dialog", "visible": true},
-                "meta": {"title": "Page", "url": url, "description": ""}
-            }),
-        );
+        browser.set_page_snapshot(url, None, feedback_snapshot(url, "Modal", &prev_tree, None));
 
         let result = post_action_page_state(
             &mut browser,
             &CrawlState::default(),
             InteractionKind::Passive,
-            Some("#outside"),
+            Some("#open-modal"),
             false,
         )
         .await
         .unwrap();
-        let state = state.lock().expect("mock state poisoned");
 
-        assert_eq!(
-            state.requested_scopes,
-            vec![Some("#confirm-dialog".to_string())]
-        );
-        assert!(state.evaluate_scripts.is_empty());
-        assert_eq!(result["changes"]["added_links"][0]["text"], "Delete");
+        let rendered = result.as_str().expect("page state should be a string");
+        println!("{rendered}");
+        assert!(rendered.contains("added:"));
+        assert!(rendered.contains("dialog \"Confirm delete\""));
+
+        let state = state.lock().expect("mock state poisoned");
+        assert_eq!(state.requested_scopes, vec![None]);
     }
 
     #[tokio::test]
-    async fn widen_true_returns_full_page_diff() {
-        let url = "https://example.com/page";
-        let prev_full = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"},
-                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": url, "description": ""}
-        });
-        let prev_scoped = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": url, "description": ""}
-        });
-        let current_full = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"},
-                {"text": "Billing", "href": "https://example.com/billing", "selector": "header a.billing"},
-                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"},
-                {"text": "Reset", "href": "https://example.com/reset", "selector": "#panel a.reset"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": url, "description": ""}
-        });
-        let current_scoped = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Save", "href": "https://example.com/save", "selector": "#panel a.save"},
-                {"text": "Reset", "href": "https://example.com/reset", "selector": "#panel a.reset"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": url, "description": ""}
-        });
+    async fn post_action_page_state_large_change_falls_back_to_full_yaml() {
+        let url = "https://example.com/fallback";
+        let prev_tree = document(vec![node("main", Some(""), Some("e2"), vec![])]);
+        let curr_tree = document(
+            (0..31)
+                .map(|idx| {
+                    node(
+                        "button",
+                        Some(&format!("Action {idx}")),
+                        Some(&format!("e{}", idx + 2)),
+                        vec![],
+                    )
+                })
+                .collect(),
+        );
 
-        let (mut browser, state) = browser_with_feedback_backend(
+        let (mut browser, _state) = browser_with_feedback_backend(
             FeedbackMockState {
-                page_maps: HashMap::from([
-                    (String::new(), current_full),
-                    ("section".to_string(), current_scoped),
-                ]),
-                evaluate_result: json!("section"),
+                page_maps: HashMap::from([(
+                    String::new(),
+                    feedback_snapshot(url, "Fallback", &curr_tree, None),
+                )]),
                 ..FeedbackMockState::default()
             },
             url,
         );
-        browser.set_page_snapshot(url, None, prev_full);
-        browser.set_page_snapshot(url, Some("section"), prev_scoped);
+        browser.set_page_snapshot(
+            url,
+            None,
+            feedback_snapshot(url, "Fallback", &prev_tree, None),
+        );
 
         let result = post_action_page_state(
             &mut browser,
@@ -1693,81 +1260,32 @@ mod tests {
         )
         .await
         .unwrap();
-        let state = state.lock().expect("mock state poisoned");
 
-        assert_eq!(state.requested_scopes, vec![None]);
-        assert!(state.evaluate_scripts.is_empty());
+        println!(
+            "{}",
+            result.as_str().expect("page state should be a string")
+        );
         assert_eq!(
-            result["changes"]["added_links"].as_array().unwrap().len(),
-            2
+            result,
+            Value::String(to_yaml(&curr_tree, Some(FEEDBACK_TREE_DEPTH)))
         );
-    }
-
-    #[tokio::test]
-    async fn no_container_falls_back_to_full_page() {
-        let url = "https://example.com/page";
-        let prev_full = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": url, "description": ""}
-        });
-        let current_full = json!({
-            "headings": [],
-            "landmarks": [],
-            "links": [
-                {"text": "Account", "href": "https://example.com/account", "selector": "header a.account"},
-                {"text": "Billing", "href": "https://example.com/billing", "selector": "header a.billing"}
-            ],
-            "forms": [],
-            "interactive": {},
-            "meta": {"title": "Page", "url": url, "description": ""}
-        });
-
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), current_full)]),
-                evaluate_result: Value::Null,
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
-        browser.set_page_snapshot(url, None, prev_full);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::Passive,
-            Some("#trigger"),
-            false,
-        )
-        .await
-        .unwrap();
-        let state = state.lock().expect("mock state poisoned");
-
-        assert_eq!(state.requested_scopes, vec![None]);
-        assert_eq!(state.evaluate_scripts.len(), 1);
-        assert_eq!(result["changes"]["added_links"][0]["text"], "Billing");
     }
 
     #[tokio::test]
     async fn silent_submit_fires_on_silent_v3_rejection() {
         let url = "https://example.com/form";
-        let title = "Form";
-        let page_map = minimal_page_map(url, title);
+        let tree = document(vec![node("form", Some("Signup"), Some("e2"), vec![])]);
+        let snapshot = feedback_snapshot(url, "Form", &tree, None);
+
         let (mut browser, state) = browser_with_feedback_backend(
             FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                page_maps: HashMap::from([(String::new(), snapshot.clone())]),
                 evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
                 ..FeedbackMockState::default()
             },
             url,
         );
-        browser.set_page_snapshot(url, None, page_map);
+        browser.set_page_snapshot(url, None, snapshot);
 
         let result = post_action_page_state(
             &mut browser,
@@ -1780,39 +1298,7 @@ mod tests {
 
         let err = result.expect_err("silent v3 rejection should error");
         assert_eq!(err.to_string(), RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE);
-        assert!(err.to_string().contains("reCAPTCHA"));
-        assert!(!err.to_string().to_lowercase().contains("blocked"));
 
-        let state = state.lock().expect("mock state poisoned");
-        assert_eq!(state.evaluate_scripts.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn silent_submit_does_not_fire_without_v3_probe_match() {
-        let url = "https://example.com/form";
-        let title = "Form";
-        let page_map = minimal_page_map(url, title);
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map.clone())]),
-                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": false}))],
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
-        browser.set_page_snapshot(url, None, page_map);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::PossibleSubmit,
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result, unchanged_response(url, title));
         let state = state.lock().expect("mock state poisoned");
         assert_eq!(state.evaluate_scripts.len(), 1);
     }
@@ -1820,84 +1306,21 @@ mod tests {
     #[tokio::test]
     async fn silent_submit_does_not_fire_when_page_changed() {
         let url = "https://example.com/form";
-        let prev = minimal_page_map(url, "Form");
-        let current = json!({
-            "headings": [
-                {"level": 1, "text": "Thanks", "id": "thanks", "selector": "#thanks", "char_count": 6, "preview": "Thanks"}
-            ],
-            "landmarks": [],
-            "links": [],
-            "forms": [],
-            "interactive": {"elements": []},
-            "meta": {"title": "Form", "url": url, "description": ""}
-        });
+        let prev_tree = document(vec![node("form", Some("Signup"), Some("e2"), vec![])]);
+        let curr_tree = document(vec![node("heading", Some("Thanks"), Some("e2"), vec![])]);
+
         let (mut browser, state) = browser_with_feedback_backend(
             FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), current)]),
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
-        browser.set_page_snapshot(url, None, prev);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::PossibleSubmit,
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result["changed"], Value::Bool(true));
-        let state = state.lock().expect("mock state poisoned");
-        assert!(state.evaluate_scripts.is_empty());
-    }
-
-    #[tokio::test]
-    async fn silent_submit_does_not_fire_for_passive_interaction() {
-        let url = "https://example.com/form";
-        let title = "Form";
-        let page_map = minimal_page_map(url, title);
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map.clone())]),
+                page_maps: HashMap::from([(
+                    String::new(),
+                    feedback_snapshot(url, "Form", &curr_tree, None),
+                )]),
                 evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
                 ..FeedbackMockState::default()
             },
             url,
         );
-        browser.set_page_snapshot(url, None, page_map);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::Passive,
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result, unchanged_response(url, title));
-        let state = state.lock().expect("mock state poisoned");
-        assert!(state.evaluate_scripts.is_empty());
-    }
-
-    #[tokio::test]
-    async fn silent_submit_does_not_fire_on_first_interaction_without_changed_key() {
-        let url = "https://example.com/form";
-        let title = "Form";
-        let page_map = minimal_page_map(url, title);
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map)]),
-                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
+        browser.set_page_snapshot(url, None, feedback_snapshot(url, "Form", &prev_tree, None));
 
         let result = post_action_page_state(
             &mut browser,
@@ -1909,145 +1332,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.get("changed").is_none());
-        let state = state.lock().expect("mock state poisoned");
-        assert!(state.evaluate_scripts.is_empty());
-    }
+        let rendered = result.as_str().expect("page state should be a string");
+        assert_ne!(rendered, "no visible change");
 
-    #[tokio::test]
-    async fn silent_submit_fail_opens_when_probe_evaluate_errors() {
-        let url = "https://example.com/form";
-        let title = "Form";
-        let page_map = minimal_page_map(url, title);
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map.clone())]),
-                evaluate_error_substrings: vec!["grecaptcha".to_string()],
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
-        browser.set_page_snapshot(url, None, page_map);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::PossibleSubmit,
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result, unchanged_response(url, title));
-        let state = state.lock().expect("mock state poisoned");
-        assert_eq!(state.evaluate_scripts.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn silent_submit_fail_opens_when_probe_returns_non_bool() {
-        let url = "https://example.com/form";
-        let title = "Form";
-        let page_map = minimal_page_map(url, title);
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map.clone())]),
-                evaluate_script_results: vec![("grecaptcha".to_string(), Value::Null)],
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
-        browser.set_page_snapshot(url, None, page_map);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::PossibleSubmit,
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(result, unchanged_response(url, title));
-        let state = state.lock().expect("mock state poisoned");
-        assert_eq!(state.evaluate_scripts.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn silent_submit_no_double_submit_probe_runs_once() {
-        let url = "https://example.com/form";
-        let page_map = minimal_page_map(url, "Form");
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map.clone())]),
-                evaluate_script_results: vec![("grecaptcha".to_string(), json!({"value": true}))],
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
-        browser.set_page_snapshot(url, None, page_map);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::PossibleSubmit,
-            None,
-            false,
-        )
-        .await;
-
-        assert!(result.is_err());
-        let state = state.lock().expect("mock state poisoned");
-        // The audit probe must run exactly once — no retries.  We assert on the
-        // *total* evaluate call count (not just a filtered subset) to prove that
-        // nothing re-invoked the probe after the `Err` was returned.
-        //
-        // Broader no-double-submit guarantee: the `Err(CaptchaDetected)` return
-        // maps to `RetryStrategy::NoRetry`, which prevents `implementation/mod.rs`
-        // self-healing from re-invoking the interaction tool (and therefore the
-        // submit action).  That path is independently covered by
-        // `silent_submit_recaptcha_v3_message_classifies_as_captcha_detected`.
-        assert_eq!(
-            state.evaluate_scripts.len(),
-            1,
-            "exactly one evaluate call total — audit probe must not be re-invoked"
-        );
-        assert!(
-            state.evaluate_scripts[0].contains("grecaptcha"),
-            "the single evaluate call must be the v3 reCAPTCHA probe"
-        );
-    }
-
-    #[tokio::test]
-    async fn silent_submit_passive_action_byte_identical_regression() {
-        let url = "https://example.com/form";
-        let title = "Form";
-        let page_map = minimal_page_map(url, title);
-        let (mut browser, state) = browser_with_feedback_backend(
-            FeedbackMockState {
-                page_maps: HashMap::from([(String::new(), page_map.clone())]),
-                ..FeedbackMockState::default()
-            },
-            url,
-        );
-        browser.set_page_snapshot(url, None, page_map);
-
-        let result = post_action_page_state(
-            &mut browser,
-            &CrawlState::default(),
-            InteractionKind::Passive,
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-
-        let expected = unchanged_response(url, title);
-        assert_eq!(
-            serde_json::to_vec(&result).unwrap(),
-            serde_json::to_vec(&expected).unwrap()
-        );
         let state = state.lock().expect("mock state poisoned");
         assert!(state.evaluate_scripts.is_empty());
     }

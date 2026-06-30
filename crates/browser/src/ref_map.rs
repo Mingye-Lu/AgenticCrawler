@@ -164,6 +164,23 @@ impl RefMap {
         self.map.get(ref_id)
     }
 
+    /// Reverse-resolve a stored DOM query or fallback selector back to its `ref_id`.
+    #[must_use]
+    pub fn ref_id_for_query(&self, query: &str) -> Option<&str> {
+        self.map.iter().find_map(|(ref_id, entry)| {
+            let resolved_query = match &entry.resolution {
+                Resolution::Attr(attr) => format!("[data-acrawl-ref='{attr}']"),
+                Resolution::Selector(selector) => selector.clone(),
+            };
+
+            if resolved_query == query || entry.fallback_selector.as_deref() == Some(query) {
+                Some(ref_id.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
     /// Clear all refs and reset the counter to 1.
     ///
     /// Called on URL change. Preserves the existing trigger semantics: every
