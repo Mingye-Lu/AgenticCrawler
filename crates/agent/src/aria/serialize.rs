@@ -430,37 +430,39 @@ mod tests {
         );
     }
 
+    fn ref_el(role: &str, name: &str, ref_id: &str, children: Vec<AriaNode>) -> AriaNode {
+        AriaNode {
+            role: role.to_string(),
+            name: Some(name.to_string()),
+            states: AriaStates::default(),
+            ref_id: Some(ref_id.to_string()),
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children,
+            omitted_children: 0,
+        }
+    }
+
+    fn ref_link(name: &str, ref_id: &str, url: &str) -> AriaNode {
+        AriaNode {
+            url: Some(url.to_string()),
+            ..ref_el("link", name, ref_id, Vec::new())
+        }
+    }
+
+    fn ref_heading(name: &str, ref_id: &str, level: u8) -> AriaNode {
+        AriaNode {
+            states: AriaStates {
+                level: Some(level),
+                ..AriaStates::default()
+            },
+            ..ref_el("heading", name, ref_id, Vec::new())
+        }
+    }
+
     #[test]
     fn test_golden_nested_regions_fixture() {
-        fn ref_el(role: &str, name: &str, ref_id: &str, children: Vec<AriaNode>) -> AriaNode {
-            AriaNode {
-                role: role.to_string(),
-                name: Some(name.to_string()),
-                states: AriaStates::default(),
-                ref_id: Some(ref_id.to_string()),
-                url: None,
-                frame_id: None,
-                offscreen: false,
-                children,
-                omitted_children: 0,
-            }
-        }
-        fn ref_link(name: &str, ref_id: &str, url: &str) -> AriaNode {
-            AriaNode {
-                url: Some(url.to_string()),
-                ..ref_el("link", name, ref_id, Vec::new())
-            }
-        }
-        fn ref_heading(name: &str, ref_id: &str, level: u8) -> AriaNode {
-            AriaNode {
-                states: AriaStates {
-                    level: Some(level),
-                    ..AriaStates::default()
-                },
-                ..ref_el("heading", name, ref_id, Vec::new())
-            }
-        }
-
         let tree = ref_el(
             "document",
             "",
