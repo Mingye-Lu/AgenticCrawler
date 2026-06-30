@@ -271,7 +271,7 @@ fn section_observation_tools() -> String {
        Reading the YAML tree:\n\
        - Each line: `- role \"accessible-name\" [state...] [ref=eN]:`\n\
        - Children are indented 2 spaces\n\
-       - Text nodes: `- text: \"content\"`\n\
+       - Standalone text nodes are not currently emitted; visible text is folded into owning element names\n\
        - Links include: `  /url: https://...`\n\
        - States: [disabled] [checked] [expanded] [expanded=false] [pressed=true] [selected] [level=N] [active] [invalid]\n\
        - `[ref=eN]` is the stable identifier for that element — use it to click, hover, fill, etc.\n\

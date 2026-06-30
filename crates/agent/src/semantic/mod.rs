@@ -70,7 +70,6 @@ pub struct ControlInfo {
     pub label: String,
     pub role: String,
     pub selector: String,
-    pub region_handle: Option<String>,
     pub value: Option<String>,
     pub required: bool,
     pub disabled: bool,

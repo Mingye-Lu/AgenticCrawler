@@ -48,6 +48,10 @@ fn validate_actionable_ref(input: &str, ref_map: &RefMap, ref_id: &str) -> Resul
 /// Resolve a ref string (e.g. "@e5" or "e5") to its owning frame and action query.
 ///
 /// Returns `(None, selector)` for raw CSS inputs and `(frame_id, dom_query)` for refs.
+///
+/// `frame_id` is preserved for bridge-aware callers, but the current Playwright
+/// bridge also falls back to searching descendant frames when given only the
+/// DOM query, so existing callers may ignore it without losing functionality.
 pub fn resolve_to_action_query(
     ref_input: &str,
     context: &BrowserContext,
