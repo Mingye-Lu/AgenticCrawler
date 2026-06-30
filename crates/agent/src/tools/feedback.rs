@@ -1156,6 +1156,36 @@ mod tests {
     }
 
     #[test]
+    fn tree_diff_root_identity_change_replaces_whole_subtree() {
+        let prev = node(
+            "dialog",
+            Some("Login"),
+            Some("e1"),
+            vec![node("button", Some("Sign in"), Some("e2"), vec![])],
+        );
+        let curr = node(
+            "main",
+            Some(""),
+            Some("e1"),
+            vec![node("heading", Some("Welcome"), Some("e2"), vec![])],
+        );
+
+        let result = build_diff_page_state(Some(&prev), Some(&curr));
+
+        let expected = [
+            "+ [ref=e1] added:",
+            "  - main \"\" [ref=e1]:",
+            "    - heading \"Welcome\" [ref=e2]:",
+            "- [ref=e1] removed:",
+            "  - dialog \"Login\" [ref=e1]:",
+            "    - button \"Sign in\" [ref=e2]:",
+        ]
+        .join("\n");
+
+        assert_eq!(result, Value::String(expected));
+    }
+
+    #[test]
     fn url_without_hash_strips_fragment() {
         use super::super::page_map::normalize_url;
 

@@ -429,4 +429,114 @@ mod tests {
             "- main \"\":\n  - navigation \"Primary\":\n    - link \"Pricing\" [ref=e3]:\n      /url: https://example.com/pricing\n      - text: \"Fast browser automation\""
         );
     }
+
+    #[test]
+    fn test_golden_nested_regions_fixture() {
+        fn ref_el(role: &str, name: &str, ref_id: &str, children: Vec<AriaNode>) -> AriaNode {
+            AriaNode {
+                role: role.to_string(),
+                name: Some(name.to_string()),
+                states: AriaStates::default(),
+                ref_id: Some(ref_id.to_string()),
+                url: None,
+                frame_id: None,
+                offscreen: false,
+                children,
+                omitted_children: 0,
+            }
+        }
+        fn ref_link(name: &str, ref_id: &str, url: &str) -> AriaNode {
+            AriaNode {
+                url: Some(url.to_string()),
+                ..ref_el("link", name, ref_id, Vec::new())
+            }
+        }
+        fn ref_heading(name: &str, ref_id: &str, level: u8) -> AriaNode {
+            AriaNode {
+                states: AriaStates {
+                    level: Some(level),
+                    ..AriaStates::default()
+                },
+                ..ref_el("heading", name, ref_id, Vec::new())
+            }
+        }
+
+        let tree = ref_el(
+            "document",
+            "",
+            "e1",
+            vec![
+                ref_el(
+                    "banner",
+                    "",
+                    "e2",
+                    vec![ref_heading("My Site Title", "e3", 1)],
+                ),
+                ref_el(
+                    "navigation",
+                    "Primary",
+                    "e4",
+                    vec![
+                        ref_link("Home", "e5", "/home"),
+                        ref_link("About", "e6", "/about"),
+                        ref_link("Contact", "e7", "/contact"),
+                    ],
+                ),
+                ref_el(
+                    "main",
+                    "",
+                    "e8",
+                    vec![
+                        ref_el(
+                            "navigation",
+                            "Breadcrumb",
+                            "e9",
+                            vec![
+                                ref_link("Root", "e10", "/"),
+                                ref_link("Section", "e11", "/section"),
+                            ],
+                        ),
+                        ref_el(
+                            "region",
+                            "Content",
+                            "e12",
+                            vec![ref_el(
+                                "article",
+                                "",
+                                "e13",
+                                vec![ref_heading("Article Heading", "e14", 2)],
+                            )],
+                        ),
+                    ],
+                ),
+                ref_el("contentinfo", "", "e15", Vec::new()),
+            ],
+        );
+
+        let expected = [
+            "- document \"\" [ref=e1]:",
+            "  - banner \"\" [ref=e2]:",
+            "    - heading \"My Site Title\" [level=1] [ref=e3]:",
+            "  - navigation \"Primary\" [ref=e4]:",
+            "    - link \"Home\" [ref=e5]:",
+            "      /url: /home",
+            "    - link \"About\" [ref=e6]:",
+            "      /url: /about",
+            "    - link \"Contact\" [ref=e7]:",
+            "      /url: /contact",
+            "  - main \"\" [ref=e8]:",
+            "    - navigation \"Breadcrumb\" [ref=e9]:",
+            "      - link \"Root\" [ref=e10]:",
+            "        /url: /",
+            "      - link \"Section\" [ref=e11]:",
+            "        /url: /section",
+            "    - region \"Content\" [ref=e12]:",
+            "      - article \"\" [ref=e13]:",
+            "        - heading \"Article Heading\" [level=2] [ref=e14]:",
+            "  - contentinfo \"\" [ref=e15]:",
+        ]
+        .join("\n");
+
+        assert_eq!(to_yaml(&tree, None), expected);
+    }
 }

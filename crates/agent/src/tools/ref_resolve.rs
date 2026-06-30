@@ -233,4 +233,73 @@ mod tests {
         assert_eq!(frame_id, Some("f7".to_string()));
         assert_eq!(query, format!("[data-acrawl-ref='{ref_id}']"));
     }
+
+    #[test]
+    fn action_query_unknown_ref_returns_exact_stale_string() {
+        let context = test_context();
+        let err = resolve_to_action_query("@e999", &context).unwrap_err();
+        assert_eq!(
+            err,
+            "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
+        );
+    }
+
+    #[test]
+    fn action_query_raw_css_selector_passes_through() {
+        let context = test_context();
+        let (frame_id, query) = resolve_to_action_query("button.submit", &context).unwrap();
+        assert_eq!(frame_id, None);
+        assert_eq!(query, "button.submit");
+    }
+
+    #[test]
+    fn scope_ref_legacy_region_handle_returns_migration_error() {
+        let context = test_context();
+        let err = resolve_scope_ref("@r1", &context).unwrap_err();
+        assert_eq!(err, STALE_REGION_HANDLE_MESSAGE);
+        assert_eq!(
+            err,
+            "@rN region handles are no longer supported. Use [ref=eN] from page_map output instead."
+        );
+    }
+
+    #[test]
+    fn scope_ref_semantic_token_and_css_pass_through_as_none() {
+        let context = test_context();
+        assert_eq!(resolve_scope_ref("main", &context).unwrap(), None);
+        assert_eq!(resolve_scope_ref("#custom-css", &context).unwrap(), None);
+    }
+
+    #[test]
+    fn scope_ref_element_ref_resolves_to_query() {
+        let mut context = test_context();
+        let ref_id = context.ref_map_mut().assign_by_identity(
+            "dialog|Confirm|",
+            "dialog",
+            "Confirm",
+            Some("f1"),
+            Resolution::Attr(String::new()),
+        );
+
+        let expected = Some(format!("[data-acrawl-ref='{ref_id}']"));
+        assert_eq!(
+            resolve_scope_ref(&format!("[ref={ref_id}]"), &context).unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_scope_ref(&format!("@{ref_id}"), &context).unwrap(),
+            expected
+        );
+        assert_eq!(resolve_scope_ref(&ref_id, &context).unwrap(), expected);
+    }
+
+    #[test]
+    fn scope_ref_unknown_element_ref_returns_stale_error() {
+        let context = test_context();
+        let err = resolve_scope_ref("@e999", &context).unwrap_err();
+        assert_eq!(
+            err,
+            "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
+        );
+    }
 }
