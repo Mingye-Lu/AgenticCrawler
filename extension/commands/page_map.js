@@ -414,6 +414,7 @@ function ariaWalk(el, ctx, frameId, depthLevel) {
     return [node];
   }
 
+  // future: pierce open shadow roots (see PR note)
   if (ctx.degraded && depthLevel >= 1) {
     node.omittedChildren = countRetainedChildren(el);
     return [node];
