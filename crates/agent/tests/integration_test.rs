@@ -1,7 +1,31 @@
 use acrawl_core::{ApiClient, ApiRequest, AssistantEvent, RuntimeError, ToolEffect, ToolExecutor};
+use agent::aria::{assign_refs, parse_raw_tree, to_yaml};
 use agent::{CrawlerAgent, ToolRegistry};
 use browser::FetchedPage;
+use browser::{PlaywrightBridge, RefMap};
 use serde_json::{json, Value};
+
+fn find_ref_by_role_and_name<'a>(
+    node: &'a agent::aria::node::AriaNode,
+    role: &str,
+    name: &str,
+) -> Option<&'a str> {
+    if node.role == role && node.name.as_deref() == Some(name) {
+        return node.ref_id.as_deref();
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_ref_by_role_and_name(child, role, name))
+}
+
+fn collect_refs(node: &agent::aria::node::AriaNode, refs: &mut Vec<String>) {
+    if let Some(ref_id) = &node.ref_id {
+        refs.push(ref_id.clone());
+    }
+    for child in &node.children {
+        collect_refs(child, refs);
+    }
+}
 
 struct MockApiClient {
     call_count: usize,
@@ -215,6 +239,62 @@ async fn interaction_tool_returns_page_state() {
     assert!(parsed.get("page_state").is_some());
     assert!(parsed["page_state"]["url"].is_string());
     assert!(parsed["page_state"]["title"].is_string());
+}
+
+#[tokio::test]
+#[ignore = "requires node + playwright installed locally"]
+async fn example_com_page_map_refs_match_dom_stamps() {
+    let mut bridge = PlaywrightBridge::new()
+        .await
+        .expect("playwright bridge should launch");
+    bridge
+        .navigate("https://example.com")
+        .await
+        .expect("navigate should succeed");
+
+    let raw = bridge
+        .page_map(None, false)
+        .await
+        .expect("page_map should succeed");
+    let js_tree = parse_raw_tree(&raw["tree"]).expect("tree should parse");
+    let js_link_ref = find_ref_by_role_and_name(&js_tree, "link", "Learn more")
+        .expect("JS tree should include Learn more link ref")
+        .to_string();
+    let mut js_refs = Vec::new();
+    collect_refs(&js_tree, &mut js_refs);
+
+    let mut tree = js_tree.clone();
+    let mut ref_map = RefMap::new();
+    assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new());
+
+    let yaml = to_yaml(&tree, Some(5));
+    assert!(
+        !yaml.starts_with("- document \"\""),
+        "virtual document root should be omitted from YAML: {yaml}"
+    );
+
+    let learn_more_line = yaml
+        .lines()
+        .find(|line| line.contains("link \"Learn more\" [ref="))
+        .expect("Learn more link should be present in YAML");
+    let ref_id = learn_more_line
+        .split("[ref=")
+        .nth(1)
+        .and_then(|tail| tail.split(']').next())
+        .expect("Learn more line should include a ref");
+    assert_eq!(
+        ref_id, js_link_ref,
+        "assigned YAML ref should match JS tree ref; yaml={yaml}; js_refs={js_refs:?}"
+    );
+    assert!(
+        js_refs.starts_with(&["e1".to_string(), "e2".to_string(), "e3".to_string()]),
+        "unexpected JS-stamped refs: {js_refs:?}"
+    );
+
+    bridge
+        .close()
+        .await
+        .expect("bridge should close without zombie process");
 }
 
 #[tokio::test]

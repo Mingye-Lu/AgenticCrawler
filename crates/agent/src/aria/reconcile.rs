@@ -42,7 +42,17 @@ pub fn assign_refs(
     frame_id: Option<&str>,
     ancestors: &mut Vec<(String, String)>,
 ) {
-    if node.role == "text" {
+    let is_virtual = node.role == "document" && node.ref_id.is_none();
+    if node.role == "text" || is_virtual {
+        let iframe_child_frame = node.frame_id.clone();
+        for child in &mut node.children {
+            let child_frame_id = if node.role == "iframe" {
+                iframe_child_frame.as_deref()
+            } else {
+                frame_id
+            };
+            assign_refs(child, ref_map, child_frame_id, ancestors);
+        }
         return;
     }
 
@@ -172,6 +182,37 @@ mod tests {
         assign_with_fresh_map(&mut tree);
         assert!(tree.ref_id.is_some());
         assert!(tree.children[0].ref_id.is_some());
+    }
+
+    #[test]
+    fn assign_refs_skips_virtual_document_root() {
+        let mut tree = AriaNode {
+            role: "document".to_string(),
+            name: None,
+            states: AriaStates::default(),
+            ref_id: None,
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children: vec![AriaNode {
+                role: "generic".to_string(),
+                name: Some(String::new()),
+                states: AriaStates::default(),
+                ref_id: None,
+                url: None,
+                frame_id: None,
+                offscreen: false,
+                children: vec![btn("Learn more")],
+                omitted_children: 0,
+            }],
+            omitted_children: 0,
+        };
+
+        assign_with_fresh_map(&mut tree);
+
+        assert_eq!(tree.ref_id, None);
+        assert_eq!(tree.children[0].ref_id.as_deref(), Some("e1"));
+        assert_eq!(tree.children[0].children[0].ref_id.as_deref(), Some("e2"));
     }
 
     #[test]

@@ -1062,9 +1062,9 @@ mod tests {
         assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new());
 
         let yaml = to_yaml(&tree, Some(super::DEFAULT_TREE_DEPTH));
-        assert!(yaml.starts_with("- document \"\""));
+        assert!(yaml.starts_with("- button \"Submit\" [disabled] [ref=e1]:"));
         assert!(yaml.contains("button \"Submit\" [disabled]"));
-        assert!(tree.ref_id.is_some());
-        assert!(tree.children[0].ref_id.is_some());
+        assert!(tree.ref_id.is_none());
+        assert_eq!(tree.children[0].ref_id.as_deref(), Some("e1"));
     }
 }

@@ -15,7 +15,13 @@ pub fn to_yaml(root: &AriaNode, depth: Option<usize>) -> String {
     };
 
     let mut lines = Vec::new();
-    serialize_node(root, 0, effective_depth, &mut lines);
+    if root.role == "document" && root.ref_id.is_none() {
+        for child in &root.children {
+            serialize_node(child, 0, effective_depth, &mut lines);
+        }
+    } else {
+        serialize_node(root, 0, effective_depth, &mut lines);
+    }
     lines.join("\n")
 }
 
