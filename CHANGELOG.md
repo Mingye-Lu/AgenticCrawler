@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `acrawl_page_map` now returns a YAML accessibility tree instead of JSON structural arrays. Each node: `- role "name" [state...] [ref=eN]:`. Post-action page_state returns YAML tree-diffs.
+- `[ref=eN]` is now the unified element reference namespace for all nodes (interactive, container, iframe). The `@rN` region handle namespace is retired.
+- `scope` (page_map) and `region` (click) now accept `[ref=eN]` or semantic tokens. `depth` parameter added to page_map.
+- `PageFingerprint` now hashes the ARIA tree instead of JSON interactive counts.
+- Same-origin iframes are stitched into the ARIA tree; cross-origin iframes degrade to `iframe [cross-origin]` with no children.
+
+### Future Work
+- Shadow DOM (open-root piercing) is intentionally deferred. A `// future: pierce open shadow roots (see PR note)` comment marks the walk site in both browser backends.
+
 ## [0.12.5] - 2026-06-28
 
 ### Added

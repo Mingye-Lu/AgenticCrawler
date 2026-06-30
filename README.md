@@ -265,7 +265,7 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 
 | Tool | Description |
 |------|-------------|
-| `page_map` | Get the page's structural map: headings, landmarks, forms, links, and interactive elements (with selectors and state), plus a `regions` hierarchy (sidebar/main/dialog), the `active_dialog`, and non-form `controls`. `scope` accepts a CSS selector, a semantic token (`dialog`/`main`/`sidebar`), or a region handle (`@r1`) to query within a specific element (e.g. a modal). |
+| `page_map` | Get the page's YAML accessibility tree (primary structural view). Each node: `- role "name" [state...] [ref=eN]:`. Scope by `[ref=eN]` or semantic token. `depth` controls tree depth. |
 | `read_content` | Extract text by heading name or CSS selector, with offset/limit pagination for large pages. |
 | `list_resources` | List all links, images, and forms on the current page. |
 | `screenshot` | Capture a full-page screenshot (base64 PNG). |
@@ -315,48 +315,37 @@ Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_b
 
 **Full page_state**, returned after the first interaction on a URL, or when changes are too extensive to diff:
 
-```json
-{
-  "url": "https://example.com/page",
-  "title": "Page Title",
-  "page_map": {
-    "headings": [{ "level": 1, "text": "...", "id": "...", "selector": "...", "char_count": 0, "preview": "..." }],
-    "landmarks": [{ "tag": "nav", "role": "navigation", "id": "...", "selector": "...", "text_preview": "..." }],
-    "links": [{ "text": "...", "href": "...", "selector": "..." }],
-    "regions": [{ "kind": "Main", "label": "main panel", "handle": "@r1", "selector": "main", "visible": true, "children": [] }],
-    "active_dialog": null,
-    "meta": { "title": "...", "url": "...", "description": "..." },
-    "truncated_links": false,
-    "truncated_forms": false,
-    "truncated_landmarks": false,
-    "truncated_regions": false,
-    "truncated_controls": false
-  }
-}
+```yaml
+url: https://example.com/page
+title: Page Title
+page_map: |
+  - main "" [ref=e1]:
+    - navigation "Primary" [ref=e2]:
+      - link "Docs" [ref=e3]:
+        /url: https://example.com/docs
+    - heading "Platform" [level=1] [ref=e4]:
+    - button "Get Started" [ref=e5]:
+    - iframe "Demo" [ref=e6]:
+      - button "Play" [ref=e7]:
 ```
 
 **Diff page_state**, returned on subsequent interactions on the same URL, showing only what changed:
 
-```json
-{
-  "url": "https://example.com/page",
-  "title": "Page Title",
-  "changed": true,
-  "changes": {
-    "added_headings": [],
-    "removed_headings": [],
-    "added_links": [],
-    "removed_links": [],
-    "added_landmarks": [],
-    "removed_landmarks": [],
-    "added_interactive": [{ "selector": "...", "tag": "...", "text": "..." }],
-    "removed_interactive": [],
-    "modified_interactive": [{ "selector": "...", "tag": "...", "text": "...", "state_changes": { "aria_expanded": "true" } }]
-  }
-}
+```yaml
+url: https://example.com/page
+title: Page Title
+changed: true
+changes: |
+  + [ref=e5] added:
+    - dialog "Confirm" [ref=e5]:
+      - button "OK" [ref=e6]:
+      - button "Cancel" [ref=e7]:
+  - [ref=e3] removed:
+    - button "Old Button" [ref=e3]:
+  ~ button "Submit" [ref=e2]: [] → [disabled]
 ```
 
-If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. The embedded `page_map` preserves `regions` and `active_dialog` but omits the verbose `forms`, `interactive`, and `controls` arrays to keep interaction responses concise — call the `page_map` tool to retrieve those. Caps: max 50 links, 20 landmarks per page_state.
+If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. Post-action page_state returns YAML tree-diffs showing only what changed. If changes are extensive, a full YAML snapshot is returned instead.
 
 
 ### Sub-Agent Parallelism
