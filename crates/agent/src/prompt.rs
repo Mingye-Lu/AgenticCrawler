@@ -266,36 +266,54 @@ fn section_autonomous_scripts() -> String {
 
 fn section_observation_tools() -> String {
     "Observation tools:\n\
-      After you navigate, click, fill a form, or refresh a page, use observation tools to understand what happened. These tools expose browser DevTools capabilities: network requests, console logs, WebSocket messages, performance metrics, cookies, and storage.\n\n\
-      Key concepts:\n\
-      - **Seq numbers**: Every action tool (navigate, click, fill_form, etc.) returns a `seq: N` number. Use this in `since` parameters to filter observations to a specific point in time.\n\
-      - **Since/until filtering**: `since: \"last\"` (default) = since your last action; `since: N` = since seq number N; `since: \"all\"` = entire session. `until: N` = exclusive upper bound. Uses half-open interval [since, until).\n\
-      - **Overview/detail pattern**: `list_*` tools give compact summaries with @rN/@logN/@wsN IDs. Use the corresponding `inspect_*` tools with those IDs for full details.\n\
-      - **Temporal scoping**: Observations are buffered per browser session. Older entries are pruned to keep memory bounded. Use `since=\"all\"` to get the full retained buffer.\n\n\
-      Available observation tools:\n\
-      - **`list_network_activity`** — List buffered HTTP requests with optional filtering by state (xhr, failed, pending), URL pattern, and sorting (slowest, fastest, largest, smallest, newest, oldest). Returns @rN IDs.\n\
-      - **`inspect_request`** — Inspect a request by @rN ID. Returns metadata, timing, initiator type, and notes about unavailable headers/bodies.\n\
-      - **`list_page_logs`** — List console logs (error, warning, info, debug) grouped by message text (default), source, or level. Returns @logN IDs for deduplicated groups.\n\
-      - **`inspect_log`** — Inspect a log group by @logN ID. Returns concrete instances with timestamps, stack traces, and source locations.\n\
-      - **`list_websocket_activity`** — Overview of WebSocket connections with message counts. Returns @wsN IDs.\n\
-      - **`inspect_websocket`** — Inspect WebSocket messages by @wsN ID. Supports direction filter (sent/received), pattern search, and sorting.\n\
-      - **`get_page_performance`** — Navigation Timing and Resource Timing metrics. Returns TTFB, DOM timings, and top 20 resources by transfer size.\n\
-      - **`inspect_cookies`** — All cookies on the current page with security analysis (missing_secure, missing_httponly, excessive_lifetime, etc.).\n\
-      - **`inspect_storage`** — LocalStorage and SessionStorage contents.\n\
-      - **`measure_coverage`** — CSS and JavaScript coverage metrics.\n\
-      - **`audit_accessibility`** — Accessibility audit results (WCAG violations, missing labels, etc.).\n\
-      - **`intercept_network`** — Set up request/response interception rules for future requests.\n\n\
-      When to use:\n\
-      - After navigate/click/fill_form when you want to understand what happened (API calls, errors, performance).\n\
-      - When debugging a page that seems broken or unresponsive — check console logs and network requests.\n\
-      - When a form submission or API call fails — inspect network activity to see the actual request/response.\n\
-      - When performance is slow — use get_page_performance to identify bottlenecks.\n\n\
-      Example workflow:\n\
-      1. Click a button that triggers an API call.\n\
-      2. Call `list_network_activity` with `since=\"last\"` to see requests since the click.\n\
-      3. If you see a failed request, call `inspect_request` with its @rN ID to get details.\n\
-      4. If you see console errors, call `list_page_logs` with `level=\"error\"` and `since=\"last\"`.\n\
-      5. Call `inspect_log` on the @logN ID to see the full stack trace."
+       After you navigate, click, fill a form, or refresh a page, use observation tools to understand what happened. These tools expose browser DevTools capabilities: network requests, console logs, WebSocket messages, performance metrics, cookies, and storage.\n\n\
+       The `page_map` tool returns a YAML accessibility tree — the primary structural view of the page.\n\n\
+       Reading the YAML tree:\n\
+       - Each line: `- role \"accessible-name\" [state...] [ref=eN]:`\n\
+       - Children are indented 2 spaces\n\
+       - Text nodes: `- text: \"content\"`\n\
+       - Links include: `  /url: https://...`\n\
+       - States: [disabled] [checked] [expanded] [expanded=false] [pressed=true] [selected] [level=N] [active] [invalid]\n\
+       - `[ref=eN]` is the stable identifier for that element — use it to click, hover, fill, etc.\n\
+       - `depth` controls how deep the tree is shown; deeper nodes show \"N children omitted\"\n\
+       - Iframes: same-origin iframes are stitched inline; `iframe [cross-origin]` has no children\n\n\
+       Targeting elements:\n\
+       - By ref: `@e5` or `[ref=e5]` — most reliable; stable across re-snapshots on the same URL\n\
+       - By semantic token: `scope=\"dialog\"`, `scope=\"main\"`, `scope=\"sidebar\"` — scopes page_map output\n\
+       - Raw CSS selectors still work but are fragile (prefer refs)\n\
+       - Stale ref error means the page changed; call page_map again to get fresh refs\n\n\
+       The `navigate` tool returns both prose (fit_markdown content) AND the YAML tree structural section.\n\
+       Post-action tools (click, fill, hover, etc.) return tree-diffs showing only what changed.\n\n\
+       Key concepts:\n\
+       - **Seq numbers**: Every action tool (navigate, click, fill_form, etc.) returns a `seq: N` number. Use this in `since` parameters to filter observations to a specific point in time.\n\
+       - **Since/until filtering**: `since: \"last\"` (default) = since your last action; `since: N` = since seq number N; `since: \"all\"` = entire session. `until: N` = exclusive upper bound. Uses half-open interval [since, until).\n\
+       - **Overview/detail pattern**: `list_*` tools give compact summaries with @logN/@wsN IDs. Use the corresponding `inspect_*` tools with those IDs for full details.\n\
+       - **Temporal scoping**: Observations are buffered per browser session. Older entries are pruned to keep memory bounded. Use `since=\"all\"` to get the full retained buffer.\n\n\
+       Available observation tools:\n\
+       - **`page_map`** — Get the page's YAML accessibility tree (primary structural view). Each node: `- role \"name\" [state...] [ref=eN]:`. Scope by `[ref=eN]` or semantic token. `depth` controls tree depth.\n\
+       - **`list_network_activity`** — List buffered HTTP requests with optional filtering by state (xhr, failed, pending), URL pattern, and sorting (slowest, fastest, largest, smallest, newest, oldest). Returns @rN IDs.\n\
+       - **`inspect_request`** — Inspect a request by @rN ID. Returns metadata, timing, initiator type, and notes about unavailable headers/bodies.\n\
+       - **`list_page_logs`** — List console logs (error, warning, info, debug) grouped by message text (default), source, or level. Returns @logN IDs for deduplicated groups.\n\
+       - **`inspect_log`** — Inspect a log group by @logN ID. Returns concrete instances with timestamps, stack traces, and source locations.\n\
+       - **`list_websocket_activity`** — Overview of WebSocket connections with message counts. Returns @wsN IDs.\n\
+       - **`inspect_websocket`** — Inspect WebSocket messages by @wsN ID. Supports direction filter (sent/received), pattern search, and sorting.\n\
+       - **`get_page_performance`** — Navigation Timing and Resource Timing metrics. Returns TTFB, DOM timings, and top 20 resources by transfer size.\n\
+       - **`inspect_cookies`** — All cookies on the current page with security analysis (missing_secure, missing_httponly, excessive_lifetime, etc.).\n\
+       - **`inspect_storage`** — LocalStorage and SessionStorage contents.\n\
+       - **`measure_coverage`** — CSS and JavaScript coverage metrics.\n\
+       - **`audit_accessibility`** — Accessibility audit results (WCAG violations, missing labels, etc.).\n\
+       - **`intercept_network`** — Set up request/response interception rules for future requests.\n\n\
+       When to use:\n\
+       - After navigate/click/fill_form when you want to understand what happened (API calls, errors, performance).\n\
+       - When debugging a page that seems broken or unresponsive — check console logs and network requests.\n\
+       - When a form submission or API call fails — inspect network activity to see the actual request/response.\n\
+       - When performance is slow — use get_page_performance to identify bottlenecks.\n\n\
+       Example workflow:\n\
+       1. Click a button that triggers an API call.\n\
+       2. Call `list_network_activity` with `since=\"last\"` to see requests since the click.\n\
+       3. If you see a failed request, call `inspect_request` with its @rN ID to get details.\n\
+       4. If you see console errors, call `list_page_logs` with `level=\"error\"` and `since=\"last\"`.\n\
+       5. Call `inspect_log` on the @logN ID to see the full stack trace."
         .to_string()
 }
 
