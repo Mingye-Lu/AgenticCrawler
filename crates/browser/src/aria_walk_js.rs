@@ -452,6 +452,9 @@ mod tests {
     #[test]
     fn extension_page_map_keeps_shared_aria_walk_in_sync() {
         let extension_source = include_str!("../../../extension/commands/page_map.js");
-        assert_eq!(extract_shared_block(extension_source), ARIA_WALK_JS.trim());
+        // Normalize CRLF→LF for cross-platform compatibility (Windows git checkout)
+        let extension_block = extract_shared_block(extension_source).replace("\r\n", "\n");
+        let canonical = ARIA_WALK_JS.trim().replace("\r\n", "\n");
+        assert_eq!(extension_block, canonical);
     }
 }
