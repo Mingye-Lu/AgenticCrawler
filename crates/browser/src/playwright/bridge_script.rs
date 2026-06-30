@@ -98,7 +98,9 @@ async function resolveEditorSurface(pg, sel) {
       // Phase 2: sibling/cousin search within the nearest container
       // Deliberately excludes <form>: a form may contain many unrelated fields, and
       // matching the first [contenteditable] in a form can write to the wrong field.
-      const searchRoot = el.closest('[class*="field"], [class*="form-group"], [class*="editor"]') || el.parentElement;
+      const immediate = el.parentElement;
+      const searchRoot = el.closest('[class*="field"], [class*="form-group"], [class*="editor"]')
+                         || (immediate && immediate.tagName.toLowerCase() !== 'form' ? immediate : null);
       if (!searchRoot) return null;
       const editorSels = [
         '.cm-editor .cm-content[contenteditable="true"]',
@@ -126,7 +128,6 @@ async function tryRichEditorFill(pg, sel, value) {
       const cm = el?.closest?.('.CodeMirror');
       if (cm?.CodeMirror) {
         cm.CodeMirror.setValue(v);
-        cm.CodeMirror.getDoc().markClean();
         cm.dispatchEvent(new Event('change', { bubbles: true }));
         return true;
       }
@@ -171,7 +172,7 @@ async function tryRichEditorFill(pg, sel, value) {
       }
       // Do not fall back to document.body — that would write to an unrelated editor.
       if (!el) return false;
-      const root = el.closest('[class*="editor"]');
+      const root = el.closest('[class*="editor"], [role="textbox"]');
       const found = root ? root.querySelector('[contenteditable="true"]') : null;
       if (found) { found.focus(); return true; }
       return false;
@@ -822,7 +823,7 @@ async function bootstrap() {
         for (const frame of page.frames()) {
           if (frame === page.mainFrame()) continue;
           try {
-            await frame.fill(command.selector, command.value, { timeout: 2000 });
+            await frame.fill(sel, command.value, { timeout: 2000 });
             filledInFrame = true;
             break;
           } catch (_) {}
