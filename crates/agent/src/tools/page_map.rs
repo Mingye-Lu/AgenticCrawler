@@ -641,7 +641,7 @@ mod tests {
             value["regions"][0]["children"][0]["label"],
             json!("Confirm")
         );
-        assert_eq!(value["active_dialog"]["handle"], json!("@r2"));
+        assert!(value["active_dialog"].get("handle").is_none());
         assert_eq!(value["active_dialog"]["selector"], json!("div#modal"));
         assert_eq!(value["controls"][0]["label"], json!("Search"));
         assert_eq!(value["controls"][0]["role"], json!("textbox"));
@@ -650,25 +650,10 @@ mod tests {
     }
 
     #[test]
-    fn semantic_scope_tokens_resolve_from_snapshot() {
+    fn semantic_scope_tokens_resolve_and_legacy_handles_rejected() {
         let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
             Arc::new(Mutex::new(Box::new(browser::NopBridge)));
-        let mut ctx = BrowserContext::new(bridge);
-        ctx.set_page_snapshot(
-            "https://example.com",
-            None,
-            json!({
-                "regions": [{
-                    "handle": "@r1",
-                    "selector": "main",
-                    "children": [{
-                        "handle": "@r2",
-                        "selector": "#modal",
-                        "children": []
-                    }]
-                }]
-            }),
-        );
+        let ctx = BrowserContext::new(bridge);
 
         assert_eq!(
             resolve_scope(Some("main"), &ctx).unwrap(),
@@ -682,13 +667,16 @@ mod tests {
             )
         );
         assert_eq!(
-            resolve_scope(Some("@r2"), &ctx).unwrap(),
-            Some("#modal".to_string())
+            resolve_scope(Some("sidebar"), &ctx).unwrap(),
+            Some("[role=\"complementary\"], aside, nav".to_string())
         );
-        assert_eq!(
-            resolve_scope(Some("@r9"), &ctx).unwrap_err().to_string(),
-            "unknown region handle '@r9'; call page_map first to get fresh handles"
-        );
+
+        for handle in ["@r2", "@r9"] {
+            assert_eq!(
+                resolve_scope(Some(handle), &ctx).unwrap_err().to_string(),
+                "@rN region handles are no longer supported. Use [ref=eN] from page_map output instead."
+            );
+        }
     }
 
     #[test]
