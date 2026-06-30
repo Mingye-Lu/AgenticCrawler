@@ -190,6 +190,16 @@ if (Test-Path $checksumFile) {
 Write-Host ""
 Write-Host "  acrawl v$version installed successfully!" -ForegroundColor Green
 Write-Host ""
+
+# If the install dir isn't active in the current session, give a one-liner.
+if ($env:Path -notlike "*$InstallDir*") {
+    Write-Host "  acrawl is not yet on your PATH in this session." -ForegroundColor Yellow
+    Write-Host "  To use it now, run:" -ForegroundColor Yellow
+    Write-Host "    `$env:Path = `"$InstallDir;`$env:Path`"" -ForegroundColor Cyan
+    Write-Host "  Or restart your terminal — it will be picked up automatically." -ForegroundColor Yellow
+    Write-Host ""
+}
+
 Write-Host "  Get started:" -ForegroundColor Cyan
 Write-Host "    acrawl                   # launch REPL (guides you through setup on first run)"
 Write-Host "    acrawl mcp install       # use as MCP server in Claude Code, Cursor, etc."
