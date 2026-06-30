@@ -51,7 +51,6 @@ pub struct RegionCandidate {
 pub struct RegionNode {
     pub kind: RegionKind,
     pub label: String,
-    pub handle: String,
     pub selector: String,
     pub visible: bool,
     pub children: Vec<RegionNode>,
@@ -132,11 +131,6 @@ pub fn region_label(kind: &RegionKind, aria_label: Option<&str>, idx: usize) -> 
 
 #[must_use]
 pub fn assemble_region_tree(candidates: &[RegionCandidate]) -> Vec<RegionNode> {
-    let handles = candidates
-        .iter()
-        .enumerate()
-        .map(|(idx, _)| format!("@r{}", idx + 1))
-        .collect::<Vec<_>>();
     let included = candidates
         .iter()
         .map(|candidate| candidate.depth <= 3)
@@ -161,7 +155,7 @@ pub fn assemble_region_tree(candidates: &[RegionCandidate]) -> Vec<RegionNode> {
 
     roots
         .into_iter()
-        .map(|idx| build_region_node(idx, candidates, &handles, &children_by_parent))
+        .map(|idx| build_region_node(idx, candidates, &children_by_parent))
         .collect()
 }
 
@@ -198,7 +192,6 @@ pub fn select_active_dialog(regions: &[RegionNode]) -> Option<&RegionNode> {
 fn build_region_node(
     idx: usize,
     candidates: &[RegionCandidate],
-    handles: &[String],
     children_by_parent: &[Vec<usize>],
 ) -> RegionNode {
     let candidate = &candidates[idx];
@@ -207,13 +200,12 @@ fn build_region_node(
     let children = children_by_parent[idx]
         .iter()
         .copied()
-        .map(|child_idx| build_region_node(child_idx, candidates, handles, children_by_parent))
+        .map(|child_idx| build_region_node(child_idx, candidates, children_by_parent))
         .collect();
 
     RegionNode {
         kind,
         label,
-        handle: handles[idx].clone(),
         selector: candidate.selector.clone(),
         visible: candidate.visible,
         children,
@@ -365,15 +357,14 @@ mod tests {
 
     fn region_node(
         kind: RegionKind,
-        handle: &str,
+        label: &str,
         selector: &str,
         visible: bool,
         children: Vec<RegionNode>,
     ) -> RegionNode {
         RegionNode {
             kind,
-            label: handle.to_string(),
-            handle: handle.to_string(),
+            label: label.to_string(),
             selector: selector.to_string(),
             visible,
             children,
@@ -561,8 +552,8 @@ mod tests {
         let regions = assemble_region_tree(&candidates);
 
         assert_eq!(regions.len(), 2);
-        assert_eq!(regions[0].handle, "@r1");
-        assert_eq!(regions[1].handle, "@r2");
+        assert_eq!(regions[0].selector, "main");
+        assert_eq!(regions[1].selector, "nav");
         assert!(regions.iter().all(|region| region.children.is_empty()));
     }
 
@@ -585,9 +576,9 @@ mod tests {
         let regions = assemble_region_tree(&candidates);
 
         assert_eq!(regions.len(), 1);
-        assert_eq!(regions[0].handle, "@r1");
-        assert_eq!(regions[0].children[0].handle, "@r2");
-        assert_eq!(regions[0].children[0].children[0].handle, "@r3");
+        assert_eq!(regions[0].selector, "main");
+        assert_eq!(regions[0].children[0].selector, "aside");
+        assert_eq!(regions[0].children[0].children[0].selector, "section");
     }
 
     #[test]
@@ -603,12 +594,12 @@ mod tests {
         let regions = assemble_region_tree(&candidates);
         let third_level = &regions[0].children[0].children[0].children[0];
 
-        assert_eq!(third_level.handle, "@r4");
+        assert_eq!(third_level.selector, "section.three");
         assert!(third_level.children.is_empty());
     }
 
     #[test]
-    fn assemble_region_tree_preserves_document_order_handles() {
+    fn assemble_region_tree_preserves_document_order_selectors() {
         let candidates = vec![
             region_candidate("main", None, None, 0, None, "main", true),
             region_candidate("dialog", Some("dialog"), None, 0, None, "dialog", true),
@@ -617,9 +608,9 @@ mod tests {
 
         let regions = assemble_region_tree(&candidates);
 
-        assert_eq!(regions[0].handle, "@r1");
-        assert_eq!(regions[1].handle, "@r2");
-        assert_eq!(regions[0].children[0].handle, "@r3");
+        assert_eq!(regions[0].selector, "main");
+        assert_eq!(regions[1].selector, "dialog");
+        assert_eq!(regions[0].children[0].selector, "section");
     }
 
     #[test]
@@ -713,49 +704,55 @@ mod tests {
     fn select_active_dialog_returns_single_dialog() {
         let regions = vec![region_node(
             RegionKind::Dialog,
-            "@r1",
+            "modal dialog",
             "dialog.one",
             true,
             Vec::new(),
         )];
 
         assert_eq!(
-            select_active_dialog(&regions).map(|region| region.handle.as_str()),
-            Some("@r1")
+            select_active_dialog(&regions).map(|region| region.selector.as_str()),
+            Some("dialog.one")
         );
     }
 
     #[test]
     fn select_active_dialog_returns_last_visible_dialog_in_document_order() {
         let regions = vec![
-            region_node(RegionKind::Dialog, "@r1", "dialog.one", true, Vec::new()),
+            region_node(RegionKind::Dialog, "first", "dialog.one", true, Vec::new()),
             region_node(
                 RegionKind::Main,
-                "@r2",
+                "main panel",
                 "main",
                 true,
                 vec![region_node(
                     RegionKind::Dialog,
-                    "@r3",
+                    "second",
                     "dialog.two",
                     true,
                     Vec::new(),
                 )],
             ),
-            region_node(RegionKind::Dialog, "@r4", "dialog.three", false, Vec::new()),
+            region_node(
+                RegionKind::Dialog,
+                "third",
+                "dialog.three",
+                false,
+                Vec::new(),
+            ),
         ];
 
         assert_eq!(
-            select_active_dialog(&regions).map(|region| region.handle.as_str()),
-            Some("@r3")
+            select_active_dialog(&regions).map(|region| region.selector.as_str()),
+            Some("dialog.two")
         );
     }
 
     #[test]
     fn select_active_dialog_returns_none_when_no_dialogs_are_visible() {
         let regions = vec![
-            region_node(RegionKind::Main, "@r1", "main", true, Vec::new()),
-            region_node(RegionKind::Dialog, "@r2", "dialog", false, Vec::new()),
+            region_node(RegionKind::Main, "main panel", "main", true, Vec::new()),
+            region_node(RegionKind::Dialog, "hidden", "dialog", false, Vec::new()),
         ];
 
         assert_eq!(select_active_dialog(&regions), None);

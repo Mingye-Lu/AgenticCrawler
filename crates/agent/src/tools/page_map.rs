@@ -104,26 +104,23 @@ fn resolve_scope(
     scope: Option<&str>,
     browser: &BrowserContext,
 ) -> Result<Option<String>, ToolExecutionError> {
-    Ok(match scope {
-        Some("dialog") => Some(
-            "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
-                .to_string(),
-        ),
-        Some("main") => Some("main, [role=\"main\"]".to_string()),
-        Some("sidebar") => Some("[role=\"complementary\"], aside, nav".to_string()),
-        Some(handle) if handle.starts_with("@r") => {
-            match browser.last_snapshot_region_selector(handle) {
-                Some(selector) => Some(selector.to_string()),
-                None => {
-                    return Err(ToolExecutionError::new(format!(
-                        "unknown region handle '{handle}'; call page_map first to get fresh handles"
-                    )))
-                }
+    let Some(scope) = scope else {
+        return Ok(None);
+    };
+
+    match crate::tools::ref_resolve::resolve_scope_ref(scope, browser) {
+        Ok(Some(query)) => Ok(Some(query)),
+        Err(message) => Err(ToolExecutionError::new(message)),
+        Ok(None) => Ok(Some(match scope {
+            "dialog" => {
+                "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                    .to_string()
             }
-        }
-        Some(other) => Some(other.to_string()),
-        None => None,
-    })
+            "main" => "main, [role=\"main\"]".to_string(),
+            "sidebar" => "[role=\"complementary\"], aside, nav".to_string(),
+            other => other.to_string(),
+        })),
+    }
 }
 
 fn infer_control_role(tag: &str, role: Option<&str>) -> String {
@@ -206,7 +203,6 @@ pub(super) fn enrich_semantic_sections(result: &mut Value) {
 
     let active_dialog = select_active_dialog(&regions).map(|region| {
         json!({
-            "handle": region.handle,
             "selector": region.selector,
             "label": region.label,
         })

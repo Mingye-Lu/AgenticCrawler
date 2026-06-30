@@ -78,6 +78,49 @@ pub fn resolve_selector(input: &str, ref_map: &RefMap) -> Result<String, String>
     }
 }
 
+/// Migration error for callers still passing a legacy `@rN` region handle to a
+/// `scope`/`region` parameter (the `@rN` namespace was retired in favor of `[ref=eN]`).
+pub const STALE_REGION_HANDLE_MESSAGE: &str =
+    "@rN region handles are no longer supported. Use [ref=eN] from page_map output instead.";
+
+fn is_legacy_region_handle(input: &str) -> bool {
+    input
+        .strip_prefix("@r")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+fn parse_scope_ref(input: &str) -> Option<String> {
+    let inner = input
+        .strip_prefix("[ref=")
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(input);
+    parse_ref(inner)
+}
+
+/// Resolve a `scope`/`region` token that may reference a specific element.
+///
+/// - `@rN` legacy region handle → `Err(STALE_REGION_HANDLE_MESSAGE)`.
+/// - `[ref=eN]` / `@eN` / `eN` → `Ok(Some(query))` via `RefMap::resolve` (a
+///   stale ref yields `Err`); container nodes are allowed, unlike `resolve_selector`.
+/// - anything else (semantic token or raw CSS) → `Ok(None)` for the caller to handle.
+pub fn resolve_scope_ref(input: &str, context: &BrowserContext) -> Result<Option<String>, String> {
+    let trimmed = input.trim();
+
+    if is_legacy_region_handle(trimmed) {
+        return Err(STALE_REGION_HANDLE_MESSAGE.to_string());
+    }
+
+    if let Some(ref_id) = parse_scope_ref(trimmed) {
+        return context
+            .ref_map()
+            .resolve(&ref_id)
+            .map(|(_frame_id, query)| Some(query))
+            .ok_or_else(|| format!("Ref '@{ref_id}'{STALE_REF_SUFFIX}"));
+    }
+
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
