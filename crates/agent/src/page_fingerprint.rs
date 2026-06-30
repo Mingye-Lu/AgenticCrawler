@@ -17,7 +17,7 @@ impl PageFingerprint {
     /// The hash mixes the URL, per-role node counts, landmark names, level-1
     /// heading names, and the `(role, name)` of every named node so relabeling
     /// an interactive control is detected. `element_count` is the total node
-    /// count, replacing the removed `interactive.counts.total` JSON field.
+    /// count across the ARIA tree.
     #[must_use]
     pub fn compute(url: &str, tree: &AriaNode) -> Self {
         let mut role_counts: BTreeMap<&str, usize> = BTreeMap::new();
