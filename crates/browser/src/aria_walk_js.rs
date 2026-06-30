@@ -1,47 +1,10 @@
-'use strict';
-
-// Uses the shared ARIA walk implementation (parity with CloakBrowser backend).
-
-function pageMapScript(payload) {
-const scope = payload?.scope || null;
-const depth = Number.isFinite(payload?.depth) ? Math.min(Math.max(Math.floor(payload.depth), 1), 10) : 5;
-
-function emptyResult(rawScope) {
-  return {
-    tree: {
-      role: 'document',
-      name: '',
-      states: {},
-      refId: null,
-      url: null,
-      frameId: null,
-      offscreen: false,
-      children: [],
-      omittedChildren: 0,
-    },
-    url: window.location.href,
-    meta: {
-      title: document.title,
-      description: document.querySelector('meta[name="description"]')?.content || '',
-      url: window.location.href,
-    },
-    headings: [],
-    landmarks: [],
-    forms: [],
-    links: [],
-    interactive: { counts: { buttons: 0, inputs: 0, selects: 0, textareas: 0, total: 0 }, elements: [] },
-    controls: [],
-    regions: [],
-    active_dialog: null,
-    scope_not_found: false,
-    scope: rawScope,
-  };
-}
-
-function staleRefMessage(refId) {
-  return "Ref '@" + refId + "' not found. The page may have changed. Call page_map to get fresh refs.";
-}
-
+/// The shared ARIA walk function included verbatim in both the `CloakBrowser`
+/// bridge script and the Chrome extension `page_map` command.
+///
+/// This is the single source of truth for the ARIA tree walk implementation.
+/// Any changes here must remain byte-for-byte identical in
+/// `extension/commands/page_map.js`; the parity test below enforces that.
+pub const ARIA_WALK_JS: &str = r#"
 // BEGIN_SHARED_ARIA_WALK
 function getView(node) {
   return node && node.ownerDocument && node.ownerDocument.defaultView
@@ -467,38 +430,26 @@ function buildTree(rootEl, maxDepth, degraded) {
   return { wrapper, overflow: ctx.totalNodes.overflow };
 }
 // END_SHARED_ARIA_WALK
+"#;
 
-const resolvedScope = resolveScopeRoot(scope);
-if (resolvedScope.kind === 'stale_ref') {
-  const stale = emptyResult(scope);
-  stale.stale_ref = true;
-  stale.error = staleRefMessage(resolvedScope.refId);
-  return stale;
-}
-if (resolvedScope.kind !== 'ok' || !resolvedScope.root) {
-  const empty = emptyResult(scope);
-  empty.scope_not_found = true;
-  return empty;
-}
+#[cfg(test)]
+mod tests {
+    use super::ARIA_WALK_JS;
 
-const firstPass = buildTree(resolvedScope.root, depth, false);
-const tree = firstPass.overflow ? buildTree(resolvedScope.root, 2, true).wrapper : firstPass.wrapper;
-const result = emptyResult(scope);
-result.tree = tree;
-return result;
-}
+    fn extract_shared_block(source: &str) -> &str {
+        let start = source
+            .find("// BEGIN_SHARED_ARIA_WALK")
+            .expect("shared ARIA walk start marker should exist");
+        let end = source
+            .find("// END_SHARED_ARIA_WALK")
+            .expect("shared ARIA walk end marker should exist")
+            + "// END_SHARED_ARIA_WALK".len();
+        &source[start..end]
+    }
 
-async function handlePageMap(tabId, payload) {
-  await ensureAttached(tabId);
-
-  const res = await cdp(tabId, 'Runtime.evaluate', {
-    expression: `(${pageMapScript.toString()})(${JSON.stringify(payload || {})})`,
-    returnByValue: true,
-  });
-
-  if (res.exceptionDetails) {
-    throw new Error(res.exceptionDetails.text || 'page_map script threw exception');
-  }
-
-  return res.result?.value || {};
+    #[test]
+    fn extension_page_map_keeps_shared_aria_walk_in_sync() {
+        let extension_source = include_str!("../../../extension/commands/page_map.js");
+        assert_eq!(extract_shared_block(extension_source), ARIA_WALK_JS.trim());
+    }
 }

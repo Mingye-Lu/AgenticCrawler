@@ -75,7 +75,7 @@ impl PlaywrightBridge {
             std::fs::create_dir_all(&config_dir)
                 .map_err(|e| BridgeError::Protocol(format!("failed to create config dir: {e}")))?;
             let script_path = config_dir.join("bridge.cjs");
-            std::fs::write(&script_path, PLAYWRIGHT_BRIDGE_NODE_SCRIPT).map_err(|e| {
+            std::fs::write(&script_path, &*PLAYWRIGHT_BRIDGE_NODE_SCRIPT).map_err(|e| {
                 BridgeError::Protocol(format!("failed to write bridge script: {e}"))
             })?;
             vec![script_path.to_string_lossy().into_owned()]
