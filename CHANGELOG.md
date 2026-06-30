@@ -12,10 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `[ref=eN]` is now the unified element reference namespace for all nodes (interactive, container, iframe). The `@rN` region handle namespace is retired.
 - `scope` (page_map) and `region` (click) now accept `[ref=eN]` or semantic tokens. `depth` parameter added to page_map.
 - `PageFingerprint` now hashes the ARIA tree instead of JSON interactive counts.
-- Same-origin iframes are stitched into the ARIA tree; cross-origin iframes degrade to `iframe [cross-origin]` with no children.
+- Same-origin iframes are stitched into the ARIA tree; cross-origin iframes appear as an `iframe` node with no children.
 
 ### Future Work
 - Shadow DOM (open-root piercing) is intentionally deferred. A `// future: pierce open shadow roots (see PR note)` comment marks the walk site in both browser backends.
+- The ARIA walk computes a cross-origin flag for unreachable iframes, but it is not yet surfaced as a marker in the serialized tree (the flag is dropped during JSON→`AriaNode` parsing).
 
 ## [0.12.5] - 2026-06-28
 

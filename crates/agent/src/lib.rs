@@ -328,7 +328,7 @@ fn page_map_tool() -> ToolSpec {
             },
             "additionalProperties": false
         }),
-        instructions: Some("Returns the YAML accessibility tree: each node is `- role \"name\" [state...] [ref=eN]:` with children indented 2 spaces. Use [ref=eN] handles in click, fill_form, hover, press_key, and select_option. Scope accepts [ref=eN] to show a subtree, or semantic tokens ('dialog', 'main', 'sidebar') to focus on a region. depth controls tree depth (default 5, max 10); at max depth, omitted children are counted. Same-origin iframes are stitched inline; cross-origin iframes show as `iframe [cross-origin]` with no children."),
+        instructions: Some("Returns the YAML accessibility tree: each node is `- role \"name\" [state...] [ref=eN]:` with children indented 2 spaces. Use [ref=eN] handles in click, fill_form, hover, press_key, and select_option. Scope accepts [ref=eN] to show a subtree, or semantic tokens ('dialog', 'main', 'sidebar') to focus on a region. depth controls tree depth (default 5, max 10); at max depth, omitted children are counted. Same-origin iframes are stitched inline; cross-origin iframes appear as an `iframe` node with no children."),
     }
 }
 

@@ -276,7 +276,7 @@ fn section_observation_tools() -> String {
        - States: [disabled] [checked] [expanded] [expanded=false] [pressed=true] [selected] [level=N] [active] [invalid]\n\
        - `[ref=eN]` is the stable identifier for that element — use it to click, hover, fill, etc.\n\
        - `depth` controls how deep the tree is shown; deeper nodes show \"N children omitted\"\n\
-       - Iframes: same-origin iframes are stitched inline; `iframe [cross-origin]` has no children\n\n\
+        - Iframes: same-origin iframes are stitched inline; cross-origin iframes appear as an `iframe` node with no children\n\n\
        Targeting elements:\n\
        - By ref: `@e5` or `[ref=e5]` — most reliable; stable across re-snapshots on the same URL\n\
        - By semantic token: `scope=\"dialog\"`, `scope=\"main\"`, `scope=\"sidebar\"` — scopes page_map output\n\
