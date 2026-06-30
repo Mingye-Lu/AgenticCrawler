@@ -7,7 +7,7 @@ use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: [&str; 31] = [
+const ASYNC_TOOLS: [&str; 37] = [
     "navigate",
     "click",
     "click_at",
@@ -39,6 +39,12 @@ const ASYNC_TOOLS: [&str; 31] = [
     "measure_coverage",
     "audit_accessibility",
     "intercept_network",
+    "read_pdf",
+    "read_document",
+    "read_spreadsheet",
+    "view_image",
+    "transcribe_media",
+    "list_archive",
 ];
 
 #[derive(Default)]
@@ -198,6 +204,12 @@ impl ToolRegistry {
             "intercept_network" => {
                 crate::tools::intercept_network::execute(input, browser, crawl_state).await
             }
+            "read_pdf" => crate::tools::read_pdf::execute(input, browser).await,
+            "read_document" => crate::tools::read_document::execute(input, browser).await,
+            "read_spreadsheet" => crate::tools::read_spreadsheet::execute(input, browser).await,
+            "view_image" => crate::tools::view_image::execute(input, browser).await,
+            "transcribe_media" => crate::tools::transcribe_media::execute(input, browser).await,
+            "list_archive" => crate::tools::list_archive::execute(input, browser).await,
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -214,7 +226,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_forty_two() {
+    fn new_with_core_tools_registers_all_forty_eight() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -231,7 +243,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 42);
+        assert_eq!(registry.len(), 48);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -244,7 +256,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 42);
+        assert_eq!(registry.len(), 48);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

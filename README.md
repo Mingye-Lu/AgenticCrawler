@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Single Rust binary. Full DevTools observability. 42 tools. 25 LLM providers. MCP server built-in.
+  Single Rust binary. Full DevTools observability. 48 tools. 25 LLM providers. MCP server built-in.
 </p>
 
 ---
@@ -205,7 +205,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 ## Features
 
-### 42-Tool Toolbox
+### 48-Tool Toolbox
 
 #### Navigation
 
@@ -358,6 +358,17 @@ Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_b
 
 If nothing changed, `{ "url": "...", "title": "...", "changed": false }` is returned. On bridge failure, `{ "url": "unknown", "title": "unknown", "page_map": null }`. The embedded `page_map` preserves `regions` and `active_dialog` but omits the verbose `forms`, `interactive`, and `controls` arrays to keep interaction responses concise — call the `page_map` tool to retrieve those. Caps: max 50 links, 20 landmarks per page_state.
 
+
+#### Resource Processing
+
+| Tool | Description |
+|------|-------------|
+| `read_pdf` | Extract text from PDF files. Supports page ranges (`pages`: `"3"`, `"1-5"`, `"10-"`) and metadata-only mode. Returns page count, content, and truncation status. |
+| `read_document` | Extract plain text from DOCX, PPTX, EPUB, RTF, and ODT files. Returns word count and format. |
+| `read_spreadsheet` | Read data from XLSX, CSV, and ODS files. Supports sheet selection, row/cell ranges (`range`: `"headers"`, `"first_100"`, `"A1:D10"`), and row limits (default 1000). |
+| `view_image` | Load and resize an image for LLM vision. Automatically resizes to `max_dimension` (default 1568px, Lanczos3). Supports PNG, JPEG, WebP, GIF (first frame), BMP, TIFF. |
+| `transcribe_media` | Transcribe audio files (MP3, WAV, FLAC, OGG, AAC) to text using Whisper. Requires `acrawl model download tiny` first. Optional `language` hint and `timestamps`. |
+| `list_archive` | List contents of ZIP and TAR archives. Use `extract` to safely pull out a single entry (zip-slip protected, 1 GB decompressed limit). |
 
 ### Sub-Agent Parallelism
 
@@ -544,7 +555,7 @@ Use `--allowedTools` to restrict which tools the agent can invoke (comma-separat
 acrawl prompt "scrape titles" --allowedTools navigate,read_content,screenshot
 ```
 
-Omit `--allowedTools` to allow all 42 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
+Omit `--allowedTools` to allow all 48 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
 
 ### MCP Extensibility
 
@@ -882,7 +893,7 @@ flowchart LR
 ```
 
 1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/agent/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
-2. Each turn, it picks from its 42 tools based on what it observes on the page.
+2. Each turn, it picks from its 48 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
 4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
 5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` collects results; `cancel_subagent` aborts a running child; `subagent_status` polls without blocking.
@@ -896,7 +907,8 @@ crates/
   core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer
-  agent/        42 tools, agent loop, sub-agent fork/join, CrawlState
+  agent/        48 tools, agent loop, sub-agent fork/join, CrawlState
+  processing/   PDF, document, spreadsheet, image, archive, transcription handlers (acrawl-processing)
   runtime/      ConversationRuntime, config, sessions, MCP client stack, OAuth PKCE
   render/       Markdown rendering, tool output formatting, OutputSink
   mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer
@@ -906,7 +918,7 @@ crates/
   commands/     17 slash commands with resume-safety annotations
 ```
 
-11 crates, ~40K lines of Rust, 1,097 tests.
+12 crates, ~40K lines of Rust, 1,097 tests.
 
 ## Development
 

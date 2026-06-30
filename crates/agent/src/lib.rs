@@ -983,6 +983,93 @@ fn script_management_tools() -> Vec<ToolSpec> {
             }),
             instructions: Some("Provide EITHER a preset name via 'device' (iphone_15, pixel_7, ipad_pro, desktop, etc.) OR one or more custom fields (viewport, userAgent, deviceScaleFactor, isMobile, hasTouch). Do not mix both. Use 'desktop' to reset. Cannot switch device while sub-agents are active."),
         },
+        ToolSpec {
+            name: "read_pdf",
+            description: "Extract text content from a PDF file. Supports page ranges and metadata extraction.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute or relative path to the PDF file" },
+                    "pages": { "type": "string", "description": "Page range: '3' (single), '1-5' (range), '10-' (from page 10), omit for all pages" },
+                    "mode": { "type": "string", "enum": ["text", "metadata"], "description": "text (default): extract text content; metadata: extract title, author, page count only" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Use after downloading a PDF with save_file. Supports page ranges to avoid context overflow on large PDFs. Returns structured JSON with page count, extracted text, and truncation status. For large PDFs, request specific page ranges to stay within context limits."),
+        },
+        ToolSpec {
+            name: "read_document",
+            description: "Extract text content from document files (DOCX, PPTX, EPUB, RTF, ODT).",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute or relative path to the document file" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Use after downloading a document with save_file. Extracts plain text from DOCX, PPTX, EPUB, RTF, and ODT files. Returns word count and truncation status. Does not preserve formatting. Legacy .doc format (binary) is not supported — only .docx."),
+        },
+        ToolSpec {
+            name: "read_spreadsheet",
+            description: "Read data from spreadsheet files (XLSX, CSV, ODS). Supports sheet selection and row ranges.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute or relative path to the spreadsheet file" },
+                    "sheet": { "type": "string", "description": "Sheet name to read (default: first sheet). XLSX/ODS only." },
+                    "range": { "type": "string", "description": "Row range: 'headers' (header row only), 'first_100' (first 100 rows), 'A1:D10' (cell range). Omit for all rows up to max_rows." },
+                    "max_rows": { "type": "integer", "description": "Maximum rows to return (default: 1000)", "default": 1000 }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Use after downloading a spreadsheet with save_file. Returns headers and row data as structured JSON. Default max_rows is 1000 — use range or max_rows to control data size. Legacy .xls format not supported. CSV files don't have named sheets."),
+        },
+        ToolSpec {
+            name: "view_image",
+            description: "Load and base64-encode an image file for visual inspection. Resizes large images to fit LLM context limits.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute or relative path to the image file" },
+                    "max_dimension": { "type": "integer", "description": "Maximum pixel dimension for longest edge (default: 1568)", "default": 1568 }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Use after downloading an image with save_file, or on any local image file. Supports PNG, JPEG, WebP, GIF (first frame), BMP, TIFF. SVG is not supported (it's text — use read_document). Images are automatically resized to max_dimension (1568px) before base64 encoding. Returns the image as a vision-compatible content block."),
+        },
+        ToolSpec {
+            name: "transcribe_media",
+            description: "Transcribe audio or video files to text using Whisper. Requires the transcription feature and a downloaded model.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute or relative path to the audio/video file" },
+                    "language": { "type": "string", "description": "BCP-47 language code hint (e.g. 'en', 'es', 'fr'). Auto-detected if omitted." },
+                    "timestamps": { "type": "boolean", "description": "Include word-level timestamps in output (default: false)" }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Transcribes audio files (MP3, WAV, FLAC, OGG, AAC, M4A) to text. Requires whisper model — if not installed, the tool returns guidance to run `acrawl model download tiny`. Video files need ffmpeg installed for audio extraction. The transcription may take 1-5 minutes for long files."),
+        },
+        ToolSpec {
+            name: "list_archive",
+            description: "List contents of archive files (ZIP, TAR, TAR.GZ). Can also extract a single entry.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Absolute or relative path to the archive file" },
+                    "extract": { "type": "string", "description": "Entry path within the archive to extract (e.g. 'data/report.pdf'). Omit to just list contents." }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+            instructions: Some("Lists all files in ZIP or TAR archives with their sizes. Use 'extract' to extract a specific file entry to the output directory. Path traversal attacks are prevented — entries with '..' or absolute paths are rejected. Extract one entry at a time for safety."),
+        },
     ]
 }
 
@@ -1042,12 +1129,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_42_tools() {
+    fn mvp_tool_specs_contains_expected_48_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 42);
+        assert_eq!(specs.len(), 48);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 42, "tool names should be unique");
+        assert_eq!(names.len(), 48, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));
@@ -1075,6 +1162,12 @@ mod tests {
         assert!(names.contains("list_scripts"));
         assert!(names.contains("read_script"));
         assert!(names.contains("set_device"));
+        assert!(names.contains("read_pdf"));
+        assert!(names.contains("read_document"));
+        assert!(names.contains("read_spreadsheet"));
+        assert!(names.contains("view_image"));
+        assert!(names.contains("transcribe_media"));
+        assert!(names.contains("list_archive"));
     }
 
     #[test]

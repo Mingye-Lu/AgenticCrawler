@@ -33,6 +33,12 @@ const EXCLUDED_TOOLS: &[&str] = &[
     "wait_for_subagents",
     "cancel_subagent",
     "subagent_status",
+    "read_pdf",
+    "read_document",
+    "read_spreadsheet",
+    "view_image",
+    "transcribe_media",
+    "list_archive",
 ];
 
 const SCRIPT_TOOLS: &[&str] = &[

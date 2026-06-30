@@ -330,7 +330,11 @@ fn tool_result_content_blocks(output: &str) -> Vec<ToolResultContentBlock> {
                 ToolResultContentBlock::Image {
                     source: ImageSource {
                         source_type: "base64".to_string(),
-                        media_type: "image/png".to_string(),
+                        media_type: parsed
+                            .get("media_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("image/png")
+                            .to_string(),
                         data: base64_data.to_string(),
                     },
                 },

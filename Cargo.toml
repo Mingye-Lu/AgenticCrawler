@@ -9,6 +9,7 @@ members = [
     "crates/commands",
     "crates/core",
     "crates/browser",
+    "crates/processing",
     "crates/tui",
     "crates/ui",
     "crates/script",
