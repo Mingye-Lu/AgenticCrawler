@@ -44,14 +44,8 @@ pub fn assign_refs(
 ) {
     let is_virtual = node.role == "document" && node.ref_id.is_none();
     if node.role == "text" || is_virtual {
-        let iframe_child_frame = node.frame_id.clone();
         for child in &mut node.children {
-            let child_frame_id = if node.role == "iframe" {
-                iframe_child_frame.as_deref()
-            } else {
-                frame_id
-            };
-            assign_refs(child, ref_map, child_frame_id, ancestors);
+            assign_refs(child, ref_map, frame_id, ancestors);
         }
         return;
     }
@@ -59,13 +53,16 @@ pub fn assign_refs(
     let name = node_name(node).to_string();
     let refs = ancestor_refs(ancestors);
     let stable_key = identity_key(&node.role, &name, &refs);
-    let ref_id = ref_map.assign_by_identity(
-        &stable_key,
-        &node.role,
-        &name,
-        frame_id,
-        Resolution::Attr(String::new()),
-    );
+    let ref_id = match node.ref_id.as_deref() {
+        Some(existing) => ref_map.bind_existing(&stable_key, existing, &node.role, &name, frame_id),
+        None => ref_map.assign_by_identity(
+            &stable_key,
+            &node.role,
+            &name,
+            frame_id,
+            Resolution::Attr(String::new()),
+        ),
+    };
     node.ref_id = Some(ref_id);
 
     ancestors.push((node.role.clone(), name));
@@ -143,6 +140,28 @@ mod tests {
     fn assign_with_fresh_map(tree: &mut AriaNode) {
         let mut ref_map = RefMap::new();
         assign_refs(tree, &mut ref_map, None, &mut vec![]);
+    }
+
+    fn with_ref(mut node: AriaNode, ref_id: &str) -> AriaNode {
+        node.ref_id = Some(ref_id.to_string());
+        node
+    }
+
+    fn main_with(children: Vec<AriaNode>, ref_id: &str) -> AriaNode {
+        with_ref(
+            AriaNode {
+                role: "main".to_string(),
+                name: Some(String::new()),
+                states: AriaStates::default(),
+                ref_id: None,
+                url: None,
+                frame_id: None,
+                offscreen: false,
+                children,
+                omitted_children: 0,
+            },
+            ref_id,
+        )
     }
 
     #[test]
@@ -331,5 +350,37 @@ mod tests {
             tree2.children[1].ref_id.as_deref(),
             Some(second_ref.as_str())
         );
+    }
+
+    #[test]
+    fn assign_refs_preserves_distinct_dom_refs_for_duplicate_siblings() {
+        let mut tree = main_with(
+            vec![
+                with_ref(btn("Action"), "e2"),
+                with_ref(btn("Action"), "e3"),
+                with_ref(btn("Submit"), "e4"),
+            ],
+            "e1",
+        );
+
+        assign_with_fresh_map(&mut tree);
+
+        assert_eq!(tree.ref_id.as_deref(), Some("e1"));
+        assert_eq!(tree.children[0].ref_id.as_deref(), Some("e2"));
+        assert_eq!(tree.children[1].ref_id.as_deref(), Some("e3"));
+        assert_eq!(tree.children[2].ref_id.as_deref(), Some("e4"));
+        assert_ne!(tree.children[0].ref_id, tree.children[1].ref_id);
+    }
+
+    #[test]
+    fn assign_refs_mints_past_stamped_ids_without_collision() {
+        let mut tree = main_with(vec![with_ref(btn("Saved"), "e5"), btn("Synthetic")], "e1");
+
+        assign_with_fresh_map(&mut tree);
+
+        assert_eq!(tree.children[0].ref_id.as_deref(), Some("e5"));
+        let minted = tree.children[1].ref_id.as_deref().unwrap();
+        assert_ne!(minted, "e5");
+        assert_eq!(minted, "e6");
     }
 }

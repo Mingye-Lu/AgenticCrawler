@@ -125,6 +125,45 @@ impl RefMap {
         ref_id
     }
 
+    /// Register a DOM-stamped ref id (the JS walk's `data-acrawl-ref='eN'`) as
+    /// the canonical ref for `stable_key`, with an `Attr` resolution.
+    ///
+    /// Unlike [`RefMap::assign_by_identity`], this never mints: the JS walk
+    /// stamps a unique attribute on every element and resolution queries it
+    /// verbatim, so re-minting by identity would collapse duplicate-named
+    /// siblings onto one id and desync the model's ref from the DOM. The mint
+    /// counter is advanced past `ref_id` so later minted ids cannot collide.
+    pub fn bind_existing(
+        &mut self,
+        stable_key: &str,
+        ref_id: &str,
+        role: &str,
+        name: &str,
+        frame_id: Option<&str>,
+    ) -> String {
+        self.map.insert(
+            ref_id.to_string(),
+            RefEntry {
+                stable_key: stable_key.to_string(),
+                role: role.to_string(),
+                name: name.to_string(),
+                frame_id: frame_id.map(String::from),
+                resolution: Resolution::Attr(ref_id.to_string()),
+                selector: String::new(),
+                fallback_selector: None,
+            },
+        );
+        self.key_to_ref
+            .insert(stable_key.to_string(), ref_id.to_string());
+        if let Some(suffix) = ref_id
+            .strip_prefix('e')
+            .and_then(|digits| digits.parse::<usize>().ok())
+        {
+            self.next_ref = self.next_ref.max(suffix + 1);
+        }
+        ref_id.to_string()
+    }
+
     /// Legacy selector-keyed assignment. If an element with the same selector
     /// already has a ref, that ref is returned; otherwise a new ref is minted.
     ///
@@ -434,5 +473,38 @@ mod tests {
             map.resolve(&frame_ref).unwrap().0,
             Some("frame-7".to_string())
         );
+    }
+
+    #[test]
+    fn bind_existing_registers_attr_resolution_and_advances_counter() {
+        let mut map = RefMap::new();
+        let id = map.bind_existing("button|Submit|", "e5", "button", "Submit", Some("f1"));
+        assert_eq!(id, "e5");
+
+        let (frame_id, query) = map.resolve("e5").expect("bound ref should resolve");
+        assert_eq!(frame_id, Some("f1".to_string()));
+        assert_eq!(query, "[data-acrawl-ref='e5']");
+
+        let minted = map.assign_by_identity(
+            "link|Home|",
+            "link",
+            "Home",
+            None,
+            Resolution::Attr(String::new()),
+        );
+        assert_eq!(minted, "e6");
+    }
+
+    #[test]
+    fn bind_existing_keeps_distinct_ids_for_same_identity_key() {
+        let mut map = RefMap::new();
+        let first = map.bind_existing("button|Action|main:", "e2", "button", "Action", None);
+        let second = map.bind_existing("button|Action|main:", "e3", "button", "Action", None);
+
+        assert_eq!(first, "e2");
+        assert_eq!(second, "e3");
+        assert_ne!(first, second);
+        assert_eq!(map.resolve("e2").unwrap().1, "[data-acrawl-ref='e2']");
+        assert_eq!(map.resolve("e3").unwrap().1, "[data-acrawl-ref='e3']");
     }
 }
