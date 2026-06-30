@@ -148,6 +148,28 @@ All optimization logic runs inside `CrawlerAgent::execute()` in `crates/agent/sr
   - For list selectors, Left jumps to the first item and Right jumps to the last item.
   - When scrolling to keep selection visible, use edge-follow behavior (no forced centering jumps).
 
+## Development workflow
+
+- **Worktree setup.** Before starting any feature, fix, or refactor, create a dedicated worktree under `.worktrees/` on a new semantically named branch — use the `feat/`, `fix/`, `chore/`, or `docs/` prefix followed by a short hyphenated description:
+  ```bash
+  git worktree add .worktrees/<branch-name> -b <branch-name>
+  # e.g. git worktree add .worktrees/feat/aria-snapshot -b feat/aria-snapshot
+  ```
+  Do all development inside that worktree directory. The only commits permitted directly on `main` are version bumps (see [Releasing a new version](#releasing-a-new-version)).
+- **Atomic commits.** Each commit must be a single, self-contained logical change — individually revertible without pulling in unrelated work. Stage precisely and avoid bulk commits that bundle multiple concerns.
+- **PR workflow.** When a branch is complete: write the PR title and body to a temporary file (e.g. `pr.md`), submit via `gh pr create --title "…" --body "$(cat pr.md)"`, then delete the file. Keep the title under 70 characters; include a concise summary and a markdown test-plan checklist in the body.
+- **Worktree cleanup.** Once the PR is open, remove the worktree and delete the local branch — the remote branch stays alive until the PR is merged:
+  ```bash
+  git worktree remove .worktrees/<branch-name>   # unmount and delete the directory
+  git branch -d <branch-name>                    # delete the local branch
+  git worktree prune                             # remove any stale worktree metadata
+  ```
+- **Merging (admin: Mingye-Lu only).** Merge via standard merge commit — never squash. Delete the remote branch as part of the merge:
+  ```bash
+  gh pr merge <PR-number> --merge --delete-branch   # merge commit, delete remote branch
+  git fetch --prune                                  # drop stale remote-tracking refs locally
+  ```
+
 ## Releasing a new version
 
 1. Bump `version` in the root `Cargo.toml` (workspace-level — all crates inherit via `version.workspace = true`).
