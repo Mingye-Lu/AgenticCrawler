@@ -62,8 +62,9 @@ impl Default for ScriptSettings {
 }
 
 /// Optimization settings for advanced crawl behavior.
-/// All fields are optional; unset fields use safe defaults (false/0).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+/// All fields are optional. Fresh installs enable `failure_classification`, `self_healing`, and
+/// `content_aware_profiles` by default; all other flags default to disabled.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct OptimizationSettings {
     /// Enable HTML diff mode for page change detection (default: false)
@@ -137,6 +138,31 @@ pub struct OptimizationSettings {
     /// Enable per-agent cost tracking (default: false)
     #[serde(default)]
     pub per_agent_cost_tracking: Option<bool>,
+}
+
+impl Default for OptimizationSettings {
+    fn default() -> Self {
+        Self {
+            html_diff_mode: None,
+            loop_detection: None,
+            loop_detection_window: None,
+            loop_nudge_threshold: None,
+            page_fingerprinting: None,
+            planning_interval: None,
+            failure_classification: Some(true),
+            self_healing: Some(true),
+            self_healing_max_retries: None,
+            action_caching: None,
+            action_cache_ttl_secs: None,
+            confidence_tracking: None,
+            compound_enrichment: None,
+            content_aware_profiles: Some(true),
+            budget_max_session_cost_usd: None,
+            budget_enforcement: None,
+            budget_warn_threshold_pct: None,
+            per_agent_cost_tracking: None,
+        }
+    }
 }
 
 /// Settings loaded from settings.json configuration file.
@@ -256,7 +282,7 @@ impl Default for Settings {
             compaction_max_summary_chars: None,
             compaction_llm_summarization: None,
             script: Some(ScriptSettings::default()),
-            optimization: None,
+            optimization: Some(OptimizationSettings::default()),
         }
     }
 }
@@ -315,6 +341,11 @@ pub fn save_settings(settings: &Settings) -> io::Result<()> {
 
 /// Update a single setting by loading current settings, applying the mutation, and saving.
 /// This avoids clobbering other settings that may have been changed externally.
+///
+/// Note: if the settings file is absent (fresh install), `load_settings` returns
+/// `Settings::default()` which has the three sensible optimization defaults set to
+/// `Some(true)`. The first call to `update_settings` therefore persists those defaults
+/// explicitly, giving users stable behaviour across future default changes.
 pub fn update_settings(mutate: impl FnOnce(&mut Settings)) -> io::Result<()> {
     let mut settings = load_settings();
     mutate(&mut settings);
@@ -1155,6 +1186,37 @@ mod tests {
     }
 
     #[test]
+    fn test_optimization_settings_backward_compat_explicit_null() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        // Write JSON with "optimization": null — serde must treat this as None
+        let settings_path = temp_dir.join("settings.json");
+        fs::write(
+            &settings_path,
+            r#"{"headless": true, "optimization": null}"#,
+        )
+        .expect("Failed to write test settings");
+
+        let settings = load_settings();
+
+        assert!(!settings_get_failure_classification(&settings));
+        assert!(!settings_get_self_healing(&settings));
+        assert!(!settings_get_content_aware_profiles(&settings));
+        assert!(!settings_get_html_diff_mode(&settings));
+        assert!(!settings_get_loop_detection(&settings));
+        assert!(!settings_get_page_fingerprinting(&settings));
+        assert!(!settings_get_action_caching(&settings));
+        assert!(!settings_get_confidence_tracking(&settings));
+        assert!(!settings_get_compound_enrichment(&settings));
+        assert!(!settings_get_per_agent_cost_tracking(&settings));
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
     fn test_optimization_settings_parse_with_values() {
         let _lock = test_env_lock();
         let temp_dir = setup_temp_dir();
@@ -1213,6 +1275,64 @@ mod tests {
         assert!(!settings_get_compound_enrichment(&settings));
         assert!(!settings_get_content_aware_profiles(&settings));
         assert!(!settings_get_per_agent_cost_tracking(&settings));
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn test_optimization_settings_default_enables_sensible() {
+        let settings = Settings::default();
+
+        // Three sensible defaults should be enabled for fresh installs
+        assert!(
+            settings_get_self_healing(&settings),
+            "self_healing should default to enabled"
+        );
+        assert!(
+            settings_get_failure_classification(&settings),
+            "failure_classification should default to enabled"
+        );
+        assert!(
+            settings_get_content_aware_profiles(&settings),
+            "content_aware_profiles should default to enabled"
+        );
+
+        // All other boolean optimization flags should remain disabled
+        assert!(!settings_get_html_diff_mode(&settings));
+        assert!(!settings_get_loop_detection(&settings));
+        assert!(!settings_get_page_fingerprinting(&settings));
+        assert!(!settings_get_action_caching(&settings));
+        assert!(!settings_get_confidence_tracking(&settings));
+        assert!(!settings_get_compound_enrichment(&settings));
+        assert!(!settings_get_per_agent_cost_tracking(&settings));
+
+        // Numeric defaults should be unchanged
+        assert_eq!(settings_get_planning_interval(&settings), 0);
+        assert_eq!(settings_get_loop_detection_window(&settings), 20);
+        assert_eq!(settings_get_loop_nudge_threshold(&settings), 5);
+        assert_eq!(settings_get_self_healing_max_retries(&settings), 2);
+        assert_eq!(settings_get_action_cache_ttl_secs(&settings), 30);
+        assert_eq!(settings_get_budget_warn_threshold_pct(&settings), 80);
+
+        // Budget enforcement should be none by default
+        assert_eq!(settings_get_budget_max_session_cost_usd(&settings), None);
+        assert_eq!(settings_get_budget_enforcement(&settings), None);
+    }
+
+    #[test]
+    fn test_optimization_settings_missing_file_gets_sensible_defaults() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        // No settings.json file exists — simulate fresh install
+        let settings = load_settings();
+
+        // Sensible defaults should be active
+        assert!(settings_get_self_healing(&settings));
+        assert!(settings_get_failure_classification(&settings));
+        assert!(settings_get_content_aware_profiles(&settings));
 
         cleanup_temp_dir(&temp_dir);
     }

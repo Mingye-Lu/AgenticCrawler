@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Fresh installs now have `failure_classification`, `self_healing`, and `content_aware_profiles` enabled by default. Existing installs with no `optimization` block in `settings.json` are unaffected.
+
 ## [0.12.6] - 2026-07-01
 
 ### Added
