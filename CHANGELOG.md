@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-07-01
+
+### Added
+
+- **`fill_form` — rich editor support**: fields backed by TipTap, ProseMirror, Quill, and similar rich-text editors are now discovered during label resolution and filled via a cascade: CodeMirror 5 programmatic API → `execCommand('insertText')` → keyboard simulation fallback. Hidden `<textarea>` selectors (CodeMirror's backing element) are redirected to the visible `.CodeMirror` editor surface automatically.
+
+### Fixed
+
+- **Installer**: PATH reminder is now shown on all platforms (not only Unix) after a successful install.
+- **Installer on Windows**: `npm.cmd` / `npx.cmd` shims are used instead of bare `npm` / `npx`, bypassing PowerShell's default script-execution policy that blocked MCP server installation.
+- **MCP server installer output**: subprocess stderr is now surfaced to the caller; output formatting is unified across all installer paths.
+- **Rich-editor fill**: four code-review hardening fixes applied (error handling, fallback scoping, macOS select-all compatibility).
+
+### Changed
+
+- **Bridge — editor surface detection**: replaced ad-hoc framework-specific CSS selectors with a proximity walk that locates the nearest visible contenteditable/editor surface relative to the target element, reducing false-positive redirects.
+
 ## [0.12.5] - 2026-06-28
 
 ### Added
