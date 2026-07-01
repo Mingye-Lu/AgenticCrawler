@@ -315,18 +315,20 @@ All optimization flags are off by default.
 | `optimization.loop_nudge_threshold` | usize | `5` | Loop repetitions before injecting a nudge |
 | `optimization.page_fingerprinting` | bool | `false` | Enable page fingerprinting |
 | `optimization.planning_interval` | usize | `0` | Inject planning guidance every N steps (0 = disabled) |
-| `optimization.failure_classification` | bool | `false` | Classify tool failures for better retry logic |
-| `optimization.self_healing` | bool | `false` | Auto-retry failed selectors with alternatives |
+| `optimization.failure_classification` | bool | `true` ¹ | Classify tool failures for better retry logic |
+| `optimization.self_healing` | bool | `true` ¹ | Auto-retry failed selectors with alternatives |
 | `optimization.self_healing_max_retries` | usize | `2` | Max self-healing retries per failure |
 | `optimization.action_caching` | bool | `false` | Cache results of read-only tool calls |
 | `optimization.action_cache_ttl_secs` | u64 | `30` | Action cache TTL (seconds) |
 | `optimization.confidence_tracking` | bool | `false` | Parse `[confidence: ...]` from assistant text |
 | `optimization.compound_enrichment` | bool | `false` | Enable compound enrichment passes |
-| `optimization.content_aware_profiles` | bool | `false` | Enable content-aware tool profiles |
+| `optimization.content_aware_profiles` | bool | `true` ¹ | Enable content-aware tool profiles |
 | `optimization.budget_max_session_cost_usd` | f64 | — | Hard cost cap per session in USD (unset = unlimited) |
 | `optimization.budget_enforcement` | string | — | `"warn"`, `"block"`, or `"route_down"` |
 | `optimization.budget_warn_threshold_pct` | u32 | `80` | Warn when cost reaches this % of the budget cap |
 | `optimization.per_agent_cost_tracking` | bool | `false` | Track cost per individual sub-agent |
+
+¹ Enabled by default for fresh installs (no `settings.json`). Existing installs without an `optimization` block retain the previous behaviour (`false`).
 
 ### MCP server configuration (`mcpServers`)
 
