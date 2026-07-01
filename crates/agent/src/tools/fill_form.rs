@@ -429,7 +429,7 @@ mod tests {
             "Missing contenteditable selector"
         );
         assert!(
-            FIELD_DISCOVERY_JS.contains(r#"group.querySelector('textarea')"#),
+            FIELD_DISCOVERY_JS.contains(r"group.querySelector('textarea')"),
             "Missing sibling textarea label fallback"
         );
     }
