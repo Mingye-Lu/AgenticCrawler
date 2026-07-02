@@ -867,6 +867,9 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.13.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.0
+[0.12.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.7
+[0.12.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.6
 [0.12.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.5
 [0.12.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.4
 [0.12.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.3
@@ -921,4 +924,3 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 [0.2.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.1.0
-[0.13.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.0
