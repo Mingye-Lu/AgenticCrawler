@@ -20,14 +20,14 @@ mod url_claim;
 
 pub mod tool_effect {
     pub use acrawl_core::effect::{
-        CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, WaitSpec,
+        CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, VisionPayload, WaitSpec,
     };
     pub use acrawl_core::error::ToolExecutionError;
 }
 
 // Re-exports that tools and registry use via `crate::` paths
 pub use acrawl_core::effect::{
-    CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, WaitSpec,
+    CancelSpec, CrawlScope, CrawlTask, StatusSpec, ToolEffect, VisionPayload, WaitSpec,
 };
 pub use acrawl_core::error::ToolExecutionError;
 pub use acrawl_core::ToolSpec;

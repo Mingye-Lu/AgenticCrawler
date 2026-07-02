@@ -8,6 +8,8 @@ use crate::compact::CompactionConfig;
 use crate::prompt::SystemPromptBuilder;
 use crate::session::{ContentBlock, MessageRole, Session};
 use crate::usage::{estimate_cost_usd, TokenUsage};
+use acrawl_core::effect::VisionPayload;
+use acrawl_core::ToolEffect;
 use std::sync::{Arc, Mutex};
 
 type RuntimeSlots = (Arc<Mutex<Option<Vec<String>>>>, Arc<Mutex<Option<String>>>);
@@ -534,5 +536,160 @@ async fn stream_assistant_message_records_last_assistant_text() {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_deref(),
         Some("latest assistant text")
+    );
+}
+
+#[tokio::test]
+async fn vision_capable_model_produces_tool_result_image() {
+    // A model that supports vision should route ToolEffect::Vision to
+    // ConversationMessage::tool_result_image (ContentBlock::ToolResultImage).
+    struct VisionApiClient {
+        call_count: usize,
+    }
+    impl ApiClient for VisionApiClient {
+        fn stream(&mut self, _req: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.call_count += 1;
+            match self.call_count {
+                1 => Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: "call-vision".to_string(),
+                        name: "screenshot".to_string(),
+                        input: "{}".to_string(),
+                    },
+                    AssistantEvent::MessageStop,
+                ]),
+                _ => Ok(vec![
+                    AssistantEvent::TextDelta("Done.".to_string()),
+                    AssistantEvent::MessageStop,
+                ]),
+            }
+        }
+    }
+
+    let tool_executor = StaticToolExecutor::new().register("screenshot", |_input| {
+        Ok(ToolOutcome::with_effect(
+            "Page screenshot".to_string(),
+            ToolEffect::Vision(VisionPayload {
+                base64_data: "abc123".to_string(),
+                media_type: "image/png".to_string(),
+                caption: "Page screenshot".to_string(),
+            }),
+        ))
+    });
+
+    let (prompt_override, last_assistant_text) = runtime_slots();
+    let mut runtime = ConversationRuntime::new(
+        Session::new(),
+        VisionApiClient { call_count: 0 },
+        tool_executor,
+        vec!["system".to_string()],
+        prompt_override,
+        last_assistant_text,
+    )
+    .with_model_supports_vision(true);
+
+    let summary = runtime
+        .run_turn("take a screenshot")
+        .await
+        .expect("turn should succeed");
+
+    assert_eq!(summary.tool_results.len(), 1);
+    let tool_result_msg = &summary.tool_results[0];
+    assert_eq!(tool_result_msg.blocks.len(), 1);
+    assert!(
+        matches!(
+            &tool_result_msg.blocks[0],
+            ContentBlock::ToolResultImage {
+                tool_use_id,
+                tool_name,
+                media_type,
+                base64_data,
+                caption,
+                is_error,
+            } if tool_use_id == "call-vision"
+                && tool_name == "screenshot"
+                && media_type == "image/png"
+                && base64_data == "abc123"
+                && caption == "Page screenshot"
+                && !is_error
+        ),
+        "expected ToolResultImage block, got: {:?}",
+        &tool_result_msg.blocks[0]
+    );
+}
+
+#[tokio::test]
+async fn non_vision_model_produces_plain_tool_result_with_caption() {
+    // A model that does NOT support vision should fall back to a plain
+    // ToolResult whose output is the caption string from the VisionPayload.
+    struct VisionApiClient {
+        call_count: usize,
+    }
+    impl ApiClient for VisionApiClient {
+        fn stream(&mut self, _req: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
+            self.call_count += 1;
+            match self.call_count {
+                1 => Ok(vec![
+                    AssistantEvent::ToolUse {
+                        id: "call-vision".to_string(),
+                        name: "screenshot".to_string(),
+                        input: "{}".to_string(),
+                    },
+                    AssistantEvent::MessageStop,
+                ]),
+                _ => Ok(vec![
+                    AssistantEvent::TextDelta("Done.".to_string()),
+                    AssistantEvent::MessageStop,
+                ]),
+            }
+        }
+    }
+
+    let tool_executor = StaticToolExecutor::new().register("screenshot", |_input| {
+        Ok(ToolOutcome::with_effect(
+            "Page screenshot".to_string(),
+            ToolEffect::Vision(VisionPayload {
+                base64_data: "abc123".to_string(),
+                media_type: "image/png".to_string(),
+                caption: "Page screenshot".to_string(),
+            }),
+        ))
+    });
+
+    let (prompt_override, last_assistant_text) = runtime_slots();
+    // model_supports_vision defaults to false — no explicit call needed.
+    let mut runtime = ConversationRuntime::new(
+        Session::new(),
+        VisionApiClient { call_count: 0 },
+        tool_executor,
+        vec!["system".to_string()],
+        prompt_override,
+        last_assistant_text,
+    );
+
+    let summary = runtime
+        .run_turn("take a screenshot")
+        .await
+        .expect("turn should succeed");
+
+    assert_eq!(summary.tool_results.len(), 1);
+    let tool_result_msg = &summary.tool_results[0];
+    assert_eq!(tool_result_msg.blocks.len(), 1);
+    assert!(
+        matches!(
+            &tool_result_msg.blocks[0],
+            ContentBlock::ToolResult {
+                tool_use_id,
+                tool_name,
+                output,
+                is_error,
+                ..
+            } if tool_use_id == "call-vision"
+                && tool_name == "screenshot"
+                && output == "Page screenshot"
+                && !is_error
+        ),
+        "expected plain ToolResult block with caption, got: {:?}",
+        &tool_result_msg.blocks[0]
     );
 }

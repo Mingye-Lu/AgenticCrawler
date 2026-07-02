@@ -55,6 +55,7 @@ pub(super) fn build_runtime_with_options(
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, CliError> {
     session.model = Some(model.clone());
     let max_steps = settings_get_max_steps(&load_settings()) as usize;
+    let vision_flag = api::provider::catalog::model_supports_vision(&model);
     let shared_control = control_state.unwrap_or_default();
     let fork_client = SharedApiClient::new(LlmRuntimeClient::new(
         model.clone(),
@@ -73,6 +74,7 @@ pub(super) fn build_runtime_with_options(
             Some(Arc::clone(&shared_control)),
             child_event_tx,
             child_control_registry,
+            vision_flag,
         ),
         system_prompt,
         Arc::new(Mutex::new(None)),
@@ -81,5 +83,6 @@ pub(super) fn build_runtime_with_options(
     )
     .with_control_state(shared_control)
     .with_max_iterations(max_steps)
+    .with_model_supports_vision(vision_flag)
     .with_observer(observer))
 }

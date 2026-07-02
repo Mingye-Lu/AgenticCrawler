@@ -199,6 +199,9 @@ impl CrawlerAgent {
         if let Some(ref allowed) = self.allowed_tools {
             child_agent = child_agent.with_allowed_tools(allowed.clone());
         }
+        if self.model_supports_vision {
+            child_agent = child_agent.with_model_supports_vision(true);
+        }
         child_agent.shared_bridge = Some(shared_bridge);
         child_agent.crawl_state = child_state;
         child_agent.api_client_arc = Some(child_api_client.clone());
