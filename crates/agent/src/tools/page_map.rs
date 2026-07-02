@@ -316,17 +316,19 @@ pub async fn execute(
         }
         assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
         browser.set_page_snapshot(&cache_key, None, result.clone());
+
+        // Only full-page snapshots may become the diff baseline and the
+        // fingerprint input; a scoped subtree would report the rest of the
+        // page as "added" on the next diff and fake a page-change signal.
+        let fp_settings = runtime::load_settings();
+        if runtime::settings_get_page_fingerprinting(&fp_settings) {
+            let fingerprint = PageFingerprint::compute(&url, &tree);
+            crawl_state.page_fingerprints.push(fingerprint);
+        }
+        crawl_state.last_aria_tree = Some(tree.clone());
     } else {
         assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
     }
-
-    let fp_settings = runtime::load_settings();
-    if runtime::settings_get_page_fingerprinting(&fp_settings) {
-        let fingerprint = PageFingerprint::compute(&url, &tree);
-        crawl_state.page_fingerprints.push(fingerprint);
-    }
-
-    crawl_state.last_aria_tree = Some(tree.clone());
 
     // The walk already limited its own depth; the serializer depth is a cap on
     // top of that, so it only truncates when the walk returned deeper data.
