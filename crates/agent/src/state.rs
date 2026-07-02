@@ -32,9 +32,11 @@ pub struct CrawlState {
     pub max_steps: usize,
     pub captured_child_sessions: Vec<ChildSession>,
     pub page_fingerprints: Vec<PageFingerprint>,
-    /// Most recent ARIA tree emitted by `page_map`/`navigate`. The next snapshot
-    /// reconciles against it so unchanged nodes keep their `@eN` refs, and it
-    /// feeds `PageFingerprint::compute`.
+    /// Most recent full-page ARIA tree emitted by `page_map`/`navigate`.
+    /// Used as the diff baseline for post-action feedback when no cached
+    /// snapshot carries a tree, and it feeds `PageFingerprint::compute`.
+    /// Ref stability across snapshots comes from the DOM-stamped
+    /// `data-acrawl-ref` attributes, not from this tree.
     pub last_aria_tree: Option<AriaNode>,
     pub action_cache: Option<ActionCache>,
     pub html_diff_tracker: Option<HtmlDiffTracker>,

@@ -6,7 +6,7 @@ use tokio::time::timeout;
 
 use acrawl_core::error::ToolExecutionError;
 
-use crate::aria::{assign_refs, identity_key, parse_raw_tree, reconcile, to_yaml, AriaNode};
+use crate::aria::{assign_refs, identity_key, parse_raw_tree, to_yaml, AriaNode};
 use crate::page_fingerprint::PageFingerprint;
 use crate::state::CrawlState;
 use crate::BrowserContext;
@@ -485,10 +485,6 @@ fn page_state_from_feedback_map(
     } else {
         crawl_state.last_aria_tree.clone()
     };
-
-    if let Some(previous_tree) = previous_tree.as_ref() {
-        reconcile(previous_tree, &mut current_tree, &mut Vec::new());
-    }
 
     let scope = resolve_diff_scope(
         browser.ref_map(),

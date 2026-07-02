@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::aria::node::AriaNode;
 use browser::ref_map::{RefMap, Resolution};
 
@@ -20,11 +18,6 @@ fn ancestor_refs(ancestors: &[(String, String)]) -> Vec<(&str, &str)> {
         .iter()
         .map(|(role, name)| (role.as_str(), name.as_str()))
         .collect()
-}
-
-fn node_identity_key(node: &AriaNode, ancestors: &[(String, String)]) -> String {
-    let refs = ancestor_refs(ancestors);
-    identity_key(&node.role, node_name(node), &refs)
 }
 
 #[must_use]
@@ -75,46 +68,6 @@ pub fn assign_refs(
         };
         assign_refs(child, ref_map, child_frame_id, ancestors);
     }
-    ancestors.pop();
-}
-
-pub fn reconcile(prev: &AriaNode, current: &mut AriaNode, ancestors: &mut Vec<(String, String)>) {
-    let refs = ancestor_refs(ancestors);
-    let prev_key = identity_key(&prev.role, node_name(prev), &refs);
-    let curr_key = identity_key(&current.role, node_name(current), &refs);
-
-    if prev_key != curr_key {
-        return;
-    }
-
-    if let Some(ref_id) = &prev.ref_id {
-        current.ref_id = Some(ref_id.clone());
-    }
-
-    let current_name = node_name(current).to_string();
-    ancestors.push((current.role.clone(), current_name));
-
-    let mut prev_children_by_key: HashMap<String, Vec<&AriaNode>> = HashMap::new();
-    for prev_child in &prev.children {
-        let key = node_identity_key(prev_child, ancestors);
-        prev_children_by_key
-            .entry(key)
-            .or_default()
-            .push(prev_child);
-    }
-
-    let mut seen_per_key: HashMap<String, usize> = HashMap::new();
-    for current_child in &mut current.children {
-        let key = node_identity_key(current_child, ancestors);
-        let occurrence = seen_per_key.entry(key.clone()).or_insert(0);
-        if let Some(prev_matches) = prev_children_by_key.get(&key) {
-            if let Some(prev_child) = prev_matches.get(*occurrence) {
-                reconcile(prev_child, current_child, ancestors);
-            }
-        }
-        *occurrence += 1;
-    }
-
     ancestors.pop();
 }
 
@@ -234,122 +187,28 @@ mod tests {
         assert_eq!(tree.children[0].children[0].ref_id.as_deref(), Some("e2"));
     }
 
+    /// Regression test for the reviewed desync bug: when a new duplicate-named
+    /// sibling is inserted in front of existing stamped elements, every node
+    /// must keep the ref its DOM stamp carries — no identity-based reshuffling
+    /// that would point the displayed ref at a different element's stamp.
     #[test]
-    fn reconcile_preserves_ref_across_snapshot() {
-        let mut tree1 = AriaNode {
-            role: "main".to_string(),
-            name: Some(String::new()),
-            states: AriaStates::default(),
-            ref_id: None,
-            url: None,
-            frame_id: None,
-            offscreen: false,
-            children: vec![btn("Submit"), btn("Cancel")],
-            omitted_children: 0,
-        };
-        assign_with_fresh_map(&mut tree1);
-        let submit_ref = tree1.children[0].ref_id.clone().unwrap();
-
-        let mut tree2 = AriaNode {
-            role: "main".to_string(),
-            name: Some(String::new()),
-            states: AriaStates::default(),
-            ref_id: None,
-            url: None,
-            frame_id: None,
-            offscreen: false,
-            children: vec![btn("Submit"), btn("Cancel")],
-            omitted_children: 0,
-        };
-        assign_with_fresh_map(&mut tree2);
-
-        reconcile(&tree1, &mut tree2, &mut vec![]);
-        assert_eq!(
-            tree2.children[0].ref_id.as_deref(),
-            Some(submit_ref.as_str())
+    fn duplicate_sibling_insert_keeps_stamped_refs() {
+        // Walk 2 arrives with a fresh "New Action" stamped e4, inserted before
+        // the previously stamped Action e2 / Action e3.
+        let mut tree = main_with(
+            vec![
+                with_ref(btn("Action"), "e4"),
+                with_ref(btn("Action"), "e2"),
+                with_ref(btn("Action"), "e3"),
+            ],
+            "e1",
         );
-    }
 
-    #[test]
-    fn insert_sibling_does_not_churn_unrelated() {
-        let mut tree1 = AriaNode {
-            role: "main".to_string(),
-            name: Some(String::new()),
-            states: AriaStates::default(),
-            ref_id: None,
-            url: None,
-            frame_id: None,
-            offscreen: false,
-            children: vec![btn("Submit"), btn("Cancel")],
-            omitted_children: 0,
-        };
-        assign_with_fresh_map(&mut tree1);
-        let cancel_ref = tree1.children[1].ref_id.clone().unwrap();
+        assign_with_fresh_map(&mut tree);
 
-        let mut tree2 = AriaNode {
-            role: "main".to_string(),
-            name: Some(String::new()),
-            states: AriaStates::default(),
-            ref_id: None,
-            url: None,
-            frame_id: None,
-            offscreen: false,
-            children: vec![btn("New Button"), btn("Submit"), btn("Cancel")],
-            omitted_children: 0,
-        };
-        assign_with_fresh_map(&mut tree2);
-        reconcile(&tree1, &mut tree2, &mut vec![]);
-
-        let cancel_node = tree2
-            .children
-            .iter()
-            .find(|node| node.name.as_deref() == Some("Cancel"));
-        assert_eq!(
-            cancel_node.and_then(|node| node.ref_id.as_deref()),
-            Some(cancel_ref.as_str())
-        );
-    }
-
-    #[test]
-    fn duplicate_siblings_preserve_occurrence_order() {
-        let mut tree1 = AriaNode {
-            role: "main".to_string(),
-            name: Some(String::new()),
-            states: AriaStates::default(),
-            ref_id: None,
-            url: None,
-            frame_id: None,
-            offscreen: false,
-            children: vec![btn("Action"), btn("Action")],
-            omitted_children: 0,
-        };
-        assign_with_fresh_map(&mut tree1);
-        let first_ref = tree1.children[0].ref_id.clone().unwrap();
-        let second_ref = tree1.children[1].ref_id.clone().unwrap();
-
-        let mut tree2 = AriaNode {
-            role: "main".to_string(),
-            name: Some(String::new()),
-            states: AriaStates::default(),
-            ref_id: None,
-            url: None,
-            frame_id: None,
-            offscreen: false,
-            children: vec![btn("Action"), btn("Action")],
-            omitted_children: 0,
-        };
-        assign_with_fresh_map(&mut tree2);
-
-        reconcile(&tree1, &mut tree2, &mut vec![]);
-
-        assert_eq!(
-            tree2.children[0].ref_id.as_deref(),
-            Some(first_ref.as_str())
-        );
-        assert_eq!(
-            tree2.children[1].ref_id.as_deref(),
-            Some(second_ref.as_str())
-        );
+        assert_eq!(tree.children[0].ref_id.as_deref(), Some("e4"));
+        assert_eq!(tree.children[1].ref_id.as_deref(), Some("e2"));
+        assert_eq!(tree.children[2].ref_id.as_deref(), Some("e3"));
     }
 
     #[test]

@@ -5,5 +5,5 @@ pub mod serialize;
 
 pub use from_js::parse_raw_tree;
 pub use node::{AriaNode, AriaStates};
-pub use reconcile::{assign_refs, identity_key, reconcile};
+pub use reconcile::{assign_refs, identity_key};
 pub use serialize::to_yaml;

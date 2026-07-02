@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::aria::{assign_refs, parse_raw_tree, reconcile, to_yaml};
+use crate::aria::{assign_refs, parse_raw_tree, to_yaml};
 use crate::page_fingerprint::PageFingerprint;
 use crate::semantic::{
     assemble_region_tree, compute_accessible_name, select_active_dialog, RawElementFacts,
@@ -292,8 +292,6 @@ pub async fn execute(
         .unwrap_or("unknown")
         .to_string();
 
-    let prev_tree = crawl_state.last_aria_tree.clone();
-
     if scope.is_none() {
         let cache_key = normalize_url(&url).to_string();
         let url_changed = browser
@@ -306,10 +304,6 @@ pub async fn execute(
         browser.set_page_snapshot(&cache_key, None, result.clone());
     } else {
         assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
-    }
-
-    if let Some(prev) = &prev_tree {
-        reconcile(prev, &mut tree, &mut Vec::new());
     }
 
     let fp_settings = runtime::load_settings();
