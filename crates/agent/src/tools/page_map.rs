@@ -12,6 +12,19 @@ use crate::{ToolEffect, ToolExecutionError};
 /// Default ARIA-tree serialization depth when the caller does not request one.
 /// Matches the bridge's own internal default so the two stay in lock-step.
 const DEFAULT_TREE_DEPTH: usize = 5;
+/// Maximum tree depth accepted from the tool input (mirrors the schema and the
+/// in-page walk's own clamp).
+const MAX_TREE_DEPTH: usize = 10;
+
+/// Parse and clamp the optional `depth` input (schema: default 5, max 10).
+/// Returns `None` when absent so the in-page walk applies its own default.
+fn parse_depth(input: &Value) -> Option<usize> {
+    input
+        .get("depth")
+        .and_then(Value::as_u64)
+        .and_then(|requested| usize::try_from(requested).ok())
+        .map(|requested| requested.clamp(1, MAX_TREE_DEPTH))
+}
 
 const MAX_PAGE_MAP_LINKS: usize = 50;
 const MAX_PAGE_MAP_FORMS: usize = 10;
@@ -251,6 +264,7 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let scope = input.get("scope").and_then(Value::as_str);
     let resolved_scope = resolve_scope(scope, browser)?;
+    let depth = parse_depth(input);
 
     let settings = runtime::load_settings();
     let compound_enrichment = runtime::settings_get_compound_enrichment(&settings);
@@ -259,7 +273,7 @@ pub async fn execute(
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .page_map(resolved_scope.as_deref(), compound_enrichment)
+        .page_map(resolved_scope.as_deref(), compound_enrichment, depth)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -314,13 +328,12 @@ pub async fn execute(
 
     crawl_state.last_aria_tree = Some(tree.clone());
 
-    let depth = input
-        .get("depth")
-        .and_then(Value::as_u64)
-        .and_then(|requested| usize::try_from(requested).ok())
-        .unwrap_or(DEFAULT_TREE_DEPTH);
-
-    Ok(ToolEffect::Reply(to_yaml(&tree, Some(depth))))
+    // The walk already limited its own depth; the serializer depth is a cap on
+    // top of that, so it only truncates when the walk returned deeper data.
+    Ok(ToolEffect::Reply(to_yaml(
+        &tree,
+        Some(depth.unwrap_or(DEFAULT_TREE_DEPTH)),
+    )))
 }
 
 #[cfg(test)]
@@ -332,6 +345,18 @@ mod tests {
 
     use super::{apply_page_map_caps, enrich_semantic_sections, resolve_scope};
     use browser::BrowserContext;
+
+    #[test]
+    fn parse_depth_clamps_to_schema_range() {
+        use super::parse_depth;
+
+        assert_eq!(parse_depth(&json!({})), None);
+        assert_eq!(parse_depth(&json!({"depth": 3})), Some(3));
+        assert_eq!(parse_depth(&json!({"depth": 0})), Some(1));
+        assert_eq!(parse_depth(&json!({"depth": 10})), Some(10));
+        assert_eq!(parse_depth(&json!({"depth": 99})), Some(10));
+        assert_eq!(parse_depth(&json!({"depth": "deep"})), None);
+    }
 
     #[test]
     fn page_map_response_structure_has_all_sections() {

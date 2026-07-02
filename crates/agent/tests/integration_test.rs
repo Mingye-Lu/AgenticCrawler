@@ -253,7 +253,7 @@ async fn example_com_page_map_refs_match_dom_stamps() {
         .expect("navigate should succeed");
 
     let raw = bridge
-        .page_map(None, false)
+        .page_map(None, false, None)
         .await
         .expect("page_map should succeed");
     let js_tree = parse_raw_tree(&raw["tree"]).expect("tree should parse");
@@ -387,6 +387,7 @@ mod set_device_integration {
             &mut self,
             _scope: Option<&str>,
             _compound_enrichment: bool,
+            _depth: Option<usize>,
         ) -> Result<serde_json::Value, BridgeError> {
             unreachable!()
         }
@@ -505,6 +506,7 @@ mod set_device_integration {
             &mut self,
             _scope: Option<&str>,
             _compound_enrichment: bool,
+            _depth: Option<usize>,
         ) -> Result<serde_json::Value, BridgeError> {
             Ok(json!({
                 "headings": [],

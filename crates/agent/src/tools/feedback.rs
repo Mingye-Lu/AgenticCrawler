@@ -633,6 +633,7 @@ mod tests {
     struct FeedbackMockState {
         page_maps: HashMap<String, Value>,
         requested_scopes: Vec<Option<String>>,
+        requested_depths: Vec<Option<usize>>,
         evaluate_result: Value,
         evaluate_script_results: Vec<(String, Value)>,
         evaluate_error_substrings: Vec<String>,
@@ -669,9 +670,11 @@ mod tests {
             &mut self,
             scope: Option<&str>,
             _compound_enrichment: bool,
+            depth: Option<usize>,
         ) -> Result<Value, BridgeError> {
             let mut state = self.state.lock().expect("mock state poisoned");
             state.requested_scopes.push(scope.map(str::to_string));
+            state.requested_depths.push(depth);
             let key = scope.unwrap_or("").to_string();
             state
                 .page_maps
@@ -1242,6 +1245,8 @@ mod tests {
 
         let state = state.lock().expect("mock state poisoned");
         assert_eq!(state.requested_scopes, vec![None]);
+        // Feedback snapshots always use the walk's default depth.
+        assert_eq!(state.requested_depths, vec![None]);
     }
 
     #[tokio::test]

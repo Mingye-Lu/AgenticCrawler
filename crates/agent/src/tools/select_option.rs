@@ -1068,6 +1068,7 @@ mod tests {
             &mut self,
             _scope: Option<&str>,
             _compound_enrichment: bool,
+            _depth: Option<usize>,
         ) -> Result<Value, BridgeError> {
             Ok(json!({
                 "headings": [],

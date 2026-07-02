@@ -367,7 +367,7 @@ async fn fetch_aria_tree(browser: &mut BrowserContext) -> Option<AriaNode> {
         .acquire_bridge()
         .await
         .ok()?
-        .page_map(None, compound_enrichment)
+        .page_map(None, compound_enrichment, None)
         .await
         .ok()?;
     parse_raw_tree(result.get("tree")?)

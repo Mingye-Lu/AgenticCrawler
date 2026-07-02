@@ -26,6 +26,7 @@ impl BrowserBackend for NopBridge {
         &mut self,
         _scope: Option<&str>,
         _compound_enrichment: bool,
+        _depth: Option<usize>,
     ) -> Result<Value, BridgeError> {
         Err(BridgeError::Protocol("NopBridge".into()))
     }

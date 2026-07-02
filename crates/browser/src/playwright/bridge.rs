@@ -29,6 +29,26 @@ pub struct PlaywrightBridge {
 
 pub type SharedBridge = Arc<Mutex<Box<dyn BrowserBackend + Send>>>;
 
+/// Build the `page_map` bridge command. `depth` is forwarded so the in-page
+/// ARIA walk honors the requested depth instead of always using its default.
+fn build_page_map_command(
+    scope: Option<&str>,
+    compound_enrichment: bool,
+    depth: Option<usize>,
+) -> serde_json::Value {
+    let mut cmd = serde_json::json!({ "action": "page_map" });
+    if let Some(s) = scope {
+        cmd["scope"] = serde_json::Value::String(s.to_string());
+    }
+    if compound_enrichment {
+        cmd["compoundEnrichment"] = serde_json::Value::Bool(true);
+    }
+    if let Some(d) = depth {
+        cmd["depth"] = serde_json::json!(d);
+    }
+    cmd
+}
+
 fn classify_io_error(err: std::io::Error) -> BridgeError {
     use std::io::ErrorKind;
     let pipe_closed = matches!(
@@ -277,14 +297,9 @@ impl PlaywrightBridge {
         &mut self,
         scope: Option<&str>,
         compound_enrichment: bool,
+        depth: Option<usize>,
     ) -> Result<serde_json::Value, BridgeError> {
-        let mut cmd = serde_json::json!({ "action": "page_map" });
-        if let Some(s) = scope {
-            cmd["scope"] = serde_json::Value::String(s.to_string());
-        }
-        if compound_enrichment {
-            cmd["compoundEnrichment"] = serde_json::Value::Bool(true);
-        }
+        let cmd = build_page_map_command(scope, compound_enrichment, depth);
         self.send_raw_command(&cmd).await
     }
 

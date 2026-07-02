@@ -39,6 +39,23 @@ fn write_python_script(name: &str, source: &str) -> PathBuf {
 }
 
 #[test]
+fn page_map_command_forwards_scope_enrichment_and_depth() {
+    assert_eq!(
+        build_page_map_command(None, false, None),
+        serde_json::json!({ "action": "page_map" })
+    );
+    assert_eq!(
+        build_page_map_command(Some("main"), true, Some(7)),
+        serde_json::json!({
+            "action": "page_map",
+            "scope": "main",
+            "compoundEnrichment": true,
+            "depth": 7
+        })
+    );
+}
+
+#[test]
 fn bridge_command_sets_node_path_to_config_home_node_modules() {
     let args = vec!["-e".to_string(), "console.log('ok')".to_string()];
     let command = PlaywrightBridge::bridge_command("node", &args);
