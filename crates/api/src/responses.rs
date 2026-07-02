@@ -252,21 +252,28 @@ fn convert_responses_user_message(message: &InputMessage, out: &mut Vec<Value>) 
                     text_parts.clear();
                 }
 
-                let output = content
-                    .iter()
-                    .map(|block| match block {
-                        ToolResultContentBlock::Text { text } => text.clone(),
-                        ToolResultContentBlock::Json { value } => value.to_string(),
-                        ToolResultContentBlock::Image { .. } => "[image omitted]".to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
+                let mut text_output: Vec<String> = Vec::new();
+                let mut image_items: Vec<Value> = Vec::new();
+                for block in content {
+                    match block {
+                        ToolResultContentBlock::Text { text } => text_output.push(text.clone()),
+                        ToolResultContentBlock::Json { value } => {
+                            text_output.push(value.to_string());
+                        }
+                        ToolResultContentBlock::Image { source } => {
+                            image_items.push(serde_json::json!({
+                                "type": "input_image",
+                                "image_url": format!("data:{};base64,{}", source.media_type, source.data)
+                            }));
+                        }
+                    }
+                }
                 out.push(serde_json::json!({
                     "type": "function_call_output",
                     "call_id": tool_use_id,
-                    "output": output,
+                    "output": text_output.join("\n"),
                 }));
+                out.extend(image_items);
             }
             InputContentBlock::ToolUse { .. } => {}
             InputContentBlock::Reasoning { .. } => {
@@ -1400,5 +1407,49 @@ mod tests {
             })),
             serde_json::json!({"type": "function", "function": {"name": "navigate"}})
         );
+    }
+
+    #[test]
+    fn tool_result_with_image_emits_input_image() {
+        use crate::types::ImageSource;
+        let converted = convert_responses_messages(&[InputMessage {
+            role: "user".to_string(),
+            content: vec![InputContentBlock::ToolResult {
+                tool_use_id: "call_img".to_string(),
+                content: vec![
+                    ToolResultContentBlock::Text {
+                        text: "screenshot taken".to_string(),
+                    },
+                    ToolResultContentBlock::Image {
+                        source: ImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: "image/png".to_string(),
+                            data: "abc123".to_string(),
+                        },
+                    },
+                ],
+                is_error: false,
+            }],
+        }]);
+
+        // Must have both a function_call_output and an input_image item.
+        assert!(
+            converted.len() >= 2,
+            "expected at least 2 items, got {}",
+            converted.len()
+        );
+
+        let func_output = converted
+            .iter()
+            .find(|item| item["type"] == "function_call_output")
+            .expect("function_call_output item");
+        assert_eq!(func_output["call_id"], "call_img");
+        assert_eq!(func_output["output"], "screenshot taken");
+
+        let img_item = converted
+            .iter()
+            .find(|item| item["type"] == "input_image")
+            .expect("input_image item");
+        assert_eq!(img_item["image_url"], "data:image/png;base64,abc123");
     }
 }

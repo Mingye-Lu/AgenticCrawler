@@ -411,6 +411,17 @@ fn convert_message(
                         "response": tool_result_response(content, *is_error),
                     }
                 }));
+                // Emit image blocks as additional inlineData parts in the same contents entry.
+                for block in content {
+                    if let ToolResultContentBlock::Image { source } = block {
+                        parts.push(serde_json::json!({
+                            "inlineData": {
+                                "mimeType": source.media_type,
+                                "data": source.data
+                            }
+                        }));
+                    }
+                }
             }
             InputContentBlock::ToolUse { .. }
             | InputContentBlock::ToolResult { .. }
@@ -435,10 +446,11 @@ fn tool_result_response(content: &[ToolResultContentBlock], is_error: bool) -> V
 
     let joined = content
         .iter()
-        .map(|block| match block {
-            ToolResultContentBlock::Text { text } => text.clone(),
-            ToolResultContentBlock::Json { value } => value.to_string(),
-            ToolResultContentBlock::Image { .. } => "[image omitted]".to_string(),
+        .filter_map(|block| match block {
+            ToolResultContentBlock::Text { text } => Some(text.clone()),
+            ToolResultContentBlock::Json { value } => Some(value.to_string()),
+            // Images are emitted as separate inlineData parts in convert_message.
+            ToolResultContentBlock::Image { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -617,6 +629,74 @@ mod tests {
             }) if reason == "end_turn"
         ));
         assert!(matches!(events[5], StreamEvent::MessageStop(_)));
+    }
+
+    #[test]
+    fn tool_result_with_image_emits_inline_data() {
+        use crate::types::ImageSource;
+        let request = MessageRequest {
+            model: "gemini-2.0-flash".to_string(),
+            max_tokens: 512,
+            messages: vec![
+                InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![InputContentBlock::ToolUse {
+                        id: "tool_1".to_string(),
+                        name: "screenshot".to_string(),
+                        input: serde_json::json!({}),
+                    }],
+                },
+                InputMessage {
+                    role: "user".to_string(),
+                    content: vec![InputContentBlock::ToolResult {
+                        tool_use_id: "tool_1".to_string(),
+                        content: vec![
+                            ToolResultContentBlock::Text {
+                                text: "screenshot taken".to_string(),
+                            },
+                            ToolResultContentBlock::Image {
+                                source: ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: "abc123".to_string(),
+                                },
+                            },
+                        ],
+                        is_error: false,
+                    }],
+                },
+            ],
+            system: None,
+            tools: None,
+            tool_choice: None,
+            stream: false,
+            reasoning_effort: None,
+        };
+
+        let body = build_gemini_request(&request);
+        let contents = body["contents"].as_array().expect("contents array");
+
+        // Find the user-role content item (the tool result).
+        let user_content = contents
+            .iter()
+            .find(|c| c["role"] == "user")
+            .expect("user content entry");
+        let parts = user_content["parts"].as_array().expect("parts array");
+
+        // functionResponse part must be present.
+        let func_response = parts
+            .iter()
+            .find(|p| p.get("functionResponse").is_some())
+            .expect("functionResponse part");
+        assert_eq!(func_response["functionResponse"]["name"], "screenshot");
+
+        // inlineData part must also be present — not "[image omitted]".
+        let inline_data = parts
+            .iter()
+            .find(|p| p.get("inlineData").is_some())
+            .expect("inlineData part");
+        assert_eq!(inline_data["inlineData"]["mimeType"], "image/png");
+        assert_eq!(inline_data["inlineData"]["data"], "abc123");
     }
 
     #[test]
