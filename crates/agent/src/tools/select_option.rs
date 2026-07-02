@@ -14,6 +14,23 @@ const OPEN_WAIT: Duration = Duration::from_millis(300);
 const VERIFY_WAIT: Duration = Duration::from_millis(200);
 const MAX_OPTION_ATTEMPTS: usize = 5;
 const OPEN_KEYS: [&str; 3] = ["Enter", "Space", "ArrowDown"];
+const FIND_ELEMENT_ACROSS_FRAMES_JS: &str = r"
+            function findElementAcrossFrames(selector, rootDocument = document) {
+                const found = rootDocument.querySelector(selector);
+                if (found) return found;
+
+                for (const iframe of Array.from(rootDocument.querySelectorAll('iframe'))) {
+                    try {
+                        const frameDoc = iframe.contentDocument;
+                        if (!frameDoc) continue;
+                        const nested = findElementAcrossFrames(selector, frameDoc);
+                        if (nested) return nested;
+                    } catch (_) {}
+                }
+
+                return null;
+            }
+";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectOptionInput {
@@ -65,11 +82,12 @@ pub fn parse_input(input: &Value) -> Result<SelectOptionInput, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
-    let selector = super::ref_resolve::resolve_selector(&params.selector, browser.ref_map())
-        .map_err(ToolExecutionError::new)?;
+    let (_frame_id, selector) =
+        super::ref_resolve::resolve_to_action_query(&params.selector, browser)
+            .map_err(ToolExecutionError::new)?;
 
     if check_is_native_select(browser, &selector).await? {
         return execute_native(&params, &selector, browser, crawl_state).await;
@@ -82,7 +100,7 @@ async fn execute_native(
     params: &SelectOptionInput,
     selector: &str,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let options = get_native_options(browser, selector).await?;
 
@@ -149,7 +167,7 @@ async fn execute_custom(
     params: &SelectOptionInput,
     selector: &str,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let before_snapshot = extract_dom_snapshot(browser).await?;
     let before = snapshot_elements(&before_snapshot)?;
@@ -237,7 +255,8 @@ async fn check_is_native_select(
     let selector_json = js_string(selector)?;
     let script = format!(
         r"(() => {{
-            const el = document.querySelector({selector_json});
+            {FIND_ELEMENT_ACROSS_FRAMES_JS}
+            const el = findElementAcrossFrames({selector_json});
             return el ? el.tagName : null;
         }})()"
     );
@@ -264,7 +283,8 @@ async fn select_native_by_label(
     let label_json = js_string(label)?;
     let script = format!(
         r"(() => {{
-            const select = document.querySelector({selector_json});
+            {FIND_ELEMENT_ACROSS_FRAMES_JS}
+            const select = findElementAcrossFrames({selector_json});
             if (!select) return {{ ok: false, error: 'select_not_found' }};
             if (select.tagName !== 'SELECT') return {{ ok: false, error: 'not_select' }};
 
@@ -315,7 +335,8 @@ async fn select_native_by_index(
     let selector_json = js_string(selector)?;
     let script = format!(
         r"(() => {{
-            const select = document.querySelector({selector_json});
+            {FIND_ELEMENT_ACROSS_FRAMES_JS}
+            const select = findElementAcrossFrames({selector_json});
             if (!select) return {{ ok: false, error: 'select_not_found' }};
             if (select.tagName !== 'SELECT') return {{ ok: false, error: 'not_select' }};
             const index = {index};
@@ -362,7 +383,8 @@ async fn get_native_options(
     let selector_json = js_string(selector)?;
     let script = format!(
         r"(() => {{
-            const select = document.querySelector({selector_json});
+            {FIND_ELEMENT_ACROSS_FRAMES_JS}
+            const select = findElementAcrossFrames({selector_json});
             if (!select || select.tagName !== 'SELECT') return [];
 
             return Array.from(select.options).map((option, index) => {{
@@ -1046,6 +1068,7 @@ mod tests {
             &mut self,
             _scope: Option<&str>,
             _compound_enrichment: bool,
+            _depth: Option<usize>,
         ) -> Result<Value, BridgeError> {
             Ok(json!({
                 "headings": [],
@@ -1577,7 +1600,7 @@ mod tests {
         let effect = execute(
             &json!({"selector": "#lang-trigger"}),
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
         )
         .await
         .unwrap();
@@ -1689,7 +1712,7 @@ mod tests {
         let effect = execute(
             &json!({"selector": "#lang-trigger", "label": "French"}),
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
         )
         .await
         .unwrap();
@@ -1783,7 +1806,7 @@ mod tests {
         let effect = execute(
             &json!({"selector": "#lang-trigger", "label": "French"}),
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
         )
         .await
         .unwrap();

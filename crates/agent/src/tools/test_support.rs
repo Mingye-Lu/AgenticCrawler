@@ -43,7 +43,12 @@ impl BrowserBackend for ObservationMockBackend {
     async fn scroll(&mut self, _: &str, _: i64) -> Result<(), BridgeError> {
         Ok(())
     }
-    async fn page_map(&mut self, _: Option<&str>, _: bool) -> Result<Value, BridgeError> {
+    async fn page_map(
+        &mut self,
+        _: Option<&str>,
+        _: bool,
+        _: Option<usize>,
+    ) -> Result<Value, BridgeError> {
         Ok(json!({}))
     }
     async fn read_content(

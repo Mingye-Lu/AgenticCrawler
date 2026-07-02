@@ -1,18 +1,20 @@
 use serde_json::{json, Value};
 
+use crate::aria::{assign_refs, parse_raw_tree, to_yaml, AriaNode, AriaStates};
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
+use crate::page_fingerprint::PageFingerprint;
 use crate::prune::{prune_html_with_profile, select_profile, CleaningProfile};
 use crate::state::CrawlState;
 use crate::tools::html_diff::HtmlDiffTracker;
-use crate::tools::page_map::{
-    annotate_refs, apply_page_map_caps, enrich_semantic_sections, normalize_url,
-};
+use crate::tools::page_map::normalize_url;
 use crate::BrowserContext;
 use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const SLIM_MAX_CHARS: usize = 2000;
-const MAX_LINK_TEXT_LEN: usize = 60;
+/// ARIA-tree serialization depth for navigate's structural section. Kept equal
+/// to the `page_map` tool default so both surfaces emit comparable trees.
+const NAVIGATE_TREE_DEPTH: usize = 5;
 
 #[derive(Debug, PartialEq)]
 enum ContentDepth {
@@ -178,37 +180,51 @@ fn strip_markdown_images(md: &str) -> String {
     result
 }
 
-fn extract_headings_from_markdown(md: &str) -> Value {
-    let headings = md
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            let hash_count = trimmed.chars().take_while(|ch| *ch == '#').count();
-            if !(1..=6).contains(&hash_count) {
-                return None;
-            }
-
-            let text = trimmed
-                .strip_prefix(&"#".repeat(hash_count))?
-                .strip_prefix(' ')?;
-
-            Some(json!({
-                "level": hash_count,
-                "text": text,
-                "id": Value::Null,
-                "selector": Value::Null
-            }))
-        })
-        .collect::<Vec<_>>();
-
-    json!({
-        "headings": headings,
-        "meta": {
-            "url": "",
-            "title": "",
-            "description": ""
+fn synthesize_tree_from_markdown(markdown: &str) -> AriaNode {
+    let mut children = Vec::new();
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        let level = trimmed.chars().take_while(|ch| *ch == '#').count();
+        if !(1..=6).contains(&level) {
+            continue;
         }
-    })
+        let Some(rest) = trimmed.strip_prefix(&"#".repeat(level)) else {
+            continue;
+        };
+        let Some(rest) = rest.strip_prefix(' ') else {
+            continue;
+        };
+        let text = rest.trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        children.push(AriaNode {
+            role: "heading".to_string(),
+            name: Some(text),
+            states: AriaStates {
+                level: u8::try_from(level).ok(),
+                ..AriaStates::default()
+            },
+            ref_id: None,
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children: Vec::new(),
+            omitted_children: 0,
+        });
+    }
+
+    AriaNode {
+        role: "document".to_string(),
+        name: None,
+        states: AriaStates::default(),
+        ref_id: None,
+        url: None,
+        frame_id: None,
+        offscreen: false,
+        children,
+        omitted_children: 0,
+    }
 }
 
 fn resolve_content(
@@ -282,62 +298,6 @@ fn resolve_content(
     }
 }
 
-fn slim_page_map(page_map: &mut Value) {
-    if let Some(links) = page_map.get_mut("links").and_then(Value::as_array_mut) {
-        for link in links.iter_mut() {
-            if let Some(obj) = link.as_object_mut() {
-                obj.remove("selector");
-                let needs_truncation = obj
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .is_some_and(|t| t.len() > MAX_LINK_TEXT_LEN);
-                if needs_truncation {
-                    let text = obj["text"].as_str().unwrap();
-                    let truncated: String = text.chars().take(MAX_LINK_TEXT_LEN).collect();
-                    obj.insert("text".to_string(), json!(format!("{truncated}...")));
-                }
-            }
-        }
-    }
-
-    if let Some(headings) = page_map.get_mut("headings").and_then(Value::as_array_mut) {
-        for heading in headings.iter_mut() {
-            if let Some(obj) = heading.as_object_mut() {
-                obj.remove("selector");
-            }
-        }
-    }
-
-    if let Some(interactive) = page_map.get_mut("interactive") {
-        if let Some(elements) = interactive
-            .get_mut("elements")
-            .and_then(Value::as_array_mut)
-        {
-            for element in elements.iter_mut() {
-                if let Some(obj) = element.as_object_mut() {
-                    obj.remove("selector");
-                }
-            }
-        }
-    }
-
-    if let Some(landmarks) = page_map.get_mut("landmarks").and_then(Value::as_array_mut) {
-        for landmark in landmarks.iter_mut() {
-            if let Some(obj) = landmark.as_object_mut() {
-                obj.remove("selector");
-            }
-        }
-    }
-
-    if let Some(forms) = page_map.get_mut("forms").and_then(Value::as_array_mut) {
-        for form in forms.iter_mut() {
-            if let Some(obj) = form.as_object_mut() {
-                obj.remove("selector");
-            }
-        }
-    }
-}
-
 fn apply_html_diff(crawl_state: &mut CrawlState, url: &str, content: &mut String) {
     let settings = runtime::load_settings();
     if !runtime::settings_get_html_diff_mode(&settings) {
@@ -400,66 +360,47 @@ fn reply_without_page_map(
     }))
 }
 
-async fn build_page_map(
-    browser: &mut BrowserContext,
-    page: &browser::FetchedPage,
-    title: &str,
-) -> Value {
-    if page.fetched_via_browser {
-        let nav_settings = runtime::load_settings();
-        let compound_enrichment = runtime::settings_get_compound_enrichment(&nav_settings);
-        match browser.acquire_bridge().await {
-            Ok(mut bridge) => match bridge.page_map(None, compound_enrichment).await {
-                Ok(mut value) => {
-                    enrich_semantic_sections(&mut value);
-                    apply_page_map_caps(&mut value);
-                    value
-                }
-                Err(_) => json!({
-                    "headings": [],
-                    "meta": {
-                        "url": page.url.clone(),
-                        "title": ""
-                    }
-                }),
-            },
-            Err(_) => json!({
-                "headings": [],
-                "meta": {
-                    "url": page.url.clone(),
-                    "title": ""
-                }
-            }),
-        }
-    } else {
-        let mut value = extract_headings_from_markdown(&page.markdown);
-        if let Some(meta) = value.get_mut("meta").and_then(Value::as_object_mut) {
-            meta.insert("url".to_string(), json!(page.url.clone()));
-            meta.insert("title".to_string(), json!(title));
-        }
-        value
-    }
+async fn fetch_aria_tree(browser: &mut BrowserContext) -> Option<AriaNode> {
+    let nav_settings = runtime::load_settings();
+    let compound_enrichment = runtime::settings_get_compound_enrichment(&nav_settings);
+    let result = browser
+        .acquire_bridge()
+        .await
+        .ok()?
+        .page_map(None, compound_enrichment, None)
+        .await
+        .ok()?;
+    parse_raw_tree(result.get("tree")?)
 }
 
-fn cache_page_map_snapshot(
+async fn build_structural_yaml(
     browser: &mut BrowserContext,
     crawl_state: &mut CrawlState,
-    page_url: &str,
-    page_map: &Value,
-) {
-    let pm_url = page_map
-        .get("meta")
-        .and_then(|meta| meta.get("url"))
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let cache_key = normalize_url(pm_url).to_string();
-    browser.set_page_snapshot(&cache_key, None, page_map.clone());
+    page: &browser::FetchedPage,
+) -> String {
+    let mut tree = if page.fetched_via_browser {
+        fetch_aria_tree(browser)
+            .await
+            .unwrap_or_else(|| synthesize_tree_from_markdown(&page.markdown))
+    } else {
+        synthesize_tree_from_markdown(&page.markdown)
+    };
+
+    if page.fetched_via_browser {
+        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
+        let cache_key = normalize_url(&page.url).to_string();
+        browser.set_page_snapshot(&cache_key, None, json!({ "meta": { "url": page.url } }));
+    }
 
     let fp_settings = runtime::load_settings();
     if runtime::settings_get_page_fingerprinting(&fp_settings) {
-        let fp = crate::page_fingerprint::PageFingerprint::compute(page_url, page_map);
-        crawl_state.page_fingerprints.push(fp);
+        let fingerprint = PageFingerprint::compute(&page.url, &tree);
+        crawl_state.page_fingerprints.push(fingerprint);
     }
+
+    crawl_state.last_aria_tree = Some(tree.clone());
+
+    to_yaml(&tree, Some(NAVIGATE_TREE_DEPTH))
 }
 
 pub async fn execute(
@@ -519,14 +460,7 @@ pub async fn execute(
         ));
     }
 
-    let mut page_map = build_page_map(browser, &page, &title).await;
-
-    annotate_refs(&mut page_map, browser);
-    cache_page_map_snapshot(browser, crawl_state, &page.url, &page_map);
-
-    if params.page_map_depth == PageMapDepth::Slim {
-        slim_page_map(&mut page_map);
-    }
+    let page_map = build_structural_yaml(browser, crawl_state, &page).await;
 
     let content_length = content.chars().count();
 
@@ -696,13 +630,19 @@ mod tests {
     }
 
     #[test]
-    fn navigate_response_has_new_shape() {
-        let result = extract_headings_from_markdown("# Title\n\n## Section");
-        assert!(result.get("headings").is_some());
-        assert!(result.get("meta").is_some());
-        assert!(result["meta"].get("url").is_some());
-        assert!(result["meta"].get("title").is_some());
-        assert!(result["meta"].get("description").is_some());
+    fn synthesize_tree_from_markdown_builds_heading_outline() {
+        let tree = synthesize_tree_from_markdown("# Title\n\nbody\n\n## Section\n###NoSpace");
+        assert_eq!(tree.role, "document");
+        assert_eq!(tree.children.len(), 2);
+        assert_eq!(tree.children[0].role, "heading");
+        assert_eq!(tree.children[0].name.as_deref(), Some("Title"));
+        assert_eq!(tree.children[0].states.level, Some(1));
+        assert_eq!(tree.children[1].name.as_deref(), Some("Section"));
+        assert_eq!(tree.children[1].states.level, Some(2));
+
+        let yaml = to_yaml(&tree, Some(NAVIGATE_TREE_DEPTH));
+        assert!(yaml.contains("heading \"Title\" [level=1]"));
+        assert!(yaml.contains("heading \"Section\" [level=2]"));
     }
 
     #[test]
@@ -729,26 +669,6 @@ mod tests {
         let html = format!("<p>{}</p>", "a".repeat(DEFAULT_MAX_MARKDOWN_CHARS + 256));
         let (_content, truncated) = html_to_markdown_capped(&html, DEFAULT_MAX_MARKDOWN_CHARS);
         assert!(truncated);
-    }
-
-    #[test]
-    fn navigate_page_map_included_in_response() {
-        let result = extract_headings_from_markdown("# Title");
-        assert_eq!(result["headings"].as_array().map(Vec::len), Some(1));
-        assert!(result["meta"].is_object());
-    }
-
-    #[test]
-    fn extract_headings_from_markdown_finds_all_levels() {
-        let result = extract_headings_from_markdown("# H1\n## H2\n### H3");
-        let headings = result["headings"].as_array().unwrap();
-        assert_eq!(headings.len(), 3);
-        assert_eq!(headings[0]["level"], 1);
-        assert_eq!(headings[0]["text"], "H1");
-        assert_eq!(headings[1]["level"], 2);
-        assert_eq!(headings[1]["text"], "H2");
-        assert_eq!(headings[2]["level"], 3);
-        assert_eq!(headings[2]["text"], "H3");
     }
 
     #[test]
@@ -871,53 +791,5 @@ mod tests {
     fn parse_page_map_depth_rejects_invalid() {
         let input = json!({"url": "https://example.com", "page_map_depth": "bogus"});
         assert!(parse_input(&input).is_err());
-    }
-
-    #[test]
-    fn slim_page_map_strips_selectors_and_caps_text() {
-        let mut page_map = json!({
-            "links": [
-                {"text": "Short", "href": "https://a.com", "selector": "a.long-selector"},
-                {"text": "This is a very long link text that definitely exceeds sixty characters and should be truncated", "href": "https://b.com", "selector": "a.other"}
-            ],
-            "headings": [
-                {"level": 1, "text": "Title", "selector": "h1.main", "char_count": 100}
-            ],
-            "interactive": {
-                "elements": [
-                    {"ref": "@e1", "role": "button", "selector": "button.submit", "text": "Submit"}
-                ]
-            },
-            "landmarks": [
-                {"tag": "main", "role": "main", "selector": "#content", "text_preview": "Main"}
-            ],
-            "forms": [
-                {"action": "/submit", "selector": "form#contact"}
-            ]
-        });
-
-        slim_page_map(&mut page_map);
-
-        let links = page_map["links"].as_array().unwrap();
-        assert!(links[0].get("selector").is_none());
-        assert_eq!(links[0]["text"], "Short");
-        assert!(links[1].get("selector").is_none());
-        let long_text = links[1]["text"].as_str().unwrap();
-        assert!(long_text.ends_with("..."));
-        assert!(long_text.len() <= MAX_LINK_TEXT_LEN + 3);
-
-        let headings = page_map["headings"].as_array().unwrap();
-        assert!(headings[0].get("selector").is_none());
-        assert_eq!(headings[0]["text"], "Title");
-
-        let elements = page_map["interactive"]["elements"].as_array().unwrap();
-        assert!(elements[0].get("selector").is_none());
-        assert_eq!(elements[0]["ref"], "@e1");
-
-        let landmarks = page_map["landmarks"].as_array().unwrap();
-        assert!(landmarks[0].get("selector").is_none());
-
-        let forms = page_map["forms"].as_array().unwrap();
-        assert!(forms[0].get("selector").is_none());
     }
 }

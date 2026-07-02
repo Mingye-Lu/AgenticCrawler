@@ -282,6 +282,7 @@ mod tests {
             &mut self,
             _scope: Option<&str>,
             _compound_enrichment: bool,
+            _depth: Option<usize>,
         ) -> Result<serde_json::Value, BridgeError> {
             Ok(serde_json::json!({}))
         }

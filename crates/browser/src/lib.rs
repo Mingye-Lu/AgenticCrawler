@@ -1,3 +1,4 @@
+pub mod aria_walk_js;
 mod browser_backend;
 pub mod context;
 pub mod extension;

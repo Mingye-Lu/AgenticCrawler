@@ -1,0 +1,33 @@
+<!-- Fixture (e): Open shadow DOM — shadow content must NOT appear in ARIA tree (future work) -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shadow DOM Test</title>
+</head>
+<body>
+
+  <main>
+    <h1>Shadow DOM Test</h1>
+    <p>
+      The div below has an open shadow root containing a button. Shadow DOM traversal
+      is future work — the shadow button must NOT appear in the ARIA tree. Only the
+      regular button outside the shadow root should be visible.
+    </p>
+
+    <div id="host"></div>
+
+    <button id="regular-btn" type="button">Regular Button</button>
+  </main>
+
+  <script>
+    var host = document.getElementById('host');
+    var shadow = host.attachShadow({ mode: 'open' });
+    var shadowBtn = document.createElement('button');
+    shadowBtn.textContent = 'Shadow Button';
+    shadow.appendChild(shadowBtn);
+  </script>
+
+</body>
+</html>

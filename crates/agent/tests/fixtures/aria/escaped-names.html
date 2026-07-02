@@ -1,0 +1,32 @@
+<!-- Fixture (g): Escaped names — tests YAML escaping of special characters in accessible names -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Escaped Names</title>
+</head>
+<body>
+
+  <main>
+    <h1>Escaped Names Test</h1>
+    <p>Each button or input below has an accessible name containing a YAML-escaping edge case.</p>
+
+    <button type="button" aria-label='Say "hello" world'>Button with double quotes</button>
+
+    <button type="button" aria-label="Key: value pair">Button with colon</button>
+
+    <div>
+      <label for="newline-input">Line one&#10;Line two</label>
+      <input type="text" id="newline-input" name="newline-input">
+    </div>
+
+    <button type="button" aria-label="- leading dash">Button with leading dash</button>
+
+    <button type="button" aria-label="Hello 🌍 World">Button with emoji</button>
+
+    <a href="/test" aria-label='Anchor: "quoted" link'>Link</a>
+  </main>
+
+</body>
+</html>

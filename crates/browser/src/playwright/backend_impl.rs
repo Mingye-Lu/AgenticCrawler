@@ -94,8 +94,9 @@ impl BrowserBackend for PlaywrightBridge {
         &mut self,
         scope: Option<&str>,
         compound_enrichment: bool,
+        depth: Option<usize>,
     ) -> Result<serde_json::Value, BridgeError> {
-        PlaywrightBridge::page_map(self, scope, compound_enrichment).await
+        PlaywrightBridge::page_map(self, scope, compound_enrichment, depth).await
     }
 
     async fn extract_dom_snapshot(

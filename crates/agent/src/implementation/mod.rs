@@ -655,7 +655,7 @@ impl CrawlerAgent {
             .acquire_bridge()
             .await
             .map_err(|error| ToolError::new(error.to_string()))?
-            .page_map(None, false)
+            .page_map(None, false, None)
             .await
             .map_err(|error| ToolError::new(error.to_string()))?;
 
@@ -1265,6 +1265,7 @@ mod tests {
             &mut self,
             _scope: Option<&str>,
             _compound_enrichment: bool,
+            _depth: Option<usize>,
         ) -> Result<Value, BridgeError> {
             let mut state = self
                 .state

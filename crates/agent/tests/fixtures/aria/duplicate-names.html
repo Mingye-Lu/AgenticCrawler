@@ -1,0 +1,52 @@
+<!-- Fixture (f): Duplicate-named buttons — tests identity-key disambiguation by DOM order -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Duplicate Names</title>
+</head>
+<body>
+
+  <main>
+    <h1>Product List</h1>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th colspan="2">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span>product-1</span></td>
+          <td><button type="button">Add to cart</button></td>
+          <td><button type="button">Remove</button></td>
+        </tr>
+        <tr>
+          <td><span>product-2</span></td>
+          <td><button type="button">Add to cart</button></td>
+          <td><button type="button">Remove</button></td>
+        </tr>
+        <tr>
+          <td><span>product-3</span></td>
+          <td><button type="button">Add to cart</button></td>
+          <td><button type="button">Remove</button></td>
+        </tr>
+        <tr>
+          <td><span>product-4</span></td>
+          <td><button type="button">Add to cart</button></td>
+          <td><button type="button">Remove</button></td>
+        </tr>
+        <tr>
+          <td><span>product-5</span></td>
+          <td><button type="button">Add to cart</button></td>
+          <td><button type="button">Remove</button></td>
+        </tr>
+      </tbody>
+    </table>
+  </main>
+
+</body>
+</html>

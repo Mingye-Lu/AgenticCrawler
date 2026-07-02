@@ -1,0 +1,29 @@
+<!-- Fixture (d): Cross-origin iframe — must degrade to childless node, no throw -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cross-Origin Iframe Test</title>
+</head>
+<body>
+
+  <main>
+    <h1>Cross-Origin Iframe Test</h1>
+    <p>
+      The iframe below embeds a cross-origin URL. Accessing its <code>contentDocument</code>
+      will throw a SecurityError. The ARIA tree serializer must catch this and emit a
+      childless iframe node rather than crashing.
+    </p>
+
+    <iframe
+      id="cross-origin-frame"
+      src="https://example.com"
+      title="External Content"
+      width="600"
+      height="400">
+    </iframe>
+  </main>
+
+</body>
+</html>

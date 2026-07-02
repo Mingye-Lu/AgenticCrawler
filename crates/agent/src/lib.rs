@@ -1,5 +1,6 @@
 pub mod action_cache;
 pub mod agent;
+pub mod aria;
 pub mod child_events;
 pub mod confidence;
 pub mod failure_classifier;
@@ -63,7 +64,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: "navigate",
-            description: "Navigate to a URL and return the page content as fit_markdown (default, prunes boilerplate for token efficiency), structured markdown, plain text, or raw HTML. Automatically escalates from fast HTTP fetch to full headless browser when JavaScript rendering is detected (React, Next.js, Vue, Angular markers, or short <noscript> bodies). Returns content with an embedded page_map of headings, links, forms, and interactive elements for subsequent tool calls. Use this as the primary tool for accessing any web page.",
+            description: "Navigate to a URL and return the page content as fit_markdown (default, prunes boilerplate for token efficiency), structured markdown, plain text, or raw HTML. Automatically escalates from fast HTTP fetch to full headless browser when JavaScript rendering is detected (React, Next.js, Vue, Angular markers, or short <noscript> bodies). Returns prose content (fit_markdown) plus a YAML accessibility tree structural section for subsequent tool calls. Use this as the primary tool for accessing any web page.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -188,7 +189,7 @@ fn click_tool() -> ToolSpec {
                 "selector": { "type": "string", "description": "CSS selector or @eN element reference from page_map (e.g. \"@e3\", \"button.submit\", \"#login-btn\"). Mutually exclusive with 'text'." },
                 "text": { "type": "string", "description": "Activate by visible label text instead of a selector. Finds the interactive element whose accessible name best matches this text. Mutually exclusive with 'selector'." },
                 "role": { "type": "string", "description": "Optional ARIA role filter when using 'text' (e.g. 'button', 'tab', 'checkbox', 'menuitem'). Narrows the match." },
-                "region": { "type": "string", "description": "Optional region handle (@r1, @r2…) or semantic token ('dialog', 'main', 'sidebar') to constrain the text search to a specific UI area." },
+                "region": { "type": "string", "description": "Optional [ref=eN] or semantic token to constrain label matching." },
                 "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
             },
             "additionalProperties": false
@@ -312,18 +313,22 @@ fn execute_js_tool() -> ToolSpec {
 fn page_map_tool() -> ToolSpec {
     ToolSpec {
         name: "page_map",
-        description: "Get a comprehensive structural map of the current page including headings (h1–h6 with section sizes), landmark regions, forms with field details, links (text + href, capped at 50), and interactive elements (buttons, inputs, selects with state and @eN refs). Also returns a regions hierarchy (sidebar/main/dialog), the active_dialog, and non-form controls alongside headings/landmarks/links/interactive. Use to discover page structure before interacting, or with scope to inspect a specific modal/dialog without background noise. Scope accepts semantic tokens ('dialog', 'main', 'sidebar') or a region handle (@r1) in addition to a raw CSS selector. Each interactive element returns a stable @eN reference for use in click, fill_form, hover, press_key, and select_option.",
+        description: "Get the page's YAML accessibility tree (primary structural view). Each node: `- role \"name\" [state...] [ref=eN]:`. Scope by [ref=eN] or semantic token. `depth` controls tree depth.",
         input_schema: json!({
             "type": "object",
             "properties": {
                 "scope": {
                     "type": "string",
-                    "description": "CSS selector to scope all queries within (e.g. \"[role='dialog']\" for modal content only, \".sidebar\" for a specific region). If omitted, queries the full page."
+                    "description": "Limit output to a subtree: `[ref=eN]` (subtree rooted at that node) or semantic token (`dialog`, `main`, `sidebar`)."
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Maximum tree depth (default: 5, max: 10). At max depth, omitted children are counted."
                 }
             },
             "additionalProperties": false
         }),
-        instructions: Some("Returns the full page anatomy: heading hierarchy (h1-h6 with section sizes), landmark regions, forms (with field details), links (text + href, capped at 50), interactive elements (buttons/inputs/selects with their text, selector, and state like disabled/aria-pressed/aria-expanded), a regions hierarchy (sidebar/main/dialog with @rN handles), the active_dialog, non-form controls, and page metadata. Use scope to inspect only a modal/dialog/overlay without noise from the background page — scope accepts a raw CSS selector, a semantic token ('dialog', 'main', 'sidebar'), or a region handle (@r1). Use links[].href with navigate instead of clicking when the URL is visible. Each interactive element includes a `ref` field (@e1, @e2, ...) — use these stable handles in click, fill_form, hover, press_key, and select_option instead of copying full CSS selectors."),
+        instructions: Some("Returns the YAML accessibility tree: each node is `- role \"name\" [state...] [ref=eN]:` with children indented 2 spaces. Use [ref=eN] handles in click, fill_form, hover, press_key, and select_option. Scope accepts [ref=eN] to show a subtree, or semantic tokens ('dialog', 'main', 'sidebar') to focus on a region. depth controls tree depth (default 5, max 10); at max depth, omitted children are counted. Same-origin iframes are stitched inline; cross-origin iframes appear as an `iframe` node with no children."),
     }
 }
 

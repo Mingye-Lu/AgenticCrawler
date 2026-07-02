@@ -82,10 +82,13 @@ pub trait BrowserBackend: Debug {
     async fn new_page(&mut self, url: Option<&str>) -> Result<usize, BridgeError>;
     async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError>;
     async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError>;
+    /// `depth` is the requested ARIA walk depth (schema: default 5, max 10);
+    /// `None` lets the in-page walk apply its own default.
     async fn page_map(
         &mut self,
         scope: Option<&str>,
         compound_enrichment: bool,
+        depth: Option<usize>,
     ) -> Result<serde_json::Value, BridgeError>;
     async fn read_content(
         &mut self,
@@ -133,7 +136,7 @@ pub trait BrowserBackend: Debug {
         &mut self,
         scope: Option<&str>,
     ) -> Result<serde_json::Value, BridgeError> {
-        self.page_map(scope, false).await
+        self.page_map(scope, false, None).await
     }
 
     async fn extract_dom_snapshot(

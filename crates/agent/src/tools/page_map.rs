@@ -1,11 +1,30 @@
 use serde_json::{json, Value};
 
+use crate::aria::{assign_refs, parse_raw_tree, to_yaml};
+use crate::page_fingerprint::PageFingerprint;
 use crate::semantic::{
     assemble_region_tree, compute_accessible_name, select_active_dialog, RawElementFacts,
     RegionCandidate,
 };
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
+
+/// Default ARIA-tree serialization depth when the caller does not request one.
+/// Matches the bridge's own internal default so the two stay in lock-step.
+const DEFAULT_TREE_DEPTH: usize = 5;
+/// Maximum tree depth accepted from the tool input (mirrors the schema and the
+/// in-page walk's own clamp).
+const MAX_TREE_DEPTH: usize = 10;
+
+/// Parse and clamp the optional `depth` input (schema: default 5, max 10).
+/// Returns `None` when absent so the in-page walk applies its own default.
+fn parse_depth(input: &Value) -> Option<usize> {
+    input
+        .get("depth")
+        .and_then(Value::as_u64)
+        .and_then(|requested| usize::try_from(requested).ok())
+        .map(|requested| requested.clamp(1, MAX_TREE_DEPTH))
+}
 
 const MAX_PAGE_MAP_LINKS: usize = 50;
 const MAX_PAGE_MAP_FORMS: usize = 10;
@@ -98,26 +117,23 @@ fn resolve_scope(
     scope: Option<&str>,
     browser: &BrowserContext,
 ) -> Result<Option<String>, ToolExecutionError> {
-    Ok(match scope {
-        Some("dialog") => Some(
-            "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
-                .to_string(),
-        ),
-        Some("main") => Some("main, [role=\"main\"]".to_string()),
-        Some("sidebar") => Some("[role=\"complementary\"], aside, nav".to_string()),
-        Some(handle) if handle.starts_with("@r") => {
-            match browser.last_snapshot_region_selector(handle) {
-                Some(selector) => Some(selector.to_string()),
-                None => {
-                    return Err(ToolExecutionError::new(format!(
-                        "unknown region handle '{handle}'; call page_map first to get fresh handles"
-                    )))
-                }
+    let Some(scope) = scope else {
+        return Ok(None);
+    };
+
+    match crate::tools::ref_resolve::resolve_page_map_scope_ref(scope, browser) {
+        Ok(Some(query)) => Ok(Some(query)),
+        Err(message) => Err(ToolExecutionError::new(message)),
+        Ok(None) => Ok(Some(match scope {
+            "dialog" => {
+                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                    .to_string()
             }
-        }
-        Some(other) => Some(other.to_string()),
-        None => None,
-    })
+            "main" => "main, [role=\"main\"]".to_string(),
+            "sidebar" => "[role=\"complementary\"], aside, nav".to_string(),
+            other => other.to_string(),
+        })),
+    }
 }
 
 fn infer_control_role(tag: &str, role: Option<&str>) -> String {
@@ -200,7 +216,6 @@ pub(super) fn enrich_semantic_sections(result: &mut Value) {
 
     let active_dialog = select_active_dialog(&regions).map(|region| {
         json!({
-            "handle": region.handle,
             "selector": region.selector,
             "label": region.label,
         })
@@ -249,55 +264,78 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let scope = input.get("scope").and_then(Value::as_str);
     let resolved_scope = resolve_scope(scope, browser)?;
+    let depth = parse_depth(input);
 
     let settings = runtime::load_settings();
     let compound_enrichment = runtime::settings_get_compound_enrichment(&settings);
 
-    let mut result = browser
+    let result = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .page_map(resolved_scope.as_deref(), compound_enrichment)
+        .page_map(resolved_scope.as_deref(), compound_enrichment, depth)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    enrich_semantic_sections(&mut result);
+    if result.get("stale_ref").and_then(Value::as_bool) == Some(true) {
+        let message = result.get("error").and_then(Value::as_str).unwrap_or(
+            "Ref not found. The page may have changed. Call page_map to get fresh refs.",
+        );
+        return Ok(ToolEffect::Reply(message.to_string()));
+    }
+    if result.get("scope_not_found").and_then(Value::as_bool) == Some(true) {
+        let requested = result.get("scope").and_then(Value::as_str).unwrap_or("");
+        return Ok(ToolEffect::Reply(format!(
+            "scope not found: '{requested}'. Call page_map without a scope to map the full page."
+        )));
+    }
 
-    apply_page_map_caps(&mut result);
+    let mut tree = result.get("tree").and_then(parse_raw_tree).ok_or_else(|| {
+        ToolExecutionError::new("failed to parse ARIA tree from page_map bridge response")
+    })?;
+
+    let url = result
+        .get("url")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            result
+                .get("meta")
+                .and_then(|meta| meta.get("url"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("unknown")
+        .to_string();
 
     if scope.is_none() {
-        let url = result
-            .get("meta")
-            .and_then(|m| m.get("url"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-
-        let cache_key = normalize_url(url).to_string();
-
-        if let Some(prev_url) = browser.snapshot_url() {
-            if prev_url != cache_key.as_str() {
-                browser.ref_map_mut().clear();
-            }
+        let cache_key = normalize_url(&url).to_string();
+        let url_changed = browser
+            .snapshot_url()
+            .is_some_and(|prev_url| prev_url != cache_key.as_str());
+        if url_changed {
+            browser.ref_map_mut().clear();
         }
-
-        annotate_refs(&mut result, browser);
+        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
         browser.set_page_snapshot(&cache_key, None, result.clone());
+
+        // Only full-page snapshots may become the diff baseline and the
+        // fingerprint input; a scoped subtree would report the rest of the
+        // page as "added" on the next diff and fake a page-change signal.
+        let fp_settings = runtime::load_settings();
+        if runtime::settings_get_page_fingerprinting(&fp_settings) {
+            let fingerprint = PageFingerprint::compute(&url, &tree);
+            crawl_state.page_fingerprints.push(fingerprint);
+        }
+        crawl_state.last_aria_tree = Some(tree.clone());
     } else {
-        annotate_refs(&mut result, browser);
+        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
     }
 
-    let fp_settings = runtime::load_settings();
-    if runtime::settings_get_page_fingerprinting(&fp_settings) {
-        let url = result
-            .get("meta")
-            .and_then(|meta| meta.get("url"))
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let fingerprint = crate::page_fingerprint::PageFingerprint::compute(url, &result);
-        crawl_state.page_fingerprints.push(fingerprint);
-    }
-
-    Ok(ToolEffect::reply_json(&result))
+    // The walk already limited its own depth; the serializer depth is a cap on
+    // top of that, so it only truncates when the walk returned deeper data.
+    Ok(ToolEffect::Reply(to_yaml(
+        &tree,
+        Some(depth.unwrap_or(DEFAULT_TREE_DEPTH)),
+    )))
 }
 
 #[cfg(test)]
@@ -308,7 +346,19 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::{apply_page_map_caps, enrich_semantic_sections, resolve_scope};
-    use browser::BrowserContext;
+    use browser::{ref_map::Resolution, BrowserContext};
+
+    #[test]
+    fn parse_depth_clamps_to_schema_range() {
+        use super::parse_depth;
+
+        assert_eq!(parse_depth(&json!({})), None);
+        assert_eq!(parse_depth(&json!({"depth": 3})), Some(3));
+        assert_eq!(parse_depth(&json!({"depth": 0})), Some(1));
+        assert_eq!(parse_depth(&json!({"depth": 10})), Some(10));
+        assert_eq!(parse_depth(&json!({"depth": 99})), Some(10));
+        assert_eq!(parse_depth(&json!({"depth": "deep"})), None);
+    }
 
     #[test]
     fn page_map_response_structure_has_all_sections() {
@@ -612,7 +662,7 @@ mod tests {
             value["regions"][0]["children"][0]["label"],
             json!("Confirm")
         );
-        assert_eq!(value["active_dialog"]["handle"], json!("@r2"));
+        assert!(value["active_dialog"].get("handle").is_none());
         assert_eq!(value["active_dialog"]["selector"], json!("div#modal"));
         assert_eq!(value["controls"][0]["label"], json!("Search"));
         assert_eq!(value["controls"][0]["role"], json!("textbox"));
@@ -621,25 +671,10 @@ mod tests {
     }
 
     #[test]
-    fn semantic_scope_tokens_resolve_from_snapshot() {
+    fn semantic_scope_tokens_resolve_and_legacy_handles_rejected() {
         let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
             Arc::new(Mutex::new(Box::new(browser::NopBridge)));
-        let mut ctx = BrowserContext::new(bridge);
-        ctx.set_page_snapshot(
-            "https://example.com",
-            None,
-            json!({
-                "regions": [{
-                    "handle": "@r1",
-                    "selector": "main",
-                    "children": [{
-                        "handle": "@r2",
-                        "selector": "#modal",
-                        "children": []
-                    }]
-                }]
-            }),
-        );
+        let ctx = BrowserContext::new(bridge);
 
         assert_eq!(
             resolve_scope(Some("main"), &ctx).unwrap(),
@@ -648,17 +683,39 @@ mod tests {
         assert_eq!(
             resolve_scope(Some("dialog"), &ctx).unwrap(),
             Some(
-                "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
                     .to_string(),
             )
         );
         assert_eq!(
-            resolve_scope(Some("@r2"), &ctx).unwrap(),
-            Some("#modal".to_string())
+            resolve_scope(Some("sidebar"), &ctx).unwrap(),
+            Some("[role=\"complementary\"], aside, nav".to_string())
         );
+
+        for handle in ["@r2", "@r9"] {
+            assert_eq!(
+                resolve_scope(Some(handle), &ctx).unwrap_err().to_string(),
+                "@rN region handles are no longer supported. Use [ref=eN] from page_map output instead."
+            );
+        }
+    }
+
+    #[test]
+    fn ref_scope_is_passed_to_page_map_walker_unresolved() {
+        let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
+            Arc::new(Mutex::new(Box::new(browser::NopBridge)));
+        let mut ctx = BrowserContext::new(bridge);
+        let ref_id = ctx.ref_map_mut().assign_by_identity(
+            "region|Embedded panel|",
+            "region",
+            "Embedded panel",
+            Some("f2"),
+            Resolution::Attr(String::new()),
+        );
+
         assert_eq!(
-            resolve_scope(Some("@r9"), &ctx).unwrap_err().to_string(),
-            "unknown region handle '@r9'; call page_map first to get fresh handles"
+            resolve_scope(Some(&format!("[ref={ref_id}]")), &ctx).unwrap(),
+            Some(format!("[ref={ref_id}]"))
         );
     }
 
@@ -808,7 +865,7 @@ mod tests {
 
         let mut map = RefMap::new();
         map.assign_or_reuse("#email-input", "textbox", "Email");
-        // @e1 should resolve to "#email-input"
+        // Legacy selector-backed refs still resolve to the stored CSS selector.
         let resolved = resolve_selector("@e1", &map).unwrap();
         assert_eq!(resolved, "#email-input");
     }
@@ -821,8 +878,10 @@ mod tests {
 
         let map = RefMap::new(); // empty map
         let err = resolve_selector("@e999", &map).unwrap_err();
-        assert!(err.contains("Unknown element ref"));
-        assert!(err.contains("page_map"));
+        assert_eq!(
+            err,
+            "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
+        );
     }
 
     #[test]
@@ -969,7 +1028,10 @@ mod tests {
         ctx.ref_map_mut().clear();
 
         let err = resolve_selector("@e1", ctx.ref_map()).unwrap_err();
-        assert!(err.contains("Unknown element ref"));
+        assert_eq!(
+            err,
+            "Ref '@e1' not found. The page may have changed. Call page_map to get fresh refs."
+        );
 
         let mut value2 = json!({
             "interactive": {
@@ -1002,5 +1064,47 @@ mod tests {
             normalize_url("https://example.com/page"),
             "https://example.com/page"
         );
+    }
+
+    #[test]
+    fn page_map_tree_pipeline_parses_assigns_and_serializes() {
+        use browser::RefMap;
+
+        use crate::aria::{assign_refs, parse_raw_tree, to_yaml};
+
+        let bridge_result = json!({
+            "tree": {
+                "role": "document",
+                "name": "",
+                "states": {},
+                "refId": Value::Null,
+                "url": Value::Null,
+                "frameId": Value::Null,
+                "offscreen": false,
+                "omittedChildren": 0,
+                "children": [
+                    {
+                        "role": "button",
+                        "name": "Submit",
+                        "states": { "disabled": true },
+                        "refId": "e1",
+                        "offscreen": false,
+                        "omittedChildren": 0,
+                        "children": []
+                    }
+                ]
+            },
+            "url": "https://example.com"
+        });
+
+        let mut tree = parse_raw_tree(&bridge_result["tree"]).expect("tree should parse");
+        let mut ref_map = RefMap::new();
+        assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new());
+
+        let yaml = to_yaml(&tree, Some(super::DEFAULT_TREE_DEPTH));
+        assert!(yaml.starts_with("- button \"Submit\" [disabled] [ref=e1]:"));
+        assert!(yaml.contains("button \"Submit\" [disabled]"));
+        assert!(tree.ref_id.is_none());
+        assert_eq!(tree.children[0].ref_id.as_deref(), Some("e1"));
     }
 }

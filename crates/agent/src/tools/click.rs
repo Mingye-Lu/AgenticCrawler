@@ -63,20 +63,19 @@ async fn resolve_by_text(
     region: Option<&str>,
 ) -> Result<String, ToolExecutionError> {
     let scope_sel: Option<String> = match region {
-        Some(r) if r.starts_with("@r") => match browser.last_snapshot_region_selector(r) {
-            Some(selector) => Some(selector.to_string()),
-            None => {
-                return Err(ToolExecutionError::new(format!(
-                    "unknown region handle '{r}'; call page_map first to get fresh handles"
-                )))
-            }
+        Some(r) => match super::ref_resolve::resolve_scope_ref(r, browser) {
+            Ok(Some(query)) => Some(query),
+            Err(message) => return Err(ToolExecutionError::new(message)),
+            Ok(None) => match r {
+                "dialog" => Some(
+                    "dialog,[role=\"dialog\"],[role=\"alertdialog\"],[aria-modal=\"true\"]"
+                        .to_string(),
+                ),
+                "main" => Some("main,[role=\"main\"]".to_string()),
+                "sidebar" => Some("[role=\"complementary\"],aside".to_string()),
+                other => Some(other.to_string()),
+            },
         },
-        Some("dialog") => {
-            Some("[role=\"dialog\"],[role=\"alertdialog\"],[aria-modal=\"true\"]".to_string())
-        }
-        Some("main") => Some("main,[role=\"main\"]".to_string()),
-        Some("sidebar") => Some("[role=\"complementary\"],aside".to_string()),
-        Some(other) => Some(other.to_string()),
         None => None,
     };
 
@@ -186,7 +185,7 @@ fn build_resolve_by_text_script(scope_init: &str) -> String {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 
@@ -258,11 +257,11 @@ mod tests {
 
     #[test]
     fn parse_text_with_role_and_region() {
-        let input = json!({"text": "Workers", "role": "tab", "region": "@r3"});
+        let input = json!({"text": "Workers", "role": "tab", "region": "[ref=e3]"});
         let result = parse_input(&input).unwrap();
         assert_eq!(result.text, Some("Workers".to_string()));
         assert_eq!(result.role, Some("tab".to_string()));
-        assert_eq!(result.region, Some("@r3".to_string()));
+        assert_eq!(result.region, Some("[ref=e3]".to_string()));
     }
 
     #[test]

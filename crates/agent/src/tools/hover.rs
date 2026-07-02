@@ -27,11 +27,12 @@ pub fn parse_input(input: &Value) -> Result<HoverInput, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
-    let resolved = super::ref_resolve::resolve_selector(&params.selector, browser.ref_map())
-        .map_err(ToolExecutionError::new)?;
+    let (_frame_id, resolved) =
+        super::ref_resolve::resolve_to_action_query(&params.selector, browser)
+            .map_err(ToolExecutionError::new)?;
 
     browser
         .acquire_bridge()

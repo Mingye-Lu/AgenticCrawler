@@ -118,6 +118,7 @@ impl BrowserBackend for MockBridge {
         &mut self,
         scope: Option<&str>,
         _compound_enrichment: bool,
+        _depth: Option<usize>,
     ) -> Result<Value, BridgeError> {
         self.log("page_map", json!({"scope": scope}));
         Ok(Self::default_page_map())

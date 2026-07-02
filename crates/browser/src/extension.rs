@@ -127,6 +127,26 @@ impl ExtensionBridge {
     }
 }
 
+/// Build the `page_map` command payload sent to the extension.
+/// `depth` is forwarded so the in-page ARIA walk honors the requested depth.
+fn build_page_map_payload(
+    scope: Option<&str>,
+    compound_enrichment: bool,
+    depth: Option<usize>,
+) -> Value {
+    let mut payload = json!({});
+    if let Some(s) = scope {
+        payload["scope"] = json!(s);
+    }
+    if compound_enrichment {
+        payload["compoundEnrichment"] = json!(true);
+    }
+    if let Some(d) = depth {
+        payload["depth"] = json!(d);
+    }
+    payload
+}
+
 fn parse_observation_event(json: serde_json::Value) -> Result<ObservationEvent, BridgeError> {
     let event_type = json
         .get("type")
@@ -212,14 +232,9 @@ impl BrowserBackend for ExtensionBridge {
         &mut self,
         scope: Option<&str>,
         compound_enrichment: bool,
+        depth: Option<usize>,
     ) -> Result<Value, BridgeError> {
-        let mut payload = json!({});
-        if let Some(s) = scope {
-            payload["scope"] = json!(s);
-        }
-        if compound_enrichment {
-            payload["compoundEnrichment"] = json!(true);
-        }
+        let payload = build_page_map_payload(scope, compound_enrichment, depth);
         let response = self.send_command("page_map", payload).await?;
         Self::require_result(response, "page_map")
     }
@@ -647,6 +662,19 @@ mod tests {
         let (command_tx, command_rx) = mpsc::channel(1);
         let (_tx, connected) = watch::channel(true);
         (ExtensionBridge::new(command_tx, connected), command_rx)
+    }
+
+    #[test]
+    fn page_map_payload_forwards_scope_enrichment_and_depth() {
+        assert_eq!(build_page_map_payload(None, false, None), json!({}));
+        assert_eq!(
+            build_page_map_payload(Some("main"), true, Some(7)),
+            json!({ "scope": "main", "compoundEnrichment": true, "depth": 7 })
+        );
+        assert_eq!(
+            build_page_map_payload(None, false, Some(10)),
+            json!({ "depth": 10 })
+        );
     }
 
     #[tokio::test]

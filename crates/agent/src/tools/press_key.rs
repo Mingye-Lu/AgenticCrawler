@@ -34,14 +34,14 @@ pub fn parse_input(input: &Value) -> Result<PressKeyInput, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
     let resolved_selector: Option<String> = if let Some(sel) = &parsed.selector {
-        let r = super::ref_resolve::resolve_selector(sel, browser.ref_map())
+        let (_frame_id, query) = super::ref_resolve::resolve_to_action_query(sel, browser)
             .map_err(ToolExecutionError::new)?;
-        Some(r)
+        Some(query)
     } else {
         None
     };
