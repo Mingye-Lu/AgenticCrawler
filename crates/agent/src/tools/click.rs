@@ -68,7 +68,8 @@ async fn resolve_by_text(
             Err(message) => return Err(ToolExecutionError::new(message)),
             Ok(None) => match r {
                 "dialog" => Some(
-                    "[role=\"dialog\"],[role=\"alertdialog\"],[aria-modal=\"true\"]".to_string(),
+                    "dialog,[role=\"dialog\"],[role=\"alertdialog\"],[aria-modal=\"true\"]"
+                        .to_string(),
                 ),
                 "main" => Some("main,[role=\"main\"]".to_string()),
                 "sidebar" => Some("[role=\"complementary\"],aside".to_string()),

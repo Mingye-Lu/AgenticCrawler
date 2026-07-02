@@ -126,7 +126,7 @@ fn resolve_scope(
         Err(message) => Err(ToolExecutionError::new(message)),
         Ok(None) => Ok(Some(match scope {
             "dialog" => {
-                "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
                     .to_string()
             }
             "main" => "main, [role=\"main\"]".to_string(),
@@ -683,7 +683,7 @@ mod tests {
         assert_eq!(
             resolve_scope(Some("dialog"), &ctx).unwrap(),
             Some(
-                "[role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
                     .to_string(),
             )
         );
