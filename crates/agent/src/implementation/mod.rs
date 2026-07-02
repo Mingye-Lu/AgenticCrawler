@@ -129,6 +129,7 @@ pub struct CrawlerAgent {
     cumulative_cost_slot: runtime::SharedCostCounter,
     step_count: usize,
     confidence_tracker: Option<crate::confidence::ConfidenceTracker>,
+    model_supports_vision: bool,
     #[cfg(test)]
     pub(super) fork_page_index_override: Option<usize>,
 }
@@ -170,6 +171,7 @@ impl CrawlerAgent {
             cumulative_cost_slot: runtime::new_cost_counter(),
             step_count: 0,
             confidence_tracker: None,
+            model_supports_vision: false,
             #[cfg(test)]
             fork_page_index_override: None,
         }
@@ -227,6 +229,12 @@ impl CrawlerAgent {
     #[must_use]
     pub fn with_allowed_tools(mut self, allowed_tools: BTreeSet<String>) -> Self {
         self.allowed_tools = Some(allowed_tools);
+        self
+    }
+
+    #[must_use]
+    pub fn with_model_supports_vision(mut self, value: bool) -> Self {
+        self.model_supports_vision = value;
         self
     }
 
@@ -335,6 +343,7 @@ impl CrawlerAgent {
         }
 
         let max_steps = self.max_steps;
+        let model_supports_vision = self.model_supports_vision;
         let prompt_override_slot = Arc::new(Mutex::new(None));
         let last_assistant_text_slot = Arc::new(Mutex::new(None));
         self.prompt_override_slot = Arc::clone(&prompt_override_slot);
@@ -347,7 +356,8 @@ impl CrawlerAgent {
             prompt_override_slot,
             last_assistant_text_slot,
         )
-        .with_max_iterations(max_steps);
+        .with_max_iterations(max_steps)
+        .with_model_supports_vision(model_supports_vision);
         runtime.tool_executor_mut().cumulative_cost_slot = runtime.cumulative_cost_counter();
 
         // Attach child event observer for streaming child output to TUI and
