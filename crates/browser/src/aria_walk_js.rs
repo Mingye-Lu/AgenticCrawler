@@ -259,6 +259,25 @@ function findStampedElementByRef(refId, docRoot) {
   return null;
 }
 
+function findScopedElement(rawScope, docRoot) {
+  let found = null;
+  try {
+    found = docRoot.querySelector(rawScope);
+  } catch (_) {
+    return null;
+  }
+  if (found) return found;
+  for (const iframe of Array.from(docRoot.querySelectorAll('iframe'))) {
+    try {
+      const frameDoc = iframe.contentDocument;
+      if (!frameDoc) continue;
+      const nested = findScopedElement(rawScope, frameDoc);
+      if (nested) return nested;
+    } catch (_) {}
+  }
+  return null;
+}
+
 function resolveScopeRoot(rawScope) {
   if (!rawScope) return { root: document.body || document.documentElement, kind: 'ok' };
   if (rawScope === 'dialog') {
@@ -273,7 +292,9 @@ function resolveScopeRoot(rawScope) {
     const sidebarRoot = document.querySelector('[role="complementary"], aside, nav');
     return sidebarRoot ? { root: sidebarRoot, kind: 'ok' } : { root: null, kind: 'scope_not_found' };
   }
-  const refMatch = rawScope.match(/^\[ref=(e\d+)\]$/) || rawScope.match(/^@?(e\d+)$/);
+  const refMatch = rawScope.match(/^\[ref=(e\d+)\]$/)
+    || rawScope.match(/^@?(e\d+)$/)
+    || rawScope.match(/^\[data-acrawl-ref=['"]?(e\d+)['"]?\]$/);
   if (refMatch) {
     const refId = refMatch[1];
     const refRoot = findStampedElementByRef(refId, document);
@@ -281,12 +302,8 @@ function resolveScopeRoot(rawScope) {
       ? { root: refRoot, kind: 'ok' }
       : { root: null, kind: 'stale_ref', refId };
   }
-  try {
-    const scoped = document.querySelector(rawScope);
-    return scoped ? { root: scoped, kind: 'ok' } : { root: null, kind: 'scope_not_found' };
-  } catch (_) {
-    return { root: null, kind: 'scope_not_found' };
-  }
+  const scoped = findScopedElement(rawScope, document);
+  return scoped ? { root: scoped, kind: 'ok' } : { root: null, kind: 'scope_not_found' };
 }
 
 function createNode(role, name, states, refId, frameId, el) {

@@ -22,7 +22,7 @@ pub enum Resolution {
 /// `selector`, `role`, and `name` fields are preserved verbatim so existing
 /// callers (`ref_resolve`, `page_map`) keep compiling, while the new
 /// `stable_key`, `frame_id`, `resolution`, and `fallback_selector` fields
-/// power the frame-aware identity-keyed model.
+/// power the identity-keyed model.
 #[derive(Debug, Clone)]
 pub struct RefEntry {
     /// Stable identity key: an opaque string derived from
@@ -34,6 +34,10 @@ pub struct RefEntry {
     /// Accessible name (empty string if none).
     pub name: String,
     /// Owning frame identifier (`None` = main frame).
+    ///
+    /// The ARIA walker currently emits per-walk frame labels (`f1`, `f2`, ...)
+    /// that are not stable enough to persist. `RefMap` keeps this field for
+    /// API compatibility, but stores `None` until a stable frame identity exists.
     pub frame_id: Option<String>,
     /// How to resolve this ref to a DOM element.
     pub resolution: Resolution,
@@ -48,7 +52,7 @@ pub struct RefEntry {
 
 /// Maps element references (e.g. "e1", "e5") to their entries.
 ///
-/// Provides stable, frame-aware ref assignment: the same identity key always
+/// Provides stable ref assignment: the same identity key always
 /// gets the same ref number on the same normalized URL. Identity matching
 /// never keys on the ref id itself (spec D2). Refs are cleared only on URL
 /// change, preserving the existing `clear()` trigger semantics.
@@ -92,7 +96,7 @@ impl RefMap {
         stable_key: &str,
         role: &str,
         name: &str,
-        frame_id: Option<&str>,
+        _frame_id: Option<&str>,
         resolution: Resolution,
     ) -> String {
         if let Some(existing) = self.key_to_ref.get(stable_key) {
@@ -114,7 +118,7 @@ impl RefMap {
                 stable_key: stable_key.to_string(),
                 role: role.to_string(),
                 name: name.to_string(),
-                frame_id: frame_id.map(String::from),
+                frame_id: None,
                 resolution,
                 selector,
                 fallback_selector,
@@ -139,7 +143,7 @@ impl RefMap {
         ref_id: &str,
         role: &str,
         name: &str,
-        frame_id: Option<&str>,
+        _frame_id: Option<&str>,
     ) -> String {
         self.map.insert(
             ref_id.to_string(),
@@ -147,7 +151,7 @@ impl RefMap {
                 stable_key: stable_key.to_string(),
                 role: role.to_string(),
                 name: name.to_string(),
-                frame_id: frame_id.map(String::from),
+                frame_id: None,
                 resolution: Resolution::Attr(ref_id.to_string()),
                 selector: String::new(),
                 fallback_selector: None,
@@ -180,13 +184,14 @@ impl RefMap {
         )
     }
 
-    /// Resolve a `ref_id` (e.g. "e5") to its owning frame and DOM query.
+    /// Resolve a `ref_id` (e.g. "e5") to its DOM query.
     ///
     /// Returns `(frame_id, query)` where:
     /// - for `Attr` resolution `query == "[data-acrawl-ref='eN']"`,
     /// - for `Selector` resolution `query` is the stored CSS selector.
     ///
-    /// `frame_id` is `None` for the main frame.
+    /// The returned `frame_id` is always `None`; walker-emitted frame labels
+    /// are intentionally not persisted because they are unstable between walks.
     #[must_use]
     pub fn resolve(&self, ref_id: &str) -> Option<(Option<String>, String)> {
         let entry = self.map.get(ref_id)?;
@@ -325,7 +330,7 @@ mod tests {
         assert_eq!(ref2, "e1");
     }
 
-    // --- Unified identity-keyed / frame-aware behavior (T6) ---
+    // --- Unified identity-keyed behavior (T6) ---
 
     #[test]
     fn test_same_identity_reuses_ref() {
@@ -389,7 +394,7 @@ mod tests {
             Resolution::Attr(String::new()),
         );
         let (frame_id, query) = map.resolve(&ref_id).expect("ref should resolve");
-        assert_eq!(frame_id, Some("f2".to_string()));
+        assert_eq!(frame_id, None);
         assert_eq!(query, format!("[data-acrawl-ref='{ref_id}']"));
         assert_eq!(
             map.get(&ref_id).unwrap().resolution,
@@ -452,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_id_is_preserved_per_entry() {
+    fn per_walk_frame_ids_are_not_persisted() {
         let mut map = RefMap::new();
         let main_ref = map.assign_by_identity(
             "k_main",
@@ -469,10 +474,8 @@ mod tests {
             Resolution::Attr(String::new()),
         );
         assert_eq!(map.resolve(&main_ref).unwrap().0, None);
-        assert_eq!(
-            map.resolve(&frame_ref).unwrap().0,
-            Some("frame-7".to_string())
-        );
+        assert_eq!(map.resolve(&frame_ref).unwrap().0, None);
+        assert_eq!(map.get(&frame_ref).unwrap().frame_id, None);
     }
 
     #[test]
@@ -482,7 +485,7 @@ mod tests {
         assert_eq!(id, "e5");
 
         let (frame_id, query) = map.resolve("e5").expect("bound ref should resolve");
-        assert_eq!(frame_id, Some("f1".to_string()));
+        assert_eq!(frame_id, None);
         assert_eq!(query, "[data-acrawl-ref='e5']");
 
         let minted = map.assign_by_identity(

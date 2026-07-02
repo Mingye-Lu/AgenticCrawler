@@ -121,7 +121,7 @@ fn resolve_scope(
         return Ok(None);
     };
 
-    match crate::tools::ref_resolve::resolve_scope_ref(scope, browser) {
+    match crate::tools::ref_resolve::resolve_page_map_scope_ref(scope, browser) {
         Ok(Some(query)) => Ok(Some(query)),
         Err(message) => Err(ToolExecutionError::new(message)),
         Ok(None) => Ok(Some(match scope {
@@ -346,7 +346,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::{apply_page_map_caps, enrich_semantic_sections, resolve_scope};
-    use browser::BrowserContext;
+    use browser::{ref_map::Resolution, BrowserContext};
 
     #[test]
     fn parse_depth_clamps_to_schema_range() {
@@ -698,6 +698,25 @@ mod tests {
                 "@rN region handles are no longer supported. Use [ref=eN] from page_map output instead."
             );
         }
+    }
+
+    #[test]
+    fn ref_scope_is_passed_to_page_map_walker_unresolved() {
+        let bridge: Arc<Mutex<Box<dyn browser::BrowserBackend + Send>>> =
+            Arc::new(Mutex::new(Box::new(browser::NopBridge)));
+        let mut ctx = BrowserContext::new(bridge);
+        let ref_id = ctx.ref_map_mut().assign_by_identity(
+            "region|Embedded panel|",
+            "region",
+            "Embedded panel",
+            Some("f2"),
+            Resolution::Attr(String::new()),
+        );
+
+        assert_eq!(
+            resolve_scope(Some(&format!("[ref={ref_id}]")), &ctx).unwrap(),
+            Some(format!("[ref={ref_id}]"))
+        );
     }
 
     #[test]

@@ -45,13 +45,11 @@ fn validate_actionable_ref(input: &str, ref_map: &RefMap, ref_id: &str) -> Resul
     Ok(())
 }
 
-/// Resolve a ref string (e.g. "@e5" or "e5") to its owning frame and action query.
+/// Resolve a ref string (e.g. "@e5" or "e5") to its action query.
 ///
-/// Returns `(None, selector)` for raw CSS inputs and `(frame_id, dom_query)` for refs.
-///
-/// `frame_id` is preserved for bridge-aware callers, but the current Playwright
-/// bridge also falls back to searching descendant frames when given only the
-/// DOM query, so existing callers may ignore it without losing functionality.
+/// Returns `(None, selector)` for raw CSS inputs and `(None, dom_query)` for refs.
+/// The frame slot is retained in the return type for compatibility; `RefMap`
+/// intentionally does not persist the walker's unstable `f1`/`f2` frame labels.
 pub fn resolve_to_action_query(
     ref_input: &str,
     context: &BrowserContext,
@@ -120,6 +118,33 @@ pub fn resolve_scope_ref(input: &str, context: &BrowserContext) -> Result<Option
             .resolve(&ref_id)
             .map(|(_frame_id, query)| Some(query))
             .ok_or_else(|| format!("Ref '@{ref_id}'{STALE_REF_SUFFIX}"));
+    }
+
+    Ok(None)
+}
+
+/// Resolve a `page_map` scope token without converting refs into DOM selectors.
+///
+/// The in-page ARIA walker understands `[ref=eN]` and searches same-origin
+/// descendant frames. If Rust pre-resolves the ref into `[data-acrawl-ref=...]`,
+/// the browser receives a generic CSS selector and can miss iframe-contained
+/// nodes. This function only validates that a ref is known, then returns a
+/// canonical `[ref=eN]` token for the walker.
+pub fn resolve_page_map_scope_ref(
+    input: &str,
+    context: &BrowserContext,
+) -> Result<Option<String>, String> {
+    let trimmed = input.trim();
+
+    if is_legacy_region_handle(trimmed) {
+        return Err(STALE_REGION_HANDLE_MESSAGE.to_string());
+    }
+
+    if let Some(ref_id) = parse_scope_ref(trimmed) {
+        if context.ref_map().get(&ref_id).is_some() {
+            return Ok(Some(format!("[ref={ref_id}]")));
+        }
+        return Err(format!("Ref '@{ref_id}'{STALE_REF_SUFFIX}"));
     }
 
     Ok(None)
@@ -234,7 +259,7 @@ mod tests {
         );
 
         let (frame_id, query) = resolve_to_action_query(&format!("@{ref_id}"), &context).unwrap();
-        assert_eq!(frame_id, Some("f7".to_string()));
+        assert_eq!(frame_id, None);
         assert_eq!(query, format!("[data-acrawl-ref='{ref_id}']"));
     }
 
@@ -295,6 +320,42 @@ mod tests {
             expected
         );
         assert_eq!(resolve_scope_ref(&ref_id, &context).unwrap(), expected);
+    }
+
+    #[test]
+    fn page_map_scope_ref_keeps_ref_token_for_browser_frame_lookup() {
+        let mut context = test_context();
+        let ref_id = context.ref_map_mut().assign_by_identity(
+            "dialog|Confirm|",
+            "dialog",
+            "Confirm",
+            Some("f1"),
+            Resolution::Attr(String::new()),
+        );
+
+        let expected = Some(format!("[ref={ref_id}]"));
+        assert_eq!(
+            resolve_page_map_scope_ref(&format!("[ref={ref_id}]"), &context).unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_page_map_scope_ref(&format!("@{ref_id}"), &context).unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_page_map_scope_ref(&ref_id, &context).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn page_map_scope_ref_unknown_element_ref_returns_stale_error() {
+        let context = test_context();
+        let err = resolve_page_map_scope_ref("[ref=e999]", &context).unwrap_err();
+        assert_eq!(
+            err,
+            "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
+        );
     }
 
     #[test]
