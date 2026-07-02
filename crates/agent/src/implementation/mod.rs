@@ -864,6 +864,7 @@ impl CrawlerAgent {
             ToolEffect::ScriptWait(spec) => self.handle_script_wait_effect(spec).await,
             ToolEffect::ScriptCancel(spec) => self.handle_script_cancel_effect(spec),
             ToolEffect::ScriptStatus(spec) => self.handle_script_status_effect(spec),
+            ToolEffect::Vision(payload) => Ok(payload.caption),
         }
     }
 

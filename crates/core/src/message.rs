@@ -25,6 +25,13 @@ pub enum ContentBlock {
     Reasoning {
         data: String,
     },
+    ToolResultImage {
+        tool_use_id: String,
+        tool_name: String,
+        media_type: String,
+        base64_data: String,
+        caption: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -97,5 +104,56 @@ impl ConversationMessage {
             }],
             usage: None,
         }
+    }
+
+    #[must_use]
+    pub fn tool_result_image(
+        tool_use_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        media_type: impl Into<String>,
+        base64_data: impl Into<String>,
+        caption: impl Into<String>,
+    ) -> Self {
+        Self {
+            role: MessageRole::Tool,
+            blocks: vec![ContentBlock::ToolResultImage {
+                tool_use_id: tool_use_id.into(),
+                tool_name: tool_name.into(),
+                media_type: media_type.into(),
+                base64_data: base64_data.into(),
+                caption: caption.into(),
+            }],
+            usage: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_result_image_constructor_stores_all_fields() {
+        let msg = ConversationMessage::tool_result_image("id1", "screenshot", "image/png", "abc123", "a screenshot");
+        match &msg.blocks[0] {
+            ContentBlock::ToolResultImage { tool_use_id, tool_name, media_type, base64_data, caption } => {
+                assert_eq!(tool_use_id, "id1");
+                assert_eq!(tool_name, "screenshot");
+                assert_eq!(media_type, "image/png");
+                assert_eq!(base64_data, "abc123");
+                assert_eq!(caption, "a screenshot");
+            }
+            _ => panic!("expected ToolResultImage"),
+        }
+    }
+
+    #[test]
+    fn vision_payload_debug() {
+        let p = crate::effect::VisionPayload {
+            base64_data: "abc".to_string(),
+            media_type: "image/png".to_string(),
+            caption: "test".to_string(),
+        };
+        assert!(format!("{p:?}").contains("abc"));
     }
 }

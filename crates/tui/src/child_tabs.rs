@@ -279,7 +279,9 @@ pub fn hydrate_from_child_sessions(sessions: &[ChildSession]) -> ChildTabPanel {
                                     },
                                 });
                             }
-                            ContentBlock::ToolResult { .. } | ContentBlock::Reasoning { .. } => {}
+                            ContentBlock::ToolResult { .. }
+                            | ContentBlock::Reasoning { .. }
+                            | ContentBlock::ToolResultImage { .. } => {}
                         }
                     }
                 }

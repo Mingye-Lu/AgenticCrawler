@@ -562,6 +562,7 @@ Output EXACTLY this structure with no other text:\n\
                 ContentBlock::ToolUse { input, .. } => input.as_str(),
                 ContentBlock::ToolResult { output, .. } => output.as_str(),
                 ContentBlock::Reasoning { data } => data.as_str(),
+                ContentBlock::ToolResultImage { caption, .. } => caption.as_str(),
             })
             .collect::<Vec<_>>()
             .join(" | ");
@@ -699,7 +700,8 @@ fn assistant_text_from_message(message: &ConversationMessage) -> String {
             ContentBlock::Text { text } => Some(text.as_str()),
             ContentBlock::ToolUse { .. }
             | ContentBlock::ToolResult { .. }
-            | ContentBlock::Reasoning { .. } => None,
+            | ContentBlock::Reasoning { .. }
+            | ContentBlock::ToolResultImage { .. } => None,
         })
         .collect()
 }

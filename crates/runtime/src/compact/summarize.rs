@@ -20,6 +20,7 @@ pub(super) fn summarize_messages(messages: &[ConversationMessage]) -> String {
         .filter_map(|block| match block {
             ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
             ContentBlock::ToolResult { tool_name, .. } => Some(tool_name.as_str()),
+            ContentBlock::ToolResultImage { tool_name, .. } => Some(tool_name.as_str()),
             ContentBlock::Text { .. } | ContentBlock::Reasoning { .. } => None,
         })
         .collect::<Vec<_>>();
@@ -101,6 +102,9 @@ pub(super) fn summarize_block(block: &ContentBlock) -> String {
             if *is_error { "error " } else { "" }
         ),
         ContentBlock::Reasoning { .. } => "reasoning".to_string(),
+        ContentBlock::ToolResultImage { tool_name, caption, .. } => {
+            format!("tool_result_image {tool_name}: {caption}")
+        }
     };
     truncate_summary(&raw, 160)
 }
@@ -152,7 +156,8 @@ pub(super) fn collect_key_urls(messages: &[ConversationMessage]) -> Vec<String> 
             ContentBlock::Text { text } => Some(text.as_str()),
             ContentBlock::ToolUse { .. }
             | ContentBlock::ToolResult { .. }
-            | ContentBlock::Reasoning { .. } => None,
+            | ContentBlock::Reasoning { .. }
+            | ContentBlock::ToolResultImage { .. } => None,
         })
         .flat_map(extract_url_candidates)
         .collect::<Vec<_>>();
@@ -184,6 +189,7 @@ pub(super) fn first_text_block(message: &ConversationMessage) -> Option<&str> {
         ContentBlock::ToolUse { .. }
         | ContentBlock::ToolResult { .. }
         | ContentBlock::Reasoning { .. }
+        | ContentBlock::ToolResultImage { .. }
         | ContentBlock::Text { .. } => None,
     })
 }
@@ -238,6 +244,9 @@ pub(super) fn estimate_message_tokens(message: &ConversationMessage) -> usize {
                 tool_name, output, ..
             } => (tool_name.len() + output.len()) / 4 + 1,
             ContentBlock::Reasoning { data } => data.len() / 4 + 1,
+            ContentBlock::ToolResultImage { tool_name, caption, .. } => {
+                (tool_name.len() + caption.len()) / 4 + 1
+            }
         })
         .sum()
 }

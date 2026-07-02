@@ -665,6 +665,9 @@ impl CrawlApiClient {
                                 serde_json::from_str(data).unwrap_or(json!({"raw": data}));
                             InputContentBlock::Reasoning { data: parsed }
                         }
+                        ContentBlock::ToolResultImage { .. } => {
+                            todo!("Task 4: ToolResultImage conversion")
+                        }
                     })
                     .collect();
                 InputMessage {

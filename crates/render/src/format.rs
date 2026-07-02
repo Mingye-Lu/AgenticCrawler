@@ -198,6 +198,7 @@ pub fn render_export_text(session: &Session) -> String {
                     ));
                 }
                 ContentBlock::Reasoning { .. } => {}
+                ContentBlock::ToolResultImage { .. } => {}
             }
         }
         lines.push(String::new());

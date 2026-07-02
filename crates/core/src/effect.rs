@@ -2,6 +2,17 @@ use serde_json::Value;
 
 use crate::script_types::{ScriptCancelSpec, ScriptStatusSpec, ScriptTask, ScriptWaitSpec};
 
+/// Image payload produced by the screenshot tool.
+#[derive(Debug, Clone)]
+pub struct VisionPayload {
+    /// Base64-encoded image data.
+    pub base64_data: String,
+    /// MIME type (e.g. `"image/png"`).
+    pub media_type: String,
+    /// Human-readable caption / summary (used as fallback text for non-vision models).
+    pub caption: String,
+}
+
 /// Control-flow instruction returned by a tool handler.
 #[derive(Debug, Clone)]
 pub enum ToolEffect {
@@ -26,6 +37,8 @@ pub enum ToolEffect {
     ScriptCancel(ScriptCancelSpec),
     /// Tool requests a read-only snapshot of script status.
     ScriptStatus(ScriptStatusSpec),
+    /// Tool produced an image result from the screenshot tool.
+    Vision(VisionPayload),
 }
 
 impl ToolEffect {

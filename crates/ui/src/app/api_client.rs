@@ -309,6 +309,9 @@ pub(super) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMes
                             .unwrap_or_else(|_| json!({}));
                         InputContentBlock::Reasoning { data: parsed }
                     }
+                    runtime::ContentBlock::ToolResultImage { .. } => {
+                        todo!("Task 4: ToolResultImage conversion")
+                    }
                 })
                 .collect::<Vec<_>>();
             (!content.is_empty()).then(|| InputMessage {
