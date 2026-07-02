@@ -7,9 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.13.0] - 2026-07-02
 
+### Added
+
+- Native ARIA accessibility-tree snapshots now power `page_map` and the post-action `page_state` flow. The browser walks the real accessibility tree, serializes it as YAML, stamps nodes with unified `[ref=eN]` handles, and stitches same-origin iframes into the tree.
+- `page_map` and interaction snapshots now accept a `depth` parameter so callers can request shallower or deeper ARIA trees without falling back to the older structural representation.
+
 ### Changed
 
-- Semantic `dialog` scope now includes native `<dialog>` elements in both page-map and click-by-text resolution, so the crawler can reason over dialog structure end to end through the MCP surface.
+- `page_state` now reports YAML tree diffs after interactions instead of JSON structural arrays, and `PageFingerprint` now hashes the ARIA tree so diffing stays aligned with the new representation.
+- `scope` and `region` now accept `[ref=eN]` handles or semantic tokens such as `dialog`, `main`, and `sidebar`. The old `@rN` region-handle namespace is retired.
+- Ref reconciliation is frame-aware and preserves DOM-stamped refs, which prevents duplicate sibling names from collapsing onto the same identifier and keeps nested-frame lookups stable.
+- Semantic `dialog` scope now includes native `<dialog>` elements in both page-map and click-by-text resolution, so dialog structure is understood end to end through the MCP surface.
+
+### Fixed
+
+- `page_map` and the browser extension backend now share the same ARIA-tree walk and serialization behavior, closing parity gaps between the embedded browser and extension backend.
+- Scoped snapshots no longer drag unrelated subtrees into diff and fingerprint state, so container-level interactions stay localized.
+
+### Future Work
+
+- Shadow DOM open-root piercing is still deferred. The ARIA walk marks the site for future work, but it does not yet descend into open shadow roots.
+- Cross-origin iframe reachability is tracked during the walk, but that flag is not yet surfaced in the serialized tree.
 
 ## [0.12.7] - 2026-07-02
 
