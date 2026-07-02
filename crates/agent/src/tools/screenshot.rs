@@ -1,10 +1,40 @@
 use std::path::{Component, Path};
 
 use base64::Engine as _;
+use image::ImageReader;
 use serde_json::Value;
 
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
+
+fn resize_for_llm(base64_data: &str, media_type: &str, max_w: u32, max_h: u32) -> String {
+    use base64::Engine as _;
+    let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(base64_data) else {
+        return base64_data.to_string();
+    };
+    let reader = match ImageReader::new(std::io::Cursor::new(&raw)).with_guessed_format() {
+        Ok(r) => r,
+        Err(_) => return base64_data.to_string(),
+    };
+    let img = match reader.decode() {
+        Ok(img) => img,
+        Err(_) => return base64_data.to_string(),
+    };
+    if img.width() <= max_w && img.height() <= max_h {
+        return base64_data.to_string();
+    }
+    let resized = img.resize(max_w, max_h, image::imageops::FilterType::Lanczos3);
+    let mut buf = Vec::new();
+    let fmt = match media_type {
+        "image/jpeg" => image::ImageFormat::Jpeg,
+        "image/webp" => image::ImageFormat::WebP,
+        _ => image::ImageFormat::Png,
+    };
+    if resized.write_to(&mut std::io::Cursor::new(&mut buf), fmt).is_err() {
+        return base64_data.to_string();
+    }
+    base64::engine::general_purpose::STANDARD.encode(&buf)
+}
 
 fn validate_filename(filename: &str) -> Result<(), ToolExecutionError> {
     if filename.trim().is_empty() {
@@ -75,14 +105,18 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     if !save {
-        let mut result = serde_json::json!({
-            "screenshot_base64": screenshot_base64,
-            "size_bytes": size_bytes
-        });
-        if let Some(fmt) = format {
-            result["format"] = serde_json::json!(fmt);
-        }
-        return Ok(ToolEffect::reply_json(&result));
+        let media_type = match format.unwrap_or("png") {
+            "jpeg" => "image/jpeg".to_string(),
+            "webp" => "image/webp".to_string(),
+            _ => "image/png".to_string(),
+        };
+        let resized = resize_for_llm(&screenshot_base64, &media_type, 1280, 800);
+        let caption = format!("Screenshot captured ({} bytes)", resized.len() * 3 / 4);
+        return Ok(ToolEffect::Vision(crate::VisionPayload {
+            base64_data: resized,
+            media_type,
+            caption,
+        }));
     }
 
     let filename = match input.get("filename").and_then(|v| v.as_str()) {
@@ -327,14 +361,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_save_false_returns_base64() {
+    async fn execute_save_false_returns_vision_effect() {
         let mut browser = make_browser(MockBackend::with_valid_screenshot());
         let input = serde_json::json!({});
 
-        let effect = execute(&input, &mut browser).await.unwrap();
-        let json_str = format!("{effect:?}");
-        assert!(json_str.contains("screenshot_base64"));
-        assert!(!json_str.contains("saved_path"));
+        let result = execute(&input, &mut browser).await.unwrap();
+        match result {
+            ToolEffect::Vision(payload) => {
+                assert!(!payload.base64_data.is_empty());
+                assert_eq!(payload.media_type, "image/png");
+                assert!(payload.caption.contains("Screenshot captured"));
+            }
+            other => panic!("expected Vision effect, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -342,9 +381,20 @@ mod tests {
         let mut browser = make_browser(MockBackend::with_valid_screenshot());
         let input = serde_json::json!({"save": false});
 
-        let effect = execute(&input, &mut browser).await.unwrap();
-        let json_str = format!("{effect:?}");
-        assert!(json_str.contains("screenshot_base64"));
+        let result = execute(&input, &mut browser).await.unwrap();
+        match result {
+            ToolEffect::Vision(payload) => {
+                assert!(!payload.base64_data.is_empty());
+                assert_eq!(payload.media_type, "image/png");
+            }
+            other => panic!("expected Vision effect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resize_for_llm_returns_original_on_bad_base64() {
+        let result = resize_for_llm("not-base64!!!", "image/png", 100, 100);
+        assert_eq!(result, "not-base64!!!");
     }
 
     #[tokio::test]
@@ -536,9 +586,13 @@ mod tests {
             "full_page": true
         });
 
-        let effect = execute(&input, &mut browser).await.unwrap();
-        let json_str = format!("{effect:?}");
-        assert!(json_str.contains("screenshot_base64"));
-        assert!(json_str.contains("webp"));
+        let result = execute(&input, &mut browser).await.unwrap();
+        match result {
+            ToolEffect::Vision(payload) => {
+                assert!(!payload.base64_data.is_empty());
+                assert_eq!(payload.media_type, "image/webp");
+            }
+            other => panic!("expected Vision effect, got {other:?}"),
+        }
     }
 }
