@@ -1,10 +1,84 @@
 use std::path::{Component, Path};
 
 use base64::Engine as _;
+use image::ImageReader;
 use serde_json::Value;
 
 use crate::BrowserContext;
 use crate::{ToolEffect, ToolExecutionError};
+
+/// Upper bound on decoded pixel count, guarding against decompression-bomb
+/// images (a small file that decodes to an enormous bitmap) blowing up memory.
+const MAX_DECODE_PIXELS: u64 = 100_000_000;
+
+fn exceeds_pixel_budget(width: u32, height: u32) -> bool {
+    u64::from(width) * u64::from(height) > MAX_DECODE_PIXELS
+}
+
+fn resize_for_llm(
+    base64_data: &str,
+    media_type: &str,
+    max_w: u32,
+    max_h: u32,
+    quality: Option<u32>,
+) -> String {
+    use base64::Engine as _;
+    let Ok(raw) = base64::engine::general_purpose::STANDARD.decode(base64_data) else {
+        return base64_data.to_string();
+    };
+
+    let Ok(dimensions_reader) = ImageReader::new(std::io::Cursor::new(&raw)).with_guessed_format()
+    else {
+        return base64_data.to_string();
+    };
+    let Ok((width, height)) = dimensions_reader.into_dimensions() else {
+        return base64_data.to_string();
+    };
+    if exceeds_pixel_budget(width, height) {
+        return base64_data.to_string();
+    }
+
+    let Ok(reader) = ImageReader::new(std::io::Cursor::new(&raw)).with_guessed_format() else {
+        return base64_data.to_string();
+    };
+    let Ok(img) = reader.decode() else {
+        return base64_data.to_string();
+    };
+    if img.width() <= max_w && img.height() <= max_h {
+        return base64_data.to_string();
+    }
+    let resized = img.resize(max_w, max_h, image::imageops::FilterType::Lanczos3);
+    let mut buf = Vec::new();
+    let write_result = match media_type {
+        "image/jpeg" => {
+            let quality = quality.unwrap_or(85).clamp(1, 100) as u8;
+            resized.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut buf, quality,
+            ))
+        }
+        // The `image` crate's WebP encoder is lossless-only, so `quality` has
+        // no effect here; PNG is likewise always lossless.
+        "image/webp" => resized.write_to(
+            &mut std::io::Cursor::new(&mut buf),
+            image::ImageFormat::WebP,
+        ),
+        _ => resized.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png),
+    };
+    if write_result.is_err() {
+        return base64_data.to_string();
+    }
+    base64::engine::general_purpose::STANDARD.encode(&buf)
+}
+
+/// Exact decoded byte length of a base64 string, accounting for padding —
+/// unlike `len() * 3 / 4`, which overshoots when the input is padded.
+fn base64_decoded_len(data: &str) -> usize {
+    if data.is_empty() {
+        return 0;
+    }
+    let padding = data.chars().rev().take_while(|&c| c == '=').count();
+    (data.len() / 4) * 3 - padding
+}
 
 fn validate_filename(filename: &str) -> Result<(), ToolExecutionError> {
     if filename.trim().is_empty() {
@@ -75,14 +149,21 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     if !save {
-        let mut result = serde_json::json!({
-            "screenshot_base64": screenshot_base64,
-            "size_bytes": size_bytes
-        });
-        if let Some(fmt) = format {
-            result["format"] = serde_json::json!(fmt);
-        }
-        return Ok(ToolEffect::reply_json(&result));
+        let media_type = match format.unwrap_or("png") {
+            "jpeg" => "image/jpeg".to_string(),
+            "webp" => "image/webp".to_string(),
+            _ => "image/png".to_string(),
+        };
+        let resized = resize_for_llm(&screenshot_base64, &media_type, 1280, 800, quality);
+        let caption = format!(
+            "Screenshot captured ({} bytes)",
+            base64_decoded_len(&resized)
+        );
+        return Ok(ToolEffect::Vision(crate::VisionPayload {
+            base64_data: resized,
+            media_type,
+            caption,
+        }));
     }
 
     let filename = match input.get("filename").and_then(|v| v.as_str()) {
@@ -327,14 +408,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_save_false_returns_base64() {
+    async fn execute_save_false_returns_vision_effect() {
         let mut browser = make_browser(MockBackend::with_valid_screenshot());
         let input = serde_json::json!({});
 
-        let effect = execute(&input, &mut browser).await.unwrap();
-        let json_str = format!("{effect:?}");
-        assert!(json_str.contains("screenshot_base64"));
-        assert!(!json_str.contains("saved_path"));
+        let result = execute(&input, &mut browser).await.unwrap();
+        match result {
+            ToolEffect::Vision(payload) => {
+                assert!(!payload.base64_data.is_empty());
+                assert_eq!(payload.media_type, "image/png");
+                assert!(payload.caption.contains("Screenshot captured"));
+            }
+            other => panic!("expected Vision effect, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -342,9 +428,59 @@ mod tests {
         let mut browser = make_browser(MockBackend::with_valid_screenshot());
         let input = serde_json::json!({"save": false});
 
-        let effect = execute(&input, &mut browser).await.unwrap();
-        let json_str = format!("{effect:?}");
-        assert!(json_str.contains("screenshot_base64"));
+        let result = execute(&input, &mut browser).await.unwrap();
+        match result {
+            ToolEffect::Vision(payload) => {
+                assert!(!payload.base64_data.is_empty());
+                assert_eq!(payload.media_type, "image/png");
+            }
+            other => panic!("expected Vision effect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resize_for_llm_returns_original_on_bad_base64() {
+        let result = resize_for_llm("not-base64!!!", "image/png", 100, 100, None);
+        assert_eq!(result, "not-base64!!!");
+    }
+
+    #[test]
+    fn exceeds_pixel_budget_flags_decompression_bomb_dimensions() {
+        assert!(exceeds_pixel_budget(20_000, 20_000)); // 400M pixels
+        assert!(!exceeds_pixel_budget(1920, 1080));
+    }
+
+    #[allow(clippy::cast_possible_truncation)] // `% 256` always fits in u8
+    fn large_jpeg_base64() -> String {
+        use base64::Engine as _;
+        let img = image::RgbImage::from_fn(2000, 1200, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
+        });
+        let dynamic = image::DynamicImage::ImageRgb8(img);
+        let mut buf = Vec::new();
+        dynamic
+            .write_to(
+                &mut std::io::Cursor::new(&mut buf),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(&buf)
+    }
+
+    #[test]
+    fn resize_for_llm_honors_requested_jpeg_quality() {
+        let source = large_jpeg_base64();
+
+        let low = resize_for_llm(&source, "image/jpeg", 1280, 800, Some(1));
+        let high = resize_for_llm(&source, "image/jpeg", 1280, 800, Some(100));
+
+        assert!(
+            high.len() > low.len(),
+            "higher requested quality should produce a larger encoded image \
+             (low={}, high={})",
+            low.len(),
+            high.len()
+        );
     }
 
     #[tokio::test]
@@ -536,9 +672,13 @@ mod tests {
             "full_page": true
         });
 
-        let effect = execute(&input, &mut browser).await.unwrap();
-        let json_str = format!("{effect:?}");
-        assert!(json_str.contains("screenshot_base64"));
-        assert!(json_str.contains("webp"));
+        let result = execute(&input, &mut browser).await.unwrap();
+        match result {
+            ToolEffect::Vision(payload) => {
+                assert!(!payload.base64_data.is_empty());
+                assert_eq!(payload.media_type, "image/webp");
+            }
+            other => panic!("expected Vision effect, got {other:?}"),
+        }
     }
 }

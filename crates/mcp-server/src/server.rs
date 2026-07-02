@@ -15,7 +15,7 @@ use api::{
     ContentBlockDelta, ContentBlockDeltaEvent, InputContentBlock, InputMessage, MessageRequest,
     StreamEvent,
 };
-use api::{ImageSource, OutputContentBlock, ToolChoice, ToolDefinition};
+use api::{OutputContentBlock, ToolChoice, ToolDefinition};
 use browser::{BrowserBackend, BrowserContext, PlaywrightBridge};
 use runtime::{encode_mcp_frame, read_mcp_frame};
 use serde::{Deserialize, Serialize};
@@ -612,59 +612,44 @@ impl CrawlApiClient {
                         }
                         ContentBlock::ToolResult {
                             tool_use_id,
-                            tool_name,
                             output,
                             is_error,
-                        } => {
-                            if tool_name == "screenshot" {
-                                if let Ok(val) = serde_json::from_str::<Value>(output) {
-                                    if let Some(b64) =
-                                        val.get("screenshot_base64").and_then(Value::as_str)
-                                    {
-                                        let media_type =
-                                            match val.get("format").and_then(Value::as_str) {
-                                                Some("jpeg") => "image/jpeg",
-                                                Some("webp") => "image/webp",
-                                                _ => "image/png",
-                                            };
-                                        let blocks = vec![
-                                            api::ToolResultContentBlock::Image {
-                                                source: ImageSource {
-                                                    source_type: "base64".to_string(),
-                                                    media_type: media_type.to_string(),
-                                                    data: b64.to_string(),
-                                                },
-                                            },
-                                            api::ToolResultContentBlock::Text {
-                                                text: format!(
-                                                    "screenshot: {} bytes",
-                                                    val.get("size_bytes")
-                                                        .and_then(Value::as_u64)
-                                                        .unwrap_or(0)
-                                                ),
-                                            },
-                                        ];
-                                        return InputContentBlock::ToolResult {
-                                            tool_use_id: tool_use_id.clone(),
-                                            content: blocks,
-                                            is_error: *is_error,
-                                        };
-                                    }
-                                }
-                            }
-                            InputContentBlock::ToolResult {
-                                tool_use_id: tool_use_id.clone(),
-                                content: vec![api::ToolResultContentBlock::Text {
-                                    text: output.clone(),
-                                }],
-                                is_error: *is_error,
-                            }
-                        }
+                            ..
+                        } => InputContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            content: vec![api::ToolResultContentBlock::Text {
+                                text: output.clone(),
+                            }],
+                            is_error: *is_error,
+                        },
                         ContentBlock::Reasoning { data } => {
                             let parsed: Value =
                                 serde_json::from_str(data).unwrap_or(json!({"raw": data}));
                             InputContentBlock::Reasoning { data: parsed }
                         }
+                        ContentBlock::ToolResultImage {
+                            tool_use_id,
+                            media_type,
+                            base64_data,
+                            caption,
+                            is_error,
+                            ..
+                        } => InputContentBlock::ToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            content: vec![
+                                api::ToolResultContentBlock::Image {
+                                    source: api::ImageSource {
+                                        source_type: "base64".to_string(),
+                                        media_type: media_type.clone(),
+                                        data: base64_data.clone(),
+                                    },
+                                },
+                                api::ToolResultContentBlock::Text {
+                                    text: caption.clone(),
+                                },
+                            ],
+                            is_error: *is_error,
+                        },
                     })
                     .collect();
                 InputMessage {
@@ -865,7 +850,9 @@ impl GoalExecutor for RealGoalExecutor {
         let system_prompt = build_run_goal_system_prompt(&request.allowed_tools);
 
         let registry = ToolRegistry::new_with_core_tools();
-        let mut agent = CrawlerAgent::new_lazy(registry);
+        let mut agent = CrawlerAgent::new_lazy(registry).with_model_supports_vision(
+            api::provider::catalog::model_supports_vision(&request.model),
+        );
         if !request.allowed_tools.is_empty() {
             agent = agent.with_allowed_tools(request.allowed_tools.iter().cloned().collect());
         }

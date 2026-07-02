@@ -20,9 +20,12 @@ impl CliToolExecutor {
         control_state: Option<Arc<ControlState>>,
         child_event_tx: Option<std::sync::mpsc::Sender<ChildEvent>>,
         child_control_registry: Option<ChildControlRegistry>,
+        model_supports_vision: bool,
     ) -> Self {
         let registry = ToolRegistry::new_with_core_tools();
-        let mut agent = CrawlerAgent::new_lazy(registry).with_api_client(fork_client);
+        let mut agent = CrawlerAgent::new_lazy(registry)
+            .with_api_client(fork_client)
+            .with_model_supports_vision(model_supports_vision);
         if let Some(state) = control_state {
             agent = agent.with_control_state(state);
         }

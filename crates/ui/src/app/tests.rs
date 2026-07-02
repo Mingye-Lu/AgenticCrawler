@@ -93,15 +93,16 @@ fn converts_tool_roundtrip_messages() {
 }
 
 #[test]
-fn screenshot_tool_result_produces_image_content_block() {
+fn tool_result_image_block_produces_image_and_text_content() {
     use api::InputContentBlock;
-    let output = r#"{"screenshot_base64":"iVBORw0KGgo=","size_bytes":42}"#;
     let messages = vec![ConversationMessage {
         role: MessageRole::Tool,
-        blocks: vec![ContentBlock::ToolResult {
+        blocks: vec![ContentBlock::ToolResultImage {
             tool_use_id: "tool-1".to_string(),
             tool_name: "screenshot".to_string(),
-            output: output.to_string(),
+            media_type: "image/png".to_string(),
+            base64_data: "iVBORw0KGgo=".to_string(),
+            caption: "screenshot: 42 bytes".to_string(),
             is_error: false,
         }],
         usage: None,
@@ -112,8 +113,11 @@ fn screenshot_tool_result_produces_image_content_block() {
     assert_eq!(content.len(), 1);
     match &content[0] {
         InputContentBlock::ToolResult {
-            content, is_error, ..
+            tool_use_id,
+            content,
+            is_error,
         } => {
+            assert_eq!(tool_use_id, "tool-1");
             assert!(!is_error);
             assert_eq!(content.len(), 2);
             match &content[0] {
@@ -126,10 +130,39 @@ fn screenshot_tool_result_produces_image_content_block() {
             }
             match &content[1] {
                 api::ToolResultContentBlock::Text { text } => {
-                    assert!(text.contains("42 bytes"), "got: {text}");
+                    assert_eq!(text, "screenshot: 42 bytes");
                 }
                 other => panic!("expected Text block, got {other:?}"),
             }
+        }
+        other => panic!("expected ToolResult, got {other:?}"),
+    }
+}
+
+#[test]
+fn tool_result_with_arbitrary_output_produces_single_text_block() {
+    use api::InputContentBlock;
+    let messages = vec![ConversationMessage {
+        role: MessageRole::Tool,
+        blocks: vec![ContentBlock::ToolResult {
+            tool_use_id: "tool-1".to_string(),
+            tool_name: "screenshot".to_string(),
+            output: r#"{"screenshot_base64":"iVBORw0KGgo=","size_bytes":42}"#.to_string(),
+            is_error: false,
+        }],
+        usage: None,
+    }];
+    let converted = convert_messages(&messages);
+    assert_eq!(converted.len(), 1);
+    let content = &converted[0].content;
+    assert_eq!(content.len(), 1);
+    match &content[0] {
+        InputContentBlock::ToolResult { content, .. } => {
+            assert_eq!(content.len(), 1);
+            assert!(matches!(
+                &content[0],
+                api::ToolResultContentBlock::Text { .. }
+            ));
         }
         other => panic!("expected ToolResult, got {other:?}"),
     }

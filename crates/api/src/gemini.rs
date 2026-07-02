@@ -405,12 +405,30 @@ fn convert_message(
                     .get(tool_use_id)
                     .cloned()
                     .unwrap_or_else(|| tool_use_id.clone());
-                parts.push(serde_json::json!({
-                    "functionResponse": {
-                        "name": name,
-                        "response": tool_result_response(content, *is_error),
-                    }
-                }));
+                // Multimodal function results are nested inside functionResponse.parts
+                // per the Gemini API's FunctionResponse schema, not emitted as sibling
+                // parts at the contents level.
+                let image_parts: Vec<Value> = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ToolResultContentBlock::Image { source } => Some(serde_json::json!({
+                            "inlineData": {
+                                "mimeType": source.media_type,
+                                "data": source.data
+                            }
+                        })),
+                        _ => None,
+                    })
+                    .collect();
+
+                let mut function_response = serde_json::json!({
+                    "name": name,
+                    "response": tool_result_response(content, *is_error),
+                });
+                if !image_parts.is_empty() {
+                    function_response["parts"] = Value::Array(image_parts);
+                }
+                parts.push(serde_json::json!({ "functionResponse": function_response }));
             }
             InputContentBlock::ToolUse { .. }
             | InputContentBlock::ToolResult { .. }
@@ -435,10 +453,11 @@ fn tool_result_response(content: &[ToolResultContentBlock], is_error: bool) -> V
 
     let joined = content
         .iter()
-        .map(|block| match block {
-            ToolResultContentBlock::Text { text } => text.clone(),
-            ToolResultContentBlock::Json { value } => value.to_string(),
-            ToolResultContentBlock::Image { .. } => "[image omitted]".to_string(),
+        .filter_map(|block| match block {
+            ToolResultContentBlock::Text { text } => Some(text.clone()),
+            ToolResultContentBlock::Json { value } => Some(value.to_string()),
+            // Images are emitted as separate inlineData parts in convert_message.
+            ToolResultContentBlock::Image { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -617,6 +636,79 @@ mod tests {
             }) if reason == "end_turn"
         ));
         assert!(matches!(events[5], StreamEvent::MessageStop(_)));
+    }
+
+    #[test]
+    fn tool_result_with_image_emits_inline_data() {
+        use crate::types::ImageSource;
+        let request = MessageRequest {
+            model: "gemini-2.0-flash".to_string(),
+            max_tokens: 512,
+            messages: vec![
+                InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![InputContentBlock::ToolUse {
+                        id: "tool_1".to_string(),
+                        name: "screenshot".to_string(),
+                        input: serde_json::json!({}),
+                    }],
+                },
+                InputMessage {
+                    role: "user".to_string(),
+                    content: vec![InputContentBlock::ToolResult {
+                        tool_use_id: "tool_1".to_string(),
+                        content: vec![
+                            ToolResultContentBlock::Text {
+                                text: "screenshot taken".to_string(),
+                            },
+                            ToolResultContentBlock::Image {
+                                source: ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: "abc123".to_string(),
+                                },
+                            },
+                        ],
+                        is_error: false,
+                    }],
+                },
+            ],
+            system: None,
+            tools: None,
+            tool_choice: None,
+            stream: false,
+            reasoning_effort: None,
+        };
+
+        let body = build_gemini_request(&request);
+        let contents = body["contents"].as_array().expect("contents array");
+
+        // Find the user-role content item (the tool result).
+        let user_content = contents
+            .iter()
+            .find(|c| c["role"] == "user")
+            .expect("user content entry");
+        let parts = user_content["parts"].as_array().expect("parts array");
+
+        // functionResponse part must be present.
+        let func_response = parts
+            .iter()
+            .find(|p| p.get("functionResponse").is_some())
+            .expect("functionResponse part");
+        assert_eq!(func_response["functionResponse"]["name"], "screenshot");
+
+        // The image must be nested inside functionResponse.parts (per Gemini's
+        // FunctionResponse schema) — not emitted as a sibling top-level part.
+        assert!(
+            parts.iter().all(|p| p.get("inlineData").is_none()),
+            "inlineData must not appear as a sibling part"
+        );
+        let response_parts = func_response["functionResponse"]["parts"]
+            .as_array()
+            .expect("functionResponse.parts array");
+        assert_eq!(response_parts.len(), 1);
+        assert_eq!(response_parts[0]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(response_parts[0]["inlineData"]["data"], "abc123");
     }
 
     #[test]

@@ -754,22 +754,51 @@ fn convert_user_message(
                     text_parts.clear();
                 }
 
+                // OpenAI's Chat Completions API only accepts string content on
+                // `role: "tool"` messages — image parts must instead be delivered via a
+                // follow-up `role: "user"` message, which is the documented workaround
+                // for attaching tool-result images.
                 let transformed_id = transform.transform_tool_call_id(tool_use_id);
                 let content_text = content
                     .iter()
-                    .map(|b| match b {
-                        ToolResultContentBlock::Text { text } => text.clone(),
-                        ToolResultContentBlock::Json { value } => value.to_string(),
-                        ToolResultContentBlock::Image { .. } => "[image omitted]".to_string(),
+                    .filter_map(|b| match b {
+                        ToolResultContentBlock::Text { text } => Some(text.clone()),
+                        ToolResultContentBlock::Json { value } => Some(value.to_string()),
+                        ToolResultContentBlock::Image { .. } => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
+                let image_parts: Vec<serde_json::Value> = content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ToolResultContentBlock::Image { source } => Some(serde_json::json!({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", source.media_type, source.data),
+                                "detail": "auto"
+                            }
+                        })),
+                        _ => None,
+                    })
+                    .collect();
 
                 out.push(serde_json::json!({
                     "role": "tool",
                     "tool_call_id": transformed_id,
                     "content": content_text,
                 }));
+
+                if !image_parts.is_empty() {
+                    let mut user_parts = vec![serde_json::json!({
+                        "type": "text",
+                        "text": format!("Image from tool call {transformed_id}:"),
+                    })];
+                    user_parts.extend(image_parts);
+                    out.push(serde_json::json!({
+                        "role": "user",
+                        "content": user_parts,
+                    }));
+                }
             }
             InputContentBlock::ToolUse { .. } | InputContentBlock::Reasoning { .. } => {}
         }
@@ -1090,6 +1119,73 @@ mod tests {
         );
         assert_eq!(url, "https://api.x.ai/v1/chat/completions");
         assert!(!url.contains("/v1/v1/"));
+    }
+
+    #[test]
+    fn tool_result_with_image_emits_followup_user_message() {
+        let request = MessageRequest {
+            model: "gpt-4o".to_string(),
+            max_tokens: 1024,
+            messages: vec![
+                InputMessage {
+                    role: "assistant".to_string(),
+                    content: vec![InputContentBlock::ToolUse {
+                        id: "call_img".to_string(),
+                        name: "screenshot".to_string(),
+                        input: serde_json::json!({}),
+                    }],
+                },
+                InputMessage {
+                    role: "user".to_string(),
+                    content: vec![InputContentBlock::ToolResult {
+                        tool_use_id: "call_img".to_string(),
+                        content: vec![
+                            ToolResultContentBlock::Text {
+                                text: "screenshot taken".to_string(),
+                            },
+                            ToolResultContentBlock::Image {
+                                source: crate::types::ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: "abc123".to_string(),
+                                },
+                            },
+                        ],
+                        is_error: false,
+                    }],
+                },
+            ],
+            system: None,
+            tools: None,
+            tool_choice: None,
+            stream: false,
+            reasoning_effort: None,
+        };
+
+        let body = build_openai_request(&request, "gpt-4o", &NoOpTransform);
+        let messages = body["messages"].as_array().expect("messages array");
+
+        // The `tool` message must carry plain string content — OpenAI's Chat
+        // Completions API rejects array/multi-part content on role: "tool".
+        let tool_msg = &messages[messages.len() - 2];
+        assert_eq!(tool_msg["role"], "tool");
+        assert_eq!(tool_msg["tool_call_id"], "call_img");
+        assert_eq!(tool_msg["content"], "screenshot taken");
+
+        // The image is delivered via a follow-up `user` message instead.
+        let user_msg = messages.last().expect("last message");
+        assert_eq!(user_msg["role"], "user");
+        let content = user_msg["content"]
+            .as_array()
+            .expect("content should be array");
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "data:image/png;base64,abc123"
+        );
+        assert_eq!(content[1]["image_url"]["detail"], "auto");
     }
 
     #[test]

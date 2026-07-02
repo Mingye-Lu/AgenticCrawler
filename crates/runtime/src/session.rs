@@ -282,6 +282,37 @@ fn content_block_to_json(block: &ContentBlock) -> JsonValue {
             );
             object.insert("data".to_string(), JsonValue::String(data.clone()));
         }
+        ContentBlock::ToolResultImage {
+            tool_use_id,
+            tool_name,
+            media_type,
+            base64_data,
+            caption,
+            is_error,
+        } => {
+            object.insert(
+                "type".to_string(),
+                JsonValue::String("tool_result_image".to_string()),
+            );
+            object.insert(
+                "tool_use_id".to_string(),
+                JsonValue::String(tool_use_id.clone()),
+            );
+            object.insert(
+                "tool_name".to_string(),
+                JsonValue::String(tool_name.clone()),
+            );
+            object.insert(
+                "media_type".to_string(),
+                JsonValue::String(media_type.clone()),
+            );
+            object.insert(
+                "base64_data".to_string(),
+                JsonValue::String(base64_data.clone()),
+            );
+            object.insert("caption".to_string(), JsonValue::String(caption.clone()));
+            object.insert("is_error".to_string(), JsonValue::Bool(*is_error));
+        }
     }
     JsonValue::Object(object)
 }
@@ -314,6 +345,19 @@ fn content_block_from_json(value: &JsonValue) -> Result<ContentBlock, SessionErr
         }),
         "reasoning" => Ok(ContentBlock::Reasoning {
             data: required_string(object, "data")?,
+        }),
+        "tool_result_image" => Ok(ContentBlock::ToolResultImage {
+            tool_use_id: required_string(object, "tool_use_id")?,
+            tool_name: required_string(object, "tool_name")?,
+            media_type: required_string(object, "media_type")?,
+            base64_data: required_string(object, "base64_data")?,
+            caption: required_string(object, "caption")?,
+            // Older sessions predate this field; default to `false` (success)
+            // rather than fail-closed, since it was never a possible error path.
+            is_error: object
+                .get("is_error")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false),
         }),
         other => Err(SessionError::Format(format!(
             "unsupported block type: {other}"

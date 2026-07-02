@@ -186,6 +186,34 @@ fi
 echo ""
 echo "acrawl ${version} installed successfully!"
 echo ""
+
+# Remind about PATH if the install dir isn't active in the current session.
+case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *)
+        echo "NOTE: ${INSTALL_DIR} is not on your PATH in this session."
+        current_shell=$(basename "${SHELL:-/bin/sh}")
+        case "$current_shell" in
+            bash)
+                echo "  To use acrawl now:  export PATH=\"${INSTALL_DIR}:\$PATH\""
+                echo "  To persist it:      echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.bashrc"
+                ;;
+            zsh)
+                echo "  To use acrawl now:  export PATH=\"${INSTALL_DIR}:\$PATH\""
+                echo "  To persist it:      echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc"
+                ;;
+            fish)
+                echo "  To use acrawl now and persist it:  fish_add_path ${INSTALL_DIR}"
+                ;;
+            *)
+                echo "  To use acrawl now:  export PATH=\"${INSTALL_DIR}:\$PATH\""
+                ;;
+        esac
+        echo "  Or open a new terminal — it will be picked up automatically."
+        echo ""
+        ;;
+esac
+
 echo "Get started:"
 echo "  acrawl                   # launch REPL (guides you through setup on first run)"
 echo "  acrawl mcp install       # use as MCP server in Claude Code, Cursor, etc."

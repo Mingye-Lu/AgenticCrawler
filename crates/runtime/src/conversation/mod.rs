@@ -18,6 +18,7 @@ pub use acrawl_core::error::{RuntimeError, ToolError};
 pub use acrawl_core::event::AssistantEvent;
 pub use acrawl_core::outcome::ToolOutcome;
 pub use acrawl_core::traits::ToolExecutor;
+use acrawl_core::ToolEffect;
 pub use acrawl_core::{ApiClient, ApiRequest};
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
@@ -49,6 +50,7 @@ pub struct ConversationRuntime<C, T> {
     prompt_override: Arc<Mutex<Option<Vec<String>>>>,
     last_assistant_text: Arc<Mutex<Option<String>>>,
     cumulative_cost: SharedCostCounter,
+    model_supports_vision: bool,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -113,6 +115,7 @@ where
             prompt_override,
             last_assistant_text,
             cumulative_cost,
+            model_supports_vision: false,
         }
     }
 
@@ -141,6 +144,12 @@ where
     #[must_use]
     pub fn with_control_state(mut self, state: Arc<ControlState>) -> Self {
         self.control_state = state;
+        self
+    }
+
+    #[must_use]
+    pub fn with_model_supports_vision(mut self, value: bool) -> Self {
+        self.model_supports_vision = value;
         self
     }
 
@@ -382,6 +391,7 @@ where
         tool_name: &str,
         input: &str,
     ) -> Result<Option<ConversationMessage>, RuntimeError> {
+        let model_supports_vision = self.model_supports_vision;
         let execute_fut = self.tool_executor.execute(tool_name, input);
         let result_message = tokio::select! {
             biased;
@@ -389,7 +399,7 @@ where
                 let _ = idx;
                 return Ok(None);
             }
-            result = execute_fut => build_tool_result_message(&mut self.observer, tool_use_id, tool_name, result),
+            result = execute_fut => build_tool_result_message(&mut self.observer, tool_use_id, tool_name, result, model_supports_vision),
         };
 
         Ok(Some(result_message))
@@ -504,18 +514,32 @@ fn build_tool_result_message(
     tool_use_id: &str,
     tool_name: &str,
     result: Result<ToolOutcome, ToolError>,
+    model_supports_vision: bool,
 ) -> ConversationMessage {
-    let (output, is_error) = match result {
+    let (output, is_error, outcome_effect) = match result {
         Ok(outcome) => {
             if let Some(ref mut observer) = observer {
                 if let Some(effect) = outcome.effect.as_ref() {
                     observer.on_tool_effect(effect);
                 }
             }
-            (outcome.text, false)
+            (outcome.text, false, outcome.effect)
         }
-        Err(error) => (error.to_string(), true),
+        Err(error) => (error.to_string(), true, None),
     };
+
+    if model_supports_vision {
+        if let Some(ToolEffect::Vision(ref payload)) = outcome_effect {
+            return ConversationMessage::tool_result_image(
+                tool_use_id.to_string(),
+                tool_name.to_string(),
+                &payload.media_type,
+                &payload.base64_data,
+                &output,
+                is_error,
+            );
+        }
+    }
 
     ConversationMessage::tool_result(
         tool_use_id.to_string(),
@@ -562,6 +586,7 @@ Output EXACTLY this structure with no other text:\n\
                 ContentBlock::ToolUse { input, .. } => input.as_str(),
                 ContentBlock::ToolResult { output, .. } => output.as_str(),
                 ContentBlock::Reasoning { data } => data.as_str(),
+                ContentBlock::ToolResultImage { caption, .. } => caption.as_str(),
             })
             .collect::<Vec<_>>()
             .join(" | ");
@@ -699,7 +724,8 @@ fn assistant_text_from_message(message: &ConversationMessage) -> String {
             ContentBlock::Text { text } => Some(text.as_str()),
             ContentBlock::ToolUse { .. }
             | ContentBlock::ToolResult { .. }
-            | ContentBlock::Reasoning { .. } => None,
+            | ContentBlock::Reasoning { .. }
+            | ContentBlock::ToolResultImage { .. } => None,
         })
         .collect()
 }

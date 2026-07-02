@@ -197,7 +197,7 @@ pub fn render_export_text(session: &Session) -> String {
                         "[tool_result id={tool_use_id} name={tool_name} error={is_error}] {output}"
                     ));
                 }
-                ContentBlock::Reasoning { .. } => {}
+                ContentBlock::Reasoning { .. } | ContentBlock::ToolResultImage { .. } => {}
             }
         }
         lines.push(String::new());

@@ -68,6 +68,135 @@ async function resolveFillSelector(pg, raw) {
   return raw;
 }
 
+async function resolveEditorSurface(pg, sel) {
+  try {
+    const redirected = await pg.evaluate((s) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) { return null; }
+      if (!el) return null;
+      const tag = el.tagName.toLowerCase();
+      if (tag !== 'textarea' && tag !== 'input') return null;
+      const rect = el.getBoundingClientRect();
+      if (rect.width >= 4 && rect.height >= 4) return null; // visible; no redirect needed
+      function selectorOf(node) {
+        if (node.id) return '#' + CSS.escape(node.id);
+        const path = [];
+        let cur = node;
+        while (cur && cur.parentElement) {
+          if (cur.id) { path.unshift('#' + CSS.escape(cur.id)); break; }
+          const parent = cur.parentElement;
+          const t = cur.tagName.toLowerCase();
+          const same = Array.from(parent.children).filter(c => c.tagName === cur.tagName);
+          path.unshift(same.length > 1 ? `${t}:nth-of-type(${same.indexOf(cur) + 1})` : t);
+          cur = parent;
+        }
+        return path.join(' > ');
+      }
+      // Phase 1: walk ancestors for any contenteditable
+      let cur = el.parentElement;
+      while (cur && cur !== document.body) {
+        if (cur.getAttribute('contenteditable') === 'true') return selectorOf(cur);
+        cur = cur.parentElement;
+      }
+      // Phase 2: proximity walk — expand outward from el's parent until we find
+      // the smallest container holding exactly one visible interactive element.
+      // Framework-agnostic: handles CM5 (sibling <textarea>), CM6/ProseMirror/
+      // Quill (contenteditable cousin), and any editor we haven't seen yet.
+      let container = el.parentElement;
+      while (container && container !== document.body) {
+        const candidates = Array.from(container.querySelectorAll(
+          '[contenteditable="true"], textarea, input:not([type="hidden"])'
+        )).filter(c => {
+          if (c === el) return false;
+          const r = c.getBoundingClientRect();
+          return r.width >= 4 && r.height >= 4;
+        });
+        if (candidates.length === 1) return selectorOf(candidates[0]);
+        if (candidates.length > 1) {
+          // Prefer contenteditable — more likely to be the editor surface than
+          // a sibling input/textarea that belongs to a different field.
+          const ce = candidates.filter(c => c.getAttribute('contenteditable') === 'true');
+          if (ce.length === 1) return selectorOf(ce[0]);
+          // Ambiguous: multiple candidates with no clear winner; don't guess.
+          return null;
+        }
+        container = container.parentElement;
+      }
+      return null;
+    }, sel);
+    if (redirected) return redirected;
+  } catch (_) {}
+  return sel;
+}
+
+async function tryRichEditorFill(pg, sel, value) {
+  // Step 1: CodeMirror v5 JS API — instant, no typing latency
+  try {
+    const cm5ok = await pg.evaluate(({ s, v }) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) {}
+      const cm = el?.closest?.('.CodeMirror');
+      if (cm?.CodeMirror) {
+        cm.CodeMirror.setValue(v);
+        cm.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      }
+      return false;
+    }, { s: sel, v: value });
+    if (cm5ok) return 'codemirror5';
+  } catch (_) {}
+
+  // Step 2: any contenteditable via execCommand — covers CM6, ProseMirror, TipTap, Quill, Lexical, Slate
+  try {
+    const ceOk = await pg.evaluate(({ s, v }) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) {}
+      let ce = el;
+      while (ce && ce !== document.body) {
+        if (ce.getAttribute('contenteditable') === 'true') break;
+        ce = ce.parentElement;
+      }
+      if (!ce || ce === document.body) {
+        // Do not fall back to document.body — that would write to an unrelated editor.
+        if (!el) return false;
+        const root = el.closest('[class*="editor"], [role="textbox"]');
+        ce = root ? root.querySelector('[contenteditable="true"]') : null;
+      }
+      if (!ce || ce === document.body) return false;
+      ce.focus();
+      document.execCommand('selectAll', false, null);
+      return document.execCommand('insertText', false, v);
+    }, { s: sel, v: value });
+    if (ceOk) return 'contenteditable';
+  } catch (_) {}
+
+  // Step 3: focus + Ctrl+A + keyboard.type — universal last resort
+  try {
+    const focused = await pg.evaluate(({ s }) => {
+      let el;
+      try { el = document.querySelector(s); } catch (_) {}
+      let ce = el;
+      while (ce && ce !== document.body) {
+        if (ce.getAttribute('contenteditable') === 'true') { ce.focus(); return true; }
+        ce = ce.parentElement;
+      }
+      // Do not fall back to document.body — that would write to an unrelated editor.
+      if (!el) return false;
+      const root = el.closest('[class*="editor"], [role="textbox"]');
+      const found = root ? root.querySelector('[contenteditable="true"]') : null;
+      if (found) { found.focus(); return true; }
+      return false;
+    }, { s: sel });
+    if (focused) {
+      await pg.keyboard.press('ControlOrMeta+a'); // portable: Ctrl on Linux/Win, Cmd on macOS
+      await pg.keyboard.type(value, { delay: 0 });
+      return 'keyboard';
+    }
+  } catch (_) {}
+
+  return null;
+}
+
 const observationBuffers = new Map();
 const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
 let currentSeq = 0;
@@ -686,16 +815,25 @@ async function bootstrap() {
     }
 
     if (command.action === 'fill') {
+      let sel = command.selector;
       try {
-        const sel = await resolveFillSelector(page, command.selector);
+        sel = await resolveFillSelector(page, sel);
+        sel = await resolveEditorSurface(page, sel);
         await page.fill(sel, command.value, { timeout: 5000 });
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
       } catch (mainError) {
+        try {
+          const richEditorResult = await tryRichEditorFill(page, sel, command.value);
+          if (richEditorResult) {
+            process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, richEditor: richEditorResult } }) + '\n');
+            continue;
+          }
+        } catch (_) {}
         let filledInFrame = false;
         for (const frame of page.frames()) {
           if (frame === page.mainFrame()) continue;
           try {
-            await frame.fill(command.selector, command.value, { timeout: 2000 });
+            await frame.fill(sel, command.value, { timeout: 2000 });
             filledInFrame = true;
             break;
           } catch (_) {}
@@ -1556,3 +1694,48 @@ bootstrap().catch((error) => {
   process.exit(1);
 });
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::PLAYWRIGHT_BRIDGE_NODE_SCRIPT;
+
+    #[test]
+    fn bridge_fill_has_rich_editor_cascade() {
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("tryRichEditorFill"),
+            "Missing tryRichEditorFill function"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("CodeMirror.setValue"),
+            "Missing CM5 JS API step"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("execCommand('insertText'"),
+            "Missing execCommand contenteditable step"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("keyboard"),
+            "Missing keyboard fallback step"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("richEditor"),
+            "Missing richEditor field in success payload"
+        );
+    }
+
+    #[test]
+    fn bridge_has_editor_surface_redirect() {
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("resolveEditorSurface"),
+            "Missing resolveEditorSurface function"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("getBoundingClientRect"),
+            "Missing visibility check in proximity walk"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(r#"[contenteditable="true"], textarea"#),
+            "Missing contenteditable candidate search in proximity walk"
+        );
+    }
+}

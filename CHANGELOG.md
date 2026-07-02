@@ -5,7 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.7] - 2026-07-02
+
+### Added
+
+- **Vision model support**: `screenshot(save=false)` now delivers the image to vision-capable models as a real multimodal content block instead of base64 text buried in a JSON reply. The image is resized to fit 1280×800 (Lanczos3) before being sent, and JPEG output honors the requested `quality`. Models without vision support (per the built-in catalog) continue to receive a text caption instead, so behavior is unchanged for non-vision models. Wired through `mcp-server`'s `run_goal` and the TUI/UI runtime builder, both of which now select the image-or-caption path from the model's catalog entry.
+
+### Fixed
+
+- **Tool-result images — provider payloads that were previously silently rejected or ignored by the model**: OpenAI Chat Completions no longer attaches images to a `role: "tool"` message (the API rejects non-string content there); the image is now sent as a follow-up `role: "user"` message. The Responses API now nests `input_image` items inside `function_call_output.output` instead of emitting them as undocumented sibling top-level items. Gemini's `inlineData` is now nested inside `functionResponse.parts` per the FunctionResponse schema instead of emitted as a sibling part.
+- **Compaction — screenshots could silently balloon context/cost**: `prune_tool_outputs` now strips old `ToolResultImage` blocks down to their caption once outside the protected window, and token estimation accounts for image payload size, matching how large text tool outputs were already handled.
+- **Screenshot resize — decompression-bomb guard**: image dimensions are checked against a 100-megapixel cap before decoding, so a small file that decodes to an enormous bitmap is left unresized instead of exhausting memory.
+
+### Changed
+
+- Fresh installs now have `failure_classification`, `self_healing`, and `content_aware_profiles` enabled by default. Existing installs with no `optimization` block in `settings.json` are unaffected.
+
+## [0.12.6] - 2026-07-01
+
+### Added
+
+- **`fill_form` — rich editor support**: fields backed by TipTap, ProseMirror, Quill, and similar rich-text editors are now discovered during label resolution and filled via a cascade: CodeMirror 5 programmatic API → `execCommand('insertText')` → keyboard simulation fallback. Hidden `<textarea>` selectors (CodeMirror's backing element) are redirected to the visible `.CodeMirror` editor surface automatically.
+
+### Fixed
+
+- **Installer**: PATH reminder is now shown on all platforms (not only Unix) after a successful install.
+- **Installer on Windows**: `npm.cmd` / `npx.cmd` shims are used instead of bare `npm` / `npx`, bypassing PowerShell's default script-execution policy that blocked MCP server installation.
+- **MCP server installer output**: subprocess stderr is now surfaced to the caller; output formatting is unified across all installer paths.
+- **Rich-editor fill**: four code-review hardening fixes applied (error handling, fallback scoping, macOS select-all compatibility).
+
+### Changed
+
+- **Bridge — editor surface detection**: replaced ad-hoc framework-specific CSS selectors with a proximity walk that locates the nearest visible contenteditable/editor surface relative to the target element, reducing false-positive redirects.
 
 ### Changed
 - `acrawl_page_map` now returns a YAML accessibility tree instead of JSON structural arrays. Each node: `- role "name" [state...] [ref=eN]:`. Post-action page_state returns YAML tree-diffs.

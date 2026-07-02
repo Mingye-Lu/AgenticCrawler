@@ -164,7 +164,7 @@ if ($nodeAvailable) {
     } else {
         Write-Host "Installing CloakBrowser..." -ForegroundColor Gray
         try {
-            & npm install --prefix $ConfigHome cloakbrowser playwright-core 2>&1 | Out-Null
+            & npm.cmd install --prefix $ConfigHome cloakbrowser playwright-core 2>&1 | Out-Null
             Write-Host "  CloakBrowser installed." -ForegroundColor Green
         } catch {
             Write-Warning "CloakBrowser installation failed: $_"
@@ -174,7 +174,7 @@ if ($nodeAvailable) {
 
     Write-Host "Ensuring browser binary is downloaded..." -ForegroundColor Gray
     try {
-        & npx --prefix $ConfigHome cloakbrowser install 2>&1 | Out-Null
+        & npx.cmd --prefix $ConfigHome cloakbrowser install 2>&1 | Out-Null
         Write-Host "  Browser binary ready." -ForegroundColor Green
     } catch {
         Write-Warning "Browser binary download failed. It will be downloaded on first use."
@@ -190,6 +190,16 @@ if (Test-Path $checksumFile) {
 Write-Host ""
 Write-Host "  acrawl v$version installed successfully!" -ForegroundColor Green
 Write-Host ""
+
+# If the install dir isn't active in the current session, give a one-liner.
+if ($env:Path -notlike "*$InstallDir*") {
+    Write-Host "  acrawl is not yet on your PATH in this session." -ForegroundColor Yellow
+    Write-Host "  To use it now, run:" -ForegroundColor Yellow
+    Write-Host "    `$env:Path = `"$InstallDir;`$env:Path`"" -ForegroundColor Cyan
+    Write-Host "  Or restart your terminal — it will be picked up automatically." -ForegroundColor Yellow
+    Write-Host ""
+}
+
 Write-Host "  Get started:" -ForegroundColor Cyan
 Write-Host "    acrawl                   # launch REPL (guides you through setup on first run)"
 Write-Host "    acrawl mcp install       # use as MCP server in Claude Code, Cursor, etc."

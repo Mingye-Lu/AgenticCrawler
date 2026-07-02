@@ -164,15 +164,39 @@ pub(super) fn prune_tool_outputs(
     for msg in messages.iter_mut().rev() {
         if cumulative_tokens >= prune_protect_tokens {
             // Outside the protected window — truncate large ToolResult outputs
+            // and strip image payloads from ToolResultImage blocks entirely
+            // (keeping only the caption), since images dominate token estimates
+            // and would otherwise silently bloat the preserved context.
             for block in &mut msg.blocks {
-                if let ContentBlock::ToolResult { output, .. } = block {
-                    let char_count = output.chars().count();
-                    if char_count > prune_max_output_chars {
-                        let truncated: String =
-                            output.chars().take(prune_max_output_chars).collect();
-                        *output =
-                            format!("{truncated}\n\n[… output truncated from {char_count} chars]");
+                match block {
+                    ContentBlock::ToolResult { output, .. } => {
+                        let char_count = output.chars().count();
+                        if char_count > prune_max_output_chars {
+                            let truncated: String =
+                                output.chars().take(prune_max_output_chars).collect();
+                            *output = format!(
+                                "{truncated}\n\n[… output truncated from {char_count} chars]"
+                            );
+                        }
                     }
+                    ContentBlock::ToolResultImage {
+                        tool_use_id,
+                        tool_name,
+                        caption,
+                        is_error,
+                        ..
+                    } => {
+                        let replacement = ContentBlock::ToolResult {
+                            tool_use_id: std::mem::take(tool_use_id),
+                            tool_name: std::mem::take(tool_name),
+                            output: format!("{caption} [image removed by compaction]"),
+                            is_error: *is_error,
+                        };
+                        *block = replacement;
+                    }
+                    ContentBlock::Text { .. }
+                    | ContentBlock::ToolUse { .. }
+                    | ContentBlock::Reasoning { .. } => {}
                 }
             }
         }

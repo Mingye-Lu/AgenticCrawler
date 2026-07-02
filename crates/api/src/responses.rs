@@ -252,15 +252,41 @@ fn convert_responses_user_message(message: &InputMessage, out: &mut Vec<Value>) 
                     text_parts.clear();
                 }
 
-                let output = content
-                    .iter()
-                    .map(|block| match block {
-                        ToolResultContentBlock::Text { text } => text.clone(),
-                        ToolResultContentBlock::Json { value } => value.to_string(),
-                        ToolResultContentBlock::Image { .. } => "[image omitted]".to_string(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let mut text_output: Vec<String> = Vec::new();
+                let mut image_items: Vec<Value> = Vec::new();
+                for block in content {
+                    match block {
+                        ToolResultContentBlock::Text { text } => text_output.push(text.clone()),
+                        ToolResultContentBlock::Json { value } => {
+                            text_output.push(value.to_string());
+                        }
+                        ToolResultContentBlock::Image { source } => {
+                            image_items.push(serde_json::json!({
+                                "type": "input_image",
+                                "image_url": format!("data:{};base64,{}", source.media_type, source.data)
+                            }));
+                        }
+                    }
+                }
+
+                // Per OpenAI's function-calling guide, function results that include
+                // images must nest them inside `function_call_output.output` as an
+                // array of content items rather than as sibling top-level `input`
+                // items — a bare top-level `input_image` item is not a documented
+                // input type and is not accepted by the Responses API.
+                let output = if image_items.is_empty() {
+                    Value::String(text_output.join("\n"))
+                } else {
+                    let mut items = Vec::new();
+                    if !text_output.is_empty() {
+                        items.push(serde_json::json!({
+                            "type": "input_text",
+                            "text": text_output.join("\n"),
+                        }));
+                    }
+                    items.extend(image_items);
+                    Value::Array(items)
+                };
 
                 out.push(serde_json::json!({
                     "type": "function_call_output",
@@ -1400,5 +1426,50 @@ mod tests {
             })),
             serde_json::json!({"type": "function", "function": {"name": "navigate"}})
         );
+    }
+
+    #[test]
+    fn tool_result_with_image_nests_input_image_in_output() {
+        use crate::types::ImageSource;
+        let converted = convert_responses_messages(&[InputMessage {
+            role: "user".to_string(),
+            content: vec![InputContentBlock::ToolResult {
+                tool_use_id: "call_img".to_string(),
+                content: vec![
+                    ToolResultContentBlock::Text {
+                        text: "screenshot taken".to_string(),
+                    },
+                    ToolResultContentBlock::Image {
+                        source: ImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: "image/png".to_string(),
+                            data: "abc123".to_string(),
+                        },
+                    },
+                ],
+                is_error: false,
+            }],
+        }]);
+
+        // The image must be nested inside function_call_output.output as an
+        // array item, not emitted as a sibling top-level input item.
+        assert_eq!(
+            converted.len(),
+            1,
+            "expected a single function_call_output item"
+        );
+
+        let func_output = &converted[0];
+        assert_eq!(func_output["type"], "function_call_output");
+        assert_eq!(func_output["call_id"], "call_img");
+
+        let output_items = func_output["output"]
+            .as_array()
+            .expect("output should be array");
+        assert_eq!(output_items.len(), 2);
+        assert_eq!(output_items[0]["type"], "input_text");
+        assert_eq!(output_items[0]["text"], "screenshot taken");
+        assert_eq!(output_items[1]["type"], "input_image");
+        assert_eq!(output_items[1]["image_url"], "data:image/png;base64,abc123");
     }
 }

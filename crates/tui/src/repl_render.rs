@@ -495,7 +495,7 @@ pub fn build_wrapped_list<S: ::std::hash::BuildHasher>(
                                 ))));
                             }
                         }
-                        ContentBlock::ToolResult { .. } => {}
+                        ContentBlock::ToolResult { .. } | ContentBlock::ToolResultImage { .. } => {}
                     }
                 }
             }
