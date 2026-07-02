@@ -31,7 +31,7 @@ pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let (direction, pixels) = parse_input(input)?;
 

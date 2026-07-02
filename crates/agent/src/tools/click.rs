@@ -184,7 +184,7 @@ fn build_resolve_by_text_script(scope_init: &str) -> String {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
 

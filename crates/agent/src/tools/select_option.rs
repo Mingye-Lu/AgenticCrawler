@@ -82,7 +82,7 @@ pub fn parse_input(input: &Value) -> Result<SelectOptionInput, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
     let (_frame_id, selector) =
@@ -100,7 +100,7 @@ async fn execute_native(
     params: &SelectOptionInput,
     selector: &str,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let options = get_native_options(browser, selector).await?;
 
@@ -167,7 +167,7 @@ async fn execute_custom(
     params: &SelectOptionInput,
     selector: &str,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let before_snapshot = extract_dom_snapshot(browser).await?;
     let before = snapshot_elements(&before_snapshot)?;
@@ -1600,7 +1600,7 @@ mod tests {
         let effect = execute(
             &json!({"selector": "#lang-trigger"}),
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
         )
         .await
         .unwrap();
@@ -1712,7 +1712,7 @@ mod tests {
         let effect = execute(
             &json!({"selector": "#lang-trigger", "label": "French"}),
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
         )
         .await
         .unwrap();
@@ -1806,7 +1806,7 @@ mod tests {
         let effect = execute(
             &json!({"selector": "#lang-trigger", "label": "French"}),
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
         )
         .await
         .unwrap();

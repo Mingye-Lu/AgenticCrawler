@@ -27,7 +27,7 @@ pub fn parse_input(input: &Value) -> Result<HoverInput, CrawlError> {
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
     let (_frame_id, resolved) =

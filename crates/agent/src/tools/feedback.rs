@@ -446,7 +446,7 @@ fn scoped_tree<'a>(
 
 fn page_state_from_feedback_map(
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
     interacted_selector: Option<&str>,
     widen: bool,
     mut pm: Value,
@@ -478,13 +478,19 @@ fn page_state_from_feedback_map(
         &mut Vec::new(),
     );
 
-    let previous_tree = if let Some(previous_snapshot) = previous_snapshot.as_ref() {
-        previous_snapshot.get("tree").and_then(parse_raw_tree)
-    } else if url_changed {
-        None
-    } else {
-        crawl_state.last_aria_tree.clone()
-    };
+    // Prefer the cached snapshot's tree, but when the snapshot lacks one
+    // (navigate caches url-only snapshots) fall back to the last full tree so
+    // the first post-action feedback after navigate is a diff, not a dump.
+    let previous_tree = previous_snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.get("tree").and_then(parse_raw_tree))
+        .or_else(|| {
+            if url_changed {
+                None
+            } else {
+                crawl_state.last_aria_tree.clone()
+            }
+        });
 
     let scope = resolve_diff_scope(
         browser.ref_map(),
@@ -504,6 +510,9 @@ fn page_state_from_feedback_map(
     };
 
     browser.set_page_snapshot(&cache_key, None, pm);
+    // Feedback snapshots are always full-page, so the freshly walked tree is
+    // the new diff/fingerprint baseline.
+    crawl_state.last_aria_tree = Some(current_tree);
     page_state
 }
 
@@ -513,7 +522,7 @@ fn page_state_from_feedback_map(
 /// comparison against the cached snapshot.
 pub(crate) async fn post_action_page_state(
     browser: &mut BrowserContext,
-    crawl_state: &CrawlState,
+    crawl_state: &mut CrawlState,
     interaction_kind: InteractionKind,
     interacted_selector: Option<&str>,
     widen: bool,
@@ -1230,7 +1239,7 @@ mod tests {
 
         let result = post_action_page_state(
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
             InteractionKind::Passive,
             Some("#open-modal"),
             false,
@@ -1247,6 +1256,57 @@ mod tests {
         assert_eq!(state.requested_scopes, vec![None]);
         // Feedback snapshots always use the walk's default depth.
         assert_eq!(state.requested_depths, vec![None]);
+    }
+
+    #[tokio::test]
+    async fn post_action_after_navigate_diffs_against_last_aria_tree() {
+        let url = "https://example.com/nav";
+        let prev_tree = document(vec![node("button", Some("Open modal"), Some("e2"), vec![])]);
+        let curr_tree = document(vec![
+            node("button", Some("Open modal"), Some("e2"), vec![]),
+            node("dialog", Some("Confirm"), Some("e3"), vec![]),
+        ]);
+
+        let (mut browser, _state) = browser_with_feedback_backend(
+            FeedbackMockState {
+                page_maps: HashMap::from([(
+                    String::new(),
+                    feedback_snapshot(url, "Nav", &curr_tree, None),
+                )]),
+                ..FeedbackMockState::default()
+            },
+            url,
+        );
+        // navigate caches a url-only snapshot without a tree; the last full
+        // tree lives in crawl_state.last_aria_tree.
+        browser.set_page_snapshot(url, None, json!({ "meta": { "url": url } }));
+        let mut crawl_state = CrawlState {
+            last_aria_tree: Some(prev_tree),
+            ..CrawlState::default()
+        };
+
+        let result = post_action_page_state(
+            &mut browser,
+            &mut crawl_state,
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let rendered = result.as_str().expect("page state should be a string");
+        assert!(
+            rendered.contains("added:"),
+            "expected a diff, got: {rendered}"
+        );
+        assert!(rendered.contains("dialog \"Confirm\""));
+
+        // The freshly walked tree becomes the new diff baseline.
+        let refreshed = crawl_state
+            .last_aria_tree
+            .expect("last_aria_tree should be refreshed");
+        assert_eq!(refreshed.children.len(), 2);
     }
 
     #[tokio::test]
@@ -1284,7 +1344,7 @@ mod tests {
 
         let result = post_action_page_state(
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
             InteractionKind::Passive,
             Some("#trigger"),
             true,
@@ -1320,7 +1380,7 @@ mod tests {
 
         let result = post_action_page_state(
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
             InteractionKind::PossibleSubmit,
             None,
             false,
@@ -1355,7 +1415,7 @@ mod tests {
 
         let result = post_action_page_state(
             &mut browser,
-            &CrawlState::default(),
+            &mut CrawlState::default(),
             InteractionKind::PossibleSubmit,
             None,
             false,
