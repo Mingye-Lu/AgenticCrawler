@@ -850,10 +850,9 @@ impl GoalExecutor for RealGoalExecutor {
         let system_prompt = build_run_goal_system_prompt(&request.allowed_tools);
 
         let registry = ToolRegistry::new_with_core_tools();
-        let mut agent = CrawlerAgent::new_lazy(registry)
-            .with_model_supports_vision(api::provider::catalog::model_supports_vision(
-                &request.model,
-            ));
+        let mut agent = CrawlerAgent::new_lazy(registry).with_model_supports_vision(
+            api::provider::catalog::model_supports_vision(&request.model),
+        );
         if !request.allowed_tools.is_empty() {
             agent = agent.with_allowed_tools(request.allowed_tools.iter().cloned().collect());
         }

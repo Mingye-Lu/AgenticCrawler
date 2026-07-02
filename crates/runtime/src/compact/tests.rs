@@ -395,7 +395,12 @@ fn prune_tool_outputs_non_tool_result_blocks_unchanged() {
 #[test]
 fn estimate_message_tokens_counts_image_payload_bytes() {
     let small = ConversationMessage::tool_result_image(
-        "call_1", "screenshot", "image/png", "abc", "shot", false,
+        "call_1",
+        "screenshot",
+        "image/png",
+        "abc",
+        "shot",
+        false,
     );
     let large = ConversationMessage::tool_result_image(
         "call_1",

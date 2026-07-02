@@ -138,9 +138,23 @@ mod tests {
 
     #[test]
     fn tool_result_image_constructor_stores_all_fields() {
-        let msg = ConversationMessage::tool_result_image("id1", "screenshot", "image/png", "abc123", "a screenshot", false);
+        let msg = ConversationMessage::tool_result_image(
+            "id1",
+            "screenshot",
+            "image/png",
+            "abc123",
+            "a screenshot",
+            false,
+        );
         match &msg.blocks[0] {
-            ContentBlock::ToolResultImage { tool_use_id, tool_name, media_type, base64_data, caption, is_error } => {
+            ContentBlock::ToolResultImage {
+                tool_use_id,
+                tool_name,
+                media_type,
+                base64_data,
+                caption,
+                is_error,
+            } => {
                 assert_eq!(tool_use_id, "id1");
                 assert_eq!(tool_name, "screenshot");
                 assert_eq!(media_type, "image/png");

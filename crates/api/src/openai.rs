@@ -1175,7 +1175,9 @@ mod tests {
         // The image is delivered via a follow-up `user` message instead.
         let user_msg = messages.last().expect("last message");
         assert_eq!(user_msg["role"], "user");
-        let content = user_msg["content"].as_array().expect("content should be array");
+        let content = user_msg["content"]
+            .as_array()
+            .expect("content should be array");
         assert_eq!(content.len(), 2);
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[1]["type"], "image_url");

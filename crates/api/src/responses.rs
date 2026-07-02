@@ -1453,20 +1453,23 @@ mod tests {
 
         // The image must be nested inside function_call_output.output as an
         // array item, not emitted as a sibling top-level input item.
-        assert_eq!(converted.len(), 1, "expected a single function_call_output item");
+        assert_eq!(
+            converted.len(),
+            1,
+            "expected a single function_call_output item"
+        );
 
         let func_output = &converted[0];
         assert_eq!(func_output["type"], "function_call_output");
         assert_eq!(func_output["call_id"], "call_img");
 
-        let output_items = func_output["output"].as_array().expect("output should be array");
+        let output_items = func_output["output"]
+            .as_array()
+            .expect("output should be array");
         assert_eq!(output_items.len(), 2);
         assert_eq!(output_items[0]["type"], "input_text");
         assert_eq!(output_items[0]["text"], "screenshot taken");
         assert_eq!(output_items[1]["type"], "input_image");
-        assert_eq!(
-            output_items[1]["image_url"],
-            "data:image/png;base64,abc123"
-        );
+        assert_eq!(output_items[1]["image_url"], "data:image/png;base64,abc123");
     }
 }

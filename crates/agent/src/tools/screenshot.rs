@@ -58,7 +58,10 @@ fn resize_for_llm(
         }
         // The `image` crate's WebP encoder is lossless-only, so `quality` has
         // no effect here; PNG is likewise always lossless.
-        "image/webp" => resized.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::WebP),
+        "image/webp" => resized.write_to(
+            &mut std::io::Cursor::new(&mut buf),
+            image::ImageFormat::WebP,
+        ),
         _ => resized.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png),
     };
     if write_result.is_err() {
@@ -456,7 +459,10 @@ mod tests {
         let dynamic = image::DynamicImage::ImageRgb8(img);
         let mut buf = Vec::new();
         dynamic
-            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+            .write_to(
+                &mut std::io::Cursor::new(&mut buf),
+                image::ImageFormat::Jpeg,
+            )
             .unwrap();
         base64::engine::general_purpose::STANDARD.encode(&buf)
     }

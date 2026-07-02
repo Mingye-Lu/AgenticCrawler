@@ -19,8 +19,8 @@ pub(super) fn summarize_messages(messages: &[ConversationMessage]) -> String {
         .flat_map(|message| message.blocks.iter())
         .filter_map(|block| match block {
             ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
-            ContentBlock::ToolResult { tool_name, .. } => Some(tool_name.as_str()),
-            ContentBlock::ToolResultImage { tool_name, .. } => Some(tool_name.as_str()),
+            ContentBlock::ToolResult { tool_name, .. }
+            | ContentBlock::ToolResultImage { tool_name, .. } => Some(tool_name.as_str()),
             ContentBlock::Text { .. } | ContentBlock::Reasoning { .. } => None,
         })
         .collect::<Vec<_>>();
@@ -102,7 +102,9 @@ pub(super) fn summarize_block(block: &ContentBlock) -> String {
             if *is_error { "error " } else { "" }
         ),
         ContentBlock::Reasoning { .. } => "reasoning".to_string(),
-        ContentBlock::ToolResultImage { tool_name, caption, .. } => {
+        ContentBlock::ToolResultImage {
+            tool_name, caption, ..
+        } => {
             format!("tool_result_image {tool_name}: {caption}")
         }
     };

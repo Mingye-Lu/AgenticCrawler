@@ -3,13 +3,13 @@ use super::{
     ConversationRuntime, RuntimeError, StaticToolExecutor, ToolOutcome,
     DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD,
 };
-use acrawl_core::effect::VisionPayload;
-use acrawl_core::ToolEffect;
 use crate::budget::usd_to_millicents;
 use crate::compact::CompactionConfig;
 use crate::prompt::SystemPromptBuilder;
 use crate::session::{ContentBlock, MessageRole, Session};
 use crate::usage::{estimate_cost_usd, TokenUsage};
+use acrawl_core::effect::VisionPayload;
+use acrawl_core::ToolEffect;
 use std::sync::{Arc, Mutex};
 
 type RuntimeSlots = (Arc<Mutex<Option<Vec<String>>>>, Arc<Mutex<Option<String>>>);

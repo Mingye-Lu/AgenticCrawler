@@ -18,8 +18,8 @@ pub use acrawl_core::error::{RuntimeError, ToolError};
 pub use acrawl_core::event::AssistantEvent;
 pub use acrawl_core::outcome::ToolOutcome;
 pub use acrawl_core::traits::ToolExecutor;
-pub use acrawl_core::{ApiClient, ApiRequest};
 use acrawl_core::ToolEffect;
+pub use acrawl_core::{ApiClient, ApiRequest};
 
 const DEFAULT_AUTO_COMPACTION_INPUT_TOKENS_THRESHOLD: u32 = 200_000;
 
