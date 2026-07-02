@@ -405,23 +405,30 @@ fn convert_message(
                     .get(tool_use_id)
                     .cloned()
                     .unwrap_or_else(|| tool_use_id.clone());
-                parts.push(serde_json::json!({
-                    "functionResponse": {
-                        "name": name,
-                        "response": tool_result_response(content, *is_error),
-                    }
-                }));
-                // Emit image blocks as additional inlineData parts in the same contents entry.
-                for block in content {
-                    if let ToolResultContentBlock::Image { source } = block {
-                        parts.push(serde_json::json!({
+                // Multimodal function results are nested inside functionResponse.parts
+                // per the Gemini API's FunctionResponse schema, not emitted as sibling
+                // parts at the contents level.
+                let image_parts: Vec<Value> = content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ToolResultContentBlock::Image { source } => Some(serde_json::json!({
                             "inlineData": {
                                 "mimeType": source.media_type,
                                 "data": source.data
                             }
-                        }));
-                    }
+                        })),
+                        _ => None,
+                    })
+                    .collect();
+
+                let mut function_response = serde_json::json!({
+                    "name": name,
+                    "response": tool_result_response(content, *is_error),
+                });
+                if !image_parts.is_empty() {
+                    function_response["parts"] = Value::Array(image_parts);
                 }
+                parts.push(serde_json::json!({ "functionResponse": function_response }));
             }
             InputContentBlock::ToolUse { .. }
             | InputContentBlock::ToolResult { .. }
@@ -690,13 +697,18 @@ mod tests {
             .expect("functionResponse part");
         assert_eq!(func_response["functionResponse"]["name"], "screenshot");
 
-        // inlineData part must also be present — not "[image omitted]".
-        let inline_data = parts
-            .iter()
-            .find(|p| p.get("inlineData").is_some())
-            .expect("inlineData part");
-        assert_eq!(inline_data["inlineData"]["mimeType"], "image/png");
-        assert_eq!(inline_data["inlineData"]["data"], "abc123");
+        // The image must be nested inside functionResponse.parts (per Gemini's
+        // FunctionResponse schema) — not emitted as a sibling top-level part.
+        assert!(
+            parts.iter().all(|p| p.get("inlineData").is_none()),
+            "inlineData must not appear as a sibling part"
+        );
+        let response_parts = func_response["functionResponse"]["parts"]
+            .as_array()
+            .expect("functionResponse.parts array");
+        assert_eq!(response_parts.len(), 1);
+        assert_eq!(response_parts[0]["inlineData"]["mimeType"], "image/png");
+        assert_eq!(response_parts[0]["inlineData"]["data"], "abc123");
     }
 
     #[test]

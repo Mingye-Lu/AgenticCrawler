@@ -103,6 +103,7 @@ fn tool_result_image_block_produces_image_and_text_content() {
             media_type: "image/png".to_string(),
             base64_data: "iVBORw0KGgo=".to_string(),
             caption: "screenshot: 42 bytes".to_string(),
+            is_error: false,
         }],
         usage: None,
     }];

@@ -536,6 +536,7 @@ fn build_tool_result_message(
                 &payload.media_type,
                 &payload.base64_data,
                 &output,
+                is_error,
             );
         }
     }

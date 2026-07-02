@@ -34,6 +34,16 @@ pub fn builtin_models() -> Vec<ModelInfo> {
     models
 }
 
+/// Whether the given model id supports vision (image) input, per the built-in catalog.
+/// Unknown models default to `false`.
+#[must_use]
+pub fn model_supports_vision(model: &str) -> bool {
+    builtin_models()
+        .into_iter()
+        .find(|m| m.id == model)
+        .is_some_and(|m| m.capabilities.vision)
+}
+
 /// Default max output tokens for unknown models (fallback when not in catalog).
 #[must_use]
 pub fn default_max_tokens(model: &str) -> u32 {

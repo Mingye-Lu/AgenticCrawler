@@ -10,13 +10,6 @@ use runtime::{
     RuntimeObserver, Session,
 };
 
-fn model_supports_vision(model: &str) -> bool {
-    api::provider::catalog::builtin_models()
-        .into_iter()
-        .find(|m| m.id == model)
-        .map_or(false, |m| m.capabilities.vision)
-}
-
 pub(super) fn build_system_prompt() -> Vec<String> {
     build_agent_system_prompt(&mvp_tool_specs(), None)
 }
@@ -62,7 +55,7 @@ pub(super) fn build_runtime_with_options(
 ) -> Result<ConversationRuntime<LlmRuntimeClient, CliToolExecutor>, CliError> {
     session.model = Some(model.clone());
     let max_steps = settings_get_max_steps(&load_settings()) as usize;
-    let vision_flag = model_supports_vision(&model);
+    let vision_flag = api::provider::catalog::model_supports_vision(&model);
     let shared_control = control_state.unwrap_or_default();
     let fork_client = SharedApiClient::new(LlmRuntimeClient::new(
         model.clone(),

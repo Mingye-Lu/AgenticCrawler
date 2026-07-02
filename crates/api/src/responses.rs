@@ -268,12 +268,31 @@ fn convert_responses_user_message(message: &InputMessage, out: &mut Vec<Value>) 
                         }
                     }
                 }
+
+                // Per OpenAI's function-calling guide, function results that include
+                // images must nest them inside `function_call_output.output` as an
+                // array of content items rather than as sibling top-level `input`
+                // items — a bare top-level `input_image` item is not a documented
+                // input type and is not accepted by the Responses API.
+                let output = if image_items.is_empty() {
+                    Value::String(text_output.join("\n"))
+                } else {
+                    let mut items = Vec::new();
+                    if !text_output.is_empty() {
+                        items.push(serde_json::json!({
+                            "type": "input_text",
+                            "text": text_output.join("\n"),
+                        }));
+                    }
+                    items.extend(image_items);
+                    Value::Array(items)
+                };
+
                 out.push(serde_json::json!({
                     "type": "function_call_output",
                     "call_id": tool_use_id,
-                    "output": text_output.join("\n"),
+                    "output": output,
                 }));
-                out.extend(image_items);
             }
             InputContentBlock::ToolUse { .. } => {}
             InputContentBlock::Reasoning { .. } => {
@@ -1410,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_with_image_emits_input_image() {
+    fn tool_result_with_image_nests_input_image_in_output() {
         use crate::types::ImageSource;
         let converted = convert_responses_messages(&[InputMessage {
             role: "user".to_string(),
@@ -1432,24 +1451,22 @@ mod tests {
             }],
         }]);
 
-        // Must have both a function_call_output and an input_image item.
-        assert!(
-            converted.len() >= 2,
-            "expected at least 2 items, got {}",
-            converted.len()
-        );
+        // The image must be nested inside function_call_output.output as an
+        // array item, not emitted as a sibling top-level input item.
+        assert_eq!(converted.len(), 1, "expected a single function_call_output item");
 
-        let func_output = converted
-            .iter()
-            .find(|item| item["type"] == "function_call_output")
-            .expect("function_call_output item");
+        let func_output = &converted[0];
+        assert_eq!(func_output["type"], "function_call_output");
         assert_eq!(func_output["call_id"], "call_img");
-        assert_eq!(func_output["output"], "screenshot taken");
 
-        let img_item = converted
-            .iter()
-            .find(|item| item["type"] == "input_image")
-            .expect("input_image item");
-        assert_eq!(img_item["image_url"], "data:image/png;base64,abc123");
+        let output_items = func_output["output"].as_array().expect("output should be array");
+        assert_eq!(output_items.len(), 2);
+        assert_eq!(output_items[0]["type"], "input_text");
+        assert_eq!(output_items[0]["text"], "screenshot taken");
+        assert_eq!(output_items[1]["type"], "input_image");
+        assert_eq!(
+            output_items[1]["image_url"],
+            "data:image/png;base64,abc123"
+        );
     }
 }

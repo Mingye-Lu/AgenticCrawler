@@ -314,6 +314,7 @@ pub(super) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMes
                         media_type,
                         base64_data,
                         caption,
+                        is_error,
                         ..
                     } => InputContentBlock::ToolResult {
                         tool_use_id: tool_use_id.clone(),
@@ -329,7 +330,7 @@ pub(super) fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMes
                                 text: caption.clone(),
                             },
                         ],
-                        is_error: false,
+                        is_error: *is_error,
                     },
                 })
                 .collect::<Vec<_>>();

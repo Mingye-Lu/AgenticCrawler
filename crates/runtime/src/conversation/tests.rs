@@ -605,11 +605,13 @@ async fn vision_capable_model_produces_tool_result_image() {
                 media_type,
                 base64_data,
                 caption,
+                is_error,
             } if tool_use_id == "call-vision"
                 && tool_name == "screenshot"
                 && media_type == "image/png"
                 && base64_data == "abc123"
                 && caption == "Page screenshot"
+                && !is_error
         ),
         "expected ToolResultImage block, got: {:?}",
         &tool_result_msg.blocks[0]

@@ -244,9 +244,12 @@ pub(super) fn estimate_message_tokens(message: &ConversationMessage) -> usize {
                 tool_name, output, ..
             } => (tool_name.len() + output.len()) / 4 + 1,
             ContentBlock::Reasoning { data } => data.len() / 4 + 1,
-            ContentBlock::ToolResultImage { tool_name, caption, .. } => {
-                (tool_name.len() + caption.len()) / 4 + 1
-            }
+            ContentBlock::ToolResultImage {
+                tool_name,
+                caption,
+                base64_data,
+                ..
+            } => (tool_name.len() + caption.len() + base64_data.len()) / 4 + 1,
         })
         .sum()
 }

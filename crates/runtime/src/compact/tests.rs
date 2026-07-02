@@ -393,6 +393,84 @@ fn prune_tool_outputs_non_tool_result_blocks_unchanged() {
 }
 
 #[test]
+fn estimate_message_tokens_counts_image_payload_bytes() {
+    let small = ConversationMessage::tool_result_image(
+        "call_1", "screenshot", "image/png", "abc", "shot", false,
+    );
+    let large = ConversationMessage::tool_result_image(
+        "call_1",
+        "screenshot",
+        "image/png",
+        "x".repeat(40_000),
+        "shot",
+        false,
+    );
+
+    assert!(
+        estimate_message_tokens(&large) > estimate_message_tokens(&small) + 1_000,
+        "a screenshot's base64 payload must dominate its token estimate"
+    );
+}
+
+#[test]
+fn prune_tool_outputs_strips_old_images_but_protects_recent_ones() {
+    let padding = "p".repeat(4_000);
+    let mut messages = vec![
+        ConversationMessage::assistant(vec![ContentBlock::ToolUse {
+            id: "call_old".to_string(),
+            name: "screenshot".to_string(),
+            input: "{}".to_string(),
+        }]),
+        ConversationMessage::tool_result_image(
+            "call_old",
+            "screenshot",
+            "image/png",
+            "old-image-data",
+            "old screenshot",
+            false,
+        ),
+    ];
+    for _ in 0..42 {
+        messages.push(ConversationMessage::user_text(&padding));
+    }
+    messages.push(ConversationMessage::tool_result_image(
+        "call_recent",
+        "screenshot",
+        "image/png",
+        "recent-image-data",
+        "recent screenshot",
+        false,
+    ));
+
+    prune_tool_outputs(&mut messages, 40_000, 2_000);
+
+    // The old screenshot, now outside the protected window, must have its
+    // image payload removed entirely — only the caption remains.
+    match &messages[1].blocks[0] {
+        ContentBlock::ToolResult {
+            tool_use_id,
+            tool_name,
+            output,
+            is_error,
+        } => {
+            assert_eq!(tool_use_id, "call_old");
+            assert_eq!(tool_name, "screenshot");
+            assert!(output.contains("old screenshot"));
+            assert!(!is_error);
+        }
+        other => panic!("expected old screenshot to be pruned to ToolResult, got {other:?}"),
+    }
+
+    // The recent screenshot, inside the protected window, must be untouched.
+    match &messages.last().unwrap().blocks[0] {
+        ContentBlock::ToolResultImage { base64_data, .. } => {
+            assert_eq!(base64_data, "recent-image-data");
+        }
+        other => panic!("expected recent screenshot to remain a ToolResultImage, got {other:?}"),
+    }
+}
+
+#[test]
 fn merge_summaries_first_compaction_returns_unchanged() {
     let summary = "<summary>Conversation summary:\n- Scope: 4 messages.</summary>";
     let result = merge_compact_summaries(None, summary);
