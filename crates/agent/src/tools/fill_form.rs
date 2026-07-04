@@ -199,7 +199,7 @@ async fn wait_for_spa_ready(browser: &mut BrowserContext) {
                 .and_then(|v| v.as_u64()),
             Err(_) => None,
         };
-        if visible_len.unwrap_or(0) as usize >= MIN_VISIBLE_CHARS {
+        if usize::try_from(visible_len.unwrap_or(0)).unwrap_or(0) >= MIN_VISIBLE_CHARS {
             break;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
