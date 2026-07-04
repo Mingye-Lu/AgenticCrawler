@@ -13,7 +13,7 @@ pub fn parse_input(input: &Value) -> Result<(String, u64), CrawlError> {
 
     let settle_ms = input
         .get("settle_ms")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
 
     Ok((script, settle_ms))
@@ -28,8 +28,7 @@ pub async fn execute(
 
     let script_to_eval = if settle_ms > 0 {
         format!(
-            "(async () => {{ const __r = await (async () => {{ return ({}); }})(); await new Promise(r => setTimeout(r, {})); return __r; }})()",
-            script, settle_ms
+            "(async () => {{ const __r = await (async () => {{ return ({script}); }})(); await new Promise(r => setTimeout(r, {settle_ms})); return __r; }})()"
         )
     } else {
         script
