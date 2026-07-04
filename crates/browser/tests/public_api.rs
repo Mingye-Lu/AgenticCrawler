@@ -37,7 +37,7 @@ impl BrowserBackend for MockBrowserBackend {
         self.navigate_count += 1;
         Ok(PageInfo {
             title: format!("Title for {url}"),
-            html: format!("<html><body>Mock page for {url}</body></html>"),
+            html: Some(format!("<html><body>Mock page for {url}</body></html>")),
         })
     }
 
@@ -215,7 +215,7 @@ async fn browser_context_navigate_through_bridge() {
     let mut guard = ctx.acquire_bridge().await.unwrap();
     let page_info = guard.navigate("https://example.com").await.unwrap();
     assert_eq!(page_info.title, "Title for https://example.com");
-    assert!(page_info.html.contains("example.com"));
+    assert!(page_info.html.unwrap_or_default().contains("example.com"));
 }
 
 #[test]

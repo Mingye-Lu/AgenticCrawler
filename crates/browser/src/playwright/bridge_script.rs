@@ -748,12 +748,18 @@ async function bootstrap() {
         }
         const targetPage = pages[pageIndex];
         await targetPage.close();
-        pages[pageIndex] = null;
-        observationBuffers.delete(pageIndex);
+        pages.splice(pageIndex, 1);
+        // Shift observation buffer indices for pages after the removed one
+        const shiftedBufs = new Map();
+        for (const [idx, buf] of observationBuffers.entries()) {
+          if (idx > pageIndex) shiftedBufs.set(idx - 1, buf);
+          else if (idx < pageIndex) shiftedBufs.set(idx, buf);
+        }
+        observationBuffers.clear();
+        for (const [k, v] of shiftedBufs) observationBuffers.set(k, v);
         if (page === targetPage) {
-          const fallbackPage = pages.find((entry) => entry);
-          if (fallbackPage) {
-            page = fallbackPage;
+          if (pages.length > 0) {
+            page = pages[Math.min(pageIndex, pages.length - 1)];
             await page.bringToFront().catch(() => {});
           }
         }

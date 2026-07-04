@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PageInfo {
     pub title: String,
-    pub html: String,
+    #[serde(default)]
+    pub html: Option<String>,
 }
 
 /// Captured browser state for preservation across bridge restarts.

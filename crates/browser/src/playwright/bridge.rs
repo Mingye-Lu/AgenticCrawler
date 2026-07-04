@@ -709,7 +709,10 @@ impl PlaywrightBridge {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("")
             .to_string();
-        Ok(PageInfo { title, html })
+        Ok(PageInfo {
+            title,
+            html: Some(html),
+        })
     }
 
     async fn read_bootstrap_message(&mut self) -> Result<(), BridgeError> {

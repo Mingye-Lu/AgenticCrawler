@@ -197,7 +197,7 @@ for line in sys.stdin:
         page,
         PageInfo {
             title: "Synthetic Example".to_string(),
-            html: "<html><title>Synthetic Example</title></html>".to_string(),
+            html: Some("<html><title>Synthetic Example</title></html>".to_string()),
         }
     );
 
@@ -289,7 +289,7 @@ async fn ignored_real_playwright_navigate_example_com() {
         .expect("navigate should succeed");
 
     assert!(page.title.contains("Example Domain"));
-    assert!(page.html.contains("Example Domain"));
+    assert!(page.html.unwrap_or_default().contains("Example Domain"));
 
     bridge
         .close()
