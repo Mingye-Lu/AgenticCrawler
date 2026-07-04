@@ -84,7 +84,10 @@ mod tests {
     fn parses_hover_selector() {
         let input = json!({"script": "getComputedStyle(document.querySelector('.btn')).color", "hover_selector": ".btn"});
         let parsed = parse_input(&input).unwrap();
-        assert_eq!(parsed.script, "getComputedStyle(document.querySelector('.btn')).color");
+        assert_eq!(
+            parsed.script,
+            "getComputedStyle(document.querySelector('.btn')).color"
+        );
         assert_eq!(parsed.hover_selector.as_deref(), Some(".btn"));
     }
 
