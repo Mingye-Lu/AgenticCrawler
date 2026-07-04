@@ -17,6 +17,7 @@ pub struct WaitInput {
     pub selector: Option<String>,
     pub timeout_ms: u64,
     pub state: Option<String>,
+    pub silent: bool,
 }
 
 pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
@@ -53,10 +54,16 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
         ));
     }
 
+    let silent = input
+        .get("silent")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
     Ok(WaitInput {
         selector,
         timeout_ms,
         state,
+        silent,
     })
 }
 
@@ -128,6 +135,13 @@ pub async fn execute(
         })))
     } else {
         tokio::time::sleep(Duration::from_millis(parsed.timeout_ms)).await;
+
+        if parsed.silent {
+            return Ok(ToolEffect::reply_json(&json!({
+                "success": true,
+                "waited_ms": parsed.timeout_ms
+            })));
+        }
 
         let page_state = super::feedback::post_action_page_state(
             browser,
@@ -221,5 +235,48 @@ mod tests {
         let input = json!({"selector": "#btn"});
         let parsed = parse_input(&input).unwrap();
         assert!(parsed.state.is_none());
+    }
+
+    #[test]
+    fn silent_defaults_to_false() {
+        let input = json!({"seconds": 1});
+        let parsed = parse_input(&input).unwrap();
+        assert!(!parsed.silent);
+    }
+
+    #[test]
+    fn parses_silent_true() {
+        let input = json!({"seconds": 1, "silent": true});
+        let parsed = parse_input(&input).unwrap();
+        assert!(parsed.silent);
+    }
+
+    #[tokio::test]
+    async fn silent_time_only_wait_skips_page_state() {
+        let _guard = crate::test_async_env_lock().lock().await;
+        let (mut browser, mut crawl_state) = super::super::feedback::tests::test_context().await;
+
+        let input = json!({"timeout_ms": 0, "silent": true});
+        let effect = execute(&input, &mut browser, &mut crawl_state)
+            .await
+            .unwrap();
+        let value = effect.reply_json_value().unwrap();
+
+        assert_eq!(value["success"], json!(true));
+        assert!(value.get("page_state").is_none());
+    }
+
+    #[tokio::test]
+    async fn silent_with_selector_still_includes_page_state() {
+        let _guard = crate::test_async_env_lock().lock().await;
+        let (mut browser, mut crawl_state) = super::super::feedback::tests::test_context().await;
+
+        let input = json!({"selector": "body", "timeout_ms": 100, "silent": true});
+        let effect = execute(&input, &mut browser, &mut crawl_state)
+            .await
+            .unwrap();
+        let value = effect.reply_json_value().unwrap();
+
+        assert!(value.get("page_state").is_some());
     }
 }
