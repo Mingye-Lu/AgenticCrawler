@@ -297,16 +297,17 @@ fn press_key_tool() -> ToolSpec {
 fn execute_js_tool() -> ToolSpec {
     ToolSpec {
         name: "execute_js",
-        description: "Execute arbitrary JavaScript in the page context and return the evaluation result. The script runs synchronously in the browser's main frame with full access to the DOM, window, and page APIs. Use as a last resort when CSS selectors and other tools cannot achieve the interaction — prefer click, fill_form, and select_option for standard interactions.",
+        description: "Execute arbitrary JavaScript in the page context and return the evaluation result. The script runs synchronously in the browser's main frame with full access to the DOM, window, and page APIs. Use as a last resort when CSS selectors and other tools cannot achieve the interaction — prefer click, fill_form, and select_option for standard interactions. When the script triggers reactive DOM changes (e.g., .click() on a toggle), the return value may reflect pre-mutation state because frameworks schedule updates asynchronously. Set settle_ms (e.g., 50) to wait for reactivity to flush before capturing the result.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." }
+                "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." },
+                "settle_ms": { "type": "integer", "description": "Milliseconds to wait after script execution before capturing the return value. Use when the script triggers DOM mutations that a reactive framework (Vue, React, etc.) processes asynchronously — a value of 50-100ms allows framework reactivity to flush before reading state. Default: 0 (no delay)." }
             },
             "required": ["script"],
             "additionalProperties": false
         }),
-        instructions: Some("Last resort for complex interactions that CSS selectors cannot handle. Prefer click, fill_form, and select_option first. The script runs in the page context and can return a value."),
+        instructions: Some("Last resort for complex interactions that CSS selectors cannot handle. Prefer click, fill_form, and select_option first. The script runs in the page context and can return a value. Set settle_ms to wait for framework reactivity to flush after triggering DOM mutations."),
     }
 }
 
