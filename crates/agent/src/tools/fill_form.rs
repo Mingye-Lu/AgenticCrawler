@@ -134,7 +134,7 @@ pub async fn execute(
                     Err(_) => None,
                 };
                 if current.as_deref() != Some(old_url.as_str()) {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    wait_for_spa_ready(browser).await;
                     break;
                 }
             }
@@ -165,6 +165,47 @@ pub async fn execute(
         ),
         "page_state": page_state
     })))
+}
+
+const MIN_VISIBLE_CHARS: usize = 200;
+
+/// Waits for a post-submit SPA navigation to actually finish rendering:
+/// document.readyState, then enough visible text, then a hydration buffer.
+/// Mirrors the readiness wait used by the navigate tool's bridge handling.
+async fn wait_for_spa_ready(browser: &mut BrowserContext) {
+    let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while tokio::time::Instant::now() < ready_deadline {
+        let is_complete = match browser.acquire_bridge().await {
+            Ok(mut b) => b
+                .evaluate("document.readyState === 'complete'")
+                .await
+                .ok()
+                .and_then(|v| v.as_bool()),
+            Err(_) => None,
+        };
+        if is_complete == Some(true) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let text_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < text_deadline {
+        let visible_len = match browser.acquire_bridge().await {
+            Ok(mut b) => b
+                .evaluate("(document.body ? document.body.innerText : '').trim().length")
+                .await
+                .ok()
+                .and_then(|v| v.as_u64()),
+            Err(_) => None,
+        };
+        if visible_len.unwrap_or(0) as usize >= MIN_VISIBLE_CHARS {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
 }
 
 async fn fill_fields(
