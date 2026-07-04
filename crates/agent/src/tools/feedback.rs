@@ -659,7 +659,7 @@ mod tests {
         async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
             Ok(PageInfo {
                 title: "Test".to_string(),
-                html: String::new(),
+                html: Some(String::new()),
             })
         }
 
