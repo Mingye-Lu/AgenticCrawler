@@ -82,13 +82,16 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    // Evaluate the caller's script unmodified so multi-statement scripts keep
-    // the completion-value (last-expression) semantics the bridge already
-    // provides. The settle delay is a separate round-trip rather than being
-    // spliced into the script text, so it can't turn a valid script into
-    // invalid JS (e.g. wrapping a statement list in a `return (...)` expression).
+    // The bridge evaluates the script as an expression (Playwright's
+    // page.evaluate), so a bare statement list with a top-level `return`
+    // would throw `SyntaxError: Illegal return statement`. Wrapping in an
+    // async IIFE turns the script into a function body: multi-statement
+    // scripts keep their completion-value (last-expression) semantics, and
+    // scripts with an explicit `return` now work too. The settle delay stays
+    // a separate round-trip rather than being spliced into the script text.
+    let wrapped = format!("(async () => {{\n{}\n}})()", params.script);
     let result = bridge
-        .evaluate(&params.script)
+        .evaluate(&wrapped)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -204,9 +207,13 @@ mod tests {
             .expect("execute should succeed");
 
         let calls = take_recorded_evaluate_scripts(&sink).await;
-        assert_eq!(
-            calls[0], script,
-            "the caller's script must be evaluated byte-for-byte, not spliced into a wrapper expression"
+        assert!(
+            calls[0].starts_with("(async () => {"),
+            "the caller's script must be wrapped in an async IIFE"
+        );
+        assert!(
+            calls[0].contains(script),
+            "the wrapped call must contain the caller's original script"
         );
         assert_eq!(
             calls.len(),
@@ -232,7 +239,41 @@ mod tests {
             .expect("execute should succeed");
 
         let calls = take_recorded_evaluate_scripts(&sink).await;
-        assert_eq!(calls, vec!["document.title".to_string()]);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].starts_with("(async () => {"));
+        assert!(calls[0].contains("document.title"));
+    }
+
+    #[test]
+    fn parses_script_with_top_level_return() {
+        let input = json!({"script": "return document.title;"});
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.script, "return document.title;");
+    }
+
+    #[tokio::test]
+    async fn wraps_script_with_return_in_async_iife() {
+        use crate::tools::test_support::{
+            browser_with_evaluate_recorder, take_recorded_evaluate_scripts,
+        };
+
+        let (mut browser, sink) = browser_with_evaluate_recorder();
+        let crawl_state = CrawlState::default();
+
+        let script = "return document.title;";
+        let input = json!({"script": script});
+
+        execute(&input, &mut browser, &crawl_state)
+            .await
+            .expect("execute should succeed");
+
+        let calls = take_recorded_evaluate_scripts(&sink).await;
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].starts_with("(async () => {"),
+            "a script with a top-level return must be wrapped in an async IIFE"
+        );
+        assert!(calls[0].contains(script));
     }
 
     mod execute_tests {
@@ -417,10 +458,10 @@ mod tests {
             let result = execute(&input, &mut browser, &CrawlState::default()).await;
 
             assert!(result.is_ok());
-            assert_eq!(
-                state.lock().unwrap().calls,
-                vec!["hover:.btn".to_string(), "evaluate:1".to_string()]
-            );
+            let calls = state.lock().unwrap().calls.clone();
+            assert_eq!(calls[0], "hover:.btn");
+            assert!(calls[1].starts_with("evaluate:(async () => {"));
+            assert!(calls[1].contains('1'));
         }
 
         #[tokio::test]
@@ -447,7 +488,9 @@ mod tests {
             let result = execute(&input, &mut browser, &CrawlState::default()).await;
 
             assert!(result.is_ok());
-            assert_eq!(state.lock().unwrap().calls, vec!["evaluate:1".to_string()]);
+            let calls = state.lock().unwrap().calls.clone();
+            assert_eq!(calls.len(), 1);
+            assert!(calls[0].starts_with("evaluate:(async () => {"));
         }
 
         #[tokio::test]
@@ -461,7 +504,8 @@ mod tests {
             assert!(result.is_ok());
             let calls = state.lock().unwrap().calls.clone();
             assert_eq!(calls[0], "hover:.btn");
-            assert_eq!(calls[1], "evaluate:1");
+            assert!(calls[1].starts_with("evaluate:(async () => {"));
+            assert!(calls[1].contains('1'));
             assert!(calls[2].contains("evaluate:") && calls[2].contains("setTimeout"));
         }
     }
