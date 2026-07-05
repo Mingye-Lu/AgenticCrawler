@@ -836,36 +836,120 @@ async fn is_target_active(
     Ok(evaluate_payload(&result).as_bool().unwrap_or(false))
 }
 
-async fn verify_custom_selection(
+const VERIFY_RETRY_DELAYS: [Duration; 3] = [
+    Duration::from_millis(400),
+    Duration::from_millis(800),
+    Duration::from_millis(1200),
+];
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+struct SelectionVerificationFacts {
+    trigger_present: bool,
+    trigger_texts: Vec<String>,
+    target_present: bool,
+    target_selected: bool,
+    trigger_expanded: Option<String>,
+    controlled_texts: Vec<String>,
+}
+
+fn normalize_verification_text(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+fn evaluate_selection_verification(facts: &SelectionVerificationFacts, target_text: &str) -> bool {
+    if !facts.trigger_present {
+        return false;
+    }
+
+    let normalized_target = normalize_verification_text(target_text);
+    if normalized_target.is_empty() {
+        return false;
+    }
+
+    if facts
+        .trigger_texts
+        .iter()
+        .any(|text| normalize_verification_text(text).contains(&normalized_target))
+    {
+        return true;
+    }
+
+    if facts.target_present && facts.target_selected {
+        return true;
+    }
+
+    if !facts.target_present {
+        let expanded = facts.trigger_expanded.as_deref();
+        if expanded.is_none() || expanded == Some("false") {
+            return true;
+        }
+    }
+
+    facts
+        .controlled_texts
+        .iter()
+        .any(|text| normalize_verification_text(text).contains(&normalized_target))
+}
+
+async fn gather_selection_verification_facts(
     browser: &mut BrowserContext,
     trigger_selector: &str,
     target_selector: &str,
-    target_text: &str,
-) -> Result<bool, ToolExecutionError> {
+) -> Result<SelectionVerificationFacts, ToolExecutionError> {
     let trigger_json = js_string(trigger_selector)?;
     let target_json = js_string(target_selector)?;
-    let target_text_json = js_string(target_text)?;
     let script = format!(
-        r"(() => {{
+        r#"(() => {{
             const trigger = document.querySelector({trigger_json});
             const target = document.querySelector({target_json});
-            const targetText = {target_text_json}.trim().toLowerCase();
-            if (!trigger) return false;
+            if (!trigger) {{
+                return {{
+                    trigger_present: false,
+                    trigger_texts: [],
+                    target_present: false,
+                    target_selected: false,
+                    trigger_expanded: null,
+                    controlled_texts: [],
+                }};
+            }}
 
-            const triggerTexts = [
-                trigger.innerText || '',
-                trigger.textContent || '',
-                trigger.getAttribute('aria-label') || '',
-                'value' in trigger ? String(trigger.value || '') : ''
+            const texts = [
+                trigger.innerText,
+                trigger.textContent,
+                trigger.getAttribute('aria-label'),
+                'value' in trigger ? String(trigger.value || '') : '',
+                trigger.getAttribute('value'),
+                trigger.getAttribute('data-value'),
+            ];
+            trigger.querySelectorAll('*').forEach((el) => texts.push(el.textContent));
+
+            const controlledIds = [
+                trigger.getAttribute('aria-controls'),
+                trigger.getAttribute('aria-owns'),
             ]
-                .map((value) => value.trim().toLowerCase())
+                .filter(Boolean)
+                .flatMap((value) => value.split(/\s+/))
                 .filter(Boolean);
-            if (triggerTexts.some((value) => value.includes(targetText))) return true;
 
-            if (target && target.getAttribute('aria-selected') === 'true') return true;
+            const controlledTexts = [];
+            controlledIds.forEach((id) => {{
+                const container = document.getElementById(id);
+                if (!container) return;
+                container.querySelectorAll('[aria-selected="true"]').forEach((el) => {{
+                    controlledTexts.push(el.textContent || '');
+                }});
+            }});
 
-            return false;
-        }})()"
+            return {{
+                trigger_present: true,
+                trigger_texts: texts.filter((value) => value != null),
+                target_present: !!target,
+                target_selected: target ? target.getAttribute('aria-selected') === 'true' : false,
+                trigger_expanded: trigger.getAttribute('aria-expanded'),
+                controlled_texts: controlledTexts,
+            }};
+        }})()"#
     );
 
     let result = browser
@@ -876,7 +960,42 @@ async fn verify_custom_selection(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    Ok(evaluate_payload(&result).as_bool().unwrap_or(false))
+    Ok(serde_json::from_value(evaluate_payload(&result).clone()).unwrap_or_default())
+}
+
+async fn verify_custom_selection_once(
+    browser: &mut BrowserContext,
+    trigger_selector: &str,
+    target_selector: &str,
+    target_text: &str,
+) -> Result<bool, ToolExecutionError> {
+    let facts =
+        gather_selection_verification_facts(browser, trigger_selector, target_selector).await?;
+    Ok(evaluate_selection_verification(&facts, target_text))
+}
+
+async fn verify_custom_selection(
+    browser: &mut BrowserContext,
+    trigger_selector: &str,
+    target_selector: &str,
+    target_text: &str,
+) -> Result<bool, ToolExecutionError> {
+    if verify_custom_selection_once(browser, trigger_selector, target_selector, target_text)
+        .await?
+    {
+        return Ok(true);
+    }
+
+    for delay in VERIFY_RETRY_DELAYS {
+        tokio::time::sleep(delay).await;
+        if verify_custom_selection_once(browser, trigger_selector, target_selector, target_text)
+            .await?
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 async fn extract_dom_snapshot(browser: &mut BrowserContext) -> Result<Value, ToolExecutionError> {
@@ -1645,7 +1764,16 @@ mod tests {
                 json!({"value": false}),
                 json!({"value": false}),
                 json!({"value": false}),
-                json!({"value": true}),
+                json!({
+                    "value": {
+                        "trigger_present": true,
+                        "trigger_texts": ["French"],
+                        "target_present": false,
+                        "target_selected": false,
+                        "trigger_expanded": "false",
+                        "controlled_texts": []
+                    }
+                }),
             ]),
             snapshot_results: VecDeque::from(vec![
                 snapshot(vec![json!({
@@ -1725,6 +1853,197 @@ mod tests {
             .clicks
             .iter()
             .any(|sel| sel == "#opt-fr"));
+    }
+
+    #[test]
+    fn evaluate_selection_verification_matches_trigger_text() {
+        let facts = SelectionVerificationFacts {
+            trigger_present: true,
+            trigger_texts: vec!["  French  ".to_string()],
+            ..Default::default()
+        };
+        assert!(evaluate_selection_verification(&facts, "French"));
+    }
+
+    #[test]
+    fn evaluate_selection_verification_matches_data_value_in_trigger_texts() {
+        let facts = SelectionVerificationFacts {
+            trigger_present: true,
+            trigger_texts: vec!["fr".to_string()],
+            ..Default::default()
+        };
+        assert!(evaluate_selection_verification(&facts, "fr"));
+    }
+
+    #[test]
+    fn evaluate_selection_verification_matches_target_aria_selected() {
+        let facts = SelectionVerificationFacts {
+            trigger_present: true,
+            target_present: true,
+            target_selected: true,
+            ..Default::default()
+        };
+        assert!(evaluate_selection_verification(&facts, "French"));
+    }
+
+    #[test]
+    fn evaluate_selection_verification_treats_removed_target_and_closed_dropdown_as_success() {
+        let facts = SelectionVerificationFacts {
+            trigger_present: true,
+            target_present: false,
+            trigger_expanded: Some("false".to_string()),
+            ..Default::default()
+        };
+        assert!(evaluate_selection_verification(&facts, "French"));
+
+        let facts_no_expanded_attr = SelectionVerificationFacts {
+            trigger_present: true,
+            target_present: false,
+            trigger_expanded: None,
+            ..Default::default()
+        };
+        assert!(evaluate_selection_verification(
+            &facts_no_expanded_attr,
+            "French"
+        ));
+    }
+
+    #[test]
+    fn evaluate_selection_verification_does_not_treat_still_open_dropdown_as_success() {
+        let facts = SelectionVerificationFacts {
+            trigger_present: true,
+            target_present: false,
+            trigger_expanded: Some("true".to_string()),
+            ..Default::default()
+        };
+        assert!(!evaluate_selection_verification(&facts, "French"));
+    }
+
+    #[test]
+    fn evaluate_selection_verification_matches_controlled_container_selection() {
+        let facts = SelectionVerificationFacts {
+            trigger_present: true,
+            target_present: true,
+            target_selected: false,
+            controlled_texts: vec!["French".to_string()],
+            ..Default::default()
+        };
+        assert!(evaluate_selection_verification(&facts, "French"));
+    }
+
+    #[test]
+    fn evaluate_selection_verification_returns_false_when_nothing_matches() {
+        let facts = SelectionVerificationFacts {
+            trigger_present: true,
+            target_present: true,
+            target_selected: false,
+            trigger_expanded: Some("true".to_string()),
+            ..Default::default()
+        };
+        assert!(!evaluate_selection_verification(&facts, "French"));
+    }
+
+    fn verification_facts_value(
+        trigger_present: bool,
+        trigger_texts: &[&str],
+        target_present: bool,
+        target_selected: bool,
+        trigger_expanded: Option<&str>,
+        controlled_texts: &[&str],
+    ) -> Value {
+        json!({
+            "value": {
+                "trigger_present": trigger_present,
+                "trigger_texts": trigger_texts,
+                "target_present": target_present,
+                "target_selected": target_selected,
+                "trigger_expanded": trigger_expanded,
+                "controlled_texts": controlled_texts,
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn verify_custom_selection_succeeds_after_trigger_text_updates_on_retry() {
+        let state = Arc::new(Mutex::new(MockState {
+            evaluate_results: VecDeque::from(vec![
+                verification_facts_value(true, &[], false, false, Some("true"), &[]),
+                verification_facts_value(true, &["French"], false, false, Some("true"), &[]),
+            ]),
+            ..MockState::default()
+        }));
+        let mut browser = make_browser(state);
+
+        let verified = verify_custom_selection(&mut browser, "#lang-trigger", "#opt-fr", "French")
+            .await
+            .unwrap();
+
+        assert!(verified);
+    }
+
+    #[tokio::test]
+    async fn verify_custom_selection_succeeds_when_dropdown_closes() {
+        let state = Arc::new(Mutex::new(MockState {
+            evaluate_results: VecDeque::from(vec![verification_facts_value(
+                true,
+                &[],
+                false,
+                false,
+                Some("false"),
+                &[],
+            )]),
+            ..MockState::default()
+        }));
+        let mut browser = make_browser(state);
+
+        let verified = verify_custom_selection(&mut browser, "#lang-trigger", "#opt-fr", "French")
+            .await
+            .unwrap();
+
+        assert!(verified);
+    }
+
+    #[tokio::test]
+    async fn verify_custom_selection_succeeds_via_data_value_attribute() {
+        let state = Arc::new(Mutex::new(MockState {
+            evaluate_results: VecDeque::from(vec![verification_facts_value(
+                true,
+                &["fr"],
+                false,
+                false,
+                Some("true"),
+                &[],
+            )]),
+            ..MockState::default()
+        }));
+        let mut browser = make_browser(state);
+
+        let verified = verify_custom_selection(&mut browser, "#lang-trigger", "#opt-fr", "fr")
+            .await
+            .unwrap();
+
+        assert!(verified);
+    }
+
+    #[tokio::test]
+    async fn verify_custom_selection_returns_false_after_all_retries_fail() {
+        let state = Arc::new(Mutex::new(MockState {
+            evaluate_results: VecDeque::from(vec![
+                verification_facts_value(true, &[], true, false, Some("true"), &[]),
+                verification_facts_value(true, &[], true, false, Some("true"), &[]),
+                verification_facts_value(true, &[], true, false, Some("true"), &[]),
+                verification_facts_value(true, &[], true, false, Some("true"), &[]),
+            ]),
+            ..MockState::default()
+        }));
+        let mut browser = make_browser(state.clone());
+
+        let verified = verify_custom_selection(&mut browser, "#lang-trigger", "#opt-fr", "French")
+            .await
+            .unwrap();
+
+        assert!(!verified);
+        assert_eq!(state.lock().unwrap().evaluate_scripts.len(), 4);
     }
 
     #[tokio::test]
