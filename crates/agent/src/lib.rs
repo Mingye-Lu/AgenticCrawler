@@ -126,7 +126,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait",
-            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires.",
+            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires, unless `silent: true` is set for a time-only wait, in which case only the completion signal is returned.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -136,11 +136,15 @@ fn navigation_tools() -> Vec<ToolSpec> {
                         "type": "string",
                         "enum": ["visible", "hidden", "attached", "detached"],
                         "description": "Target state to wait for. 'attached' (default) = element exists in DOM; 'visible' = element is rendered and not hidden; 'hidden' = element is no longer visible; 'detached' = element removed from DOM. Use 'hidden' to wait for loading spinners to disappear."
+                    },
+                    "silent": {
+                        "type": "boolean",
+                        "description": "When true, suppress the page_state payload from the response. Use for simple timed pauses where you don't need a structural diff — saves context tokens. Only effective for time-only waits (no selector). Default: false."
                     }
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner). Returns post-action page_state (URL, title, and structural diff) so you can see what changed without a separate page_map call."),
+            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner). Set `silent: true` for simple timed pauses to suppress the page_state and save context tokens. Has no effect when a `selector` is provided."),
         },
     ]
 }
@@ -297,16 +301,18 @@ fn press_key_tool() -> ToolSpec {
 fn execute_js_tool() -> ToolSpec {
     ToolSpec {
         name: "execute_js",
-        description: "Execute arbitrary JavaScript in the page context and return the evaluation result. The script runs synchronously in the browser's main frame with full access to the DOM, window, and page APIs. Use as a last resort when CSS selectors and other tools cannot achieve the interaction — prefer click, fill_form, and select_option for standard interactions.",
+        description: "Execute arbitrary JavaScript in the page context and return the evaluation result. The script runs synchronously in the browser's main frame with full access to the DOM, window, and page APIs. Use as a last resort when CSS selectors and other tools cannot achieve the interaction — prefer click, fill_form, and select_option for standard interactions. Optionally accepts `hover_selector` to hover over an element before executing the script, enabling inspection of CSS :hover styles and hover-triggered DOM changes. When the script triggers reactive DOM changes (e.g., .click() on a toggle), the return value may reflect pre-mutation state because frameworks schedule updates asynchronously. Set settle_ms (e.g., 50) to wait for reactivity to flush before capturing the result.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." }
+                "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." },
+                "hover_selector": { "type": "string", "description": "Optional CSS selector or @eN ref (from page_map) of an element to hover over BEFORE executing the script. When provided, the mouse is moved over the element (triggering :hover CSS pseudo-class), then the script is evaluated. This allows inspecting hover-dependent computed styles (e.g. getComputedStyle(el).color after hover) or verifying hover-triggered DOM changes." },
+                "settle_ms": { "type": "integer", "description": "Milliseconds to wait after script execution before capturing the return value (max 5000). Use when the script triggers DOM mutations that a reactive framework (Vue, React, etc.) processes asynchronously — a value of 50-100ms allows framework reactivity to flush before reading state. Default: 0 (no delay)." }
             },
             "required": ["script"],
             "additionalProperties": false
         }),
-        instructions: Some("Last resort for complex interactions that CSS selectors cannot handle. Prefer click, fill_form, and select_option first. The script runs in the page context and can return a value."),
+        instructions: Some("Last resort for complex interactions that CSS selectors cannot handle. Prefer click, fill_form, and select_option first. The script runs in the page context and can return a value. To inspect CSS :hover styles, pass hover_selector to trigger the hover state before script evaluation. Set settle_ms to wait for framework reactivity to flush after triggering DOM mutations."),
     }
 }
 

@@ -259,7 +259,7 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 | `hover` | Hover over an element to reveal tooltips or menus. Returns `page_state`. |
 | `press_key` | Press a keyboard key (Enter, Escape, Tab, etc.), optionally targeting an element. Returns `page_state`. |
 | `set_device` | Switch browser device emulation (mobile/desktop). Supports 10 presets (iphone_15, pixel_7, ipad_pro, desktop, etc.) or custom viewport/UA/touch parameters. Returns differential `page_state` showing responsive layout changes. |
-| `execute_js` | Run arbitrary JavaScript in the page context and return the result. |
+| `execute_js` | Run arbitrary JavaScript in the page context and return the result. Optional `hover_selector` hovers an element (CSS selector or @eN ref) before evaluation, for inspecting `:hover` styles. |
 
 #### Content Extraction
 
