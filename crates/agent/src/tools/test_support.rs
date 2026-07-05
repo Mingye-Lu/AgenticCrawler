@@ -15,12 +15,14 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 pub type SaveFileHeadersRecord = Arc<Mutex<Option<BTreeMap<String, String>>>>;
+pub type EvaluateScriptsRecord = Arc<Mutex<Vec<String>>>;
 
 #[derive(Debug, Default)]
 pub struct ObservationMockBackend {
     pub observations: Vec<ObservationEvent>,
     pub last_save_file_headers: Option<BTreeMap<String, String>>,
     pub save_file_headers_sink: Option<SaveFileHeadersRecord>,
+    pub evaluate_scripts_sink: Option<EvaluateScriptsRecord>,
 }
 
 #[async_trait]
@@ -71,7 +73,10 @@ impl BrowserBackend for ObservationMockBackend {
     async fn select_option(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {
         Ok(())
     }
-    async fn evaluate(&mut self, _: &str) -> Result<Value, BridgeError> {
+    async fn evaluate(&mut self, script: &str) -> Result<Value, BridgeError> {
+        if let Some(sink) = &self.evaluate_scripts_sink {
+            sink.lock().await.push(script.to_string());
+        }
         Ok(Value::Null)
     }
     async fn hover(&mut self, _: &str) -> Result<(), BridgeError> {
@@ -149,6 +154,7 @@ pub fn browser_with_observations(observations: Vec<ObservationEvent>) -> Browser
         observations,
         last_save_file_headers: None,
         save_file_headers_sink: None,
+        evaluate_scripts_sink: None,
     }) as Box<dyn BrowserBackend + Send>));
     BrowserContext::new(bridge)
 }
@@ -162,6 +168,7 @@ pub fn browser_with_save_file_header_recorder(
         observations,
         last_save_file_headers: None,
         save_file_headers_sink: Some(sink.clone()),
+        evaluate_scripts_sink: None,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
 }
@@ -169,5 +176,21 @@ pub fn browser_with_save_file_header_recorder(
 pub async fn take_recorded_save_file_headers(
     sink: &SaveFileHeadersRecord,
 ) -> Option<BTreeMap<String, String>> {
+    sink.lock().await.clone()
+}
+
+#[must_use]
+pub fn browser_with_evaluate_recorder() -> (BrowserContext, EvaluateScriptsRecord) {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bridge: SharedBridge = Arc::new(Mutex::new(Box::new(ObservationMockBackend {
+        observations: Vec::new(),
+        last_save_file_headers: None,
+        save_file_headers_sink: None,
+        evaluate_scripts_sink: Some(sink.clone()),
+    }) as Box<dyn BrowserBackend + Send>));
+    (BrowserContext::new(bridge), sink)
+}
+
+pub async fn take_recorded_evaluate_scripts(sink: &EvaluateScriptsRecord) -> Vec<String> {
     sink.lock().await.clone()
 }

@@ -302,7 +302,7 @@ fn execute_js_tool() -> ToolSpec {
             "type": "object",
             "properties": {
                 "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." },
-                "settle_ms": { "type": "integer", "description": "Milliseconds to wait after script execution before capturing the return value. Use when the script triggers DOM mutations that a reactive framework (Vue, React, etc.) processes asynchronously — a value of 50-100ms allows framework reactivity to flush before reading state. Default: 0 (no delay)." }
+                "settle_ms": { "type": "integer", "description": "Milliseconds to wait after script execution before capturing the return value (max 5000). Use when the script triggers DOM mutations that a reactive framework (Vue, React, etc.) processes asynchronously — a value of 50-100ms allows framework reactivity to flush before reading state. Default: 0 (no delay)." }
             },
             "required": ["script"],
             "additionalProperties": false
