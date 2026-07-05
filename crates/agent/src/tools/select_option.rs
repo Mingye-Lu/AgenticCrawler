@@ -854,7 +854,11 @@ struct SelectionVerificationFacts {
 }
 
 fn normalize_verification_text(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 fn evaluate_selection_verification(facts: &SelectionVerificationFacts, target_text: &str) -> bool {
@@ -980,8 +984,7 @@ async fn verify_custom_selection(
     target_selector: &str,
     target_text: &str,
 ) -> Result<bool, ToolExecutionError> {
-    if verify_custom_selection_once(browser, trigger_selector, target_selector, target_text)
-        .await?
+    if verify_custom_selection_once(browser, trigger_selector, target_selector, target_text).await?
     {
         return Ok(true);
     }
