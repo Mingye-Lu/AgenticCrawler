@@ -257,4 +257,65 @@ mod tests {
         let parsed = parse_input(&input).unwrap();
         assert!(!parsed.silent);
     }
+
+    fn effect_json(effect: ToolEffect) -> Value {
+        let ToolEffect::Reply(body) = effect else {
+            panic!("expected ToolEffect::Reply, got {effect:?}");
+        };
+        serde_json::from_str(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn execute_silent_time_only_wait_omits_page_state() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut browser = browser_with_observations(vec![]);
+        let mut state = CrawlState::default();
+
+        let effect = execute(
+            &json!({"timeout_ms": 1, "silent": true}),
+            &mut browser,
+            &mut state,
+        )
+        .await
+        .unwrap();
+        let response = effect_json(effect);
+
+        assert_eq!(response["waited_ms"], 1);
+        assert!(response.get("page_state").is_none());
+    }
+
+    #[tokio::test]
+    async fn execute_non_silent_time_only_wait_includes_page_state() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut browser = browser_with_observations(vec![]);
+        let mut state = CrawlState::default();
+
+        let effect = execute(&json!({"timeout_ms": 1}), &mut browser, &mut state)
+            .await
+            .unwrap();
+        let response = effect_json(effect);
+
+        assert!(response.get("page_state").is_some());
+    }
+
+    #[tokio::test]
+    async fn execute_silent_with_selector_still_includes_page_state() {
+        use crate::tools::test_support::browser_with_observations;
+
+        let mut browser = browser_with_observations(vec![]);
+        let mut state = CrawlState::default();
+
+        let effect = execute(
+            &json!({"selector": "#btn", "silent": true}),
+            &mut browser,
+            &mut state,
+        )
+        .await
+        .unwrap();
+        let response = effect_json(effect);
+
+        assert!(response.get("page_state").is_some());
+    }
 }
