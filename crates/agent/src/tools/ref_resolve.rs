@@ -127,9 +127,7 @@ pub fn resolve_selector(input: &str, ref_map: &RefMap) -> Result<String, String>
         let resolved_ref = validate_or_auto_descend(input, ref_map, &ref_id)?;
 
         let target_id = match resolved_ref {
-            Some(child_ref) => {
-                parse_ref(&child_ref).unwrap_or(child_ref)
-            }
+            Some(child_ref) => parse_ref(&child_ref).unwrap_or(child_ref),
             None => ref_id,
         };
 
@@ -336,8 +334,7 @@ mod tests {
         );
 
         // Resolving the container should auto-descend to the button
-        let result =
-            resolve_selector(&format!("@{container_id}"), &map).unwrap();
+        let result = resolve_selector(&format!("@{container_id}"), &map).unwrap();
         // Should resolve to the button's attr query
         assert!(result.contains("data-acrawl-ref='e2'"));
     }
@@ -374,9 +371,18 @@ mod tests {
         );
 
         let err = resolve_selector(&format!("@{container_id}"), &map).unwrap_err();
-        assert!(err.contains(&format!("@{child1}")), "error should mention child1: {err}");
-        assert!(err.contains(&format!("@{child2}")), "error should mention child2: {err}");
-        assert!(err.contains("2 clickable children"), "error should state count: {err}");
+        assert!(
+            err.contains(&format!("@{child1}")),
+            "error should mention child1: {err}"
+        );
+        assert!(
+            err.contains(&format!("@{child2}")),
+            "error should mention child2: {err}"
+        );
+        assert!(
+            err.contains("2 clickable children"),
+            "error should state count: {err}"
+        );
     }
 
     #[test]

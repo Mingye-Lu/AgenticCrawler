@@ -48,7 +48,14 @@ pub fn assign_refs(
     let refs = ancestor_refs(ancestors);
     let stable_key = identity_key(&node.role, &name, &refs);
     let ref_id = match node.ref_id.as_deref() {
-        Some(existing) => ref_map.bind_existing(&stable_key, existing, &node.role, &name, frame_id, parent_ref_id),
+        Some(existing) => ref_map.bind_existing(
+            &stable_key,
+            existing,
+            &node.role,
+            &name,
+            frame_id,
+            parent_ref_id,
+        ),
         None => ref_map.assign_by_identity(
             &stable_key,
             &node.role,

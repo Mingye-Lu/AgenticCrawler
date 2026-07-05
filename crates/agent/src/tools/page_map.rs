@@ -314,7 +314,13 @@ pub async fn execute(
         if url_changed {
             browser.ref_map_mut().clear();
         }
-        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new(), None);
+        assign_refs(
+            &mut tree,
+            browser.ref_map_mut(),
+            None,
+            &mut Vec::new(),
+            None,
+        );
         browser.set_page_snapshot(&cache_key, None, result.clone());
 
         // Only full-page snapshots may become the diff baseline and the
@@ -327,7 +333,13 @@ pub async fn execute(
         }
         crawl_state.last_aria_tree = Some(tree.clone());
     } else {
-        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new(), None);
+        assign_refs(
+            &mut tree,
+            browser.ref_map_mut(),
+            None,
+            &mut Vec::new(),
+            None,
+        );
     }
 
     // The walk already limited its own depth; the serializer depth is a cap on

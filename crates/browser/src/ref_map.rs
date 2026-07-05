@@ -62,10 +62,7 @@ impl RefEntry {
             if parent_id == ancestor_ref_id {
                 return true;
             }
-            current = ref_map
-                .map
-                .get(parent_id)
-                .and_then(|p| p.parent.as_deref());
+            current = ref_map.map.get(parent_id).and_then(|p| p.parent.as_deref());
         }
         false
     }
@@ -257,7 +254,7 @@ impl RefMap {
         })
     }
 
-    /// Return all descendant ref_ids (direct children + grandchildren, etc.)
+    /// Return all descendant `ref_id`s (direct children + grandchildren, etc.)
     /// of the given ref. Walk the parent chain transitively.
     #[must_use]
     pub fn descendant_refs(&self, ancestor_ref_id: &str) -> Vec<String> {
