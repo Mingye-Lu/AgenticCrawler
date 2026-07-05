@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.1] - 2026-07-05
 
 ### Added
 
@@ -900,6 +900,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.13.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.1
 [0.13.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.0
 [0.12.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.7
 [0.12.6]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.6
