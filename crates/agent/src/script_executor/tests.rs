@@ -89,9 +89,9 @@ impl BrowserBackend for MockBridge {
         if responses.is_empty() {
             Ok(PageInfo {
                 title: "Mock Page".to_string(),
-                html: format!(
+                html: Some(format!(
                     "<html><head><title>Mock Page</title></head><body><h1>Content for {url}</h1></body></html>"
-                ),
+                )),
             })
         } else {
             Ok(responses.remove(0))

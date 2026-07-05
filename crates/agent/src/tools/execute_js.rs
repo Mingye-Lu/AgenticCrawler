@@ -263,7 +263,7 @@ mod tests {
             async fn navigate(&mut self, _url: &str) -> Result<PageInfo, BridgeError> {
                 Ok(PageInfo {
                     title: "Test".to_string(),
-                    html: String::new(),
+                    html: Some(String::new()),
                 })
             }
             async fn new_page(&mut self, _url: Option<&str>) -> Result<usize, BridgeError> {

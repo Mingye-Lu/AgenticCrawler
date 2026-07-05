@@ -486,7 +486,10 @@ impl BrowserBackend for ExtensionBridge {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string();
-        Ok(PageInfo { title, html })
+        Ok(PageInfo {
+            title,
+            html: Some(html),
+        })
     }
 
     async fn set_device(&mut self, options: &Value) -> Result<Value, BridgeError> {
@@ -708,7 +711,7 @@ mod tests {
             page,
             PageInfo {
                 title: "Example Domain".to_string(),
-                html: "<html></html>".to_string(),
+                html: Some("<html></html>".to_string()),
             }
         );
     }

@@ -757,10 +757,11 @@ impl FetchRouter {
             .await
             .map_err(|e| FetchError::Browser(e.to_string()))?;
 
-        let text = extract_text(&page_info.html);
-        let markdown = crate::markdown::html_to_markdown(&page_info.html);
+        let html = page_info.html.unwrap_or_default();
+        let text = extract_text(&html);
+        let markdown = crate::markdown::html_to_markdown(&html);
         let title = if page_info.title.is_empty() {
-            extract_title(&page_info.html)
+            extract_title(&html)
         } else {
             Some(page_info.title)
         };
@@ -768,7 +769,7 @@ impl FetchRouter {
         Ok(FetchedPage {
             url: url.to_string(),
             title,
-            html: page_info.html,
+            html,
             text,
             markdown,
             fetched_via_browser: true,
