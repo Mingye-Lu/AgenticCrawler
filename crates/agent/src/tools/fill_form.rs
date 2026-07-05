@@ -482,4 +482,203 @@ mod tests {
             "Missing sibling textarea label fallback"
         );
     }
+
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use browser::{
+        BridgeError, BrowserBackend, BrowserState, ObservationEvent, PageInfo, ScreenshotOptions,
+        SharedBridge,
+    };
+    use tokio::sync::Mutex as AsyncMutex;
+
+    /// Bridge backend whose `evaluate` replies are pre-scripted and, like the
+    /// real Playwright/extension backends, wrapped as `{"value": ...}`. Used to
+    /// pin down that `eval_str`/`eval_bool`/`eval_u64` unwrap that envelope
+    /// instead of reading the raw `evaluate()` result.
+    #[derive(Debug, Default)]
+    struct ScriptedBackend {
+        evaluate_results: VecDeque<Value>,
+    }
+
+    #[async_trait]
+    impl BrowserBackend for ScriptedBackend {
+        async fn navigate(&mut self, _: &str) -> Result<PageInfo, BridgeError> {
+            Err(BridgeError::Protocol("unused".to_string()))
+        }
+        async fn new_page(&mut self, _: Option<&str>) -> Result<usize, BridgeError> {
+            Ok(0)
+        }
+        async fn close_page(&mut self, _: usize) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn scroll(&mut self, _: &str, _: i64) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn page_map(
+            &mut self,
+            _: Option<&str>,
+            _: bool,
+            _: Option<usize>,
+        ) -> Result<Value, BridgeError> {
+            Ok(json!({}))
+        }
+        async fn read_content(
+            &mut self,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: usize,
+            _: usize,
+        ) -> Result<Value, BridgeError> {
+            Ok(json!({}))
+        }
+        async fn wait_for_selector(
+            &mut self,
+            _: &str,
+            _: u64,
+            _: Option<&str>,
+        ) -> Result<bool, BridgeError> {
+            Ok(true)
+        }
+        async fn select_option(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn evaluate(&mut self, _script: &str) -> Result<Value, BridgeError> {
+            Ok(self.evaluate_results.pop_front().unwrap_or(Value::Null))
+        }
+        async fn hover(&mut self, _: &str) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn press_key(&mut self, _: &str, _: Option<&str>) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn switch_tab(&mut self, _: i64) -> Result<Value, BridgeError> {
+            Ok(json!({}))
+        }
+        async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
+            Ok(BrowserState {
+                cookies: Value::Array(vec![]),
+                local_storage: Value::Object(serde_json::Map::new()),
+                url: String::new(),
+            })
+        }
+        async fn import_cookies(&mut self, _: &BrowserState) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn import_cookies_only(&mut self, _: &BrowserState) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn import_local_storage(&mut self, _: &BrowserState) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn list_resources(&mut self) -> Result<Value, BridgeError> {
+            Ok(json!([]))
+        }
+        async fn save_file(
+            &mut self,
+            _: &str,
+            _: &str,
+            _: Option<&BTreeMap<String, String>>,
+        ) -> Result<String, BridgeError> {
+            Ok(String::new())
+        }
+        async fn click(&mut self, _: &str) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn click_at(&mut self, _: f64, _: f64) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn fill(&mut self, _: &str, _: &str) -> Result<(), BridgeError> {
+            Ok(())
+        }
+        async fn screenshot(
+            &mut self,
+            _: &ScreenshotOptions<'_>,
+        ) -> Result<(String, usize), BridgeError> {
+            Ok((String::new(), 0))
+        }
+        async fn go_back(&mut self) -> Result<String, BridgeError> {
+            Ok(String::new())
+        }
+        async fn set_device(&mut self, _: &Value) -> Result<Value, BridgeError> {
+            Ok(json!({}))
+        }
+        async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
+            Ok(Vec::new())
+        }
+        async fn set_seq(&mut self, _: u64) -> Result<(), BridgeError> {
+            Ok(())
+        }
+    }
+
+    fn browser_with_evaluate_results(results: Vec<Value>) -> BrowserContext {
+        let backend = ScriptedBackend {
+            evaluate_results: results.into(),
+        };
+        let bridge: SharedBridge = Arc::new(AsyncMutex::new(
+            Box::new(backend) as Box<dyn BrowserBackend + Send>
+        ));
+        BrowserContext::new(bridge)
+    }
+
+    #[tokio::test]
+    async fn eval_str_unwraps_value_envelope() {
+        let mut browser = browser_with_evaluate_results(vec![json!({"value": "https://x/y"})]);
+        assert_eq!(
+            eval_str(&mut browser, "window.location.href").await,
+            Some("https://x/y".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_bool_unwraps_value_envelope() {
+        let mut browser = browser_with_evaluate_results(vec![json!({"value": true})]);
+        assert_eq!(
+            eval_bool(&mut browser, "document.readyState === 'complete'").await,
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_u64_unwraps_value_envelope() {
+        let mut browser = browser_with_evaluate_results(vec![json!({"value": 250})]);
+        assert_eq!(
+            eval_u64(&mut browser, "document.body.innerText.length").await,
+            Some(250)
+        );
+    }
+
+    #[tokio::test]
+    async fn eval_str_returns_none_when_bridge_errors() {
+        // No queued results: ScriptedBackend::evaluate falls back to `Value::Null`,
+        // which has no "value" key, so extraction must yield None rather than panic.
+        let mut browser = browser_with_evaluate_results(vec![]);
+        assert_eq!(eval_str(&mut browser, "window.location.href").await, None);
+    }
+
+    #[tokio::test]
+    async fn wait_for_spa_ready_exits_once_readiness_signals_are_seen() {
+        // First poll of each phase reports "not ready yet"; second poll reports
+        // ready. Before the `.get("value")` unwrap fix, both `eval_bool` and
+        // `eval_u64` always returned None regardless of these queued values, so
+        // this would always burn the full ~8s of deadlines. With the fix it
+        // should finish in roughly (100ms + 300ms + 500ms) ~= 900ms.
+        let mut browser = browser_with_evaluate_results(vec![
+            json!({"value": false}),
+            json!({"value": true}),
+            json!({"value": 50}),
+            json!({"value": 250}),
+        ]);
+
+        let start = tokio::time::Instant::now();
+        wait_for_spa_ready(&mut browser).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "wait_for_spa_ready took {elapsed:?}, expected it to exit promptly once ready \
+             (the unbroken deadlines alone total ~8.5s)"
+        );
+    }
 }
