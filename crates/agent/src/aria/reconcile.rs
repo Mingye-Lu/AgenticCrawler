@@ -34,11 +34,12 @@ pub fn assign_refs(
     ref_map: &mut RefMap,
     frame_id: Option<&str>,
     ancestors: &mut Vec<(String, String)>,
+    parent_ref_id: Option<&str>,
 ) {
     let is_virtual = node.role == "document" && node.ref_id.is_none();
     if node.role == "text" || is_virtual {
         for child in &mut node.children {
-            assign_refs(child, ref_map, frame_id, ancestors);
+            assign_refs(child, ref_map, frame_id, ancestors, parent_ref_id);
         }
         return;
     }
@@ -47,16 +48,17 @@ pub fn assign_refs(
     let refs = ancestor_refs(ancestors);
     let stable_key = identity_key(&node.role, &name, &refs);
     let ref_id = match node.ref_id.as_deref() {
-        Some(existing) => ref_map.bind_existing(&stable_key, existing, &node.role, &name, frame_id),
+        Some(existing) => ref_map.bind_existing(&stable_key, existing, &node.role, &name, frame_id, parent_ref_id),
         None => ref_map.assign_by_identity(
             &stable_key,
             &node.role,
             &name,
             frame_id,
             Resolution::Attr(String::new()),
+            parent_ref_id,
         ),
     };
-    node.ref_id = Some(ref_id);
+    node.ref_id = Some(ref_id.clone());
 
     ancestors.push((node.role.clone(), name));
     let iframe_child_frame = node.frame_id.clone();
@@ -66,7 +68,7 @@ pub fn assign_refs(
         } else {
             frame_id
         };
-        assign_refs(child, ref_map, child_frame_id, ancestors);
+        assign_refs(child, ref_map, child_frame_id, ancestors, Some(&ref_id));
     }
     ancestors.pop();
 }
@@ -92,7 +94,7 @@ mod tests {
 
     fn assign_with_fresh_map(tree: &mut AriaNode) {
         let mut ref_map = RefMap::new();
-        assign_refs(tree, &mut ref_map, None, &mut vec![]);
+        assign_refs(tree, &mut ref_map, None, &mut vec![], None);
     }
 
     fn with_ref(mut node: AriaNode, ref_id: &str) -> AriaNode {

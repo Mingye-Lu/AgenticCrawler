@@ -476,6 +476,7 @@ fn page_state_from_feedback_map(
         browser.ref_map_mut(),
         None,
         &mut Vec::new(),
+        None,
     );
 
     // Prefer the cached snapshot's tree, but when the snapshot lacks one

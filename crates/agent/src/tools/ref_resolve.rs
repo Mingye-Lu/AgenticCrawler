@@ -37,12 +37,56 @@ fn is_actionable_role(role: &str) -> bool {
     )
 }
 
-fn validate_actionable_ref(input: &str, ref_map: &RefMap, ref_id: &str) -> Result<(), String> {
+/// Validate that a ref is actionable or try to auto-descend into children.
+///
+/// Returns:
+/// - `Ok(None)`: ref is directly actionable — use it as-is.
+/// - `Ok(Some(child_ref_id))`: container with exactly one actionable
+///   descendant — auto-descend to this child ref.
+/// - `Err(msg)`: container with 0 or 2+ actionable children, or stale ref.
+fn validate_or_auto_descend(
+    input: &str,
+    ref_map: &RefMap,
+    ref_id: &str,
+) -> Result<Option<String>, String> {
     let entry = ref_map.get(ref_id).ok_or_else(|| stale_ref_error(input))?;
-    if matches!(entry.resolution, Resolution::Attr(_)) && !is_actionable_role(&entry.role) {
-        return Err(container_ref_error(input));
+
+    // Directly actionable ref — no auto-descend needed
+    if !matches!(entry.resolution, Resolution::Attr(_)) || is_actionable_role(&entry.role) {
+        return Ok(None);
     }
-    Ok(())
+
+    // Container ref — try to find actionable descendants
+    let descendants = ref_map.descendant_refs(ref_id);
+    let actionable: Vec<String> = descendants
+        .into_iter()
+        .filter(|d_id| {
+            ref_map
+                .get(d_id)
+                .is_some_and(|e| is_actionable_role(&e.role))
+        })
+        .collect();
+
+    match actionable.len() {
+        0 => Err(container_ref_error(input)),
+        1 => {
+            let child_ref = &actionable[0];
+            Ok(Some(format!("@{child_ref}")))
+        }
+        _ => {
+            let child_list = actionable
+                .iter()
+                .map(|id| format!("@{id}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "Ref '{}' is a container with {} clickable children ({}). Target one of them directly.",
+                canonical_ref(input),
+                actionable.len(),
+                child_list
+            ))
+        }
+    }
 }
 
 /// Resolve a ref string (e.g. "@e5" or "e5") to its action query.
@@ -56,9 +100,19 @@ pub fn resolve_to_action_query(
 ) -> Result<(Option<String>, String), String> {
     if let Some(ref_id) = parse_ref(ref_input) {
         let ref_map = context.ref_map();
-        validate_actionable_ref(ref_input, ref_map, &ref_id)?;
+        let resolved_ref = validate_or_auto_descend(ref_input, ref_map, &ref_id)?;
+
+        let target_id = match resolved_ref {
+            Some(child_ref) => {
+                // parse_ref strips the @ before the ref id
+                parse_ref(&child_ref).unwrap_or(child_ref)
+            }
+            None => ref_id,
+        };
+
         return ref_map
-            .resolve(&ref_id)
+            .resolve(&target_id)
+            .map(|(_, query)| (None, query))
             .ok_or_else(|| stale_ref_error(ref_input));
     }
 
@@ -70,9 +124,17 @@ pub fn resolve_to_action_query(
 /// Returns Err if input looks like a ref but is not found in the map.
 pub fn resolve_selector(input: &str, ref_map: &RefMap) -> Result<String, String> {
     if let Some(ref_id) = parse_ref(input) {
-        validate_actionable_ref(input, ref_map, &ref_id)?;
+        let resolved_ref = validate_or_auto_descend(input, ref_map, &ref_id)?;
+
+        let target_id = match resolved_ref {
+            Some(child_ref) => {
+                parse_ref(&child_ref).unwrap_or(child_ref)
+            }
+            None => ref_id,
+        };
+
         ref_map
-            .resolve(&ref_id)
+            .resolve(&target_id)
             .map(|(_, query)| query)
             .ok_or_else(|| stale_ref_error(input))
     } else {
@@ -175,7 +237,7 @@ mod tests {
     #[test]
     fn valid_ref_resolves_to_selector() {
         let mut map = RefMap::new();
-        map.assign_or_reuse("button.submit", "button", "Submit");
+        map.assign_or_reuse("button.submit", "button", "Submit", None);
         let result = resolve_selector("@e1", &map).unwrap();
         assert_eq!(result, "button.submit");
     }
@@ -183,7 +245,7 @@ mod tests {
     #[test]
     fn bare_ref_resolves() {
         let mut map = RefMap::new();
-        map.assign_or_reuse("input#email", "textbox", "Email");
+        map.assign_or_reuse("input#email", "textbox", "Email", None);
         let result = resolve_selector("e1", &map).unwrap();
         assert_eq!(result, "input#email");
     }
@@ -221,6 +283,7 @@ mod tests {
             "Submit",
             Some("f1"),
             Resolution::Attr(String::new()),
+            None,
         );
 
         let result = resolve_selector(&format!("@{ref_id}"), &map).unwrap();
@@ -236,6 +299,7 @@ mod tests {
             "Primary",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
 
         let err = resolve_selector(&format!("@{ref_id}"), &map).unwrap_err();
@@ -248,6 +312,74 @@ mod tests {
     }
 
     #[test]
+    fn container_ref_auto_descends_to_single_actionable_child() {
+        let mut map = RefMap::new();
+
+        // Container (generic div wrapping a button)
+        let container_id = map.assign_by_identity(
+            "generic|Diagramma|",
+            "generic",
+            "Diagramma",
+            None,
+            Resolution::Attr(String::new()),
+            None,
+        );
+
+        // Single actionable child (button)
+        map.assign_by_identity(
+            "button|Settings|generic:Diagramma|",
+            "button",
+            "Settings",
+            None,
+            Resolution::Attr(String::new()),
+            Some(&container_id),
+        );
+
+        // Resolving the container should auto-descend to the button
+        let result =
+            resolve_selector(&format!("@{container_id}"), &map).unwrap();
+        // Should resolve to the button's attr query
+        assert!(result.contains("data-acrawl-ref='e2'"));
+    }
+
+    #[test]
+    fn container_ref_with_multiple_actionable_children_returns_hint() {
+        let mut map = RefMap::new();
+
+        let container_id = map.assign_by_identity(
+            "generic|Root|",
+            "generic",
+            "Root",
+            None,
+            Resolution::Attr(String::new()),
+            None,
+        );
+
+        let child1 = map.assign_by_identity(
+            "button|A|generic:Root|",
+            "button",
+            "A",
+            None,
+            Resolution::Attr(String::new()),
+            Some(&container_id),
+        );
+
+        let child2 = map.assign_by_identity(
+            "button|B|generic:Root|",
+            "button",
+            "B",
+            None,
+            Resolution::Attr(String::new()),
+            Some(&container_id),
+        );
+
+        let err = resolve_selector(&format!("@{container_id}"), &map).unwrap_err();
+        assert!(err.contains(&format!("@{child1}")), "error should mention child1: {err}");
+        assert!(err.contains(&format!("@{child2}")), "error should mention child2: {err}");
+        assert!(err.contains("2 clickable children"), "error should state count: {err}");
+    }
+
+    #[test]
     fn action_query_returns_frame_and_query() {
         let mut context = test_context();
         let ref_id = context.ref_map_mut().assign_by_identity(
@@ -256,6 +388,7 @@ mod tests {
             "Submit",
             Some("f7"),
             Resolution::Attr(String::new()),
+            None,
         );
 
         let (frame_id, query) = resolve_to_action_query(&format!("@{ref_id}"), &context).unwrap();
@@ -308,6 +441,7 @@ mod tests {
             "Confirm",
             Some("f1"),
             Resolution::Attr(String::new()),
+            None,
         );
 
         let expected = Some(format!("[data-acrawl-ref='{ref_id}']"));
@@ -331,6 +465,7 @@ mod tests {
             "Confirm",
             Some("f1"),
             Resolution::Attr(String::new()),
+            None,
         );
 
         let expected = Some(format!("[ref={ref_id}]"));

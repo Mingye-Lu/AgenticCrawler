@@ -265,7 +265,7 @@ async fn example_com_page_map_refs_match_dom_stamps() {
 
     let mut tree = js_tree.clone();
     let mut ref_map = RefMap::new();
-    assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new());
+    assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new(), None);
 
     let yaml = to_yaml(&tree, Some(5));
     assert!(
