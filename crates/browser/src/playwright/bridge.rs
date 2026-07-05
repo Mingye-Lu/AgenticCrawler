@@ -352,6 +352,27 @@ impl PlaywrightBridge {
             .unwrap_or(false))
     }
 
+    pub async fn wait_for_text(
+        &mut self,
+        selector: Option<&str>,
+        text_pattern: &str,
+        timeout_ms: u64,
+    ) -> Result<bool, BridgeError> {
+        let mut cmd = serde_json::json!({
+            "action": "wait_for_text",
+            "text_pattern": text_pattern,
+            "timeout_ms": timeout_ms,
+        });
+        if let Some(sel) = selector {
+            cmd["selector"] = serde_json::Value::String(sel.to_string());
+        }
+        let result = self.send_raw_command(&cmd).await?;
+        Ok(result
+            .get("found")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false))
+    }
+
     pub async fn select_option(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         let cmd = serde_json::json!({
             "action": "select_option",

@@ -1165,6 +1165,44 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
       continue;
     }
 
+    if (command.action === 'wait_for_text') {
+      try {
+        const timeout = command.timeout_ms || 5000;
+        const pattern = command.text_pattern;
+        const selector = command.selector;
+        const start = Date.now();
+        let found = false;
+        while (Date.now() - start < timeout) {
+          let text;
+          if (selector) {
+            try {
+              text = await page.evaluate((sel) => {
+                const el = document.querySelector(sel);
+                return el ? (el.textContent || '').trim() : '';
+              }, selector);
+            } catch (e) {
+              text = '';
+            }
+          } else {
+            try {
+              text = await page.evaluate(() => (document.body?.textContent || '').trim());
+            } catch (e) {
+              text = '';
+            }
+          }
+          if (text && text.includes(pattern)) {
+            found = true;
+            break;
+          }
+          await new Promise(r => setTimeout(r, 250));
+        }
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { found } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'wait_for_text_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
     if (command.action === 'select_option') {
       try {
         await page.selectOption(command.selector, command.value);

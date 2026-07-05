@@ -208,4 +208,33 @@ pub trait BrowserBackend: Debug {
             "clear_intercept_rules not implemented for this backend".into(),
         ))
     }
+
+    async fn wait_for_text(
+        &mut self,
+        selector: Option<&str>,
+        text_pattern: &str,
+        timeout_ms: u64,
+    ) -> Result<bool, BridgeError> {
+        let start = std::time::Instant::now();
+        let poll_interval = std::time::Duration::from_millis(250);
+        loop {
+            let script = if let Some(sel) = selector {
+                format!(
+                    "document.querySelector('{}')?.textContent?.trim() || ''",
+                    sel.replace('\'', "\\'")
+                )
+            } else {
+                "document.body?.textContent?.trim() || ''".to_string()
+            };
+            let result = self.evaluate(&script).await?;
+            let text = result.get("value").and_then(|v| v.as_str()).unwrap_or("");
+            if text.contains(text_pattern) {
+                return Ok(true);
+            }
+            if start.elapsed() >= std::time::Duration::from_millis(timeout_ms) {
+                return Ok(false);
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
 }
