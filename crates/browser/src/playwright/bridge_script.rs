@@ -362,16 +362,36 @@ async function drainConsolePage(page, pageIndex) {
   }
 }
 
-async function attachObservationListeners(page, pageIndex) {
+// `pages` can shift a page's index (close_page splices the array), so the
+// listeners below re-resolve the page's current index via currentPageIndex()
+// close to where each event is actually buffered, instead of capturing
+// `initialPageIndex` once -- otherwise they'd keep buffering events under a
+// stale index forever, out of step with observationBuffers (which close_page
+// re-keys to the post-splice scheme). Handlers with an await chain between
+// entry and their bufferEvent call (e.g. requestfinished) re-resolve right
+// before buffering, since a close_page on another tab can shift this page's
+// index while those awaits are in flight.
+async function attachObservationListeners(page, pages, initialPageIndex) {
   if (page.__acrawlObservationAttached) {
     return;
   }
   page.__acrawlObservationAttached = true;
 
   const pendingRequests = new WeakMap();
+  // pages.indexOf(page) stops resolving once this page itself is closed and
+  // spliced out, so we fall back to the last index we actually observed the
+  // page occupy -- not the immutable initialPageIndex, which may be stale by
+  // then if an earlier close_page already shifted this page at least once.
+  let lastKnownPageIndex = initialPageIndex;
+  const currentPageIndex = () => {
+    const idx = pages.indexOf(page);
+    if (idx !== -1) lastKnownPageIndex = idx;
+    return idx === -1 ? lastKnownPageIndex : idx;
+  };
 
   page.on('request', (req) => {
     if (req.url().includes('__acrawl_poll')) return;
+    const pageIndex = currentPageIndex();
 
     const requestId = `req_${pageIndex}_${++nextRequestId}`;
     const startTime = Date.now();
@@ -445,6 +465,12 @@ async function attachObservationListeners(page, pageIndex) {
     let timing = null;
     try { timing = computeTimingMs(req.timing()); } catch (_) {}
 
+    // Re-resolve now, right before buffering -- the awaits above give
+    // close_page on another tab a chance to shift this page's index while
+    // this handler was in flight, so the value captured at handler entry
+    // could already be stale by the time we get here.
+    const pageIndex = currentPageIndex();
+
     bufferEvent(pageIndex, {
       type: 'NetworkRequest',
       timestamp_ms: Date.now(),
@@ -472,6 +498,7 @@ async function attachObservationListeners(page, pageIndex) {
 
   page.on('requestfailed', (req) => {
     if (req.url().includes('__acrawl_poll')) return;
+    const pageIndex = currentPageIndex();
 
     const tracked = pendingRequests.get(req);
 
@@ -496,9 +523,11 @@ async function attachObservationListeners(page, pageIndex) {
   });
 
   page.on('websocket', (ws) => {
+    const pageIndex = currentPageIndex();
     const wsId = `ws_${pageIndex}_${++nextWebSocketId}`;
 
     ws.on('framesent', (frame) => {
+      const pageIndex = currentPageIndex();
       const payload = frame.payload?.toString() || '';
       bufferEvent(pageIndex, {
         type: 'WebSocketFrame',
@@ -514,6 +543,7 @@ async function attachObservationListeners(page, pageIndex) {
     });
 
     ws.on('framereceived', (frame) => {
+      const pageIndex = currentPageIndex();
       const payload = frame.payload?.toString() || '';
       bufferEvent(pageIndex, {
         type: 'WebSocketFrame',
@@ -583,12 +613,12 @@ async function bootstrap() {
   await context.addInitScript(CONSOLE_CAPTURE_SOURCE);
   let page = await context.newPage();
   const pages = [page];
-  await attachObservationListeners(page, 0);
+  await attachObservationListeners(page, pages, 0);
   context.on('page', (p) => {
     if (!pages.includes(p)) {
       pages.push(p);
       const popupIndex = pages.length - 1;
-      void attachObservationListeners(p, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
+      void attachObservationListeners(p, pages, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
     }
   });
 
@@ -711,7 +741,7 @@ async function bootstrap() {
           pages.push(newPage);
         }
         const pageIndex = pages.indexOf(newPage);
-        await attachObservationListeners(newPage, pageIndex);
+        await attachObservationListeners(newPage, pages, pageIndex);
         page = newPage;
         let currentUrl = newPage.url();
         if (command.url) {
@@ -1415,12 +1445,12 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         observationBuffers.clear();
         pages.length = 0;
         pages.push(page);
-        await attachObservationListeners(page, 0);
+        await attachObservationListeners(page, pages, 0);
         context.on('page', (p) => {
           if (!pages.includes(p)) {
             pages.push(p);
             const popupIndex = pages.length - 1;
-            void attachObservationListeners(p, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
+            void attachObservationListeners(p, pages, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
           }
         });
         await oldContext.close().catch(() => {});

@@ -25,6 +25,17 @@ pub struct PlaywrightBridge {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    /// Responses still owed by the bridge process for commands whose read
+    /// previously hit `CommandTimeout`. The Node side processes commands
+    /// strictly in order and writes exactly one response line per command,
+    /// so a timed-out read doesn't mean the response is lost — it means it
+    /// hasn't arrived yet. If we moved on and issued the next command
+    /// anyway, that next command's read would consume the stale response
+    /// instead, permanently misaligning every read after it (e.g. a
+    /// `navigate` silently receiving a `switch_tab` response and deserializing
+    /// it as `PageInfo` with the wrong title and no html). Draining these
+    /// before sending a new command keeps the request/response stream in sync.
+    pending_responses: usize,
 }
 
 pub type SharedBridge = Arc<Mutex<Box<dyn BrowserBackend + Send>>>;
@@ -130,6 +141,7 @@ impl PlaywrightBridge {
             child,
             stdin,
             stdout: BufReader::new(stdout),
+            pending_responses: 0,
         };
 
         if let Ok(result) = timeout(launch_timeout, bridge.read_bootstrap_message()).await {
@@ -249,21 +261,9 @@ impl PlaywrightBridge {
         command: &serde_json::Value,
     ) -> Result<serde_json::Value, BridgeError> {
         let payload = serde_json::to_string(command)?;
-        self.stdin
-            .write_all(payload.as_bytes())
-            .await
-            .map_err(classify_io_error)?;
-        self.stdin
-            .write_all(b"\n")
-            .await
-            .map_err(classify_io_error)?;
-        self.stdin.flush().await.map_err(classify_io_error)?;
-
-        let line = timeout(DEFAULT_COMMAND_TIMEOUT, self.read_bridge_line())
-            .await
-            .map_err(|_| BridgeError::CommandTimeout {
-                timeout: DEFAULT_COMMAND_TIMEOUT,
-            })??;
+        let line = self
+            .write_command_and_read_line(&payload, DEFAULT_COMMAND_TIMEOUT)
+            .await?;
         let response: GenericBridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {
             return Err(BridgeError::Protocol(format!(
@@ -758,15 +758,9 @@ impl PlaywrightBridge {
         command_timeout: Duration,
     ) -> Result<BridgeResponseMessage, BridgeError> {
         let payload = serde_json::to_string(&command)?;
-        self.stdin.write_all(payload.as_bytes()).await?;
-        self.stdin.write_all(b"\n").await?;
-        self.stdin.flush().await?;
-
-        let line = timeout(command_timeout, self.read_bridge_line())
-            .await
-            .map_err(|_| BridgeError::CommandTimeout {
-                timeout: command_timeout,
-            })??;
+        let line = self
+            .write_command_and_read_line(&payload, command_timeout)
+            .await?;
         let response: BridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {
             return Err(BridgeError::Protocol(format!(
@@ -775,6 +769,52 @@ impl PlaywrightBridge {
             )));
         }
         Ok(response)
+    }
+
+    /// Writes `payload` to the bridge's stdin and reads back exactly one
+    /// response line, first draining any responses left owed by earlier
+    /// timed-out commands so this read can't consume a stale one.
+    ///
+    /// The bridge process handles commands one at a time in the order
+    /// they're received and writes exactly one `bridge_response` line per
+    /// command, so responses arrive in lockstep with requests as long as
+    /// every response is actually read. A `CommandTimeout` only means the
+    /// read gave up waiting — the Node side is still going to write that
+    /// response eventually. If we sent a new command without first
+    /// consuming it, the next read would receive the old response instead,
+    /// desynchronizing every read after it.
+    async fn write_command_and_read_line(
+        &mut self,
+        payload: &str,
+        command_timeout: Duration,
+    ) -> Result<String, BridgeError> {
+        while self.pending_responses > 0 {
+            let _stale = timeout(command_timeout, self.read_bridge_line())
+                .await
+                .map_err(|_| BridgeError::CommandTimeout {
+                    timeout: command_timeout,
+                })??;
+            self.pending_responses -= 1;
+        }
+
+        self.stdin
+            .write_all(payload.as_bytes())
+            .await
+            .map_err(classify_io_error)?;
+        self.stdin
+            .write_all(b"\n")
+            .await
+            .map_err(classify_io_error)?;
+        self.stdin.flush().await.map_err(classify_io_error)?;
+
+        if let Ok(result) = timeout(command_timeout, self.read_bridge_line()).await {
+            result
+        } else {
+            self.pending_responses += 1;
+            Err(BridgeError::CommandTimeout {
+                timeout: command_timeout,
+            })
+        }
     }
 
     pub async fn add_intercept_rule(

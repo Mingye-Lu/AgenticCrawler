@@ -206,6 +206,83 @@ for line in sys.stdin:
 }
 
 #[tokio::test]
+async fn command_timeout_does_not_desync_next_response() {
+    // Regression test for issue #69: a command whose read times out client-side
+    // still gets a response from the bridge process eventually (it's just late).
+    // If the next command's read isn't protected, it swallows that stale
+    // response instead of its own, corrupting whatever it returns.
+    let script_path = write_python_script(
+        "timeout-desync",
+        r#"import json
+import sys
+import time
+print(json.dumps({"event": "bridge_bootstrap", "ok": True}), flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    action = command.get("action")
+    if action == "slow_action":
+        time.sleep(0.3)
+        print(json.dumps({
+            "event": "bridge_response",
+            "ok": True,
+            "result": {"title": "stale", "html": "<stale></stale>"}
+        }), flush=True)
+    elif action == "navigate":
+        print(json.dumps({
+            "event": "bridge_response",
+            "ok": True,
+            "result": {"title": "fresh", "html": "<fresh></fresh>"}
+        }), flush=True)
+    elif action == "close":
+        print(json.dumps({"event": "bridge_response", "ok": True}), flush=True)
+        break
+"#,
+    );
+
+    let mut bridge = PlaywrightBridge::new_with_invocation(
+        python_program(),
+        vec![script_path.to_string_lossy().into_owned()],
+        Duration::from_secs(2),
+    )
+    .await
+    .expect("bridge should bootstrap");
+
+    let timed_out = bridge
+        .send_bridge_command_with_timeout(
+            BridgeCommandEnvelope {
+                action: "slow_action",
+                url: None,
+            },
+            Duration::from_millis(50),
+        )
+        .await;
+    assert!(
+        matches!(timed_out, Err(BridgeError::CommandTimeout { .. })),
+        "expected CommandTimeout, got {timed_out:?}"
+    );
+
+    // Let the slow response actually land on the pipe before issuing the next
+    // command, so the desync window is real rather than a timing accident.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let page = bridge
+        .navigate("https://example.com")
+        .await
+        .expect("navigate should succeed after a prior command timed out");
+    assert_eq!(
+        page,
+        PageInfo {
+            title: "fresh".to_string(),
+            html: Some("<fresh></fresh>".to_string()),
+        },
+        "navigate must not receive the stale slow_action response"
+    );
+
+    bridge.close().await.expect("close should succeed");
+    cleanup_temp_script(&script_path);
+}
+
+#[tokio::test]
 #[ignore = "requires node + playwright installed locally"]
 async fn test_bridge_new_page_returns_index() {
     let mut bridge = PlaywrightBridge::new()
@@ -290,6 +367,145 @@ async fn ignored_real_playwright_navigate_example_com() {
 
     assert!(page.title.contains("Example Domain"));
     assert!(page.html.unwrap_or_default().contains("Example Domain"));
+
+    bridge
+        .close()
+        .await
+        .expect("bridge should close without zombie process");
+}
+
+#[tokio::test]
+#[ignore = "requires node + playwright installed locally"]
+async fn close_page_shrinks_tab_count_and_keeps_indices_consistent() {
+    // Regression test for issue #69: closing a non-last tab used to leave a
+    // null hole in the pages array instead of removing it, so tab_count never
+    // shrank and switch_tab/new_page saw stale indices.
+    let mut bridge = PlaywrightBridge::new()
+        .await
+        .expect("playwright bridge should launch");
+
+    let idx1 = bridge
+        .new_page(Some("https://example.com"))
+        .await
+        .expect("new_page 1 should succeed");
+    let idx2 = bridge
+        .new_page(Some("https://example.org"))
+        .await
+        .expect("new_page 2 should succeed");
+    assert_eq!(idx1, 1);
+    assert_eq!(idx2, 2);
+
+    // Close the middle tab (not the last), which previously left a hole.
+    bridge
+        .close_page(1)
+        .await
+        .expect("close_page should succeed");
+
+    // What was tab 2 should now be reachable at index 1, and tab_count should
+    // have shrunk to 2 rather than staying at 3 with a dead slot.
+    let tab = bridge
+        .switch_tab(1)
+        .await
+        .expect("switch_tab should reach the shifted former index-2 tab");
+    assert_eq!(
+        tab.get("tab_count").and_then(serde_json::Value::as_u64),
+        Some(2),
+        "closing a tab should shrink tab_count instead of leaving a hole"
+    );
+    assert_eq!(
+        tab.get("url").and_then(serde_json::Value::as_str),
+        Some("https://example.org/")
+    );
+
+    // navigate should still work normally after a close_page (the other half
+    // of the original bug report: navigation intermittently failed with a
+    // missing-html bridge error).
+    let page = bridge
+        .navigate("https://example.com")
+        .await
+        .expect("navigate should succeed after close_page");
+    assert!(page.html.unwrap_or_default().contains("Example Domain"));
+
+    bridge
+        .close()
+        .await
+        .expect("bridge should close without zombie process");
+}
+
+#[tokio::test]
+#[ignore = "requires node + playwright installed locally"]
+async fn observation_events_track_correct_tab_after_close_page() {
+    // Regression test: attachObservationListeners used to capture a page's
+    // index once at attach time, so after close_page shifted indices, a
+    // surviving tab's network events kept landing under its stale pre-close
+    // index instead of the index observationBuffers was re-keyed to.
+    let mut bridge = PlaywrightBridge::new()
+        .await
+        .expect("playwright bridge should launch");
+
+    let idx1 = bridge
+        .new_page(Some("https://example.com"))
+        .await
+        .expect("new_page 1 should succeed");
+    let idx2 = bridge
+        .new_page(Some("https://example.org"))
+        .await
+        .expect("new_page 2 should succeed");
+    assert_eq!(idx1, 1);
+    assert_eq!(idx2, 2);
+
+    // Drop the events buffered for all tabs up to this point.
+    for i in 0..3 {
+        bridge
+            .poll_observations_raw(i)
+            .await
+            .expect("poll_observations should succeed before close");
+    }
+
+    // Close tab 0, shifting tab 1 -> 0 and tab 2 -> 1.
+    bridge
+        .close_page(0)
+        .await
+        .expect("close_page should succeed");
+
+    // Generate a fresh network request on the tab now at index 1 (formerly
+    // index 2, https://example.org) by switching to it and reloading.
+    bridge
+        .switch_tab(1)
+        .await
+        .expect("switch_tab to former index-2 tab should succeed");
+    bridge.reload().await.expect("reload should succeed");
+
+    let events_at_new_index = bridge
+        .poll_observations_raw(1)
+        .await
+        .expect("poll_observations at new index should succeed");
+    let saw_example_org_request = events_at_new_index.iter().any(|event| {
+        event
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|url| url.contains("example.org"))
+    });
+    assert!(
+        saw_example_org_request,
+        "expected reload's network events for the surviving example.org tab \
+         to be buffered under its new post-close index 1, got: {events_at_new_index:?}"
+    );
+
+    let events_at_stale_index = bridge
+        .poll_observations_raw(2)
+        .await
+        .expect("poll_observations at stale index should succeed");
+    assert!(
+        events_at_stale_index.iter().all(|event| {
+            event
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|url| !url.contains("example.org"))
+        }),
+        "example.org's events must not still be filed under its old \
+         pre-close index 2, got: {events_at_stale_index:?}"
+    );
 
     bridge
         .close()
