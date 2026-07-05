@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `wait` now accepts a `silent` boolean parameter (default `false`). When `true` and no `selector` is given, a time-only wait returns just `{ success, waited_ms }` instead of the full `page_state` diff, saving context tokens for simple timed pauses. `silent` has no effect when a `selector` is provided — `page_state` is still returned.
+- `execute_js` now accepts a `hover_selector` parameter (CSS selector or `@eN` ref). The mouse is moved over the element before the script runs, enabling inspection of `:hover` computed styles or hover-triggered DOM changes. Resolves `@eN` refs the same way `click`/`hover` do, and rejects an empty selector up front.
+- `execute_js` now accepts a `settle_ms` parameter (integer, max 5000, default `0`). It delays capturing the script's return value, giving reactive frameworks (Vue, React) time to flush an asynchronous DOM mutation (e.g. a `.click()` on a toggle) before the result is read.
+
+### Fixed
+
+- **`fill_form` — SPA redirect readiness**: after `submit: true` triggers a full-page redirect, the tool now waits for `document.readyState`, visible text content (≥200 chars), and a hydration buffer before capturing `page_state`, matching the `navigate` tool's readiness heuristic. Previously a flat 200ms sleep was often too short for React/Next.js apps to hydrate and render after the redirect. A follow-up fix unwraps the bridge's `{"value": ...}` `evaluate()` envelope, which the new readiness checks — and the existing pre/post-submit URL comparison — had been reading raw, silently defeating the redirect gate and readiness polling alike.
+- **Tab lifecycle — `close_page` left `null` holes**: closing a tab now removes it from the page list via `splice` instead of nulling its slot, and shifts observation-buffer indices to match so remaining tabs keep stable, correct indices.
+- **Bridge — stale response desync**: the CloakBrowser bridge protocol has no built-in request/response correlation, so a command that timed out could leave its late response sitting on the pipe for the *next* command to silently consume instead. `PlaywrightBridge` now tracks pending responses and drains stale lines before issuing a new command.
+- **Observation buffer — tab misattribution after close**: network/console events for a surviving tab could be recorded under its pre-close index after a different tab closed, because the page's index was captured once in a listener closure. The index is now resolved live via `pages.indexOf(page)`, with a last-known-index fallback for a page's own trailing events after it closes.
 
 ## [0.13.0] - 2026-07-02
 

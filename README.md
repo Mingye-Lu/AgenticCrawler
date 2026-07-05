@@ -215,7 +215,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 | `go_back` | Browser back button. Returns `page_state` with the resulting page structure. |
 | `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
-| `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). Returns `page_state` after the condition is met. |
+| `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). Set `silent: true` on a time-only wait to skip the `page_state` diff and save tokens. Returns `page_state` after the condition is met. |
 | `refresh` | Reload the current page. Returns `page_state` after reload. Use after setting intercept rules to replay the page load with rules active. Seq counter increments for temporal observation queries. |
 
 #### Content Formats
@@ -254,12 +254,12 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 |------|-------------|
 | `click` | Click an element by CSS selector, `@eN` ref, or visible label text. Use `text` (with optional `role`/`region`) to activate a button, tab, or link by its label — handy for SPA admin UIs and modals where CSS paths are fragile. Returns `page_state` after the click. |
 | `click_at` | Click at specific viewport coordinates (x, y). Use for canvas, maps, or SVGs. Returns `page_state`. |
-| `fill_form` | Fill form fields by selector, name, `@eN` ref, or visible label text — labels resolve page-wide, so fields in modals and div-based UIs without a `<form>` boundary work too. Optional auto-submit. Returns `page_state`. |
+| `fill_form` | Fill form fields by selector, name, `@eN` ref, or visible label text — labels resolve page-wide, so fields in modals and div-based UIs without a `<form>` boundary work too. Optional auto-submit; on a submit-triggered redirect, waits for SPA readiness (DOM ready, visible text, hydration buffer) before returning `page_state`. |
 | `select_option` | Select a dropdown option by value, label, or index. Works on native `<select>` and custom ARIA/portal dropdowns; omit value/label/index to list the available options without selecting. Returns `page_state`. |
 | `hover` | Hover over an element to reveal tooltips or menus. Returns `page_state`. |
 | `press_key` | Press a keyboard key (Enter, Escape, Tab, etc.), optionally targeting an element. Returns `page_state`. |
 | `set_device` | Switch browser device emulation (mobile/desktop). Supports 10 presets (iphone_15, pixel_7, ipad_pro, desktop, etc.) or custom viewport/UA/touch parameters. Returns differential `page_state` showing responsive layout changes. |
-| `execute_js` | Run arbitrary JavaScript in the page context and return the result. Optional `hover_selector` hovers an element (CSS selector or @eN ref) before evaluation, for inspecting `:hover` styles. |
+| `execute_js` | Run arbitrary JavaScript in the page context and return the result. Optional `hover_selector` hovers an element (CSS selector or @eN ref) before evaluation, for inspecting `:hover` styles. Optional `settle_ms` (max 5000) delays capturing the result so reactive frameworks (Vue/React) can flush DOM mutations first. |
 
 #### Content Extraction
 
