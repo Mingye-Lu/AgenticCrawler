@@ -145,6 +145,11 @@ impl RefMap {
         name: &str,
         _frame_id: Option<&str>,
     ) -> String {
+        if let Some(old_ref_id) = self.key_to_ref.get(stable_key) {
+            if old_ref_id != ref_id {
+                self.map.remove(old_ref_id.as_str());
+            }
+        }
         self.map.insert(
             ref_id.to_string(),
             RefEntry {
@@ -507,7 +512,25 @@ mod tests {
         assert_eq!(first, "e2");
         assert_eq!(second, "e3");
         assert_ne!(first, second);
-        assert_eq!(map.resolve("e2").unwrap().1, "[data-acrawl-ref='e2']");
         assert_eq!(map.resolve("e3").unwrap().1, "[data-acrawl-ref='e3']");
+    }
+
+    #[test]
+    fn bind_existing_clears_old_ref_on_rebind() {
+        let mut map = RefMap::new();
+        let first = map.bind_existing("dialog|Confirm|main:", "e14", "dialog", "Confirm", None);
+        assert_eq!(first, "e14");
+        assert!(map.get("e14").is_some());
+
+        let second = map.bind_existing("dialog|Confirm|main:", "e21", "dialog", "Confirm", None);
+        assert_eq!(second, "e21");
+
+        // The old ref_id must be removed from the map once the identity key
+        // is re-bound to a new ref_id, so stale `@e14`-style scopes fail
+        // fast instead of resolving to a query for a since-removed
+        // `data-acrawl-ref` attribute.
+        assert!(map.get("e14").is_none());
+        assert!(map.get("e21").is_some());
+        assert_eq!(map.resolve("e21").unwrap().1, "[data-acrawl-ref='e21']");
     }
 }
