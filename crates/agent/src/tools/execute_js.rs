@@ -21,6 +21,12 @@ pub fn parse_input(input: &Value) -> Result<ExecuteJsInput, CrawlError> {
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    if let Some(ref s) = hover_selector {
+        if s.is_empty() {
+            return Err(CrawlError::new("hover_selector must not be empty"));
+        }
+    }
+
     Ok(ExecuteJsInput {
         script,
         hover_selector,
@@ -103,6 +109,12 @@ mod tests {
     #[test]
     fn fails_with_non_string_script() {
         let input = json!({"script": 42});
+        assert!(parse_input(&input).is_err());
+    }
+
+    #[test]
+    fn fails_with_empty_hover_selector() {
+        let input = json!({"script": "1", "hover_selector": ""});
         assert!(parse_input(&input).is_err());
     }
 }
