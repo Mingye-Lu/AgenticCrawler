@@ -81,14 +81,7 @@ pub async fn execute(
     fill_fields(browser, &resolved_fields).await?;
 
     if params.submit {
-        let pre_url = match browser.acquire_bridge().await {
-            Ok(mut b) => b
-                .evaluate("window.location.href")
-                .await
-                .ok()
-                .and_then(|v| v.as_str().map(String::from)),
-            Err(_) => None,
-        };
+        let pre_url = eval_str(browser, "window.location.href").await;
 
         let js = format!(
             r#"(() => {{
@@ -125,14 +118,7 @@ pub async fn execute(
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
             while tokio::time::Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(50)).await;
-                let current = match browser.acquire_bridge().await {
-                    Ok(mut b) => b
-                        .evaluate("window.location.href")
-                        .await
-                        .ok()
-                        .and_then(|v| v.as_str().map(String::from)),
-                    Err(_) => None,
-                };
+                let current = eval_str(browser, "window.location.href").await;
                 if current.as_deref() != Some(old_url.as_str()) {
                     wait_for_spa_ready(browser).await;
                     break;
@@ -169,20 +155,45 @@ pub async fn execute(
 
 const MIN_VISIBLE_CHARS: usize = 200;
 
+/// `BrowserBackend::evaluate` wraps the script's return value as `{"value": ...}`
+/// (see the Playwright bridge's and extension backend's `evaluate` handlers).
+/// Every extraction from a bridge `evaluate` call must unwrap that envelope first.
+async fn eval_value(browser: &mut BrowserContext, script: &str) -> Option<Value> {
+    browser
+        .acquire_bridge()
+        .await
+        .ok()?
+        .evaluate(script)
+        .await
+        .ok()?
+        .get("value")
+        .cloned()
+}
+
+async fn eval_str(browser: &mut BrowserContext, script: &str) -> Option<String> {
+    eval_value(browser, script)
+        .await?
+        .as_str()
+        .map(String::from)
+}
+
+async fn eval_bool(browser: &mut BrowserContext, script: &str) -> Option<bool> {
+    eval_value(browser, script).await?.as_bool()
+}
+
+async fn eval_u64(browser: &mut BrowserContext, script: &str) -> Option<u64> {
+    eval_value(browser, script).await?.as_u64()
+}
+
 /// Waits for a post-submit SPA navigation to actually finish rendering:
 /// document.readyState, then enough visible text, then a hydration buffer.
-/// Mirrors the readiness wait used by the navigate tool's bridge handling.
+/// Reuses the same 200-char SPA-shell heuristic as `MIN_VISIBLE_CHARS_THRESHOLD`
+/// in `browser::fetch`, which backs the Playwright bridge's own navigate
+/// hydration wait.
 async fn wait_for_spa_ready(browser: &mut BrowserContext) {
     let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(3);
     while tokio::time::Instant::now() < ready_deadline {
-        let is_complete = match browser.acquire_bridge().await {
-            Ok(mut b) => b
-                .evaluate("document.readyState === 'complete'")
-                .await
-                .ok()
-                .and_then(|v| v.as_bool()),
-            Err(_) => None,
-        };
+        let is_complete = eval_bool(browser, "document.readyState === 'complete'").await;
         if is_complete == Some(true) {
             break;
         }
@@ -191,14 +202,11 @@ async fn wait_for_spa_ready(browser: &mut BrowserContext) {
 
     let text_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     while tokio::time::Instant::now() < text_deadline {
-        let visible_len = match browser.acquire_bridge().await {
-            Ok(mut b) => b
-                .evaluate("(document.body ? document.body.innerText : '').trim().length")
-                .await
-                .ok()
-                .and_then(|v| v.as_u64()),
-            Err(_) => None,
-        };
+        let visible_len = eval_u64(
+            browser,
+            "(document.body ? document.body.innerText : '').trim().length",
+        )
+        .await;
         if usize::try_from(visible_len.unwrap_or(0)).unwrap_or(0) >= MIN_VISIBLE_CHARS {
             break;
         }
