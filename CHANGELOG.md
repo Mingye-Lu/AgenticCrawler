@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `wait` now accepts a `silent` boolean parameter (default `false`). When `true` and no `selector` is given, a time-only wait returns just `{ success, waited_ms }` instead of the full `page_state` diff, saving context tokens for simple timed pauses. `silent` has no effect when a `selector` is provided — `page_state` is still returned.
+
 ## [0.13.0] - 2026-07-02
 
 ### Added

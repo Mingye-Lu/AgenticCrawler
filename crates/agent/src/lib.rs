@@ -126,7 +126,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait",
-            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires.",
+            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires, unless `silent: true` is set for a time-only wait, in which case only the completion signal is returned.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -136,11 +136,15 @@ fn navigation_tools() -> Vec<ToolSpec> {
                         "type": "string",
                         "enum": ["visible", "hidden", "attached", "detached"],
                         "description": "Target state to wait for. 'attached' (default) = element exists in DOM; 'visible' = element is rendered and not hidden; 'hidden' = element is no longer visible; 'detached' = element removed from DOM. Use 'hidden' to wait for loading spinners to disappear."
+                    },
+                    "silent": {
+                        "type": "boolean",
+                        "description": "When true, suppress the page_state payload from the response. Use for simple timed pauses where you don't need a structural diff — saves context tokens. Only effective for time-only waits (no selector). Default: false."
                     }
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner). Returns post-action page_state (URL, title, and structural diff) so you can see what changed without a separate page_map call."),
+            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner). Set `silent: true` for simple timed pauses to suppress the page_state and save context tokens. Has no effect when a `selector` is provided."),
         },
     ]
 }
