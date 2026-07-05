@@ -301,16 +301,17 @@ fn press_key_tool() -> ToolSpec {
 fn execute_js_tool() -> ToolSpec {
     ToolSpec {
         name: "execute_js",
-        description: "Execute arbitrary JavaScript in the page context and return the evaluation result. The script runs synchronously in the browser's main frame with full access to the DOM, window, and page APIs. Use as a last resort when CSS selectors and other tools cannot achieve the interaction — prefer click, fill_form, and select_option for standard interactions.",
+        description: "Execute arbitrary JavaScript in the page context and return the evaluation result. The script runs synchronously in the browser's main frame with full access to the DOM, window, and page APIs. Use as a last resort when CSS selectors and other tools cannot achieve the interaction — prefer click, fill_form, and select_option for standard interactions. Optionally accepts `hover_selector` to hover over an element before executing the script, enabling inspection of CSS :hover styles and hover-triggered DOM changes.",
         input_schema: json!({
             "type": "object",
             "properties": {
-                "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." }
+                "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." },
+                "hover_selector": { "type": "string", "description": "Optional CSS selector or @eN ref (from page_map) of an element to hover over BEFORE executing the script. When provided, the mouse is moved over the element (triggering :hover CSS pseudo-class), then the script is evaluated. This allows inspecting hover-dependent computed styles (e.g. getComputedStyle(el).color after hover) or verifying hover-triggered DOM changes." }
             },
             "required": ["script"],
             "additionalProperties": false
         }),
-        instructions: Some("Last resort for complex interactions that CSS selectors cannot handle. Prefer click, fill_form, and select_option first. The script runs in the page context and can return a value."),
+        instructions: Some("Last resort for complex interactions that CSS selectors cannot handle. Prefer click, fill_form, and select_option first. The script runs in the page context and can return a value. To inspect CSS :hover styles, pass hover_selector to trigger the hover state before script evaluation."),
     }
 }
 
