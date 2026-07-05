@@ -6,7 +6,7 @@ use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 use super::feedback::InteractionKind;
 
-pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
+pub fn parse_input(input: &Value) -> Result<(String, i64, Option<String>), CrawlError> {
     let direction = input
         .get("direction")
         .and_then(|v| v.as_str())
@@ -25,7 +25,12 @@ pub fn parse_input(input: &Value) -> Result<(String, i64), CrawlError> {
         .and_then(serde_json::Value::as_i64)
         .unwrap_or(500);
 
-    Ok((direction, pixels))
+    let selector = input
+        .get("selector")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    Ok((direction, pixels, selector))
 }
 
 pub async fn execute(
@@ -33,13 +38,13 @@ pub async fn execute(
     browser: &mut BrowserContext,
     crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
-    let (direction, pixels) = parse_input(input)?;
+    let (direction, pixels, selector) = parse_input(input)?;
 
     browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .scroll(&direction, pixels)
+        .scroll(&direction, pixels, selector.as_deref())
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -70,15 +75,16 @@ mod tests {
     #[test]
     fn parses_direction_and_pixels() {
         let input = json!({"direction": "down", "pixels": 300});
-        let (dir, px) = parse_input(&input).unwrap();
+        let (dir, px, selector) = parse_input(&input).unwrap();
         assert_eq!(dir, "down");
         assert_eq!(px, 300);
+        assert_eq!(selector, None);
     }
 
     #[test]
     fn accepts_legacy_amount_key() {
         let input = json!({"direction": "down", "amount": 200});
-        let (dir, px) = parse_input(&input).unwrap();
+        let (dir, px, _selector) = parse_input(&input).unwrap();
         assert_eq!(dir, "down");
         assert_eq!(px, 200);
     }
@@ -86,15 +92,16 @@ mod tests {
     #[test]
     fn defaults_to_down_500() {
         let input = json!({});
-        let (dir, px) = parse_input(&input).unwrap();
+        let (dir, px, selector) = parse_input(&input).unwrap();
         assert_eq!(dir, "down");
         assert_eq!(px, 500);
+        assert_eq!(selector, None);
     }
 
     #[test]
     fn accepts_pixels_key() {
         let input = json!({"direction": "up", "pixels": 200});
-        let (dir, px) = parse_input(&input).unwrap();
+        let (dir, px, _selector) = parse_input(&input).unwrap();
         assert_eq!(dir, "up");
         assert_eq!(px, 200);
     }
@@ -103,6 +110,22 @@ mod tests {
     fn rejects_invalid_direction() {
         let input = json!({"direction": "left"});
         assert!(parse_input(&input).is_err());
+    }
+
+    #[test]
+    fn parses_optional_selector() {
+        let input = json!({"direction": "down", "pixels": 300, "selector": "#modal-body"});
+        let (dir, px, selector) = parse_input(&input).unwrap();
+        assert_eq!(dir, "down");
+        assert_eq!(px, 300);
+        assert_eq!(selector.as_deref(), Some("#modal-body"));
+    }
+
+    #[test]
+    fn selector_defaults_to_none_when_absent() {
+        let input = json!({"direction": "down"});
+        let (_dir, _px, selector) = parse_input(&input).unwrap();
+        assert_eq!(selector, None);
     }
 
     #[test]

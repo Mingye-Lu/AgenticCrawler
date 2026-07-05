@@ -1257,7 +1257,12 @@ mod tests {
             Ok(())
         }
 
-        async fn scroll(&mut self, _direction: &str, _pixels: i64) -> Result<(), BridgeError> {
+        async fn scroll(
+            &mut self,
+            _direction: &str,
+            _pixels: i64,
+            _selector: Option<&str>,
+        ) -> Result<(), BridgeError> {
             Err(BridgeError::Protocol("unused".into()))
         }
 

@@ -918,7 +918,11 @@ async function bootstrap() {
       try {
         const dir = command.direction === 'up' ? -1 : 1;
         const px = (command.pixels || 500) * dir;
-        await page.evaluate((y) => window.scrollBy(0, y), px);
+        if (command.selector) {
+          await page.locator(command.selector).first().evaluate((el, y) => el.scrollBy(0, y), px);
+        } else {
+          await page.evaluate((y) => window.scrollBy(0, y), px);
+        }
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { scrolled: true } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'scroll_failed', message: String(error) } }) + '\n');
