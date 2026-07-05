@@ -126,7 +126,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait",
-            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires.",
+            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires, unless `silent: true` is set for a time-only wait, in which case only the completion signal is returned.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
