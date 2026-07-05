@@ -302,7 +302,7 @@ fn execute_js_tool() -> ToolSpec {
             "type": "object",
             "properties": {
                 "script": { "type": "string", "description": "JavaScript code to execute in the page context. The return value of the last expression is serialized as JSON and returned. For async operations, use 'await' (the script is wrapped in an async function). Example: \"document.title\" or \"await fetch('/api/data').then(r => r.json())\"." },
-                "hover_selector": { "type": "string", "description": "Optional CSS selector of an element to hover over BEFORE executing the script. When provided, the mouse is moved over the element (triggering :hover CSS pseudo-class), then the script is evaluated. This allows inspecting hover-dependent computed styles (e.g. getComputedStyle(el).color after hover) or verifying hover-triggered DOM changes." }
+                "hover_selector": { "type": "string", "description": "Optional CSS selector or @eN ref (from page_map) of an element to hover over BEFORE executing the script. When provided, the mouse is moved over the element (triggering :hover CSS pseudo-class), then the script is evaluated. This allows inspecting hover-dependent computed styles (e.g. getComputedStyle(el).color after hover) or verifying hover-triggered DOM changes." }
             },
             "required": ["script"],
             "additionalProperties": false
