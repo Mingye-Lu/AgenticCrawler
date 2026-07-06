@@ -375,10 +375,12 @@ pub fn build_diff_page_state(
             }
 
             let diff = diff_trees(prev, curr);
-            if should_fallback(&diff) {
-                full_snapshot_value(curr)
-            } else if widen {
-                Value::String(render_diff(&diff))
+            if widen {
+                if should_fallback(&diff) {
+                    full_snapshot_value(curr)
+                } else {
+                    Value::String(render_diff(&diff))
+                }
             } else {
                 diff_summary_value(&diff)
             }
