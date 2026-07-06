@@ -53,6 +53,31 @@ pub fn parse_input(input: &Value) -> Result<ExecuteJsInput, CrawlError> {
     })
 }
 
+/// Ensures the script's final expression is returned so an async IIFE
+/// wrapper produces a completion value instead of `undefined`.
+fn preserve_completion_value(script: &str) -> String {
+    if script.trim_start().starts_with("return ") || script.trim_start().starts_with("return\t") {
+        return script.to_string();
+    }
+
+    let Some(last_semicolon) = script.rfind(';') else {
+        return format!("return {};", script.trim());
+    };
+
+    let tail = &script[last_semicolon + 1..];
+    let trimmed_tail = tail.trim_start();
+    if trimmed_tail.is_empty() || trimmed_tail.starts_with("return") {
+        return script.to_string();
+    }
+
+    let tail_start = last_semicolon + 1 + (tail.len() - trimmed_tail.len());
+    format!(
+        "{}return {};",
+        &script[..tail_start],
+        script[tail_start..].trim_end()
+    )
+}
+
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
@@ -89,7 +114,8 @@ pub async fn execute(
     // scripts keep their completion-value (last-expression) semantics, and
     // scripts with an explicit `return` now work too. The settle delay stays
     // a separate round-trip rather than being spliced into the script text.
-    let wrapped = format!("(async () => {{\n{}\n}})()", params.script);
+    let transformed = preserve_completion_value(&params.script);
+    let wrapped = format!("(async () => {{\n{transformed}\n}})()");
     let result = bridge
         .evaluate(&wrapped)
         .await
@@ -122,6 +148,50 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn preserve_completion_value_single_expression_gets_return() {
+        assert_eq!(
+            preserve_completion_value("document.title"),
+            "return document.title;"
+        );
+    }
+
+    #[test]
+    fn preserve_completion_value_leaves_existing_return_unchanged() {
+        assert_eq!(
+            preserve_completion_value("return document.title;"),
+            "return document.title;"
+        );
+        assert_eq!(
+            preserve_completion_value("  return document.title;  "),
+            "  return document.title;  "
+        );
+    }
+
+    #[test]
+    fn preserve_completion_value_multi_statement_adds_return_to_last() {
+        assert_eq!(
+            preserve_completion_value(
+                "document.querySelector('.toggle').click(); document.querySelector('.toggle').getAttribute('aria-checked')"
+            ),
+            "document.querySelector('.toggle').click(); return document.querySelector('.toggle').getAttribute('aria-checked');"
+        );
+    }
+
+    #[test]
+    fn preserve_completion_value_multi_statement_with_existing_return() {
+        assert_eq!(
+            preserve_completion_value("a(); return b;"),
+            "a(); return b;"
+        );
+    }
+
+    #[test]
+    fn preserve_completion_value_trailing_semicolon_only_unchanged() {
+        assert_eq!(preserve_completion_value("a(); b();"), "a(); b();");
+        assert_eq!(preserve_completion_value("a();   "), "a();   ");
+    }
 
     #[test]
     fn parses_script() {
@@ -212,8 +282,14 @@ mod tests {
             "the caller's script must be wrapped in an async IIFE"
         );
         assert!(
-            calls[0].contains(script),
-            "the wrapped call must contain the caller's original script"
+            calls[0].contains("document.querySelector('.toggle').click();"),
+            "the wrapped call must contain the caller's original first statement"
+        );
+        assert!(
+            calls[0].contains(
+                "return document.querySelector('.toggle').getAttribute('aria-checked');"
+            ),
+            "the wrapped call must add a return to the final expression so it becomes the completion value"
         );
         assert_eq!(
             calls.len(),
