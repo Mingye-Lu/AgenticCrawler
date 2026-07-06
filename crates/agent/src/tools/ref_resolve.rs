@@ -48,12 +48,25 @@ fn validate_or_auto_descend(
     input: &str,
     ref_map: &RefMap,
     ref_id: &str,
+    skip_auto_descend: bool,
 ) -> Result<Option<String>, String> {
     let entry = ref_map.get(ref_id).ok_or_else(|| stale_ref_error(input))?;
 
     // Directly actionable ref — no auto-descend needed
     if !matches!(entry.resolution, Resolution::Attr(_)) || is_actionable_role(&entry.role) {
         return Ok(None);
+    }
+
+    // Container ref — skip auto-descend when caller explicitly opts out
+    // (e.g. fill_form's form_selector must stay on the <form> element)
+    if skip_auto_descend {
+        return Err(container_ref_error(input));
+    }
+
+    // Truncated container — children may have been omitted by depth/child-count
+    // limits in the ARIA walk; the single visible child may not be the only one
+    if entry.truncated {
+        return Err(container_ref_error(input));
     }
 
     // Container ref — try to find actionable descendants
@@ -100,7 +113,7 @@ pub fn resolve_to_action_query(
 ) -> Result<(Option<String>, String), String> {
     if let Some(ref_id) = parse_ref(ref_input) {
         let ref_map = context.ref_map();
-        let resolved_ref = validate_or_auto_descend(ref_input, ref_map, &ref_id)?;
+        let resolved_ref = validate_or_auto_descend(ref_input, ref_map, &ref_id, false)?;
 
         let target_id = match resolved_ref {
             Some(child_ref) => {
@@ -122,9 +135,18 @@ pub fn resolve_to_action_query(
 /// Resolve an @eN ref or bare eN ref to its DOM action query.
 /// If input is a CSS selector (not a ref), returns it unchanged.
 /// Returns Err if input looks like a ref but is not found in the map.
-pub fn resolve_selector(input: &str, ref_map: &RefMap) -> Result<String, String> {
+///
+/// When `skip_auto_descend` is true, container refs always produce an error
+/// instead of trying to auto-descend to a child. Use this for selectors that
+/// must stay on the container element (e.g. `fill_form`'s `form_selector`,
+/// which needs the actual `<form>` element for submission).
+pub fn resolve_selector(
+    input: &str,
+    ref_map: &RefMap,
+    skip_auto_descend: bool,
+) -> Result<String, String> {
     if let Some(ref_id) = parse_ref(input) {
-        let resolved_ref = validate_or_auto_descend(input, ref_map, &ref_id)?;
+        let resolved_ref = validate_or_auto_descend(input, ref_map, &ref_id, skip_auto_descend)?;
 
         let target_id = match resolved_ref {
             Some(child_ref) => parse_ref(&child_ref).unwrap_or(child_ref),
@@ -228,7 +250,7 @@ mod tests {
     #[test]
     fn css_selector_passes_through() {
         let map = RefMap::new();
-        let result = resolve_selector("#my-button", &map).unwrap();
+        let result = resolve_selector("#my-button", &map, false).unwrap();
         assert_eq!(result, "#my-button");
     }
 
@@ -236,7 +258,7 @@ mod tests {
     fn valid_ref_resolves_to_selector() {
         let mut map = RefMap::new();
         map.assign_or_reuse("button.submit", "button", "Submit", None);
-        let result = resolve_selector("@e1", &map).unwrap();
+        let result = resolve_selector("@e1", &map, false).unwrap();
         assert_eq!(result, "button.submit");
     }
 
@@ -244,14 +266,14 @@ mod tests {
     fn bare_ref_resolves() {
         let mut map = RefMap::new();
         map.assign_or_reuse("input#email", "textbox", "Email", None);
-        let result = resolve_selector("e1", &map).unwrap();
+        let result = resolve_selector("e1", &map, false).unwrap();
         assert_eq!(result, "input#email");
     }
 
     #[test]
     fn unknown_ref_returns_error() {
         let map = RefMap::new();
-        let err = resolve_selector("@e999", &map).unwrap_err();
+        let err = resolve_selector("@e999", &map, false).unwrap_err();
         assert_eq!(
             err,
             "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
@@ -261,14 +283,14 @@ mod tests {
     #[test]
     fn dot_selector_passes_through() {
         let map = RefMap::new();
-        let result = resolve_selector(".btn-primary", &map).unwrap();
+        let result = resolve_selector(".btn-primary", &map, false).unwrap();
         assert_eq!(result, ".btn-primary");
     }
 
     #[test]
     fn empty_string_passes_through() {
         let map = RefMap::new();
-        let result = resolve_selector("", &map).unwrap();
+        let result = resolve_selector("", &map, false).unwrap();
         assert_eq!(result, "");
     }
 
@@ -284,7 +306,7 @@ mod tests {
             None,
         );
 
-        let result = resolve_selector(&format!("@{ref_id}"), &map).unwrap();
+        let result = resolve_selector(&format!("@{ref_id}"), &map, false).unwrap();
         assert_eq!(result, format!("[data-acrawl-ref='{ref_id}']"));
     }
 
@@ -300,7 +322,7 @@ mod tests {
             None,
         );
 
-        let err = resolve_selector(&format!("@{ref_id}"), &map).unwrap_err();
+        let err = resolve_selector(&format!("@{ref_id}"), &map, false).unwrap_err();
         assert_eq!(
             err,
             format!(
@@ -334,7 +356,7 @@ mod tests {
         );
 
         // Resolving the container should auto-descend to the button
-        let result = resolve_selector(&format!("@{container_id}"), &map).unwrap();
+        let result = resolve_selector(&format!("@{container_id}"), &map, false).unwrap();
         // Should resolve to the button's attr query
         assert!(result.contains("data-acrawl-ref='e2'"));
     }
@@ -370,7 +392,7 @@ mod tests {
             Some(&container_id),
         );
 
-        let err = resolve_selector(&format!("@{container_id}"), &map).unwrap_err();
+        let err = resolve_selector(&format!("@{container_id}"), &map, false).unwrap_err();
         assert!(
             err.contains(&format!("@{child1}")),
             "error should mention child1: {err}"

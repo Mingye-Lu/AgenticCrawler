@@ -471,6 +471,7 @@ fn page_state_from_feedback_map(
         browser.set_page_snapshot(&cache_key, None, pm);
         return page_state;
     };
+    browser.ref_map_mut().begin_snapshot();
     assign_refs(
         &mut current_tree,
         browser.ref_map_mut(),

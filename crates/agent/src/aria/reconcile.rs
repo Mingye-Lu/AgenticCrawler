@@ -67,6 +67,13 @@ pub fn assign_refs(
     };
     node.ref_id = Some(ref_id.clone());
 
+    // Mark containers with omitted children (truncated by depth/child-count
+    // limits in the ARIA walk) so auto-descend won't pick a misleading single
+    // visible child when there are more hidden descendants.
+    if node.omitted_children > 0 {
+        ref_map.set_truncated(&ref_id, true);
+    }
+
     ancestors.push((node.role.clone(), name));
     let iframe_child_frame = node.frame_id.clone();
     for child in &mut node.children {

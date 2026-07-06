@@ -61,8 +61,9 @@ pub async fn execute(
     let params = parse_input(input)?;
 
     if let Some(hover_selector) = &params.hover_selector {
-        let resolved = super::ref_resolve::resolve_selector(hover_selector, browser.ref_map())
-            .map_err(ToolExecutionError::new)?;
+        let resolved =
+            super::ref_resolve::resolve_selector(hover_selector, browser.ref_map(), false)
+                .map_err(ToolExecutionError::new)?;
 
         browser
             .acquire_bridge()

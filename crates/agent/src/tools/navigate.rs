@@ -387,6 +387,7 @@ async fn build_structural_yaml(
     };
 
     if page.fetched_via_browser {
+        browser.ref_map_mut().begin_snapshot();
         assign_refs(
             &mut tree,
             browser.ref_map_mut(),

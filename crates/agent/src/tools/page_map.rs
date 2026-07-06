@@ -314,6 +314,7 @@ pub async fn execute(
         if url_changed {
             browser.ref_map_mut().clear();
         }
+        browser.ref_map_mut().begin_snapshot();
         assign_refs(
             &mut tree,
             browser.ref_map_mut(),
@@ -333,6 +334,7 @@ pub async fn execute(
         }
         crawl_state.last_aria_tree = Some(tree.clone());
     } else {
+        browser.ref_map_mut().begin_snapshot();
         assign_refs(
             &mut tree,
             browser.ref_map_mut(),
@@ -863,9 +865,9 @@ mod tests {
 
         let map = RefMap::new();
         // Pure CSS selectors pass through unchanged
-        assert_eq!(resolve_selector("#email", &map).unwrap(), "#email");
+        assert_eq!(resolve_selector("#email", &map, false).unwrap(), "#email");
         assert_eq!(
-            resolve_selector("input[name='q']", &map).unwrap(),
+            resolve_selector("input[name='q']", &map, false).unwrap(),
             "input[name='q']"
         );
     }
@@ -879,7 +881,7 @@ mod tests {
         let mut map = RefMap::new();
         map.assign_or_reuse("#email-input", "textbox", "Email", None);
         // Legacy selector-backed refs still resolve to the stored CSS selector.
-        let resolved = resolve_selector("@e1", &map).unwrap();
+        let resolved = resolve_selector("@e1", &map, false).unwrap();
         assert_eq!(resolved, "#email-input");
     }
 
@@ -890,7 +892,7 @@ mod tests {
         use crate::tools::ref_resolve::resolve_selector;
 
         let map = RefMap::new(); // empty map
-        let err = resolve_selector("@e999", &map).unwrap_err();
+        let err = resolve_selector("@e999", &map, false).unwrap_err();
         assert_eq!(
             err,
             "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
@@ -907,11 +909,14 @@ mod tests {
         map.assign_or_reuse("button.submit", "button", "Submit", None);
 
         // @e1 resolves to CSS selector
-        assert_eq!(resolve_selector("@e1", &map).unwrap(), "button.submit");
-        // Unrelated CSS selectors pass through unchanged
-        assert_eq!(resolve_selector("#other", &map).unwrap(), "#other");
         assert_eq!(
-            resolve_selector(".class-selector", &map).unwrap(),
+            resolve_selector("@e1", &map, false).unwrap(),
+            "button.submit"
+        );
+        // Unrelated CSS selectors pass through unchanged
+        assert_eq!(resolve_selector("#other", &map, false).unwrap(), "#other");
+        assert_eq!(
+            resolve_selector(".class-selector", &map, false).unwrap(),
             ".class-selector"
         );
     }
@@ -1036,11 +1041,14 @@ mod tests {
             }
         });
         annotate_refs(&mut value, &mut ctx);
-        assert_eq!(resolve_selector("@e1", ctx.ref_map()).unwrap(), "#old-btn");
+        assert_eq!(
+            resolve_selector("@e1", ctx.ref_map(), false).unwrap(),
+            "#old-btn"
+        );
 
         ctx.ref_map_mut().clear();
 
-        let err = resolve_selector("@e1", ctx.ref_map()).unwrap_err();
+        let err = resolve_selector("@e1", ctx.ref_map(), false).unwrap_err();
         assert_eq!(
             err,
             "Ref '@e1' not found. The page may have changed. Call page_map to get fresh refs."
@@ -1054,7 +1062,10 @@ mod tests {
             }
         });
         annotate_refs(&mut value2, &mut ctx);
-        assert_eq!(resolve_selector("@e1", ctx.ref_map()).unwrap(), "#new-btn");
+        assert_eq!(
+            resolve_selector("@e1", ctx.ref_map(), false).unwrap(),
+            "#new-btn"
+        );
     }
 
     #[test]

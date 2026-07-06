@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// How a ref is resolved to a DOM element within its owning frame.
 ///
@@ -51,16 +51,30 @@ pub struct RefEntry {
     /// The parent's `ref_id` (e.g. "e1"), if any. Used to walk the ancestor
     /// chain for container auto-descend (`RefMap::descendant_refs`).
     pub parent: Option<String>,
+    /// The snapshot generation this entry was last (re)assigned in. Used by
+    /// `RefMap::descendant_refs` to ignore stale refs from prior `page_map`
+    /// walks on same-URL DOM updates.
+    pub generation: u64,
+    /// Whether this container's children were truncated by the ARIA walker
+    /// (depth/child-count limits omitted some children). Truncated
+    /// containers are never auto-descended into, since the single retained
+    /// actionable child may not be the only actionable descendant.
+    pub truncated: bool,
 }
 
 impl RefEntry {
     /// Check whether this entry is a descendant of `ancestor_ref_id`.
-    /// Walks the parent chain transitively through the given `RefMap`.
+    /// Walks the parent chain transitively through the given `RefMap`,
+    /// tracking visited ids to break cycles from stale/duplicate parent data.
     fn has_ancestor(&self, ancestor_ref_id: &str, ref_map: &RefMap) -> bool {
+        let mut visited: HashSet<&str> = HashSet::new();
         let mut current = self.parent.as_deref();
         while let Some(parent_id) = current {
             if parent_id == ancestor_ref_id {
                 return true;
+            }
+            if !visited.insert(parent_id) {
+                break;
             }
             current = ref_map.map.get(parent_id).and_then(|p| p.parent.as_deref());
         }
@@ -83,6 +97,10 @@ pub struct RefMap {
     /// its identity key, so same-selector dedup still holds.
     key_to_ref: HashMap<String, String>,
     next_ref: usize,
+    /// Snapshot generation counter. Incremented by `begin_snapshot()` at the
+    /// start of each `page_map` walk so `descendant_refs` can ignore entries
+    /// left over from earlier snapshots on the same URL.
+    current_generation: u64,
 }
 
 impl RefMap {
@@ -93,7 +111,16 @@ impl RefMap {
             map: HashMap::new(),
             key_to_ref: HashMap::new(),
             next_ref: 1,
+            current_generation: 0,
         }
+    }
+
+    /// Begin a new snapshot generation. Call this when `page_map` starts a new
+    /// ARIA walk so refs assigned/rebound during the walk are tagged with the
+    /// new generation, letting `descendant_refs` ignore stale entries left
+    /// over from a prior walk on the same URL.
+    pub fn begin_snapshot(&mut self) {
+        self.current_generation += 1;
     }
 
     /// Assign a ref by identity key (stable across snapshots on the same URL).
@@ -118,8 +145,14 @@ impl RefMap {
         resolution: Resolution,
         parent_ref_id: Option<&str>,
     ) -> String {
-        if let Some(existing) = self.key_to_ref.get(stable_key) {
-            return existing.clone();
+        if let Some(existing) = self.key_to_ref.get(stable_key).cloned() {
+            // Re-walking an unchanged node never mints a new ref, but it does
+            // touch the entry in the current snapshot generation so
+            // `descendant_refs` doesn't treat it as stale.
+            if let Some(entry) = self.map.get_mut(&existing) {
+                entry.generation = self.current_generation;
+            }
+            return existing;
         }
         let ref_id = format!("e{}", self.next_ref);
         self.next_ref += 1;
@@ -142,6 +175,8 @@ impl RefMap {
                 selector,
                 fallback_selector,
                 parent: parent_ref_id.map(str::to_string),
+                generation: self.current_generation,
+                truncated: false,
             },
         );
         self.key_to_ref
@@ -157,6 +192,12 @@ impl RefMap {
     /// verbatim, so re-minting by identity would collapse duplicate-named
     /// siblings onto one id and desync the model's ref from the DOM. The mint
     /// counter is advanced past `ref_id` so later minted ids cannot collide.
+    ///
+    /// If an entry already exists for `ref_id` and has a parent set, that
+    /// parent is preserved rather than overwritten with `parent_ref_id`. This
+    /// keeps a scoped `page_map` re-walk (which has no ancestors above the
+    /// scope root) from detaching an already-mapped subtree from its real
+    /// ancestors and breaking container auto-descend.
     pub fn bind_existing(
         &mut self,
         stable_key: &str,
@@ -166,6 +207,11 @@ impl RefMap {
         _frame_id: Option<&str>,
         parent_ref_id: Option<&str>,
     ) -> String {
+        let parent = match self.map.get(ref_id) {
+            Some(existing) if existing.parent.is_some() => existing.parent.clone(),
+            _ => parent_ref_id.map(str::to_string),
+        };
+
         self.map.insert(
             ref_id.to_string(),
             RefEntry {
@@ -176,7 +222,9 @@ impl RefMap {
                 resolution: Resolution::Attr(ref_id.to_string()),
                 selector: String::new(),
                 fallback_selector: None,
-                parent: parent_ref_id.map(str::to_string),
+                parent,
+                generation: self.current_generation,
+                truncated: false,
             },
         );
         self.key_to_ref
@@ -256,12 +304,19 @@ impl RefMap {
 
     /// Return all descendant `ref_id`s (direct children + grandchildren, etc.)
     /// of the given ref. Walk the parent chain transitively.
+    ///
+    /// Only entries from the current snapshot generation are returned: on a
+    /// same-URL DOM update, `RefMap` keeps entries from prior `page_map`
+    /// walks, and a container's old child may have been removed or replaced.
+    /// Filtering by generation keeps auto-descend from picking a stale ref.
     #[must_use]
     pub fn descendant_refs(&self, ancestor_ref_id: &str) -> Vec<String> {
         self.map
             .iter()
             .filter_map(|(ref_id, entry)| {
-                if entry.has_ancestor(ancestor_ref_id, self) {
+                if entry.generation == self.current_generation
+                    && entry.has_ancestor(ancestor_ref_id, self)
+                {
                     Some(ref_id.clone())
                 } else {
                     None
@@ -279,6 +334,17 @@ impl RefMap {
         self.map.clear();
         self.key_to_ref.clear();
         self.next_ref = 1;
+        self.current_generation = 0;
+    }
+
+    /// Mark a ref's container as having omitted children during the ARIA
+    /// walk (depth/child-count limits truncated the subtree). Truncated
+    /// containers are skipped by auto-descend since the retained actionable
+    /// child may not be the container's only actionable descendant.
+    pub fn set_truncated(&mut self, ref_id: &str, truncated: bool) {
+        if let Some(entry) = self.map.get_mut(ref_id) {
+            entry.truncated = truncated;
+        }
     }
 }
 
