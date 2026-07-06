@@ -810,7 +810,7 @@ mod tests {
         // short enough that even if browser::prune's boilerplate check
         // somehow missed it, navigate.rs's fallback safety net must still
         // keep real content out of an error-only result.
-        let html = r#"<html><body><div><p>Uh oh! There was an error while loading. Please reload this page.</p></div></body></html>"#;
+        let html = r"<html><body><div><p>Uh oh! There was an error while loading. Please reload this page.</p></div></body></html>";
         let text = "Uh oh! There was an error while loading. Please reload this page. Actual page content the user wants.";
         let markdown = html_to_markdown(html);
         let (content, _) = resolve_content(
