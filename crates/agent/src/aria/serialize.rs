@@ -71,7 +71,7 @@ fn serialize_node(
             .iter()
             .filter(|child| child.ref_id.is_some())
             .count();
-        let collapsed_count = node.children.len() - ref_child_count;
+        let collapsed_count = node.children.len() - ref_child_count + node.omitted_children;
 
         if collapsed_count > 0 {
             let indent = "  ".repeat(current_depth + 1);
@@ -695,6 +695,20 @@ mod tests {
         assert!(yaml.contains("6 children collapsed"));
         assert!(yaml.contains("link \"Learn more\" [ref=e1]:"));
         assert!(yaml.contains("/url: /learn-more"));
+    }
+
+    #[test]
+    fn test_collapse_preserves_walker_omitted_children() {
+        let mut node = node(
+            "log",
+            Some("Events"),
+            (0..10).map(|_| leaf("text", None)).collect(),
+        );
+        node.omitted_children = 42; // walker already capped at 50, this holds the hidden tail
+
+        let yaml = to_yaml(&node, None);
+
+        assert!(yaml.contains("52 children collapsed"));
     }
 
     #[test]
