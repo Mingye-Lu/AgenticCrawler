@@ -883,11 +883,8 @@ fn evaluate_selection_verification(facts: &SelectionVerificationFacts, target_te
         return true;
     }
 
-    if !facts.target_present {
-        let expanded = facts.trigger_expanded.as_deref();
-        if expanded.is_none() || expanded == Some("false") {
-            return true;
-        }
+    if !facts.target_present && facts.trigger_expanded.as_deref() == Some("false") {
+        return true;
     }
 
     facts
@@ -1898,14 +1895,17 @@ mod tests {
             ..Default::default()
         };
         assert!(evaluate_selection_verification(&facts, "French"));
+    }
 
+    #[test]
+    fn evaluate_selection_verification_requires_selection_evidence_when_aria_expanded_missing() {
         let facts_no_expanded_attr = SelectionVerificationFacts {
             trigger_present: true,
             target_present: false,
             trigger_expanded: None,
             ..Default::default()
         };
-        assert!(evaluate_selection_verification(
+        assert!(!evaluate_selection_verification(
             &facts_no_expanded_attr,
             "French"
         ));
