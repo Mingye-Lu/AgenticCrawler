@@ -260,9 +260,18 @@ impl PlaywrightBridge {
         &mut self,
         command: &serde_json::Value,
     ) -> Result<serde_json::Value, BridgeError> {
+        self.send_raw_command_with_timeout(command, DEFAULT_COMMAND_TIMEOUT)
+            .await
+    }
+
+    pub async fn send_raw_command_with_timeout(
+        &mut self,
+        command: &serde_json::Value,
+        command_timeout: Duration,
+    ) -> Result<serde_json::Value, BridgeError> {
         let payload = serde_json::to_string(command)?;
         let line = self
-            .write_command_and_read_line(&payload, DEFAULT_COMMAND_TIMEOUT)
+            .write_command_and_read_line(&payload, command_timeout)
             .await?;
         let response: GenericBridgeResponseMessage = serde_json::from_str(&line)?;
         if response.event != "bridge_response" {
@@ -345,7 +354,12 @@ impl PlaywrightBridge {
         if let Some(s) = state {
             cmd["state"] = serde_json::Value::String(s.to_string());
         }
-        let result = self.send_raw_command(&cmd).await?;
+        let result = self
+            .send_raw_command_with_timeout(
+                &cmd,
+                Duration::from_millis(timeout_ms) + Duration::from_secs(5),
+            )
+            .await?;
         Ok(result
             .get("found")
             .and_then(serde_json::Value::as_bool)
@@ -366,7 +380,12 @@ impl PlaywrightBridge {
         if let Some(sel) = selector {
             cmd["selector"] = serde_json::Value::String(sel.to_string());
         }
-        let result = self.send_raw_command(&cmd).await?;
+        let result = self
+            .send_raw_command_with_timeout(
+                &cmd,
+                Duration::from_millis(timeout_ms) + Duration::from_secs(5),
+            )
+            .await?;
         Ok(result
             .get("found")
             .and_then(serde_json::Value::as_bool)
