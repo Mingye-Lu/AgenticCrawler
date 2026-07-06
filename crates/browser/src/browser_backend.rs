@@ -221,7 +221,7 @@ pub trait BrowserBackend: Debug {
             let script = if let Some(sel) = selector {
                 format!(
                     "document.querySelector('{}')?.textContent?.trim() || ''",
-                    sel.replace('\'', "\\'")
+                    sel.replace('\\', "\\\\").replace('\'', "\\'")
                 )
             } else {
                 "document.body?.textContent?.trim() || ''".to_string()
