@@ -1177,8 +1177,8 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
           if (selector) {
             try {
               text = await page.evaluate((sel) => {
-                const el = document.querySelector(sel);
-                return el ? (el.textContent || '').trim() : '';
+                const els = document.querySelectorAll(sel);
+                return Array.from(els).map((el) => (el.textContent || '').trim()).join(' ');
               }, selector);
             } catch (e) {
               text = '';
