@@ -78,6 +78,78 @@ fn preserve_completion_value(script: &str) -> String {
     )
 }
 
+/// Returns `true` when the script contains a `return` statement at the
+/// top level (brace depth 0, excluding `return` inside function bodies,
+/// blocks, or string literals). Used to decide whether IIFE wrapping is
+/// needed — scripts that only declare global helpers should NOT be wrapped
+/// so that `var` / `function` declarations persist on `window`.
+#[allow(clippy::collapsible_match)]
+fn has_top_level_return(script: &str) -> bool {
+    let chars: Vec<char> = script.chars().collect();
+    let len = chars.len();
+    let mut depth = 0u32;
+    let mut in_string = false;
+    let mut string_char = ' ';
+    let mut i = 0;
+    while i < len {
+        let c = chars[i];
+        if in_string {
+            if c == '\\' && i + 1 < len {
+                i += 2; // skip escaped char
+                continue;
+            }
+            if c == string_char {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '"' | '\'' | '`' => {
+                in_string = true;
+                string_char = c;
+            }
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            '/' if i + 1 < len && chars[i + 1] == '/' => {
+                // Skip single-line comment
+                while i < len && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            '/' if i + 1 < len && chars[i + 1] == '*' => {
+                // Skip block comment
+                i += 2;
+                while i + 1 < len && !(chars[i] == '*' && chars[i + 1] == '/') {
+                    i += 1;
+                }
+                i += 2;
+                continue;
+            }
+            'r' if depth == 0 => {
+                // Check for "return" keyword at top level
+                let rest: &[char] = if i + 6 < len {
+                    &chars[i..i + 7]
+                } else {
+                    &chars[i..]
+                };
+                let rest_str: String = rest.iter().collect();
+                if rest_str.starts_with("return ")
+                    || rest_str.starts_with("return\t")
+                    || rest_str.starts_with("return\n")
+                    || rest_str.starts_with("return;")
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
@@ -107,17 +179,21 @@ pub async fn execute(
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
-    // The bridge evaluates the script as an expression (Playwright's
-    // page.evaluate), so a bare statement list with a top-level `return`
-    // would throw `SyntaxError: Illegal return statement`. Wrapping in an
-    // async IIFE turns the script into a function body: multi-statement
-    // scripts keep their completion-value (last-expression) semantics, and
-    // scripts with an explicit `return` now work too. The settle delay stays
-    // a separate round-trip rather than being spliced into the script text.
-    let transformed = preserve_completion_value(&params.script);
-    let wrapped = format!("(async () => {{\n{transformed}\n}})()");
+    // When the script contains a top-level `return`, wrap in an async IIFE
+    // so the return is inside a function body — otherwise Playwright's
+    // page.evaluate throws `SyntaxError: Illegal return statement`. For
+    // scripts without top-level return (declaration-style inputs like
+    // `var scrape = ...` or `function scrape() { ... }`), evaluate directly
+    // so variable / function declarations persist on the page global.
+    let eval_script = if has_top_level_return(&params.script) {
+        let transformed = preserve_completion_value(&params.script);
+        format!("(async () => {{\n{transformed}\n}})()")
+    } else {
+        params.script.clone()
+    };
+
     let result = bridge
-        .evaluate(&wrapped)
+        .evaluate(&eval_script)
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
@@ -277,19 +353,9 @@ mod tests {
             .expect("execute should succeed");
 
         let calls = take_recorded_evaluate_scripts(&sink).await;
-        assert!(
-            calls[0].starts_with("(async () => {"),
-            "the caller's script must be wrapped in an async IIFE"
-        );
-        assert!(
-            calls[0].contains("document.querySelector('.toggle').click();"),
-            "the wrapped call must contain the caller's original first statement"
-        );
-        assert!(
-            calls[0].contains(
-                "return document.querySelector('.toggle').getAttribute('aria-checked');"
-            ),
-            "the wrapped call must add a return to the final expression so it becomes the completion value"
+        assert_eq!(
+            calls[0], script,
+            "script without top-level return must be evaluated directly, not wrapped"
         );
         assert_eq!(
             calls.len(),
@@ -309,15 +375,18 @@ mod tests {
         let (mut browser, sink) = browser_with_evaluate_recorder();
         let crawl_state = CrawlState::default();
 
-        let input = json!({"script": "document.title"});
+        let script = "document.title";
+        let input = json!({"script": script});
         execute(&input, &mut browser, &crawl_state)
             .await
             .expect("execute should succeed");
 
         let calls = take_recorded_evaluate_scripts(&sink).await;
         assert_eq!(calls.len(), 1);
-        assert!(calls[0].starts_with("(async () => {"));
-        assert!(calls[0].contains("document.title"));
+        assert_eq!(
+            calls[0], script,
+            "script without top-level return must be evaluated directly, not IIFE-wrapped"
+        );
     }
 
     #[test]
@@ -536,8 +605,7 @@ mod tests {
             assert!(result.is_ok());
             let calls = state.lock().unwrap().calls.clone();
             assert_eq!(calls[0], "hover:.btn");
-            assert!(calls[1].starts_with("evaluate:(async () => {"));
-            assert!(calls[1].contains('1'));
+            assert_eq!(calls[1], "evaluate:1");
         }
 
         #[tokio::test]
@@ -566,7 +634,7 @@ mod tests {
             assert!(result.is_ok());
             let calls = state.lock().unwrap().calls.clone();
             assert_eq!(calls.len(), 1);
-            assert!(calls[0].starts_with("evaluate:(async () => {"));
+            assert_eq!(calls[0], "evaluate:1");
         }
 
         #[tokio::test]
@@ -580,9 +648,62 @@ mod tests {
             assert!(result.is_ok());
             let calls = state.lock().unwrap().calls.clone();
             assert_eq!(calls[0], "hover:.btn");
-            assert!(calls[1].starts_with("evaluate:(async () => {"));
-            assert!(calls[1].contains('1'));
+            assert_eq!(calls[1], "evaluate:1");
             assert!(calls[2].contains("evaluate:") && calls[2].contains("setTimeout"));
+        }
+
+        #[tokio::test]
+        async fn non_return_script_evaluated_directly() {
+            let state = Arc::new(Mutex::new(MockState::default()));
+            let mut browser = make_browser(state.clone());
+            // `var` declaration — must NOT be IIFE-wrapped so `scrape` persists on `window`
+            let input = json!({"script": "var scrape = function() { return 1; }; scrape()"});
+
+            let result = execute(&input, &mut browser, &CrawlState::default()).await;
+
+            assert!(result.is_ok());
+            let calls = state.lock().unwrap().calls.clone();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                calls[0], "evaluate:var scrape = function() { return 1; }; scrape()",
+                "declaration scripts must be evaluated directly to persist globals"
+            );
+        }
+
+        #[tokio::test]
+        async fn function_with_nested_return_evaluated_directly() {
+            let state = Arc::new(Mutex::new(MockState::default()));
+            let mut browser = make_browser(state.clone());
+            // `return` inside a function body, not at top level — should NOT trigger IIFE
+            let input = json!({"script": "function foo() { return 5; }; foo()"});
+
+            let result = execute(&input, &mut browser, &CrawlState::default()).await;
+
+            assert!(result.is_ok());
+            let calls = state.lock().unwrap().calls.clone();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(
+                calls[0], "evaluate:function foo() { return 5; }; foo()",
+                "scripts with return only inside function bodies must be evaluated directly"
+            );
+        }
+
+        #[tokio::test]
+        async fn top_level_return_still_wrapped_in_iife() {
+            let state = Arc::new(Mutex::new(MockState::default()));
+            let mut browser = make_browser(state.clone());
+            let input = json!({"script": "return 42;"});
+
+            let result = execute(&input, &mut browser, &CrawlState::default()).await;
+
+            assert!(result.is_ok());
+            let calls = state.lock().unwrap().calls.clone();
+            assert_eq!(calls.len(), 1);
+            assert!(
+                calls[0].starts_with("evaluate:(async () => {"),
+                "scripts with top-level return MUST still be wrapped in IIFE"
+            );
+            assert!(calls[0].contains("return 42;"));
         }
     }
 }
