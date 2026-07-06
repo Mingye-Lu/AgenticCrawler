@@ -1,7 +1,13 @@
 name: Trigger Codex Review
 on:
-  pull_request:
+  pull_request_target: # secrets available for collaborator and fork PRs; no code checkout
     types: [opened, reopened] # synchronize intentionally excluded
+  workflow_dispatch: # manual fallback: trigger review on any open PR by number
+    inputs:
+      pr_number:
+        description: Pull request number
+        required: true
+        type: number
 
 jobs:
   trigger:
@@ -12,25 +18,34 @@ jobs:
         with:
           github-token: ${{ secrets.CODEX_TRIGGER_TOKEN }}
           script: |
+            const prNumber = context.eventName === 'workflow_dispatch'
+              ? parseInt(context.payload.inputs.pr_number, 10)
+              : context.payload.pull_request.number;
+
+            if (!prNumber || isNaN(prNumber)) {
+              core.setFailed(`Invalid PR number: ${context.payload.inputs?.pr_number}`);
+              return;
+            }
+
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
+              issue_number: prNumber,
+              per_page: 100,
             });
 
-            // Only post if no @codex review comment exists yet
             const alreadyTriggered = comments.some(c =>
-              c.body && c.body.toLowerCase().includes('@codex')
+              c.body && c.body.trim().toLowerCase() === '@codex review'
             );
 
             if (!alreadyTriggered) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
+                issue_number: prNumber,
                 body: '@codex review'
               });
-              console.log('Codex review triggered.');
+              console.log(`Codex review triggered on PR #${prNumber}.`);
             } else {
-              console.log('Codex already mentioned on this PR — skipping.');
+              console.log(`PR #${prNumber}: @codex review already posted — skipping.`);
             }
