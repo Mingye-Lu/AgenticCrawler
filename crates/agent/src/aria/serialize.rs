@@ -65,15 +65,29 @@ fn serialize_node(
         lines.push(format!("{child_indent}/url: {url}"));
     }
 
-    if let Some((_, count)) = should_collapse_children(&node.children) {
-        let indent = "  ".repeat(current_depth + 1);
-        if let Some(ref_id) = &node.ref_id {
-            lines.push(format!(
-                "{indent}- [{count} children collapsed — use read_content(@{ref_id}) to read]"
-            ));
-        } else {
-            lines.push(format!("{indent}- [{count} children collapsed]"));
+    if should_collapse_children(&node.children).is_some() {
+        let ref_child_count = node
+            .children
+            .iter()
+            .filter(|child| child.ref_id.is_some())
+            .count();
+        let collapsed_count = node.children.len() - ref_child_count;
+
+        if collapsed_count > 0 {
+            let indent = "  ".repeat(current_depth + 1);
+            if let Some(ref_id) = &node.ref_id {
+                lines.push(format!(
+                    "{indent}- [{collapsed_count} children collapsed — use read_content(@{ref_id}) to read]"
+                ));
+            } else {
+                lines.push(format!("{indent}- [{collapsed_count} children collapsed]"));
+            }
         }
+
+        for child in node.children.iter().filter(|child| child.ref_id.is_some()) {
+            serialize_node(child, current_depth + 1, max_depth, lines);
+        }
+
         return;
     }
 
@@ -668,6 +682,19 @@ mod tests {
         let yaml = to_yaml(&tree, None);
 
         assert_eq!(yaml, "- region \"Log\":\n  - [20 children collapsed]");
+    }
+
+    #[test]
+    fn test_collapse_preserves_ref_child_sibling() {
+        let mut children: Vec<AriaNode> = (0..6).map(|_| leaf("text", None)).collect();
+        children.push(ref_link("Learn more", "e1", "/learn-more"));
+        let tree = node("region", Some("Log"), children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert!(yaml.contains("6 children collapsed"));
+        assert!(yaml.contains("link \"Learn more\" [ref=e1]:"));
+        assert!(yaml.contains("/url: /learn-more"));
     }
 
     #[test]
