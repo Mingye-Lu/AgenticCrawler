@@ -71,6 +71,45 @@ pub fn assign_refs(
     ancestors.pop();
 }
 
+/// Collect every `ref_id` from an ARIA tree into a set so callers can tell
+/// `RefMap::retain_active` which entries are still present in the current
+/// snapshot. Must be called AFTER `assign_refs` (which stamps `ref_id` on
+/// every node).
+#[must_use]
+pub fn collect_ref_ids(node: &AriaNode) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    collect_ref_ids_recursive(node, &mut ids);
+    ids
+}
+
+fn collect_ref_ids_recursive(node: &AriaNode, ids: &mut std::collections::HashSet<String>) {
+    if let Some(ref ref_id) = node.ref_id {
+        ids.insert(ref_id.clone());
+    }
+    for child in &node.children {
+        collect_ref_ids_recursive(child, ids);
+    }
+}
+
+/// Assign refs to every node in the ARIA tree, then prune any stale
+/// `Attr`-resolved entries from `ref_map` that no longer appear in the tree.
+///
+/// This wraps `assign_refs` + `collect_ref_ids` + `RefMap::retain_active` so
+/// that *both* the stale-ref case (element re-stamped after DOM mutation) and
+/// the duplicate-sibling case (same `stable_key`, different valid DOM stamps)
+/// are handled correctly:
+/// - Duplicate siblings keep all their refs because both appear in the tree.
+/// - Re-stamped elements lose the old ref because only the new one is active.
+///
+/// Use this in production code. Tests that create a fresh `RefMap` per call
+/// can still use raw `assign_refs` directly (no stale entries exist to prune).
+pub fn assign_refs_and_prune(node: &mut AriaNode, ref_map: &mut RefMap) {
+    assign_refs(node, ref_map, None, &mut Vec::new());
+    let active = collect_ref_ids(node);
+    let active_refs: std::collections::HashSet<&str> = active.iter().map(String::as_str).collect();
+    ref_map.retain_active(&active_refs);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

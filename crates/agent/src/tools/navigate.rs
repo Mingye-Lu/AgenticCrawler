@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::aria::{assign_refs, parse_raw_tree, to_yaml, AriaNode, AriaStates};
+use crate::aria::{assign_refs_and_prune, parse_raw_tree, to_yaml, AriaNode, AriaStates};
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
 use crate::page_fingerprint::PageFingerprint;
 use crate::prune::{prune_html_with_profile, select_profile, CleaningProfile};
@@ -387,7 +387,7 @@ async fn build_structural_yaml(
     };
 
     if page.fetched_via_browser {
-        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
+        assign_refs_and_prune(&mut tree, browser.ref_map_mut());
         let cache_key = normalize_url(&page.url).to_string();
         browser.set_page_snapshot(&cache_key, None, json!({ "meta": { "url": page.url } }));
     }

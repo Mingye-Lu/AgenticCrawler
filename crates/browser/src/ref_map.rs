@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// How a ref is resolved to a DOM element within its owning frame.
 ///
@@ -234,6 +234,41 @@ impl RefMap {
         self.map.clear();
         self.key_to_ref.clear();
         self.next_ref = 1;
+    }
+
+    /// Remove stale `Attr`-resolved entries whose `ref_ids` are absent from
+    /// the current ARIA tree snapshot.
+    ///
+    /// After `assign_refs` processes the tree, any `Attr`-resolved entry that
+    /// was NOT seen in the current walk represents either:
+    /// - A re-stamped element (same identity, new stamp) — the old `ref_id`
+    ///   points to a `data-acrawl-ref` attribute that no longer exists.
+    /// - An element that disappeared from the DOM entirely.
+    ///
+    /// Both are stale and should be removed so `@eN`-style scopes fail fast
+    /// instead of resolving to a ghost query.
+    ///
+    /// `Selector`-resolved entries (legacy `assign_or_reuse` path) are left
+    /// untouched — they are deduplicated by selector text, not DOM stamps.
+    ///
+    /// `key_to_ref` entries pointing to removed refs are also cleaned up so
+    /// a future occurrence gets a fresh ref.
+    pub fn retain_active(&mut self, active_ref_ids: &HashSet<&str>) {
+        let stale: Vec<String> = self
+            .map
+            .keys()
+            .filter(|id| !active_ref_ids.contains(id.as_str()))
+            .filter(|id| {
+                self.map
+                    .get(id.as_str())
+                    .is_some_and(|e| matches!(e.resolution, Resolution::Attr(_)))
+            })
+            .cloned()
+            .collect();
+        for id in &stale {
+            self.map.remove(id.as_str());
+        }
+        self.key_to_ref.retain(|_, ref_id| !stale.contains(ref_id));
     }
 }
 
@@ -511,20 +546,72 @@ mod tests {
     }
 
     #[test]
-    fn bind_existing_clears_old_ref_on_rebind() {
+    fn bind_existing_preserves_both_refs_on_rebind_retain_active_cleans_stale() {
         let mut map = RefMap::new();
         let first = map.bind_existing("dialog|Confirm|main:", "e14", "dialog", "Confirm", None);
         assert_eq!(first, "e14");
         assert!(map.get("e14").is_some());
 
+        // After re-binding, both refs are present — bind_existing alone does
+        // NOT eagerly remove the old entry (duplicate-named siblings in the
+        // same ARIA walk must stay resolvable).
         let second = map.bind_existing("dialog|Confirm|main:", "e21", "dialog", "Confirm", None);
         assert_eq!(second, "e21");
-
-        // The old ref_id is preserved in the map so that duplicate-named
-        // siblings (same stable_key, different stamped ids) remain
-        // resolvable via their original ref (e.g. scope="@e14").
         assert!(map.get("e14").is_some());
         assert!(map.get("e21").is_some());
+
+        // Simulate a post-tree-walk cleanup: only e21 is in the current
+        // snapshot (the element was re-stamped). The stale e14 is removed.
+        let active: HashSet<&str> = ["e21"].into_iter().collect();
+        map.retain_active(&active);
+        assert!(map.get("e14").is_none());
+        assert!(map.get("e21").is_some());
         assert_eq!(map.resolve("e21").unwrap().1, "[data-acrawl-ref='e21']");
+    }
+
+    #[test]
+    fn retain_active_preserves_duplicate_sibling_refs() {
+        let mut map = RefMap::new();
+        map.bind_existing("button|Action|main:", "e2", "button", "Action", None);
+        map.bind_existing("button|Action|main:", "e3", "button", "Action", None);
+
+        // Both siblings are active in the same tree walk.
+        let active: HashSet<&str> = ["e2", "e3"].into_iter().collect();
+        map.retain_active(&active);
+
+        assert!(map.get("e2").is_some());
+        assert!(map.get("e3").is_some());
+        assert_eq!(map.resolve("e2").unwrap().1, "[data-acrawl-ref='e2']");
+        assert_eq!(map.resolve("e3").unwrap().1, "[data-acrawl-ref='e3']");
+        // key_to_ref should point to the last-bound ref for the key.
+        assert_eq!(map.ref_id_for_query("[data-acrawl-ref='e2']"), Some("e2"));
+        assert_eq!(map.ref_id_for_query("[data-acrawl-ref='e3']"), Some("e3"));
+    }
+
+    #[test]
+    fn retain_active_ignores_selector_resolved_entries() {
+        let mut map = RefMap::new();
+        map.assign_or_reuse("button.submit", "button", "Submit");
+        // Only Attr entries are pruned; Selector entries persist.
+        let active: HashSet<&str> = HashSet::new(); // empty — nothing is "active"
+        map.retain_active(&active);
+        assert!(
+            map.get("e1").is_some(),
+            "Selector-resolved entries must survive retain_active"
+        );
+    }
+
+    #[test]
+    fn retain_active_cleans_key_to_ref_for_stale_entries() {
+        let mut map = RefMap::new();
+        map.bind_existing("link|Home|main:", "e5", "link", "Home", None);
+        assert!(map.key_to_ref.contains_key("link|Home|main:"));
+
+        // e5 is stale — not in the active set.
+        let active: HashSet<&str> = HashSet::new();
+        map.retain_active(&active);
+
+        assert!(map.get("e5").is_none());
+        assert!(!map.key_to_ref.contains_key("link|Home|main:"));
     }
 }
