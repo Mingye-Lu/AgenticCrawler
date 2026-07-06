@@ -84,7 +84,9 @@ fn navigation_tools() -> Vec<ToolSpec> {
             description: "Navigate the browser back to the previous page in history (equivalent to the browser back button). Returns the URL navigated to and a page_state object with headings, landmarks, and links of the resulting page. Use after clicking into a page to return to a listing or search results without re-navigating by URL.",
             input_schema: json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
+                },
                 "additionalProperties": false
             }),
             instructions: Some("Returns the URL navigated to and a `page_state` object with headings, landmarks, and links of the resulting page. Use page_state to understand what you landed on after going back."),
@@ -94,7 +96,9 @@ fn navigation_tools() -> Vec<ToolSpec> {
             description: "Reload the current page. Returns page_state after reload. Use after setting intercept rules to replay the page with rules active. Seq increments for temporal observation queries.",
             input_schema: json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
+                },
                 "additionalProperties": false
             }),
             instructions: Some("Reloads the current page and returns a `page_state` object with the updated page structure. Use after setting intercept rules to replay the page with rules active. The seq field increments for temporal observation queries."),
@@ -106,7 +110,8 @@ fn navigation_tools() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "direction": { "type": "string", "enum": ["up", "down"], "description": "Scroll direction. 'down' reveals content below the viewport; 'up' scrolls back toward the top." },
-                    "pixels": { "type": "integer", "description": "Number of pixels to scroll (default: 500). Use 300–800 for a normal page scroll; larger values for quickly reaching page bottom." }
+                    "pixels": { "type": "integer", "description": "Number of pixels to scroll (default: 500). Use 300–800 for a normal page scroll; larger values for quickly reaching page bottom." },
+                    "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
                 },
                 "additionalProperties": false
             }),
@@ -118,7 +123,8 @@ fn navigation_tools() -> Vec<ToolSpec> {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "index": { "type": "integer", "description": "Zero-based tab index to switch to (0 = first tab). Use the tab count from previous responses to determine valid indices." }
+                    "index": { "type": "integer", "description": "Zero-based tab index to switch to (0 = first tab). Use the tab count from previous responses to determine valid indices." },
+                    "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
                 },
                 "additionalProperties": false
             }),
@@ -140,7 +146,8 @@ fn navigation_tools() -> Vec<ToolSpec> {
                     "silent": {
                         "type": "boolean",
                         "description": "When true, suppress the page_state payload from the response. Use for simple timed pauses where you don't need a structural diff — saves context tokens. Only effective for time-only waits (no selector). Default: false."
-                    }
+                    },
+                    "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
                 },
                 "additionalProperties": false
             }),
@@ -988,7 +995,8 @@ fn script_management_tools() -> Vec<ToolSpec> {
                     "hasTouch": {
                         "type": "boolean",
                         "description": "Enable touch event support. Cannot be used with 'device'."
-                    }
+                    },
+                    "widen": { "type": "boolean", "description": "When true, return the full-page diff instead of scoping to the interacted container. Default: false." }
                 },
                 "additionalProperties": false
             }),

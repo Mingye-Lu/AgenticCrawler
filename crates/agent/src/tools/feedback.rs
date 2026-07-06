@@ -556,7 +556,7 @@ fn page_state_from_feedback_map(
         if widen {
             scoped.map_or_else(|| full_snapshot_value(&current_tree), full_snapshot_value)
         } else {
-            json!({"changed": true, "first_snapshot": true, "added": 1, "removed": 0, "changed_states": 0})
+            json!({"changed": true, "first_snapshot": true, "url": full_url, "added": 1, "removed": 0, "changed_states": 0})
         }
     };
 
