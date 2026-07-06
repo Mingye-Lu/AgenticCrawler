@@ -7,7 +7,7 @@ use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: [&str; 31] = [
+const ASYNC_TOOLS: [&str; 32] = [
     "navigate",
     "click",
     "click_at",
@@ -20,6 +20,7 @@ const ASYNC_TOOLS: [&str; 31] = [
     "inspect_websocket",
     "screenshot",
     "go_back",
+    "get_page_info",
     "refresh",
     "scroll",
     "wait",
@@ -169,6 +170,9 @@ impl ToolRegistry {
             }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
+            "get_page_info" => {
+                crate::tools::get_page_info::execute(input, browser, crawl_state).await
+            }
             "refresh" => crate::tools::refresh::execute(input, browser, crawl_state).await,
             "scroll" => crate::tools::scroll::execute(input, browser, crawl_state).await,
             "wait" => crate::tools::wait::execute(input, browser, crawl_state).await,
@@ -214,7 +218,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_forty_two() {
+    fn new_with_core_tools_registers_all_forty_three() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -231,7 +235,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 42);
+        assert_eq!(registry.len(), 43);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -244,7 +248,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 42);
+        assert_eq!(registry.len(), 43);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

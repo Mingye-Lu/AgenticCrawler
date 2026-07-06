@@ -1189,7 +1189,7 @@ mod tests {
             .into_iter()
             .filter(|spec| !EXCLUDED_TOOLS.contains(&spec.name))
             .collect();
-        assert_eq!(browser_specs.len(), 38);
+        assert_eq!(browser_specs.len(), 39);
         let names: BTreeSet<&str> = browser_specs.iter().map(|s| s.name).collect();
         assert!(names.contains("navigate"));
         assert!(names.contains("click"));
