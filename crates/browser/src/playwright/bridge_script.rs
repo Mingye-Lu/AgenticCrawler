@@ -1185,7 +1185,31 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
             }
           } else {
             try {
-              text = await page.evaluate(() => (document.body?.textContent || '').trim());
+              text = await page.evaluate(() => {
+                if (!document.body) return '';
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                  acceptNode: function(node) {
+                    const el = node.parentElement;
+                    if (!el) return NodeFilter.FILTER_REJECT;
+                    const tag = el.tagName;
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+                    let parent = el.parentElement;
+                    while (parent && parent !== document.body) {
+                      const ps = window.getComputedStyle(parent);
+                      if (ps.display === 'none' || ps.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+                      parent = parent.parentElement;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                  }
+                });
+                let result = '';
+                while (walker.nextNode()) {
+                  result += walker.currentNode.textContent;
+                }
+                return result.trim();
+              });
             } catch (e) {
               text = '';
             }
