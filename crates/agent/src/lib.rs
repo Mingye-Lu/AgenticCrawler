@@ -126,12 +126,12 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait",
-            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires, unless `silent: true` is set for a time-only wait, in which case only the completion signal is returned.",
+            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires, unless `silent: true` is set for a time-only wait, in which case only the completion signal is returned. When no selector is provided, maximum wait is 45 seconds due to MCP transport constraints. Chain multiple wait calls for longer delays. Waits with a selector are not subject to this limit (max 300s) since they poll instead of blocking the response.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "selector": { "type": "string", "description": "CSS selector of the element to wait for (e.g. \".results-loaded\", \"#spinner\"). Mutually exclusive with 'seconds' — provide one or the other." },
-                    "seconds": { "type": "number", "description": "Fixed number of seconds to wait (max 300). Use when no specific element signals completion. Mutually exclusive with 'selector'." },
+                    "seconds": { "type": "number", "description": "Fixed number of seconds to wait. Max 45 when no selector is given (MCP transport limit — chain multiple wait calls for longer delays); max 300 when a selector is given. Use when no specific element signals completion. Mutually exclusive with 'selector'." },
                     "state": {
                         "type": "string",
                         "enum": ["visible", "hidden", "attached", "detached"],
