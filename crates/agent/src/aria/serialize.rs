@@ -114,9 +114,7 @@ fn should_collapse_children(children: &[AriaNode]) -> Option<(String, usize)> {
 
     let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for child in children {
-        if child.ref_id.is_none() {
-            *counts.entry(child.role.as_str()).or_insert(0) += 1;
-        }
+        *counts.entry(child.role.as_str()).or_insert(0) += 1;
     }
 
     let (dominant_role, count) = counts.into_iter().max_by_key(|(_, count)| *count)?;
@@ -636,20 +634,6 @@ mod tests {
             yaml,
             "- list \"Items\" [ref=e2]:\n  - [8 children collapsed — use read_content(@e2) to read]"
         );
-    }
-
-    #[test]
-    fn test_no_collapse_when_children_have_refs() {
-        let mut children: Vec<AriaNode> = (0..5)
-            .map(|idx| leaf("generic", Some(&format!("e{idx}"))))
-            .collect();
-        children.extend((0..5).map(|_| leaf("generic", None)));
-        let tree = node("region", Some("Log"), children);
-
-        let yaml = to_yaml(&tree, None);
-
-        assert!(!yaml.contains("children collapsed"));
-        assert_eq!(yaml.lines().count(), 11);
     }
 
     #[test]
