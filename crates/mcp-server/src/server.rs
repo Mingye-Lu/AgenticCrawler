@@ -249,6 +249,34 @@ fn execute_browser_tool(
     rt: &tokio::runtime::Runtime,
     crawl_state: &mut agent::state::CrawlState,
 ) -> Result<String, String> {
+    // MCP transport timeout: reject selector-less waits over 45s.
+    // The cap is enforced here (MCP-only path), not in parse_input()
+    // which is shared with TUI/prompt sessions where the 300s limit applies.
+    const MAX_MCP_TIME_ONLY_MS: u64 = 45_000;
+    if name == "wait" {
+        let selector = input.get("selector").and_then(|v| v.as_str());
+        if selector.is_none() {
+            let timeout_ms = if let Some(ms) = input.get("timeout_ms").and_then(serde_json::Value::as_u64) {
+                ms
+            } else if let Some(sec) = input.get("seconds").and_then(serde_json::Value::as_f64) {
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let ms = (sec * 1000.0) as u64;
+                ms
+            } else {
+                5_000 // default
+            };
+            if timeout_ms > MAX_MCP_TIME_ONLY_MS {
+                return Err(format!(
+                    "wait without a selector is limited to {}s when used over MCP. \
+                     For longer delays, chain multiple wait calls \
+                     (e.g., wait(seconds=30) then wait(seconds=30)). \
+                     Use wait with a selector for longer timeouts.",
+                    MAX_MCP_TIME_ONLY_MS / 1000
+                ));
+            }
+        }
+    }
+
     rt.block_on(async {
         match registry
             .execute_async(name, input, browser, crawl_state)

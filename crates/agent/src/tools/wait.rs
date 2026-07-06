@@ -11,8 +11,6 @@ use super::feedback::InteractionKind;
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 const MAX_TIMEOUT_SECONDS: f64 = 300.0;
-const MAX_TIME_ONLY_TIMEOUT_MS: u64 = 45_000;
-
 #[derive(Debug)]
 pub struct WaitInput {
     pub selector: Option<String>,
@@ -28,15 +26,6 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
         .map(String::from);
 
     let timeout_ms = parse_timeout_ms(input)?;
-
-    if selector.is_none() && timeout_ms > MAX_TIME_ONLY_TIMEOUT_MS {
-        return Err(CrawlError::new(format!(
-            "wait without a selector is limited to {}s when used over MCP. For longer delays, \
-             chain multiple wait calls (e.g., wait(seconds=30) then wait(seconds=30)). Use wait \
-             with a selector for longer timeouts.",
-            MAX_TIME_ONLY_TIMEOUT_MS / 1000
-        )));
-    }
 
     let state = input
         .get("state")
@@ -311,24 +300,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_time_only_wait_over_45_seconds() {
-        let input = json!({"seconds": 60});
-        let err = parse_input(&input).unwrap_err();
-        assert!(err.to_string().contains("45s"));
-    }
-
-    #[test]
-    fn rejects_time_only_wait_timeout_ms_over_45_seconds() {
-        let input = json!({"timeout_ms": 50_000});
-        let err = parse_input(&input).unwrap_err();
-        assert!(err.to_string().contains("45s"));
-    }
-
-    #[test]
-    fn allows_time_only_wait_at_30_seconds() {
-        let input = json!({"seconds": 30});
+    fn allows_time_only_wait_at_45_seconds() {
+        let input = json!({"seconds": 45});
         let parsed = parse_input(&input).unwrap();
-        assert_eq!(parsed.timeout_ms, 30_000);
+        assert_eq!(parsed.timeout_ms, 45_000);
     }
 
     #[test]
