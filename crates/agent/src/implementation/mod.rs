@@ -2248,7 +2248,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let result = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2294,7 +2294,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2324,7 +2324,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2354,7 +2354,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2382,7 +2382,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)

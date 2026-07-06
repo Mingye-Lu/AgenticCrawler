@@ -68,14 +68,14 @@ pub async fn execute(
         .fields
         .iter()
         .map(|(sel, val)| {
-            let resolved = super::ref_resolve::resolve_selector(sel, browser.ref_map())
+            let resolved = super::ref_resolve::resolve_selector(sel, browser.ref_map(), false)
                 .map_err(ToolExecutionError::new)?;
             Ok::<_, ToolExecutionError>((resolved, val.clone()))
         })
         .collect::<Result<Vec<_>, _>>()?;
 
     let resolved_form_selector =
-        super::ref_resolve::resolve_selector(&params.form_selector, browser.ref_map())
+        super::ref_resolve::resolve_selector(&params.form_selector, browser.ref_map(), true)
             .map_err(ToolExecutionError::new)?;
 
     fill_fields(browser, &resolved_fields).await?;

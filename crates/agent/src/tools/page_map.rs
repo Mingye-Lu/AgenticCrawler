@@ -66,7 +66,7 @@ pub fn annotate_refs(result: &mut Value, browser: &mut BrowserContext) {
                     .to_string();
                 let ref_id = browser
                     .ref_map_mut()
-                    .assign_or_reuse(&selector, &role, &name);
+                    .assign_or_reuse(&selector, &role, &name, None);
                 if let Some(obj) = el.as_object_mut() {
                     obj.insert("ref".to_string(), Value::String(format!("@{ref_id}")));
                 }
@@ -314,7 +314,14 @@ pub async fn execute(
         if url_changed {
             browser.ref_map_mut().clear();
         }
-        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
+        browser.ref_map_mut().begin_snapshot();
+        assign_refs(
+            &mut tree,
+            browser.ref_map_mut(),
+            None,
+            &mut Vec::new(),
+            None,
+        );
         browser.set_page_snapshot(&cache_key, None, result.clone());
 
         // Only full-page snapshots may become the diff baseline and the
@@ -327,7 +334,14 @@ pub async fn execute(
         }
         crawl_state.last_aria_tree = Some(tree.clone());
     } else {
-        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
+        browser.ref_map_mut().begin_snapshot();
+        assign_refs(
+            &mut tree,
+            browser.ref_map_mut(),
+            None,
+            &mut Vec::new(),
+            None,
+        );
     }
 
     // The walk already limited its own depth; the serializer depth is a cap on
@@ -711,6 +725,7 @@ mod tests {
             "Embedded panel",
             Some("f2"),
             Resolution::Attr(String::new()),
+            None,
         );
 
         assert_eq!(
@@ -811,13 +826,13 @@ mod tests {
 
         let mut ref_map = RefMap::new();
         // Assign twice for same selector → same ref
-        let r1 = ref_map.assign_or_reuse("#submit", "button", "Submit");
-        let r2 = ref_map.assign_or_reuse("#submit", "button", "Submit");
+        let r1 = ref_map.assign_or_reuse("#submit", "button", "Submit", None);
+        let r2 = ref_map.assign_or_reuse("#submit", "button", "Submit", None);
         assert_eq!(r1, r2);
         assert_eq!(r1, "e1");
 
         // Different selector → new ref
-        let r3 = ref_map.assign_or_reuse("#email", "textbox", "Email");
+        let r3 = ref_map.assign_or_reuse("#email", "textbox", "Email", None);
         assert_ne!(r1, r3);
         assert_eq!(r3, "e2");
     }
@@ -827,13 +842,13 @@ mod tests {
         use browser::RefMap;
 
         let mut ref_map = RefMap::new();
-        let r1 = ref_map.assign_or_reuse("#btn", "button", "Click me");
+        let r1 = ref_map.assign_or_reuse("#btn", "button", "Click me", None);
         assert_eq!(r1, "e1");
 
         ref_map.clear();
 
         // After clear, counter resets
-        let r2 = ref_map.assign_or_reuse("#other-btn", "button", "Other");
+        let r2 = ref_map.assign_or_reuse("#other-btn", "button", "Other", None);
         assert_eq!(r2, "e1");
         // Original ref no longer exists — e1 now points to #other-btn
         assert_eq!(
@@ -850,9 +865,9 @@ mod tests {
 
         let map = RefMap::new();
         // Pure CSS selectors pass through unchanged
-        assert_eq!(resolve_selector("#email", &map).unwrap(), "#email");
+        assert_eq!(resolve_selector("#email", &map, false).unwrap(), "#email");
         assert_eq!(
-            resolve_selector("input[name='q']", &map).unwrap(),
+            resolve_selector("input[name='q']", &map, false).unwrap(),
             "input[name='q']"
         );
     }
@@ -864,9 +879,9 @@ mod tests {
         use crate::tools::ref_resolve::resolve_selector;
 
         let mut map = RefMap::new();
-        map.assign_or_reuse("#email-input", "textbox", "Email");
+        map.assign_or_reuse("#email-input", "textbox", "Email", None);
         // Legacy selector-backed refs still resolve to the stored CSS selector.
-        let resolved = resolve_selector("@e1", &map).unwrap();
+        let resolved = resolve_selector("@e1", &map, false).unwrap();
         assert_eq!(resolved, "#email-input");
     }
 
@@ -877,7 +892,7 @@ mod tests {
         use crate::tools::ref_resolve::resolve_selector;
 
         let map = RefMap::new(); // empty map
-        let err = resolve_selector("@e999", &map).unwrap_err();
+        let err = resolve_selector("@e999", &map, false).unwrap_err();
         assert_eq!(
             err,
             "Ref '@e999' not found. The page may have changed. Call page_map to get fresh refs."
@@ -891,14 +906,17 @@ mod tests {
         use crate::tools::ref_resolve::resolve_selector;
 
         let mut map = RefMap::new();
-        map.assign_or_reuse("button.submit", "button", "Submit");
+        map.assign_or_reuse("button.submit", "button", "Submit", None);
 
         // @e1 resolves to CSS selector
-        assert_eq!(resolve_selector("@e1", &map).unwrap(), "button.submit");
-        // Unrelated CSS selectors pass through unchanged
-        assert_eq!(resolve_selector("#other", &map).unwrap(), "#other");
         assert_eq!(
-            resolve_selector(".class-selector", &map).unwrap(),
+            resolve_selector("@e1", &map, false).unwrap(),
+            "button.submit"
+        );
+        // Unrelated CSS selectors pass through unchanged
+        assert_eq!(resolve_selector("#other", &map, false).unwrap(), "#other");
+        assert_eq!(
+            resolve_selector(".class-selector", &map, false).unwrap(),
             ".class-selector"
         );
     }
@@ -912,9 +930,9 @@ mod tests {
         let mut map_b = RefMap::new();
 
         // Assign to map_a
-        let ref_a = map_a.assign_or_reuse("#btn-a", "button", "A");
+        let ref_a = map_a.assign_or_reuse("#btn-a", "button", "A", None);
         // Assign different selector to map_b
-        let ref_b = map_b.assign_or_reuse("#btn-b", "button", "B");
+        let ref_b = map_b.assign_or_reuse("#btn-b", "button", "B", None);
 
         // Both start at e1 (independent counters)
         assert_eq!(ref_a, "e1");
@@ -1023,11 +1041,14 @@ mod tests {
             }
         });
         annotate_refs(&mut value, &mut ctx);
-        assert_eq!(resolve_selector("@e1", ctx.ref_map()).unwrap(), "#old-btn");
+        assert_eq!(
+            resolve_selector("@e1", ctx.ref_map(), false).unwrap(),
+            "#old-btn"
+        );
 
         ctx.ref_map_mut().clear();
 
-        let err = resolve_selector("@e1", ctx.ref_map()).unwrap_err();
+        let err = resolve_selector("@e1", ctx.ref_map(), false).unwrap_err();
         assert_eq!(
             err,
             "Ref '@e1' not found. The page may have changed. Call page_map to get fresh refs."
@@ -1041,7 +1062,10 @@ mod tests {
             }
         });
         annotate_refs(&mut value2, &mut ctx);
-        assert_eq!(resolve_selector("@e1", ctx.ref_map()).unwrap(), "#new-btn");
+        assert_eq!(
+            resolve_selector("@e1", ctx.ref_map(), false).unwrap(),
+            "#new-btn"
+        );
     }
 
     #[test]
@@ -1099,7 +1123,7 @@ mod tests {
 
         let mut tree = parse_raw_tree(&bridge_result["tree"]).expect("tree should parse");
         let mut ref_map = RefMap::new();
-        assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new());
+        assign_refs(&mut tree, &mut ref_map, None, &mut Vec::new(), None);
 
         let yaml = to_yaml(&tree, Some(super::DEFAULT_TREE_DEPTH));
         assert!(yaml.starts_with("- button \"Submit\" [disabled] [ref=e1]:"));

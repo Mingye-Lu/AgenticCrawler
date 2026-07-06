@@ -387,7 +387,14 @@ async fn build_structural_yaml(
     };
 
     if page.fetched_via_browser {
-        assign_refs(&mut tree, browser.ref_map_mut(), None, &mut Vec::new());
+        browser.ref_map_mut().begin_snapshot();
+        assign_refs(
+            &mut tree,
+            browser.ref_map_mut(),
+            None,
+            &mut Vec::new(),
+            None,
+        );
         let cache_key = normalize_url(&page.url).to_string();
         browser.set_page_snapshot(&cache_key, None, json!({ "meta": { "url": page.url } }));
     }
