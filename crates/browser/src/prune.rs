@@ -8,6 +8,23 @@ static ANCHOR_SELECTOR: LazyLock<Option<Selector>> = LazyLock::new(|| Selector::
 const NEGATIVE_PATTERNS: [&str; 10] = [
     "nav", "footer", "header", "sidebar", "ads", "comment", "promo", "advert", "social", "share",
 ];
+/// Class/id patterns for error/alert banners. Kept separate from
+/// `NEGATIVE_PATTERNS` (which drops elements outright) since these are more
+/// generic and only warrant a smaller scoring penalty to avoid false
+/// positives on legitimate content.
+const WARNING_CLASS_PATTERNS: [&str; 4] = ["blankslate", "flash", "toast", "alert-banner"];
+/// Known error/boilerplate text snippets (e.g. GitHub's SPA error banners)
+/// that should never survive pruning, regardless of their computed score.
+const ERROR_BOILERPLATE_PATTERNS: [&str; 8] = [
+    "you can't perform that action at this time",
+    "uh oh! there was an error while loading",
+    "please reload this page",
+    "something went wrong",
+    "an error occurred",
+    "this page is taking too long",
+    "there was an error loading",
+    "please try again",
+];
 const VOID_ELEMENTS: [&str; 14] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
     "track", "wbr",
@@ -127,6 +144,10 @@ fn prune_node(element: ElementRef<'_>, profile: CleaningProfile) -> Option<Strin
         return None;
     }
 
+    if has_error_boilerplate_text(element) {
+        return None;
+    }
+
     if score_element(element, profile) < profile.threshold() {
         return None;
     }
@@ -178,7 +199,7 @@ fn score_element(element: ElementRef<'_>, profile: CleaningProfile) -> f64 {
     0.4 * text_density
         + 0.2 * link_density_complement
         + 0.2 * adjusted_tag_weight
-        + 0.1 * f64::max(0.0, class_id_score)
+        + 0.1 * class_id_score
         + 0.1 * ln_term
 }
 
@@ -198,14 +219,42 @@ fn class_id_score(element: ElementRef<'_>) -> f64 {
         .flatten()
         .map(str::to_ascii_lowercase)
         .map(|value| {
-            usize_to_f64(
+            let negative_hits = usize_to_f64(
                 NEGATIVE_PATTERNS
                     .iter()
                     .filter(|pattern| value.contains(**pattern))
                     .count(),
-            ) * -0.5
+            ) * -0.5;
+            let warning_hits = usize_to_f64(
+                WARNING_CLASS_PATTERNS
+                    .iter()
+                    .filter(|pattern| value.contains(**pattern))
+                    .count(),
+            ) * -0.3;
+            negative_hits + warning_hits
         })
         .sum()
+}
+
+/// Whether the element's visible text contains known error/boilerplate
+/// copy (e.g. GitHub's SPA "something went wrong" banners). Such elements
+/// should be dropped outright rather than scored, since their moderate
+/// text density and low link density can otherwise outscore real content.
+fn has_error_boilerplate_text(element: ElementRef<'_>) -> bool {
+    let text: String = element.text().collect();
+    let text = text.trim();
+    // Bound the check to short, banner-sized elements only. Without this an
+    // ancestor wrapping both a small error banner and large legitimate
+    // content would match on concatenated descendant text and drop the
+    // whole subtree; recursion into the banner's own (short) node still
+    // catches it directly.
+    if text.is_empty() || text.len() > 500 {
+        return false;
+    }
+    let lower = text.to_ascii_lowercase();
+    ERROR_BOILERPLATE_PATTERNS
+        .iter()
+        .any(|pattern| lower.contains(pattern))
 }
 
 fn has_negative_class_id_pattern(element: ElementRef<'_>) -> bool {
@@ -569,5 +618,60 @@ mod tests {
         assert!((profile.tag_weight_multiplier("article") - 1.0).abs() < f64::EPSILON);
         assert!((profile.tag_weight_multiplier("nav") - 1.0).abs() < f64::EPSILON);
         assert!((profile.tag_weight_multiplier("form") - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn error_boilerplate_text_pruned() {
+        let html = r#"<html><body>
+            <div class="js-flash-alert"><p>Uh oh! There was an error while loading. Please reload this page.</p></div>
+            <article><p>This is the real page content that a user actually wants to read here.</p></article>
+        </body></html>"#;
+        let result = prune_html(html);
+        assert!(
+            !result.contains("Uh oh"),
+            "error banner text should be pruned, got: {result}"
+        );
+        assert!(
+            result.contains("real page content"),
+            "real content should survive, got: {result}"
+        );
+    }
+
+    #[test]
+    fn error_class_patterns_penalized() {
+        let plain_html = r#"<html><body><div class="content-block"><p>Some content here.</p></div></body></html>"#;
+        let banner_html = r#"<html><body><div class="blankslate content-block"><p>Some content here.</p></div></body></html>"#;
+        let plain_score = first_body_child_score(plain_html);
+        let banner_score = first_body_child_score(banner_html);
+        assert!(
+            banner_score < plain_score,
+            "blankslate class should score lower ({banner_score}) than plain ({plain_score})"
+        );
+    }
+
+    #[test]
+    fn real_content_survives_with_error_banner() {
+        let html = r#"<html><body>
+            <div class="flash flash-error js-flash-alert">
+                <p>You can't perform that action at this time.</p>
+            </div>
+            <article>
+                <h1>Pull Request Title</h1>
+                <p>This is a detailed description of the pull request with substantial real content that a reader wants to see when navigating to this page.</p>
+            </article>
+        </body></html>"#;
+        let result = prune_html(html);
+        assert!(
+            result.contains("Pull Request Title"),
+            "real article heading should survive, got: {result}"
+        );
+        assert!(
+            result.contains("detailed description"),
+            "real article body should survive, got: {result}"
+        );
+        assert!(
+            !result.contains("can't perform that action"),
+            "error banner text should not survive, got: {result}"
+        );
     }
 }
