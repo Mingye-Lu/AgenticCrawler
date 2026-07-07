@@ -11,15 +11,20 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let _ = input;
 
-    let url = browser
-        .current_url()
-        .map(ToString::to_string)
-        .ok_or_else(|| ToolExecutionError::new("no page loaded; call navigate first"))?;
-
     let mut bridge = browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+
+    let live_url = bridge
+        .evaluate("window.location.href")
+        .await
+        .ok()
+        .and_then(|v| {
+            v.get("value")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        });
 
     let title = bridge
         .evaluate("document.title")
@@ -44,6 +49,14 @@ pub async fn execute(
         .unwrap_or_default();
 
     drop(bridge);
+
+    let url = match live_url {
+        Some(url) => url,
+        None => browser
+            .current_url()
+            .map(ToString::to_string)
+            .ok_or_else(|| ToolExecutionError::new("no page loaded; call navigate first"))?,
+    };
 
     let seq = super::seq::increment_seq(crawl_state, browser).await;
 
