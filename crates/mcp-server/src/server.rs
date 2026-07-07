@@ -622,28 +622,35 @@ impl CrawlApiClient {
                             output,
                             is_error,
                         } => {
-                            if tool_name == "screenshot" {
+                            if tool_name == "screenshot" || tool_name == "view_image" {
                                 if let Ok(val) = serde_json::from_str::<Value>(output) {
                                     if let Some(b64) =
                                         val.get("screenshot_base64").and_then(Value::as_str)
                                     {
-                                        let media_type =
+                                        let media_type = if tool_name == "view_image" {
+                                            val.get("media_type")
+                                                .and_then(Value::as_str)
+                                                .unwrap_or("image/png")
+                                                .to_string()
+                                        } else {
                                             match val.get("format").and_then(Value::as_str) {
                                                 Some("jpeg") => "image/jpeg",
                                                 Some("webp") => "image/webp",
                                                 _ => "image/png",
-                                            };
+                                            }
+                                            .to_string()
+                                        };
                                         let blocks = vec![
                                             api::ToolResultContentBlock::Image {
                                                 source: ImageSource {
                                                     source_type: "base64".to_string(),
-                                                    media_type: media_type.to_string(),
+                                                    media_type,
                                                     data: b64.to_string(),
                                                 },
                                             },
                                             api::ToolResultContentBlock::Text {
                                                 text: format!(
-                                                    "screenshot: {} bytes",
+                                                    "{tool_name}: {} bytes",
                                                     val.get("size_bytes")
                                                         .and_then(Value::as_u64)
                                                         .unwrap_or(0)
