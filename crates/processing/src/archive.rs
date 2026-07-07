@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -236,6 +237,7 @@ fn collect_tar_entries<R: std::io::Read>(
 /// - Rejects entry paths containing `..` components (zip-slip prevention).
 /// - Rejects entries larger than 100 MB.
 /// - Validates that the resolved output path is within `output_dir`.
+/// - Rejects writes to existing paths to prevent symlink attacks (uses `O_CREAT` | `O_EXCL`).
 pub fn extract_entry(
     path: &Path,
     entry_path: &str,
@@ -281,7 +283,11 @@ pub fn extract_entry(
     let mut buf = Vec::new();
     entry.read_to_end(&mut buf)?;
 
-    std::fs::write(&dest_path, &buf)?;
+    let mut dest_file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&dest_path)?;
+    dest_file.write_all(&buf)?;
 
     let content = if entry_size < MAX_INLINE_CONTENT_SIZE {
         String::from_utf8(buf).ok()
