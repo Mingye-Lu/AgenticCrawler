@@ -15,7 +15,7 @@ const NEGATIVE_PATTERNS: [&str; 10] = [
 const WARNING_CLASS_PATTERNS: [&str; 4] = ["blankslate", "flash", "toast", "alert-banner"];
 /// Known error/boilerplate text snippets (e.g. GitHub's SPA error banners)
 /// that should never survive pruning, regardless of their computed score.
-const ERROR_BOILERPLATE_PATTERNS: [&str; 8] = [
+const ERROR_BOILERPLATE_PATTERNS: [&str; 7] = [
     "you can't perform that action at this time",
     "uh oh! there was an error while loading",
     "please reload this page",
@@ -23,7 +23,6 @@ const ERROR_BOILERPLATE_PATTERNS: [&str; 8] = [
     "an error occurred",
     "this page is taking too long",
     "there was an error loading",
-    "please try again",
 ];
 const VOID_ELEMENTS: [&str; 14] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
@@ -144,7 +143,7 @@ fn prune_node(element: ElementRef<'_>, profile: CleaningProfile) -> Option<Strin
         return None;
     }
 
-    if has_error_boilerplate_text(element) {
+    if has_error_boilerplate_text(element) && !has_element_children(element) {
         return None;
     }
 
@@ -241,7 +240,7 @@ fn class_id_score(element: ElementRef<'_>) -> f64 {
 /// should be dropped outright rather than scored, since their moderate
 /// text density and low link density can otherwise outscore real content.
 fn has_error_boilerplate_text(element: ElementRef<'_>) -> bool {
-    let text: String = element.text().collect();
+    let text = direct_text(element);
     let text = text.trim();
     // Bound the check to short, banner-sized elements only. Without this an
     // ancestor wrapping both a small error banner and large legitimate
@@ -251,10 +250,31 @@ fn has_error_boilerplate_text(element: ElementRef<'_>) -> bool {
     if text.is_empty() || text.len() > 500 {
         return false;
     }
-    let lower = text.to_ascii_lowercase();
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = normalized.to_ascii_lowercase();
     ERROR_BOILERPLATE_PATTERNS
         .iter()
         .any(|pattern| lower.contains(pattern))
+}
+
+/// Text from this element's direct text-node children only, excluding text
+/// contributed by descendant elements. Used so a boilerplate check on a
+/// wrapping container doesn't see text belonging to a nested, legitimate
+/// child element.
+fn direct_text(element: ElementRef<'_>) -> String {
+    element
+        .children()
+        .filter_map(|child| match child.value() {
+            Node::Text(text) => Some(text.as_ref() as &str),
+            _ => None,
+        })
+        .collect()
+}
+
+fn has_element_children(element: ElementRef<'_>) -> bool {
+    element
+        .children()
+        .any(|child| matches!(child.value(), Node::Element(_)))
 }
 
 fn has_negative_class_id_pattern(element: ElementRef<'_>) -> bool {
