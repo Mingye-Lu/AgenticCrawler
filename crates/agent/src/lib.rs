@@ -1049,7 +1049,8 @@ fn script_management_tools() -> Vec<ToolSpec> {
                 "properties": {
                     "path": { "type": "string", "description": "Absolute or relative path to the audio/video file" },
                     "language": { "type": "string", "description": "BCP-47 language code hint (e.g. 'en', 'es', 'fr'). Auto-detected if omitted." },
-                    "timestamps": { "type": "boolean", "description": "Include word-level timestamps in output (default: false)" }
+                    "timestamps": { "type": "boolean", "description": "Include word-level timestamps in output (default: false)" },
+                    "model": { "type": "string", "description": "Whisper model to use: 'tiny' (~75MB), 'small' (~466MB), 'large-turbo' (~547MB). Auto-detects best available if omitted." }
                 },
                 "required": ["path"],
                 "additionalProperties": false
