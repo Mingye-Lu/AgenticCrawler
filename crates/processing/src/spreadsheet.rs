@@ -9,7 +9,7 @@ const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 const DEFAULT_MAX_ROWS: usize = 1000;
 
 /// Which cells to read from a sheet.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CellRange {
     All,
