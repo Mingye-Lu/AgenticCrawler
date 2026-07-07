@@ -166,6 +166,12 @@ pub fn transcribe(
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 #[cfg(feature = "transcription")]
+const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024;
+
+#[cfg(feature = "transcription")]
+const MAX_DURATION_SECONDS: f64 = 7200.0;
+
+#[cfg(feature = "transcription")]
 fn transcribe_impl(
     path: &Path,
     opts: &TranscribeOptions,
@@ -174,6 +180,22 @@ fn transcribe_impl(
 
     let metadata = media_metadata(path)?;
     let duration_seconds = metadata.duration_seconds;
+
+    if metadata.size_bytes > MAX_FILE_SIZE {
+        return Err(ProcessingError::FileTooLarge {
+            actual_bytes: metadata.size_bytes,
+            limit_bytes: MAX_FILE_SIZE,
+        });
+    }
+
+    if metadata.duration_seconds > MAX_DURATION_SECONDS {
+        // Duration exceeds the cap; reuse FileTooLarge with seconds standing in for bytes.
+        return Err(ProcessingError::FileTooLarge {
+            actual_bytes: metadata.duration_seconds as u64,
+            limit_bytes: MAX_DURATION_SECONDS as u64,
+        });
+    }
+
     let audio_data = decode_to_f32_pcm(path)?;
 
     let model_path = opts
@@ -246,6 +268,14 @@ fn decode_to_f32_pcm(path: &Path) -> Result<Vec<f32>, ProcessingError> {
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
+
+    let file_size = std::fs::metadata(path)?.len();
+    if file_size > MAX_FILE_SIZE {
+        return Err(ProcessingError::FileTooLarge {
+            actual_bytes: file_size,
+            limit_bytes: MAX_FILE_SIZE,
+        });
+    }
 
     let src = std::fs::File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(src), Default::default());
@@ -323,6 +353,15 @@ fn decode_to_f32_pcm(path: &Path) -> Result<Vec<f32>, ProcessingError> {
         return Err(ProcessingError::CorruptFile(
             "no decodable audio samples found".to_string(),
         ));
+    }
+
+    const MAX_SAMPLE_COUNT: usize = 115_200_000;
+    let channel_count = source_channels.unwrap_or(1).max(1);
+    if interleaved.len() / channel_count > MAX_SAMPLE_COUNT {
+        return Err(ProcessingError::FileTooLarge {
+            actual_bytes: (interleaved.len() / channel_count) as u64,
+            limit_bytes: MAX_SAMPLE_COUNT as u64,
+        });
     }
 
     let source_sample_rate = source_sample_rate
