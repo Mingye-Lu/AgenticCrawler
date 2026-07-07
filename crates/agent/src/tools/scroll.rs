@@ -40,11 +40,17 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let (direction, pixels, selector) = parse_input(input)?;
 
+    let resolved_selector: Option<String> = selector
+        .as_deref()
+        .map(|sel| super::ref_resolve::resolve_selector(sel, browser.ref_map()))
+        .transpose()
+        .map_err(ToolExecutionError::new)?;
+
     browser
         .acquire_bridge()
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?
-        .scroll(&direction, pixels, selector.as_deref())
+        .scroll(&direction, pixels, resolved_selector.as_deref())
         .await
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
