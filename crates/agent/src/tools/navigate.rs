@@ -283,6 +283,7 @@ fn resolve_content(
                 let md = html_to_markdown(&pruned);
                 if (md.trim().is_empty() || looks_like_error_boilerplate(&md))
                     && !text.trim().is_empty()
+                    && !looks_like_error_boilerplate(text)
                 {
                     cap_content(text, max_chars)
                 } else {
@@ -315,6 +316,7 @@ fn resolve_content(
                     let md = html_to_markdown(&pruned);
                     if (md.trim().is_empty() || looks_like_error_boilerplate(&md))
                         && !text.trim().is_empty()
+                        && !looks_like_error_boilerplate(text)
                     {
                         cap_content(text, max_chars)
                     } else {
@@ -825,6 +827,32 @@ mod tests {
             !content.to_ascii_lowercase().contains("uh oh")
                 || content.contains("Actual page content"),
             "should not surface bare error boilerplate without real content, got: {content}"
+        );
+    }
+
+    #[test]
+    fn fit_markdown_does_not_fall_back_when_text_is_also_error_boilerplate() {
+        // Pruning strips the error banner from the HTML, leaving md empty.
+        // The unpruned `text` is derived from the same fetched page and is
+        // itself error boilerplate, so falling back to it would just
+        // reintroduce the error we pruned away — the fallback must be
+        // skipped and the (empty) md returned instead.
+        let html = r#"<html><body><div class="ads"><span class="ads">Something went wrong.</span></div></body></html>"#;
+        let text = "Something went wrong.";
+        let markdown = html_to_markdown(html);
+        let (content, _) = resolve_content(
+            html,
+            text,
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        );
+        assert!(
+            !content
+                .to_ascii_lowercase()
+                .contains("something went wrong"),
+            "should not fall back to error-boilerplate text, got: {content}"
         );
     }
 
