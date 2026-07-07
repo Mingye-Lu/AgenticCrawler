@@ -857,10 +857,29 @@ async function bootstrap() {
         sel = await resolveEditorSurface(page, sel);
 
         await page.fill(sel, command.value, { timeout: 5000 });
-        let actualValue = await page.$eval(sel, (el) => el.value).catch(() => null);
+
+        // Only real input/textarea elements expose a meaningful `.value`.
+        // contenteditable divs, labels, and other custom fill targets return
+        // `undefined` here even though page.fill() already succeeded — treat
+        // those as done instead of forcing them through the keyboard_type/
+        // native_setter fallbacks below, which only work on input/textarea.
+        const isValueBacked = await page.$eval(sel, (el) => {
+          const tag = el.tagName;
+          return (tag === 'INPUT' || tag === 'TEXTAREA') && el.value !== undefined;
+        }).catch(() => false);
+
+        // Some input types normalize the stored value (type=color lowercases
+        // hex, type=number trims whitespace), so compare case-insensitively
+        // and trimmed instead of requiring an exact string match.
+        const valuesMatch = (a, b) =>
+          typeof a === 'string' && typeof b === 'string'
+            ? a.toLowerCase().trim() === b.toLowerCase().trim()
+            : a === b;
+
+        let actualValue = isValueBacked ? await page.$eval(sel, (el) => el.value).catch(() => null) : null;
         let method = 'fill';
 
-        if (actualValue !== command.value) {
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
           await page.click(sel, { timeout: 5000 }).catch(() => {});
           await page.fill(sel, '').catch(() => {});
           await page.keyboard.type(command.value, { delay: 0 });
@@ -868,7 +887,7 @@ async function bootstrap() {
           method = 'keyboard_type';
         }
 
-        if (actualValue !== command.value) {
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
           await page.$eval(sel, (el, value) => {
             const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
             const nativeValueSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
@@ -880,7 +899,7 @@ async function bootstrap() {
           method = 'native_setter';
         }
 
-        if (actualValue !== command.value) {
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
           throw new Error(`fill_not_retained: value was not retained after ${method} attempt`);
         }
 
