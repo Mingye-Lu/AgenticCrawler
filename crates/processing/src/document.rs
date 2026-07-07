@@ -10,6 +10,7 @@ use crate::error::ProcessingError;
 
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 const MAX_CONTENT_SIZE: usize = 500 * 1024;
+const MAX_XML_UNCOMPRESSED: u64 = 50 * 1024 * 1024;
 
 /// Metadata extracted from a document file.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -62,16 +63,18 @@ pub fn extract_text(path: &Path) -> Result<DocumentOutput, ProcessingError> {
         _ => extract_from_zip(path, &format)?,
     };
 
-    let truncated = raw_content.len() > MAX_CONTENT_SIZE;
-    let content = if truncated {
-        let slice = &raw_content[..MAX_CONTENT_SIZE];
-        match slice.rfind(' ') {
-            Some(pos) => slice[..pos].to_string(),
-            None => slice.to_string(),
+    let mut content = raw_content;
+    let truncated = content.len() > MAX_CONTENT_SIZE;
+    if truncated {
+        let mut boundary = MAX_CONTENT_SIZE;
+        while boundary > 0 && !content.is_char_boundary(boundary) {
+            boundary -= 1;
         }
-    } else {
-        raw_content
-    };
+        content.truncate(boundary);
+        if let Some(pos) = content.rfind(' ') {
+            content.truncate(pos);
+        }
+    }
 
     let word_count = content.split_whitespace().count();
 
@@ -176,6 +179,13 @@ fn extract_docx_text<R: Read + std::io::Seek>(
         .by_name("word/document.xml")
         .map_err(|_| ProcessingError::CorruptFile("Missing word/document.xml".into()))?;
 
+    if entry.size() > MAX_XML_UNCOMPRESSED {
+        return Err(ProcessingError::FileTooLarge {
+            actual_bytes: entry.size(),
+            limit_bytes: MAX_XML_UNCOMPRESSED,
+        });
+    }
+
     let mut xml = String::new();
     entry.read_to_string(&mut xml)?;
     Ok(strip_xml_to_text(&xml))
@@ -203,6 +213,9 @@ fn extract_pptx_text<R: Read + std::io::Seek>(
     let mut all_text = String::new();
     for name in &slide_names {
         if let Ok(mut entry) = archive.by_name(name) {
+            if entry.size() > MAX_XML_UNCOMPRESSED {
+                continue;
+            }
             let mut xml = String::new();
             if entry.read_to_string(&mut xml).is_ok() {
                 let slide_text = strip_xml_to_text(&xml);
@@ -247,6 +260,9 @@ fn extract_epub_text<R: Read + std::io::Seek>(
     let mut all_text = String::new();
     for name in &html_names {
         if let Ok(mut entry) = archive.by_name(name) {
+            if entry.size() > MAX_XML_UNCOMPRESSED {
+                continue;
+            }
             let mut xml = String::new();
             if entry.read_to_string(&mut xml).is_ok() {
                 let page_text = strip_xml_to_text(&xml);
@@ -274,6 +290,13 @@ fn extract_odt_text<R: Read + std::io::Seek>(
     let mut entry = archive
         .by_name("content.xml")
         .map_err(|_| ProcessingError::CorruptFile("Missing content.xml".into()))?;
+
+    if entry.size() > MAX_XML_UNCOMPRESSED {
+        return Err(ProcessingError::FileTooLarge {
+            actual_bytes: entry.size(),
+            limit_bytes: MAX_XML_UNCOMPRESSED,
+        });
+    }
 
     let mut xml = String::new();
     entry.read_to_string(&mut xml)?;
