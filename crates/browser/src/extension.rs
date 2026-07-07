@@ -228,7 +228,7 @@ impl BrowserBackend for ExtensionBridge {
             let selector_json = serde_json::to_string(selector)
                 .map_err(|e| BridgeError::Protocol(format!("failed to encode selector: {e}")))?;
             let script = format!(
-                "(() => {{ const el = document.querySelector({selector_json}); if (el) {{ el.scrollBy(0, {delta}); }} }})()"
+                "(() => {{ const el = document.querySelector({selector_json}); if (!el) throw new Error('scroll selector not found: ' + {selector_json}); el.scrollBy(0, {delta}); }})()"
             );
             let response = self
                 .send_command("execute_js", json!({ "script": script }))
