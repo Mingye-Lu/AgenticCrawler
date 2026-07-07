@@ -74,7 +74,7 @@ pub fn extract_text(path: &Path, pages: Option<PageRange>) -> Result<PdfOutput, 
         PageRange::Range(start, end) => {
             let start_idx = start.saturating_sub(1);
             let end_idx = (*end).min(total_pages);
-            if start_idx < total_pages {
+            if start_idx < total_pages && start_idx < end_idx {
                 all_pages[start_idx..end_idx].iter().collect()
             } else {
                 vec![]
@@ -408,6 +408,27 @@ mod tests {
         assert_eq!(result.pages_extracted, 0);
         assert_eq!(result.total_pages, 2);
         assert!(result.content.is_empty());
+    }
+
+    #[test]
+    fn reversed_page_range_returns_empty() {
+        let file = create_minimal_pdf();
+
+        // 5-3 on a 2-page PDF: start_idx=4, end_idx=3 → reversed, should not panic
+        let result = extract_text(file.path(), Some(PageRange::Range(5, 3))).unwrap();
+        assert_eq!(result.pages_extracted, 0);
+        assert_eq!(result.total_pages, 2);
+        assert!(result.content.is_empty());
+    }
+
+    #[test]
+    fn single_element_range_works() {
+        let file = create_minimal_pdf();
+
+        // Range(2,2) should extract just page 2
+        let result = extract_text(file.path(), Some(PageRange::Range(2, 2))).unwrap();
+        assert_eq!(result.pages_extracted, 1);
+        assert_eq!(result.total_pages, 2);
     }
 
     #[test]
