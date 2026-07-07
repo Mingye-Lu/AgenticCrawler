@@ -915,17 +915,35 @@ async function bootstrap() {
     }
 
     if (command.action === 'scroll') {
-      try {
-        const dir = command.direction === 'up' ? -1 : 1;
-        const px = (command.pixels || 500) * dir;
-        if (command.selector) {
+      const dir = command.direction === 'up' ? -1 : 1;
+      const px = (command.pixels || 500) * dir;
+      if (command.selector) {
+        try {
           await page.locator(command.selector).first().evaluate((el, y) => el.scrollBy(0, y), px);
-        } else {
-          await page.evaluate((y) => window.scrollBy(0, y), px);
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { scrolled: true } }) + '\n');
+        } catch (mainError) {
+          let scrolledInFrame = false;
+          for (const frame of page.frames()) {
+            if (frame === page.mainFrame()) continue;
+            try {
+              await frame.locator(command.selector).first().evaluate((el, y) => el.scrollBy(0, y), px);
+              scrolledInFrame = true;
+              break;
+            } catch (_) {}
+          }
+          if (scrolledInFrame) {
+            process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { scrolled: true, frame: true } }) + '\n');
+          } else {
+            process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'scroll_failed', message: String(mainError) } }) + '\n');
+          }
         }
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { scrolled: true } }) + '\n');
-      } catch (error) {
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'scroll_failed', message: String(error) } }) + '\n');
+      } else {
+        try {
+          await page.evaluate((y) => window.scrollBy(0, y), px);
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { scrolled: true } }) + '\n');
+        } catch (error) {
+          process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'scroll_failed', message: String(error) } }) + '\n');
+        }
       }
       continue;
     }
