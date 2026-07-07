@@ -84,6 +84,7 @@ async fn download_model(size: &str) -> Result<(), Box<dyn std::error::Error>> {
     let dir = models_dir();
     std::fs::create_dir_all(&dir)?;
     let dest = dir.join(model.filename);
+    let part = dest.with_extension("part");
 
     if dest.exists() {
         println!(
@@ -117,7 +118,7 @@ async fn download_model(size: &str) -> Result<(), Box<dyn std::error::Error>> {
         pb
     });
 
-    let mut file = std::fs::File::create(&dest)?;
+    let mut file = std::fs::File::create(&part)?;
     let mut downloaded = 0u64;
     let mut stream = response.bytes_stream();
 
@@ -129,10 +130,13 @@ async fn download_model(size: &str) -> Result<(), Box<dyn std::error::Error>> {
             pb.set_position(downloaded);
         }
     }
+    drop(file);
 
     if let Some(pb) = pb {
         pb.finish_with_message("Download complete");
     }
+
+    std::fs::rename(&part, &dest)?;
 
     println!("Downloaded {} to {}", model.display_name, dest.display());
     Ok(())
