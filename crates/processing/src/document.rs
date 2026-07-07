@@ -123,12 +123,16 @@ fn extract_zip_metadata<R: Read + std::io::Seek>(
         _ => return DocumentMetadata::default(),
     };
 
-    let Ok(mut entry) = archive.by_name(meta_path) else {
+    let Ok(entry) = archive.by_name(meta_path) else {
         return DocumentMetadata::default();
     };
 
     let mut xml = String::new();
-    if entry.read_to_string(&mut xml).is_err() {
+    if entry
+        .take(MAX_XML_UNCOMPRESSED)
+        .read_to_string(&mut xml)
+        .is_err()
+    {
         return DocumentMetadata::default();
     }
 
@@ -175,7 +179,7 @@ fn parse_core_metadata(xml: &str) -> DocumentMetadata {
 fn extract_docx_text<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<String, ProcessingError> {
-    let mut entry = archive
+    let entry = archive
         .by_name("word/document.xml")
         .map_err(|_| ProcessingError::CorruptFile("Missing word/document.xml".into()))?;
 
@@ -186,9 +190,7 @@ fn extract_docx_text<R: Read + std::io::Seek>(
         });
     }
 
-    let mut xml = String::new();
-    entry.read_to_string(&mut xml)?;
-    Ok(strip_xml_to_text(&xml))
+    Ok(strip_xml_to_text(entry.take(MAX_XML_UNCOMPRESSED)))
 }
 
 fn extract_pptx_text<R: Read + std::io::Seek>(
@@ -212,19 +214,16 @@ fn extract_pptx_text<R: Read + std::io::Seek>(
 
     let mut all_text = String::new();
     for name in &slide_names {
-        if let Ok(mut entry) = archive.by_name(name) {
+        if let Ok(entry) = archive.by_name(name) {
             if entry.size() > MAX_XML_UNCOMPRESSED {
                 continue;
             }
-            let mut xml = String::new();
-            if entry.read_to_string(&mut xml).is_ok() {
-                let slide_text = strip_xml_to_text(&xml);
-                if !slide_text.is_empty() {
-                    if !all_text.is_empty() {
-                        all_text.push(' ');
-                    }
-                    all_text.push_str(&slide_text);
+            let slide_text = strip_xml_to_text(entry.take(MAX_XML_UNCOMPRESSED));
+            if !slide_text.is_empty() {
+                if !all_text.is_empty() {
+                    all_text.push(' ');
                 }
+                all_text.push_str(&slide_text);
             }
         }
     }
@@ -259,19 +258,16 @@ fn extract_epub_text<R: Read + std::io::Seek>(
 
     let mut all_text = String::new();
     for name in &html_names {
-        if let Ok(mut entry) = archive.by_name(name) {
+        if let Ok(entry) = archive.by_name(name) {
             if entry.size() > MAX_XML_UNCOMPRESSED {
                 continue;
             }
-            let mut xml = String::new();
-            if entry.read_to_string(&mut xml).is_ok() {
-                let page_text = strip_xml_to_text(&xml);
-                if !page_text.is_empty() {
-                    if !all_text.is_empty() {
-                        all_text.push(' ');
-                    }
-                    all_text.push_str(&page_text);
+            let page_text = strip_xml_to_text(entry.take(MAX_XML_UNCOMPRESSED));
+            if !page_text.is_empty() {
+                if !all_text.is_empty() {
+                    all_text.push(' ');
                 }
+                all_text.push_str(&page_text);
             }
         }
     }
@@ -287,7 +283,7 @@ fn extract_epub_text<R: Read + std::io::Seek>(
 fn extract_odt_text<R: Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<String, ProcessingError> {
-    let mut entry = archive
+    let entry = archive
         .by_name("content.xml")
         .map_err(|_| ProcessingError::CorruptFile("Missing content.xml".into()))?;
 
@@ -298,9 +294,7 @@ fn extract_odt_text<R: Read + std::io::Seek>(
         });
     }
 
-    let mut xml = String::new();
-    entry.read_to_string(&mut xml)?;
-    Ok(strip_xml_to_text(&xml))
+    Ok(strip_xml_to_text(entry.take(MAX_XML_UNCOMPRESSED)))
 }
 
 fn extract_rtf_text(path: &Path) -> Result<String, ProcessingError> {
@@ -396,8 +390,10 @@ fn extract_rtf_text(path: &Path) -> Result<String, ProcessingError> {
     Ok(cleaned)
 }
 
-fn strip_xml_to_text(xml: &str) -> String {
-    let mut reader = Reader::from_str(xml);
+fn strip_xml_to_text(reader: impl Read) -> String {
+    const MAX_OUTPUT_SIZE: usize = MAX_CONTENT_SIZE * 2;
+
+    let mut reader = Reader::from_reader(std::io::BufReader::new(reader));
     reader.config_mut().trim_text(true);
 
     let mut text = String::new();
@@ -413,6 +409,9 @@ fn strip_xml_to_text(xml: &str) -> String {
                         text.push(' ');
                     }
                     text.push_str(trimmed);
+                }
+                if text.len() >= MAX_OUTPUT_SIZE {
+                    break;
                 }
             }
             Ok(Event::Eof) | Err(_) => break,
@@ -593,14 +592,32 @@ mod tests {
     #[test]
     fn strip_xml_to_text_basic() {
         let xml = r"<root><p>Hello</p><p>World</p></root>";
-        let text = strip_xml_to_text(xml);
+        let text = strip_xml_to_text(xml.as_bytes());
         assert_eq!(text, "Hello World");
     }
 
     #[test]
     fn strip_xml_handles_nested_tags() {
         let xml = r"<w:p><w:r><w:t>foo</w:t></w:r><w:r><w:t>bar</w:t></w:r></w:p>";
-        let text = strip_xml_to_text(xml);
+        let text = strip_xml_to_text(xml.as_bytes());
         assert_eq!(text, "foo bar");
+    }
+
+    #[test]
+    fn strip_xml_to_text_caps_output() {
+        let mut xml = String::from("<root>");
+        let node = "<p>word</p>";
+        let needed = (MAX_CONTENT_SIZE * 2) / node.len() + 100;
+        for _ in 0..needed {
+            xml.push_str(node);
+        }
+        xml.push_str("</root>");
+
+        let text = strip_xml_to_text(xml.as_bytes());
+        assert!(
+            text.len() <= MAX_CONTENT_SIZE * 2 + "word".len(),
+            "expected capped output, got length {}",
+            text.len()
+        );
     }
 }
