@@ -75,9 +75,9 @@ fn serialize_node(
 
         if collapsed_count > 0 {
             let indent = "  ".repeat(current_depth + 1);
-            if let Some(ref_id) = &node.ref_id {
+            if let Some(name) = &node.name {
                 lines.push(format!(
-                    "{indent}- [{collapsed_count} children collapsed — use read_content(@{ref_id}) to read]"
+                    "{indent}- [{collapsed_count} children collapsed — use read_content(heading=\"{name}\") to expand]"
                 ));
             } else {
                 lines.push(format!("{indent}- [{collapsed_count} children collapsed]"));
@@ -633,7 +633,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "- region \"Log\" [ref=e1]:\n  - [10 children collapsed — use read_content(@e1) to read]"
+            "- region \"Log\" [ref=e1]:\n  - [10 children collapsed — use read_content(heading=\"Log\") to expand]"
         );
     }
 
@@ -646,7 +646,7 @@ mod tests {
 
         assert_eq!(
             yaml,
-            "- list \"Items\" [ref=e2]:\n  - [8 children collapsed — use read_content(@e2) to read]"
+            "- list \"Items\" [ref=e2]:\n  - [8 children collapsed — use read_content(heading=\"Items\") to expand]"
         );
     }
 
@@ -681,7 +681,7 @@ mod tests {
 
         let yaml = to_yaml(&tree, None);
 
-        assert_eq!(yaml, "- region \"Log\":\n  - [20 children collapsed]");
+        assert_eq!(yaml, "- region \"Log\":\n  - [20 children collapsed — use read_content(heading=\"Log\") to expand]");
     }
 
     #[test]
