@@ -7,7 +7,7 @@ use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: [&str; 37] = [
+const ASYNC_TOOLS: [&str; 31] = [
     "navigate",
     "click",
     "click_at",
@@ -39,6 +39,9 @@ const ASYNC_TOOLS: [&str; 37] = [
     "measure_coverage",
     "audit_accessibility",
     "intercept_network",
+];
+
+const BROWSER_FREE_ASYNC_TOOLS: [&str; 6] = [
     "read_pdf",
     "read_document",
     "read_spreadsheet",
@@ -62,6 +65,13 @@ impl ToolRegistry {
     pub fn new_with_core_tools() -> Self {
         let mut registry = Self::new();
         for name in ASYNC_TOOLS {
+            let tool_name = name.to_string();
+            registry.register(
+                name,
+                Box::new(move |_| Err(ToolExecutionError::requires_async(tool_name.clone()))),
+            );
+        }
+        for name in BROWSER_FREE_ASYNC_TOOLS {
             let tool_name = name.to_string();
             registry.register(
                 name,
@@ -117,6 +127,16 @@ impl ToolRegistry {
     #[must_use]
     pub fn is_async_tool(name: &str) -> bool {
         ASYNC_TOOLS.contains(&name)
+    }
+
+    #[must_use]
+    pub fn is_browser_free_async_tool(name: &str) -> bool {
+        BROWSER_FREE_ASYNC_TOOLS.contains(&name)
+    }
+
+    #[must_use]
+    pub fn is_any_async_tool(name: &str) -> bool {
+        ASYNC_TOOLS.contains(&name) || BROWSER_FREE_ASYNC_TOOLS.contains(&name)
     }
 
     #[must_use]
@@ -204,12 +224,12 @@ impl ToolRegistry {
             "intercept_network" => {
                 crate::tools::intercept_network::execute(input, browser, crawl_state).await
             }
-            "read_pdf" => crate::tools::read_pdf::execute(input, browser).await,
-            "read_document" => crate::tools::read_document::execute(input, browser).await,
-            "read_spreadsheet" => crate::tools::read_spreadsheet::execute(input, browser).await,
-            "view_image" => crate::tools::view_image::execute(input, browser).await,
-            "transcribe_media" => crate::tools::transcribe_media::execute(input, browser).await,
-            "list_archive" => crate::tools::list_archive::execute(input, browser).await,
+            "read_pdf" => crate::tools::read_pdf::execute(input),
+            "read_document" => crate::tools::read_document::execute(input),
+            "read_spreadsheet" => crate::tools::read_spreadsheet::execute(input),
+            "view_image" => crate::tools::view_image::execute(input),
+            "transcribe_media" => crate::tools::transcribe_media::execute(input),
+            "list_archive" => crate::tools::list_archive::execute(input),
             _ => {
                 if let Some(handler) = self.handlers.get(name) {
                     handler(input)
@@ -217,6 +237,25 @@ impl ToolRegistry {
                     Err(ToolExecutionError::new(format!("unknown tool: `{name}`")))
                 }
             }
+        }
+    }
+
+    /// Execute a browser-free async tool (file processing) without requiring a browser.
+    pub async fn execute_async_no_browser(
+        &self,
+        name: &str,
+        input: &Value,
+    ) -> Result<ToolEffect, ToolExecutionError> {
+        match name {
+            "read_pdf" => crate::tools::read_pdf::execute(input),
+            "read_document" => crate::tools::read_document::execute(input),
+            "read_spreadsheet" => crate::tools::read_spreadsheet::execute(input),
+            "view_image" => crate::tools::view_image::execute(input),
+            "transcribe_media" => crate::tools::transcribe_media::execute(input),
+            "list_archive" => crate::tools::list_archive::execute(input),
+            _ => Err(ToolExecutionError::new(format!(
+                "`{name}` is not a browser-free async tool"
+            ))),
         }
     }
 }
@@ -246,6 +285,7 @@ mod tests {
         assert_eq!(registry.len(), 48);
         for &name in ASYNC_TOOLS
             .iter()
+            .chain(BROWSER_FREE_ASYNC_TOOLS.iter())
             .chain(effect_tools.iter())
             .chain(script_tools.iter())
         {

@@ -4,7 +4,7 @@ use acrawl_processing::error::ProcessingError;
 use acrawl_processing::transcribe::{self, TranscribeOptions};
 use serde_json::{json, Value};
 
-use crate::{BrowserContext, ToolEffect, ToolExecutionError};
+use crate::{ToolEffect, ToolExecutionError};
 
 const MODEL_FILENAMES: &[(&str, &str)] = &[
     ("tiny", "ggml-tiny.en.bin"),
@@ -18,11 +18,7 @@ const CAPABILITY_ORDER: &[&str] = &["large-turbo", "small", "tiny"];
 
 const DEFAULT_MODEL_FILENAME: &str = "ggml-tiny.en.bin";
 
-#[allow(clippy::unused_async)]
-pub async fn execute(
-    input: &Value,
-    _browser: &mut BrowserContext,
-) -> Result<ToolEffect, ToolExecutionError> {
+pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let path_str = input
         .get("path")
         .and_then(|v| v.as_str())

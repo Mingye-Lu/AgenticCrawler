@@ -3,13 +3,9 @@ use std::path::Path;
 use acrawl_processing::document;
 use serde_json::{json, Value};
 
-use crate::{BrowserContext, ToolEffect, ToolExecutionError};
+use crate::{ToolEffect, ToolExecutionError};
 
-#[allow(clippy::unused_async)]
-pub async fn execute(
-    input: &Value,
-    _browser: &mut BrowserContext,
-) -> Result<ToolEffect, ToolExecutionError> {
+pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let path_str = input
         .get("path")
         .and_then(|v| v.as_str())

@@ -559,25 +559,30 @@ impl CrawlerAgent {
             match handler(input_value) {
                 Ok(effect) => effect,
                 Err(error) if error.is_requires_async() => {
-                    if !Self::supports_async(tool_name) {
+                    if ToolRegistry::is_browser_free_async_tool(tool_name) {
+                        self.registry
+                            .execute_async_no_browser(tool_name, input_value)
+                            .await
+                            .map_err(|error| ToolError::new(error.to_string()))?
+                    } else if !Self::supports_async(tool_name) {
                         return Err(ToolError::new(error.to_string()));
+                    } else {
+                        self.ensure_browser().await?;
+                        let browser = self
+                            .browser
+                            .as_mut()
+                            .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
+                        self.crawl_state.has_active_subagents = !self
+                            .agent_manager
+                            .lock()
+                            .await
+                            .get_active_children(&self.agent_id)
+                            .is_empty();
+                        self.registry
+                            .execute_async(tool_name, input_value, browser, &mut self.crawl_state)
+                            .await
+                            .map_err(|error| ToolError::new(error.to_string()))?
                     }
-
-                    self.ensure_browser().await?;
-                    let browser = self
-                        .browser
-                        .as_mut()
-                        .ok_or_else(|| ToolError::new("browser context is not initialized"))?;
-                    self.crawl_state.has_active_subagents = !self
-                        .agent_manager
-                        .lock()
-                        .await
-                        .get_active_children(&self.agent_id)
-                        .is_empty();
-                    self.registry
-                        .execute_async(tool_name, input_value, browser, &mut self.crawl_state)
-                        .await
-                        .map_err(|error| ToolError::new(error.to_string()))?
                 }
                 Err(error) => return Err(ToolError::new(error.to_string())),
             }
