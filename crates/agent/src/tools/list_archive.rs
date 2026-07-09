@@ -15,7 +15,15 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let extract_entry = input.get("extract").and_then(|v| v.as_str());
 
     if let Some(entry_path) = extract_entry {
-        let output_dir = std::env::temp_dir().join("acrawl_extract");
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("archive");
+        let suffix: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
+            ^ u64::from(std::process::id());
+        let output_dir = std::env::temp_dir().join(format!("acrawl_extract_{stem}_{suffix:x}"));
         std::fs::create_dir_all(&output_dir).map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
         let extracted = archive::extract_entry(path, entry_path, &output_dir)

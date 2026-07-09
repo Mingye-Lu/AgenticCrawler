@@ -268,6 +268,10 @@ fn extract_epub_text<R: Read + std::io::Seek>(
                     all_text.push(' ');
                 }
                 all_text.push_str(&page_text);
+                if all_text.len() >= MAX_CONTENT_SIZE {
+                    all_text.truncate(MAX_CONTENT_SIZE);
+                    break;
+                }
             }
         }
     }
@@ -339,6 +343,12 @@ fn extract_rtf_text(path: &Path) -> Result<String, ProcessingError> {
                     let next = chars[i + 1];
                     match next {
                         '\'' => {
+                            if i + 3 < chars.len() {
+                                let hex: String = chars[i + 2..i + 4].iter().collect();
+                                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                    result.push(char::from(byte));
+                                }
+                            }
                             i += 3;
                             in_control = false;
                         }

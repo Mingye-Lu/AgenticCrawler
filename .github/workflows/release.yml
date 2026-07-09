@@ -63,7 +63,7 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           GIT_SHA: ${{ github.sha }}
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked --features transcription --target ${{ matrix.target }}
 
       - name: Strip binary (Linux)
         if: runner.os == 'Linux'

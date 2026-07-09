@@ -48,8 +48,8 @@ fn is_safe_path(entry_name: &str) -> bool {
 
 /// List all entries in an archive file.
 ///
-/// Supports ZIP on all platforms. TAR formats (`.tar`, `.tar.gz`, `.tgz`,
-/// `.tar.bz2`) are only supported on Unix.
+/// Supports ZIP and TAR formats (`.tar`, `.tar.gz`, `.tgz`, `.tar.bz2`) on
+/// all platforms.
 ///
 /// # Errors
 ///
@@ -110,16 +110,7 @@ pub fn list_archive(path: &Path) -> Result<ArchiveOutput, ProcessingError> {
     if format == "zip" {
         list_zip(path)
     } else {
-        #[cfg(unix)]
-        {
-            list_tar(path, &ext)
-        }
-        #[cfg(not(unix))]
-        {
-            Err(ProcessingError::UnsupportedFormat(
-                "TAR archives only supported on Unix".to_string(),
-            ))
-        }
+        list_tar(path, &ext)
     }
 }
 
@@ -160,7 +151,6 @@ fn list_zip(path: &Path) -> Result<ArchiveOutput, ProcessingError> {
     })
 }
 
-#[cfg(unix)]
 fn list_tar(path: &Path, ext: &str) -> Result<ArchiveOutput, ProcessingError> {
     use flate2::read::GzDecoder;
     use std::fs::File;
@@ -202,7 +192,6 @@ fn list_tar(path: &Path, ext: &str) -> Result<ArchiveOutput, ProcessingError> {
     })
 }
 
-#[cfg(unix)]
 fn collect_tar_entries<R: std::io::Read>(
     archive: &mut tar::Archive<R>,
 ) -> Result<Vec<ArchiveEntry>, ProcessingError> {

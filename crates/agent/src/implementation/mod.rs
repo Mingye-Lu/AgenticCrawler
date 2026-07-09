@@ -561,8 +561,7 @@ impl CrawlerAgent {
                 Err(error) if error.is_requires_async() => {
                     if ToolRegistry::is_browser_free_async_tool(tool_name) {
                         self.registry
-                            .execute_async_no_browser(tool_name, input_value)
-                            .await
+                            .execute_no_browser(tool_name, input_value)
                             .map_err(|error| ToolError::new(error.to_string()))?
                     } else if !Self::supports_async(tool_name) {
                         return Err(ToolError::new(error.to_string()));

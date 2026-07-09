@@ -240,8 +240,8 @@ impl ToolRegistry {
         }
     }
 
-    /// Execute a browser-free async tool (file processing) without requiring a browser.
-    pub async fn execute_async_no_browser(
+    /// Execute a browser-free tool (file processing) without requiring a browser.
+    pub fn execute_no_browser(
         &self,
         name: &str,
         input: &Value,

@@ -335,7 +335,7 @@ fn apply_range_workbook(
 
             let rows = (row_start..row_start + limit)
                 .map(|r| {
-                    let sheet_row = r + 1;
+                    let sheet_row = r;
                     (col_start..col_end)
                         .map(|c| cell_to_string(sheet.get((sheet_row, c))))
                         .collect()

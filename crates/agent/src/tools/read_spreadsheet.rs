@@ -88,6 +88,10 @@ fn parse_cell_ref(s: &str) -> Option<(usize, usize)> {
         return None;
     }
 
+    if !col_str.chars().all(|c| c.is_ascii_uppercase()) {
+        return None;
+    }
+
     // Convert column letters to 0-indexed: A=0, B=1, ..., Z=25, AA=26, etc.
     let col_index = col_str
         .chars()

@@ -17,15 +17,15 @@ struct ModelInfo {
 const MODELS: &[ModelInfo] = &[
     ModelInfo {
         display_name: "tiny",
-        filename: "ggml-tiny.en.bin",
+        filename: "ggml-tiny.bin",
         size_display: "~75MB",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
     },
     ModelInfo {
         display_name: "small",
-        filename: "ggml-small.en.bin",
+        filename: "ggml-small.bin",
         size_display: "~466MB",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
     },
     ModelInfo {
         display_name: "large-turbo",
