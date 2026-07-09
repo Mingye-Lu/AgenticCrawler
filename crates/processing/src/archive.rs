@@ -230,7 +230,10 @@ fn collect_tar_entries<R: std::io::Read>(
     Ok(entries)
 }
 
-/// Extract a single entry from a ZIP archive to `output_dir`.
+/// Extract a single entry from an archive to `output_dir`.
+///
+/// Supports ZIP on all platforms. TAR formats (`.tar`, `.tar.gz`, `.tgz`,
+/// `.tar.bz2`) are only supported on Unix.
 ///
 /// # Security
 ///
@@ -250,15 +253,50 @@ pub fn extract_entry(
         )));
     }
 
-    let file = std::fs::File::open(path)?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|e| ProcessingError::CorruptFile(e.to_string()))?;
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
 
-    let mut entry = archive
-        .by_name(entry_path)
-        .map_err(|_| ProcessingError::FormatError(format!("Entry not found: {entry_path}")))?;
+    let is_tar = match ext.as_str() {
+        "zip" => false,
+        "tar" | "tgz" => true,
+        "gz" | "bz2" => {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            if std::path::Path::new(stem)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("tar"))
+            {
+                true
+            } else {
+                return Err(ProcessingError::UnsupportedFormat(format!(
+                    "Unsupported archive format: .{ext}"
+                )));
+            }
+        }
+        _ => {
+            return Err(ProcessingError::UnsupportedFormat(format!(
+                "Unsupported archive format: .{ext}"
+            )));
+        }
+    };
 
-    let entry_size = entry.size();
+    let (entry_size, buf) = if is_tar {
+        #[cfg(unix)]
+        {
+            extract_tar_entry(path, &ext, entry_path)?
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(ProcessingError::UnsupportedFormat(
+                "TAR archives only supported on Unix".to_string(),
+            ));
+        }
+    } else {
+        extract_zip_entry(path, entry_path)?
+    };
+
     if entry_size > MAX_ENTRY_SIZE {
         return Err(ProcessingError::FileTooLarge {
             actual_bytes: entry_size,
@@ -280,9 +318,6 @@ pub fn extract_entry(
         }
     }
 
-    let mut buf = Vec::new();
-    entry.read_to_end(&mut buf)?;
-
     let mut dest_file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -300,6 +335,83 @@ pub fn extract_entry(
         size: entry_size,
         content,
     })
+}
+
+fn extract_zip_entry(path: &Path, entry_path: &str) -> Result<(u64, Vec<u8>), ProcessingError> {
+    let file = std::fs::File::open(path)?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| ProcessingError::CorruptFile(e.to_string()))?;
+
+    let mut entry = archive
+        .by_name(entry_path)
+        .map_err(|_| ProcessingError::FormatError(format!("Entry not found: {entry_path}")))?;
+
+    let entry_size = entry.size();
+    let mut buf = Vec::new();
+    entry.read_to_end(&mut buf)?;
+
+    Ok((entry_size, buf))
+}
+
+#[cfg(unix)]
+fn extract_tar_entry(
+    path: &Path,
+    ext: &str,
+    entry_path: &str,
+) -> Result<(u64, Vec<u8>), ProcessingError> {
+    use bzip2::read::BzDecoder;
+    use flate2::read::GzDecoder;
+
+    let file = std::fs::File::open(path)?;
+
+    match ext {
+        "tgz" | "gz" => {
+            let decoder = GzDecoder::new(file);
+            let mut archive = tar::Archive::new(decoder);
+            find_tar_entry(&mut archive, entry_path)
+        }
+        "bz2" => {
+            let decoder = BzDecoder::new(file);
+            let mut archive = tar::Archive::new(decoder);
+            find_tar_entry(&mut archive, entry_path)
+        }
+        "tar" => {
+            let mut archive = tar::Archive::new(file);
+            find_tar_entry(&mut archive, entry_path)
+        }
+        _ => Err(ProcessingError::UnsupportedFormat(format!(
+            "Unsupported tar variant: .{ext}"
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn find_tar_entry<R: std::io::Read>(
+    archive: &mut tar::Archive<R>,
+    entry_path: &str,
+) -> Result<(u64, Vec<u8>), ProcessingError> {
+    for entry_result in archive
+        .entries()
+        .map_err(|e| ProcessingError::CorruptFile(e.to_string()))?
+    {
+        let mut entry = entry_result.map_err(|e| ProcessingError::CorruptFile(e.to_string()))?;
+        let path = entry
+            .path()
+            .map_err(|e| ProcessingError::CorruptFile(e.to_string()))?
+            .to_string_lossy()
+            .to_string();
+
+        if path == entry_path {
+            let size = entry.size();
+            let mut buf = Vec::new();
+            entry.read_to_end(&mut buf)?;
+            return Ok((size, buf));
+        }
+    }
+
+    Err(ProcessingError::FormatError(format!(
+        "Entry not found: {entry_path}"
+    )))
 }
 
 #[cfg(test)]

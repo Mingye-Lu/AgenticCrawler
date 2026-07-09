@@ -15,6 +15,7 @@ zip = "2"
 
 [target.'cfg(unix)'.dependencies]
 tar = "0.4"
+bzip2 = "0.4"
 
 [dependencies.pdf-extract]
 version = "0.7"
