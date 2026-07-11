@@ -12,6 +12,32 @@ use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const SLIM_MAX_CHARS: usize = 2000;
+/// Mirrors `browser::prune`'s error-boilerplate list. If pruning somehow
+/// still lets one of these strings through as the dominant content, we fall
+/// back to unpruned text rather than surface it to the caller.
+const ERROR_BOILERPLATE_PATTERNS: &[&str] = &[
+    "you can't perform that action at this time",
+    "uh oh! there was an error while loading",
+    "please reload this page",
+    "something went wrong",
+    "an error occurred",
+    "this page is taking too long",
+    "there was an error loading",
+    "please try again",
+];
+/// Above this length we assume real content dominates even if an error
+/// string is present somewhere in it, so no fallback is needed.
+const ERROR_FALLBACK_MAX_CHARS: usize = 500;
+
+fn looks_like_error_boilerplate(content: &str) -> bool {
+    if content.chars().count() >= ERROR_FALLBACK_MAX_CHARS {
+        return false;
+    }
+    let lower = content.to_ascii_lowercase();
+    ERROR_BOILERPLATE_PATTERNS
+        .iter()
+        .any(|pattern| lower.contains(pattern))
+}
 /// ARIA-tree serialization depth for navigate's structural section. Kept equal
 /// to the `page_map` tool default so both surfaces emit comparable trees.
 const NAVIGATE_TREE_DEPTH: usize = 5;
@@ -255,7 +281,10 @@ fn resolve_content(
             "fit_markdown" => {
                 let pruned = prune_html_with_profile(html, profile);
                 let md = html_to_markdown(&pruned);
-                if md.trim().is_empty() && !text.trim().is_empty() {
+                if (md.trim().is_empty() || looks_like_error_boilerplate(&md))
+                    && !text.trim().is_empty()
+                    && !looks_like_error_boilerplate(text)
+                {
                     cap_content(text, max_chars)
                 } else {
                     cap_content(&md, max_chars)
@@ -285,7 +314,10 @@ fn resolve_content(
                 "fit_markdown" => {
                     let pruned = prune_html_with_profile(&main_html, profile);
                     let md = html_to_markdown(&pruned);
-                    if md.trim().is_empty() && !text.trim().is_empty() {
+                    if (md.trim().is_empty() || looks_like_error_boilerplate(&md))
+                        && !text.trim().is_empty()
+                        && !looks_like_error_boilerplate(text)
+                    {
                         cap_content(text, max_chars)
                     } else {
                         cap_content(&md, max_chars)
@@ -765,6 +797,74 @@ mod tests {
             content.contains("fallback text"),
             "should fall back to text when pruning removes all content, got: {content}"
         );
+    }
+
+    #[test]
+    fn fit_markdown_falls_back_on_error_text() {
+        // The banner div lacks negative class hints, and its own text is
+        // short enough that even if browser::prune's boilerplate check
+        // somehow missed it, navigate.rs's fallback safety net must still
+        // keep real content out of an error-only result.
+        let html = r"<html><body><div><p>Uh oh! There was an error while loading. Please reload this page.</p></div></body></html>";
+        let text = "Uh oh! There was an error while loading. Please reload this page. Actual page content the user wants.";
+        let markdown = html_to_markdown(html);
+        let (content, _) = resolve_content(
+            html,
+            text,
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        );
+        assert!(
+            !content.to_ascii_lowercase().contains("uh oh")
+                || content.contains("Actual page content"),
+            "should not surface bare error boilerplate without real content, got: {content}"
+        );
+    }
+
+    #[test]
+    fn fit_markdown_does_not_fall_back_when_text_is_also_error_boilerplate() {
+        // Pruning strips the error banner from the HTML, leaving md empty.
+        // The unpruned `text` is derived from the same fetched page and is
+        // itself error boilerplate, so falling back to it would just
+        // reintroduce the error we pruned away — the fallback must be
+        // skipped and the (empty) md returned instead.
+        let html = r#"<html><body><div class="ads"><span class="ads">Something went wrong.</span></div></body></html>"#;
+        let text = "Something went wrong.";
+        let markdown = html_to_markdown(html);
+        let (content, _) = resolve_content(
+            html,
+            text,
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        );
+        assert!(
+            !content
+                .to_ascii_lowercase()
+                .contains("something went wrong"),
+            "should not fall back to error-boilerplate text, got: {content}"
+        );
+    }
+
+    #[test]
+    fn looks_like_error_boilerplate_detects_known_strings() {
+        assert!(looks_like_error_boilerplate(
+            "You can't perform that action at this time."
+        ));
+        assert!(looks_like_error_boilerplate("Something went wrong"));
+        assert!(!looks_like_error_boilerplate("Normal page content here."));
+    }
+
+    #[test]
+    fn looks_like_error_boilerplate_ignores_long_content() {
+        let long_content = format!(
+            "Something went wrong. {}",
+            "Real substantial content. ".repeat(30)
+        );
+        assert!(!looks_like_error_boilerplate(&long_content));
     }
 
     #[test]
