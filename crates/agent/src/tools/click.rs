@@ -190,7 +190,7 @@ pub async fn execute(
     let params = parse_input(input)?;
 
     let selector = if let Some(ref sel) = params.selector {
-        super::ref_resolve::resolve_selector(sel, browser.ref_map())
+        super::ref_resolve::resolve_selector(sel, browser.ref_map(), false)
             .map_err(ToolExecutionError::new)?
     } else {
         let text = params.text.as_deref().unwrap_or_default();

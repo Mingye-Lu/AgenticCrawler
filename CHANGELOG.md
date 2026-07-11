@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-07-11
+
+### Fixed
+
+- **`click` — auto-descend into container refs**: clicking a `@eN` ref that points at a non-actionable container (a generic wrapper, nav, etc.) now automatically descends into its descendants — if exactly one actionable child is found, the click resolves to that child; if multiple are found, an error lists them so the caller can target one directly; if none are found, the original container error is returned as before. `fill_form`'s form-selector resolution opts out of auto-descend to keep matching the exact form element. Ref lookups are scoped to the current ARIA snapshot generation (stale refs from a prior page are ignored), parent-walks guard against cycles, and truncated containers (with omitted children) are excluded from auto-descend. Closes #79.
+
 ## [0.13.1] - 2026-07-05
 
 ### Added
@@ -900,6 +906,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.13.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.2
 [0.13.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.1
 [0.13.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.0
 [0.12.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.7
