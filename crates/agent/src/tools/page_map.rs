@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::aria::{assign_refs, parse_raw_tree, to_yaml};
+use crate::aria::{assign_refs_and_prune, parse_raw_tree, to_yaml};
 use crate::page_fingerprint::PageFingerprint;
 use crate::semantic::{
     assemble_region_tree, compute_accessible_name, select_active_dialog, RawElementFacts,
@@ -314,14 +314,7 @@ pub async fn execute(
         if url_changed {
             browser.ref_map_mut().clear();
         }
-        browser.ref_map_mut().begin_snapshot();
-        assign_refs(
-            &mut tree,
-            browser.ref_map_mut(),
-            None,
-            &mut Vec::new(),
-            None,
-        );
+        assign_refs_and_prune(&mut tree, browser.ref_map_mut());
         browser.set_page_snapshot(&cache_key, None, result.clone());
 
         // Only full-page snapshots may become the diff baseline and the
@@ -334,14 +327,7 @@ pub async fn execute(
         }
         crawl_state.last_aria_tree = Some(tree.clone());
     } else {
-        browser.ref_map_mut().begin_snapshot();
-        assign_refs(
-            &mut tree,
-            browser.ref_map_mut(),
-            None,
-            &mut Vec::new(),
-            None,
-        );
+        assign_refs_and_prune(&mut tree, browser.ref_map_mut());
     }
 
     // The walk already limited its own depth; the serializer depth is a cap on

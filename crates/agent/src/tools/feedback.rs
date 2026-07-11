@@ -6,7 +6,7 @@ use tokio::time::timeout;
 
 use acrawl_core::error::ToolExecutionError;
 
-use crate::aria::{assign_refs, identity_key, parse_raw_tree, to_yaml, AriaNode};
+use crate::aria::{assign_refs_and_prune, identity_key, parse_raw_tree, to_yaml, AriaNode};
 use crate::page_fingerprint::PageFingerprint;
 use crate::state::CrawlState;
 use crate::BrowserContext;
@@ -471,14 +471,7 @@ fn page_state_from_feedback_map(
         browser.set_page_snapshot(&cache_key, None, pm);
         return page_state;
     };
-    browser.ref_map_mut().begin_snapshot();
-    assign_refs(
-        &mut current_tree,
-        browser.ref_map_mut(),
-        None,
-        &mut Vec::new(),
-        None,
-    );
+    assign_refs_and_prune(&mut current_tree, browser.ref_map_mut());
 
     // Prefer the cached snapshot's tree, but when the snapshot lacks one
     // (navigate caches url-only snapshots) fall back to the last full tree so
