@@ -1000,7 +1000,7 @@ fn qa_multiple_compaction_rounds() {
     assert!(
         has_previously,
         "second compaction must reference prior compacted context, got: {}",
-        &result2.formatted_summary
+        result2.formatted_summary
     );
 
     // Round 3: Append more, compact a third time
