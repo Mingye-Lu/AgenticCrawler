@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn constant_time_eq_same() {
-        assert!(auth::generate_bridge_token().len() == 64);
+        assert_eq!(auth::generate_bridge_token().len(), 64);
     }
 
     #[test]
