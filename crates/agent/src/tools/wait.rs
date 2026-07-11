@@ -11,7 +11,6 @@ use super::feedback::InteractionKind;
 const DEFAULT_TIMEOUT_MS: u64 = 5_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 const MAX_TIMEOUT_SECONDS: f64 = 300.0;
-
 #[derive(Debug)]
 pub struct WaitInput {
     pub selector: Option<String>,
@@ -298,6 +297,27 @@ mod tests {
         let response = effect_json(effect);
 
         assert!(response.get("page_state").is_some());
+    }
+
+    #[test]
+    fn allows_time_only_wait_at_45_seconds() {
+        let input = json!({"seconds": 45});
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.timeout_ms, 45_000);
+    }
+
+    #[test]
+    fn allows_selector_wait_at_60_seconds() {
+        let input = json!({"seconds": 60, "selector": "#foo"});
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.timeout_ms, 60_000);
+    }
+
+    #[test]
+    fn allows_selector_wait_timeout_ms_at_200_000() {
+        let input = json!({"timeout_ms": 200_000, "selector": "#foo"});
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.timeout_ms, 200_000);
     }
 
     #[tokio::test]
