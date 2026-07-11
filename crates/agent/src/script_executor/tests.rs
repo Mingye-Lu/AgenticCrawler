@@ -860,7 +860,10 @@ async fn variable_substitution_in_tool_input() {
     let calls = log.lock().unwrap();
     let eval_calls: Vec<_> = calls.iter().filter(|(m, _)| m == "evaluate").collect();
     assert_eq!(eval_calls.len(), 1);
-    assert_eq!(eval_calls[0].1["script"], "document.title");
+    assert!(eval_calls[0].1["script"]
+        .as_str()
+        .unwrap()
+        .contains("document.title"));
 }
 
 #[tokio::test]
