@@ -307,6 +307,10 @@ pub async fn execute(
     crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let device_input = parse_input(input)?;
+    let widen = input
+        .get("widen")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
     let (device_name, options) = resolve_to_options(device_input)?;
     let display_name = if device_name.starts_with("custom:") {
         "custom".to_string()
@@ -350,7 +354,7 @@ pub async fn execute(
         crawl_state,
         InteractionKind::Passive,
         None,
-        false,
+        widen,
     )
     .await?;
 

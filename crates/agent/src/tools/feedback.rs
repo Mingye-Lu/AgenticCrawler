@@ -311,33 +311,78 @@ fn full_snapshot_value(root: &AriaNode) -> Value {
     Value::String(to_yaml(root, Some(FEEDBACK_TREE_DEPTH)))
 }
 
+fn diff_summary_value(diff: &AriaTreeDiff) -> Value {
+    let changed = !diff.added.is_empty() || !diff.removed.is_empty() || !diff.changed.is_empty();
+    json!({
+        "changed": changed,
+        "added": diff.added.len(),
+        "removed": diff.removed.len(),
+        "changed_states": diff.changed.len(),
+    })
+}
+
+fn page_replaced_summary_value() -> Value {
+    json!({
+        "changed": true,
+        "page_replaced": true,
+        "added": 0,
+        "removed": 0,
+        "changed_states": 0,
+    })
+}
+
 #[must_use]
-pub fn build_diff_page_state(prev: Option<&AriaNode>, curr: Option<&AriaNode>) -> Value {
+pub fn build_diff_page_state(
+    prev: Option<&AriaNode>,
+    curr: Option<&AriaNode>,
+    widen: bool,
+) -> Value {
     match (prev, curr) {
-        (None, None) => Value::String("no visible change".to_string()),
+        (None, None) => {
+            if widen {
+                Value::String("no visible change".to_string())
+            } else {
+                json!({"changed": false, "added": 0, "removed": 0, "changed_states": 0})
+            }
+        }
         (None, Some(curr)) => {
             let mut diff = AriaTreeDiff::default();
             push_added_subtree(&mut diff, curr, &[]);
-            Value::String(render_diff(&diff))
+            if widen {
+                Value::String(render_diff(&diff))
+            } else {
+                diff_summary_value(&diff)
+            }
         }
         (Some(prev), None) => {
             let mut diff = AriaTreeDiff::default();
             push_removed_subtree(&mut diff, prev, &[]);
-            Value::String(render_diff(&diff))
+            if widen {
+                Value::String(render_diff(&diff))
+            } else {
+                diff_summary_value(&diff)
+            }
         }
         (Some(prev), Some(curr)) => {
             if !same_identity(prev, curr, &[]) {
-                let mut diff = AriaTreeDiff::default();
-                push_removed_subtree(&mut diff, prev, &[]);
-                push_added_subtree(&mut diff, curr, &[]);
-                return Value::String(render_diff(&diff));
+                if widen {
+                    let mut diff = AriaTreeDiff::default();
+                    push_removed_subtree(&mut diff, prev, &[]);
+                    push_added_subtree(&mut diff, curr, &[]);
+                    return Value::String(render_diff(&diff));
+                }
+                return page_replaced_summary_value();
             }
 
             let diff = diff_trees(prev, curr);
-            if should_fallback(&diff) {
-                full_snapshot_value(curr)
+            if widen {
+                if should_fallback(&diff) {
+                    full_snapshot_value(curr)
+                } else {
+                    Value::String(render_diff(&diff))
+                }
             } else {
-                Value::String(render_diff(&diff))
+                diff_summary_value(&diff)
             }
         }
     }
@@ -502,13 +547,19 @@ fn page_state_from_feedback_map(
         widen,
     );
 
-    let page_state = match previous_tree.as_ref() {
-        Some(previous_tree) => build_diff_page_state(
+    let page_state = if let Some(previous_tree) = previous_tree.as_ref() {
+        build_diff_page_state(
             scoped_tree(previous_tree, previous_snapshot.as_ref(), &scope),
             scoped_tree(&current_tree, Some(&pm), &scope),
-        ),
-        None => scoped_tree(&current_tree, Some(&pm), &scope)
-            .map_or_else(|| full_snapshot_value(&current_tree), full_snapshot_value),
+            widen,
+        )
+    } else {
+        let scoped = scoped_tree(&current_tree, Some(&pm), &scope);
+        if widen {
+            scoped.map_or_else(|| full_snapshot_value(&current_tree), full_snapshot_value)
+        } else {
+            json!({"changed": true, "first_snapshot": true, "url": full_url, "added": 1, "removed": 0, "changed_states": 0})
+        }
     };
 
     browser.set_page_snapshot(&cache_key, None, pm);
@@ -567,7 +618,9 @@ async fn audit_silent_submission(
         return None;
     }
 
-    if page_state.as_str() != Some("no visible change") {
+    let unchanged = page_state.as_str() == Some("no visible change")
+        || page_state.get("changed").and_then(Value::as_bool) == Some(false);
+    if !unchanged {
         return None;
     }
 
@@ -1066,7 +1119,7 @@ mod tests {
             ),
         ]);
 
-        let result = build_diff_page_state(Some(&prev), Some(&curr));
+        let result = build_diff_page_state(Some(&prev), Some(&curr), true);
         let rendered = result.as_str().expect("tree diff should be a string");
 
         assert!(rendered.contains("added:"));
@@ -1086,7 +1139,7 @@ mod tests {
         ]);
         let curr = document(vec![node("main", Some(""), Some("e2"), vec![])]);
 
-        let result = build_diff_page_state(Some(&prev), Some(&curr));
+        let result = build_diff_page_state(Some(&prev), Some(&curr), true);
         let rendered = result.as_str().expect("tree diff should be a string");
 
         assert!(rendered.contains("removed:"));
@@ -1113,7 +1166,7 @@ mod tests {
             vec![],
         )]);
 
-        let result = build_diff_page_state(Some(&prev), Some(&curr));
+        let result = build_diff_page_state(Some(&prev), Some(&curr), true);
         let rendered = result.as_str().expect("tree diff should be a string");
 
         assert!(rendered.contains("changed:"));
@@ -1126,9 +1179,10 @@ mod tests {
         let prev = document(vec![node("button", Some("Submit"), Some("e2"), vec![])]);
         let curr = document(vec![node("button", Some("Submit"), Some("e9"), vec![])]);
 
+        let result = build_diff_page_state(Some(&prev), Some(&curr), false);
         assert_eq!(
-            build_diff_page_state(Some(&prev), Some(&curr)),
-            Value::String("no visible change".to_string())
+            result,
+            json!({"changed": false, "added": 0, "removed": 0, "changed_states": 0})
         );
     }
 
@@ -1137,9 +1191,10 @@ mod tests {
         let prev = document(vec![node("button", Some("Save"), Some("e2"), vec![])]);
         let curr = document(vec![node("button", Some("Save"), Some("e99"), vec![])]);
 
+        let result = build_diff_page_state(Some(&prev), Some(&curr), false);
         assert_eq!(
-            build_diff_page_state(Some(&prev), Some(&curr)),
-            Value::String("no visible change".to_string())
+            result,
+            json!({"changed": false, "added": 0, "removed": 0, "changed_states": 0})
         );
     }
 
@@ -1160,7 +1215,7 @@ mod tests {
         );
 
         assert_eq!(
-            build_diff_page_state(Some(&prev), Some(&curr)),
+            build_diff_page_state(Some(&prev), Some(&curr), true),
             Value::String(to_yaml(&curr, Some(FEEDBACK_TREE_DEPTH)))
         );
     }
@@ -1180,7 +1235,7 @@ mod tests {
             vec![node("heading", Some("Welcome"), Some("e2"), vec![])],
         );
 
-        let result = build_diff_page_state(Some(&prev), Some(&curr));
+        let result = build_diff_page_state(Some(&prev), Some(&curr), true);
 
         let expected = [
             "+ [ref=e1] added:",
@@ -1193,6 +1248,29 @@ mod tests {
         .join("\n");
 
         assert_eq!(result, Value::String(expected));
+    }
+
+    #[test]
+    fn tree_diff_root_identity_change_summary_marks_page_replaced() {
+        let prev = node(
+            "dialog",
+            Some("Login"),
+            Some("e1"),
+            vec![node("button", Some("Sign in"), Some("e2"), vec![])],
+        );
+        let curr = node(
+            "main",
+            Some(""),
+            Some("e1"),
+            vec![node("heading", Some("Welcome"), Some("e2"), vec![])],
+        );
+
+        let result = build_diff_page_state(Some(&prev), Some(&curr), false);
+
+        assert_eq!(
+            result,
+            json!({"changed": true, "page_replaced": true, "added": 0, "removed": 0, "changed_states": 0})
+        );
     }
 
     #[test]
@@ -1249,10 +1327,8 @@ mod tests {
         .await
         .unwrap();
 
-        let rendered = result.as_str().expect("page state should be a string");
-        println!("{rendered}");
-        assert!(rendered.contains("added:"));
-        assert!(rendered.contains("dialog \"Confirm delete\""));
+        assert_eq!(result["changed"], true);
+        assert_eq!(result["added"], 1);
 
         let state = state.lock().expect("mock state poisoned");
         assert_eq!(state.requested_scopes, vec![None]);
@@ -1292,7 +1368,7 @@ mod tests {
             &mut crawl_state,
             InteractionKind::Passive,
             None,
-            false,
+            true,
         )
         .await
         .unwrap();
@@ -1425,8 +1501,10 @@ mod tests {
         .await
         .unwrap();
 
-        let rendered = result.as_str().expect("page state should be a string");
-        assert_ne!(rendered, "no visible change");
+        let changed = result["changed"]
+            .as_bool()
+            .expect("summary should have changed field");
+        assert!(changed, "page should have changed");
 
         let state = state.lock().expect("mock state poisoned");
         assert!(state.evaluate_scripts.is_empty());
