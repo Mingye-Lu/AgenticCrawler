@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.3] - 2026-07-11
+
+### Fixed
+
+- **`RefMap` — stale ref cleanup on identity rebind**: when a DOM re-render re-stamps an existing element with a new `data-acrawl-ref` value, the ref map now prunes the old, now-dangling `ref_id` after each ARIA walk instead of leaving it resolvable. Previously a stale `@eN` could silently resolve to a removed attribute, making `page_map(scope=@eN)` and similar ref-scoped lookups fail with "Ref not found" after the DOM changed underneath them. The cleanup runs as a two-pass step (`RefMap::retain_active`) after ref assignment, so duplicate-sibling refs from the same walk are preserved while genuinely stale entries are removed. Closes #82.
+
 ## [0.13.2] - 2026-07-11
 
 ### Fixed
@@ -906,6 +912,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.13.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.3
 [0.13.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.2
 [0.13.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.1
 [0.13.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.0
