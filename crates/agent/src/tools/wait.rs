@@ -18,6 +18,7 @@ pub struct WaitInput {
     pub timeout_ms: u64,
     pub state: Option<String>,
     pub silent: bool,
+    pub text_pattern: Option<String>,
 }
 
 pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
@@ -48,6 +49,17 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
         ));
     }
 
+    let text_pattern = input
+        .get("text_pattern")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    if text_pattern.is_some() && state.is_some() {
+        return Err(CrawlError::new(
+            "wait text_pattern and state are mutually exclusive",
+        ));
+    }
+
     if selector.is_none() && timeout_ms == 0 {
         return Err(CrawlError::new(
             "wait requires either a selector or a positive timeout",
@@ -64,6 +76,7 @@ pub fn parse_input(input: &Value) -> Result<WaitInput, CrawlError> {
         timeout_ms,
         state,
         silent,
+        text_pattern,
     })
 }
 
@@ -108,7 +121,33 @@ pub async fn execute(
 ) -> Result<ToolEffect, ToolExecutionError> {
     let parsed = parse_input(input)?;
 
-    if let Some(ref selector) = parsed.selector {
+    if let Some(ref text_pattern) = parsed.text_pattern {
+        let found = browser
+            .acquire_bridge()
+            .await
+            .map_err(|e| ToolExecutionError::new(e.to_string()))?
+            .wait_for_text(parsed.selector.as_deref(), text_pattern, parsed.timeout_ms)
+            .await
+            .map_err(|e| ToolExecutionError::new(e.to_string()))?;
+
+        let page_state = super::feedback::post_action_page_state(
+            browser,
+            crawl_state,
+            InteractionKind::Passive,
+            None,
+            false,
+        )
+        .await?;
+
+        Ok(ToolEffect::reply_json(&json!({
+            "success": true,
+            "found": found,
+            "text_pattern": text_pattern,
+            "selector": parsed.selector,
+            "timeout_ms": parsed.timeout_ms,
+            "page_state": page_state
+        })))
+    } else if let Some(ref selector) = parsed.selector {
         let found = browser
             .acquire_bridge()
             .await
@@ -256,6 +295,38 @@ mod tests {
         let input = json!({"seconds": 1, "silent": false});
         let parsed = parse_input(&input).unwrap();
         assert!(!parsed.silent);
+    }
+
+    #[test]
+    fn parses_text_pattern_with_selector() {
+        let input =
+            json!({"selector": "#status", "text_pattern": "completed", "timeout_ms": 10000});
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.text_pattern.as_deref(), Some("completed"));
+        assert_eq!(parsed.selector.as_deref(), Some("#status"));
+        assert_eq!(parsed.timeout_ms, 10000);
+    }
+
+    #[test]
+    fn parses_text_pattern_without_selector() {
+        let input = json!({"text_pattern": "success", "seconds": 5});
+        let parsed = parse_input(&input).unwrap();
+        assert_eq!(parsed.text_pattern.as_deref(), Some("success"));
+        assert!(parsed.selector.is_none());
+    }
+
+    #[test]
+    fn rejects_text_pattern_with_state() {
+        let input = json!({"selector": "#btn", "text_pattern": "done", "state": "visible"});
+        let err = parse_input(&input).unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn text_pattern_none_when_omitted() {
+        let input = json!({"selector": "#btn"});
+        let parsed = parse_input(&input).unwrap();
+        assert!(parsed.text_pattern.is_none());
     }
 
     fn effect_json(effect: ToolEffect) -> Value {
