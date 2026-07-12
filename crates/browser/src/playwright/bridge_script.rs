@@ -1514,15 +1514,23 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
     }
 
     if (command.action === 'start_coverage') {
-      const doJs = command.js !== false;
-      const doCss = command.css !== false;
-      if (doJs) await pages[activePageIndex()].coverage.startJSCoverage({ resetOnNavigation: false });
-      if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage({ resetOnNavigation: false });
-      process.stdout.write(JSON.stringify({
-        event: 'bridge_response',
-        ok: true,
-        result: {}
-      }) + '\n');
+      try {
+        const doJs = command.js !== false;
+        const doCss = command.css !== false;
+        if (doJs) await pages[activePageIndex()].coverage.startJSCoverage({ resetOnNavigation: false });
+        if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage({ resetOnNavigation: false });
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: {}
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'start_coverage_failed', message: String(error) }
+        }) + '\n');
+      }
       continue;
     }
 
@@ -1607,63 +1615,79 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
     }
 
     if (command.action === 'get_cookies') {
-      const context = browser.contexts()[0];
-      const rawCookies = await context.cookies();
-      const cookies = rawCookies.map((c) => ({
-        name: c.name,
-        value: c.value,
-        domain: c.domain,
-        path: c.path,
-        expires: (typeof c.expires === 'number' && c.expires >= 0) ? c.expires : null,
-        secure: !!c.secure,
-        http_only: !!c.httpOnly,
-        same_site: c.sameSite || null,
-        size_bytes: (c.name ? c.name.length : 0) + (c.value ? c.value.length : 0),
-      }));
-      process.stdout.write(JSON.stringify({
-        event: 'bridge_response',
-        ok: true,
-        result: { cookies }
-      }) + '\n');
+      try {
+        const context = browser.contexts()[0];
+        const rawCookies = await context.cookies();
+        const cookies = rawCookies.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain,
+          path: c.path,
+          expires: (typeof c.expires === 'number' && c.expires >= 0) ? c.expires : null,
+          secure: !!c.secure,
+          http_only: !!c.httpOnly,
+          same_site: c.sameSite || null,
+          size_bytes: (c.name ? c.name.length : 0) + (c.value ? c.value.length : 0),
+        }));
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { cookies }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'get_cookies_failed', message: String(error) }
+        }) + '\n');
+      }
       continue;
     }
 
     if (command.action === 'get_storage') {
-      const storageType = command.storage_type || 'all';
-      const page = pages[activePageIndex()];
-      
-      let localStorage = [];
-      let sessionStorage = [];
-      
-      if (storageType === 'local' || storageType === 'all') {
-        localStorage = await page.evaluate(() => {
-          const items = [];
-          for (let i = 0; i < window.localStorage.length; i++) {
-            const key = window.localStorage.key(i);
-            const value = window.localStorage.getItem(key);
-            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
-          }
-          return items;
-        });
+      try {
+        const storageType = command.storage_type || 'all';
+        const page = pages[activePageIndex()];
+
+        let localStorage = [];
+        let sessionStorage = [];
+
+        if (storageType === 'local' || storageType === 'all') {
+          localStorage = await page.evaluate(() => {
+            const items = [];
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const key = window.localStorage.key(i);
+              const value = window.localStorage.getItem(key);
+              items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+            }
+            return items;
+          });
+        }
+
+        if (storageType === 'session' || storageType === 'all') {
+          sessionStorage = await page.evaluate(() => {
+            const items = [];
+            for (let i = 0; i < window.sessionStorage.length; i++) {
+              const key = window.sessionStorage.key(i);
+              const value = window.sessionStorage.getItem(key);
+              items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+            }
+            return items;
+          });
+        }
+
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { local_storage: localStorage, session_storage: sessionStorage }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'get_storage_failed', message: String(error) }
+        }) + '\n');
       }
-      
-      if (storageType === 'session' || storageType === 'all') {
-        sessionStorage = await page.evaluate(() => {
-          const items = [];
-          for (let i = 0; i < window.sessionStorage.length; i++) {
-            const key = window.sessionStorage.key(i);
-            const value = window.sessionStorage.getItem(key);
-            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
-          }
-          return items;
-        });
-      }
-      
-      process.stdout.write(JSON.stringify({
-        event: 'bridge_response',
-        ok: true,
-        result: { local_storage: localStorage, session_storage: sessionStorage }
-      }) + '\n');
       continue;
     }
 
@@ -1757,6 +1781,41 @@ mod tests {
             PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("richEditor"),
             "Missing richEditor field in success payload"
         );
+    }
+
+    #[test]
+    fn bridge_wraps_coverage_and_storage_handlers_in_try_catch() {
+        // start_coverage, get_cookies, and get_storage previously had no
+        // try/catch, so an exception inside them (e.g. mid-navigation, or
+        // browser.contexts()[0] unavailable during a device-context swap)
+        // would propagate out of the `for await` dispatch loop and crash
+        // the whole persistent bridge subprocess instead of failing just
+        // that one command.
+        for (action, error_kind) in [
+            ("start_coverage", "start_coverage_failed"),
+            ("get_cookies", "get_cookies_failed"),
+            ("get_storage", "get_storage_failed"),
+        ] {
+            let marker = format!("command.action === '{action}'");
+            let start = PLAYWRIGHT_BRIDGE_NODE_SCRIPT
+                .find(&marker)
+                .unwrap_or_else(|| panic!("missing handler for {action}"));
+            // The handler body (until the next top-level `if (command.action`)
+            // must contain both a try block and the expected error kind.
+            let rest = &PLAYWRIGHT_BRIDGE_NODE_SCRIPT[start..];
+            let end = rest[marker.len()..]
+                .find("if (command.action ===")
+                .map_or(rest.len(), |i| i + marker.len());
+            let body = &rest[..end];
+            assert!(
+                body.contains("try {") && body.contains("} catch (error) {"),
+                "{action} handler is missing a try/catch wrapper"
+            );
+            assert!(
+                body.contains(error_kind),
+                "{action} handler is missing expected error kind {error_kind}"
+            );
+        }
     }
 
     #[test]
