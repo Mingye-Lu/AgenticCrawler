@@ -124,15 +124,9 @@ fn resolve_scope(
     match crate::tools::ref_resolve::resolve_page_map_scope_ref(scope, browser) {
         Ok(Some(query)) => Ok(Some(query)),
         Err(message) => Err(ToolExecutionError::new(message)),
-        Ok(None) => Ok(Some(match scope {
-            "dialog" => {
-                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
-                    .to_string()
-            }
-            "main" => "main, [role=\"main\"]".to_string(),
-            "sidebar" => "[role=\"complementary\"], aside, nav".to_string(),
-            other => other.to_string(),
-        })),
+        Ok(None) => Ok(Some(crate::tools::ref_resolve::region_scope_selector(
+            scope,
+        ))),
     }
 }
 
@@ -683,13 +677,13 @@ mod tests {
         assert_eq!(
             resolve_scope(Some("dialog"), &ctx).unwrap(),
             Some(
-                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]:popover-open"
                     .to_string(),
             )
         );
         assert_eq!(
             resolve_scope(Some("sidebar"), &ctx).unwrap(),
-            Some("[role=\"complementary\"], aside, nav".to_string())
+            Some("[role=\"complementary\"], aside".to_string())
         );
 
         for handle in ["@r2", "@r9"] {

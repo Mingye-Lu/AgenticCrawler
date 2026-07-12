@@ -232,6 +232,27 @@ pub fn resolve_page_map_scope_ref(
     Ok(None)
 }
 
+/// CSS selector fallback for a well-known semantic region token (`"dialog"`,
+/// `"main"`, `"sidebar"`) when it doesn't resolve to a ref via
+/// [`resolve_scope_ref`]/[`resolve_page_map_scope_ref`].
+///
+/// Shared by `click`'s `region` param and `page_map`'s `scope` param so the
+/// two tools agree on what e.g. `region="dialog"` means — previously each
+/// hardcoded its own copy of these selectors and they drifted apart.
+/// Any other token (a raw CSS selector) is returned unchanged.
+#[must_use]
+pub fn region_scope_selector(token: &str) -> String {
+    match token {
+        "dialog" => {
+            "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]:popover-open"
+                .to_string()
+        }
+        "main" => "main, [role=\"main\"]".to_string(),
+        "sidebar" => "[role=\"complementary\"], aside".to_string(),
+        other => other.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -252,6 +273,36 @@ mod tests {
         let map = RefMap::new();
         let result = resolve_selector("#my-button", &map, false).unwrap();
         assert_eq!(result, "#my-button");
+    }
+
+    #[test]
+    fn region_scope_selector_dialog_includes_popover() {
+        // click(region="dialog") and page_map(scope="dialog") must agree on
+        // what counts as a dialog, including `[popover]`-based ones.
+        let selector = region_scope_selector("dialog");
+        assert!(
+            selector.contains("[popover]:popover-open"),
+            "selector: {selector}"
+        );
+        assert!(
+            selector.contains("[role=\"dialog\"]"),
+            "selector: {selector}"
+        );
+    }
+
+    #[test]
+    fn region_scope_selector_sidebar_excludes_nav() {
+        let selector = region_scope_selector("sidebar");
+        assert!(!selector.contains("nav"), "selector: {selector}");
+        assert!(
+            selector.contains("[role=\"complementary\"]"),
+            "selector: {selector}"
+        );
+    }
+
+    #[test]
+    fn region_scope_selector_passes_through_unknown_token() {
+        assert_eq!(region_scope_selector("#custom-css"), "#custom-css");
     }
 
     #[test]
