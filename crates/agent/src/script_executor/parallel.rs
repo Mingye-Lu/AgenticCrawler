@@ -33,6 +33,8 @@ impl ScriptExecutor {
                 return Ok(());
             }
 
+            let pre_parallel_bytes = self.output_bytes.load(Ordering::Relaxed);
+
             let shared_bridge = self.browser.bridge().clone();
             let current_url = self.state.current_url.clone();
             let mut page_indices = Vec::with_capacity(branches.len());
@@ -106,6 +108,8 @@ impl ScriptExecutor {
             self.state.step = self.step_counter.load(Ordering::Relaxed);
 
             if let Some(error) = first_error.or(cleanup_error) {
+                self.output_bytes
+                    .store(pre_parallel_bytes, Ordering::Relaxed);
                 return Err(error);
             }
 
