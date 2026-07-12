@@ -790,6 +790,59 @@ fn install_openclaw(acrawl_path: &str) -> io::Result<String> {
     Ok(format!("wrote {}", config_path.display()))
 }
 
+/// Run a CLI's `mcp add` command, upserting the `acrawl` entry.
+///
+/// Tries `add` directly first: most of these CLIs only fail `add` when an
+/// entry with the same name already exists, so this succeeds immediately
+/// for a fresh install and is a no-op-safe upsert for a reinstall that
+/// doesn't conflict. Only if that first `add` fails do we remove the
+/// existing entry and retry once — removing unconditionally up front (the
+/// previous behavior) would destroy a working entry even when `add` was
+/// going to fail for an unrelated reason (bad path, CLI bug, ...), leaving
+/// the user with neither the old nor the new entry and no way to recover.
+/// If the retry after removal also fails, the entry really has been
+/// removed without a replacement, so the error says so explicitly and
+/// tells the user how to reinstall manually.
+fn run_cli_mcp_add(
+    cli: &Path,
+    add_args: &[&str],
+    remove_args: &[&str],
+    label: &str,
+) -> io::Result<String> {
+    let first = Command::new(cli)
+        .args(add_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if first.status.success() {
+        return Ok(format!("configured via `{label} add`"));
+    }
+
+    let _ = Command::new(cli)
+        .args(remove_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let retry = Command::new(cli)
+        .args(add_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if retry.status.success() {
+        Ok(format!(
+            "configured via `{label} add` (replaced existing entry)"
+        ))
+    } else {
+        Err(cli_error(
+            &format!(
+                "`{label} add` failed after removing the previous `acrawl` entry — \
+                 re-run `{label} add` manually to reinstall"
+            ),
+            &retry,
+        ))
+    }
+}
+
 fn install_codex_cli(acrawl_path: &str) -> io::Result<String> {
     let codex = resolve_command("codex").ok_or_else(|| {
         io::Error::new(
@@ -798,21 +851,12 @@ fn install_codex_cli(acrawl_path: &str) -> io::Result<String> {
         )
     })?;
 
-    let _ = Command::new(&codex)
-        .args(["mcp", "remove", "acrawl"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let output = Command::new(&codex)
-        .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()?;
-    if output.status.success() {
-        Ok("configured via `codex mcp add`".to_string())
-    } else {
-        Err(cli_error("`codex mcp add` failed", &output))
-    }
+    run_cli_mcp_add(
+        &codex,
+        &["mcp", "add", "acrawl", "--", acrawl_path, "mcp"],
+        &["mcp", "remove", "acrawl"],
+        "codex mcp",
+    )
 }
 
 fn install_hermes(acrawl_path: &str) -> io::Result<String> {
@@ -823,13 +867,9 @@ fn install_hermes(acrawl_path: &str) -> io::Result<String> {
         )
     })?;
 
-    let _ = Command::new(&hermes)
-        .args(["mcp", "remove", "acrawl"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let output = Command::new(&hermes)
-        .args([
+    run_cli_mcp_add(
+        &hermes,
+        &[
             "mcp",
             "add",
             "acrawl",
@@ -837,15 +877,10 @@ fn install_hermes(acrawl_path: &str) -> io::Result<String> {
             acrawl_path,
             "--args",
             "mcp",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()?;
-    if output.status.success() {
-        Ok("configured via `hermes mcp add`".to_string())
-    } else {
-        Err(cli_error("`hermes mcp add` failed", &output))
-    }
+        ],
+        &["mcp", "remove", "acrawl"],
+        "hermes mcp",
+    )
 }
 
 fn install_goose(acrawl_path: &str) -> IdeOutcome {
@@ -1849,5 +1884,157 @@ mod tests {
             format_error_line("Hermes", "`hermes mcp add` failed: permission denied"),
             "  ✗ Hermes — `hermes mcp add` failed: permission denied"
         );
+    }
+
+    /// Build a fake `<cli> mcp add|remove` executable driven entirely by
+    /// marker files in `state_dir`, so `run_cli_mcp_add`'s retry logic can be
+    /// exercised without a real `codex`/`hermes` binary on PATH:
+    /// - `remove` always "succeeds", touches `remove_invoked`, and (unless
+    ///   `fail_forever` exists) touches `allow_add`.
+    /// - `add` fails unless `allow_add` exists, and always fails if
+    ///   `fail_forever` exists.
+    #[cfg(windows)]
+    fn write_fake_mcp_cli_script(dir: &Path) -> PathBuf {
+        // `goto` is used instead of a parenthesized if-block: cmd.exe does
+        // not reliably short-circuit on `exit /b` inside `( ... )` when the
+        // block contains more than one conditional exit, so a chain of
+        // `if COND exit /b N` lines inside parens can silently fall through
+        // to the wrong branch.
+        let script_path = dir.join("fake-mcp-cli.cmd");
+        let script = "@echo off\r\n\
+set STATE=%~3\r\n\
+if \"%2\"==\"remove\" goto :do_remove\r\n\
+if \"%2\"==\"add\" goto :do_add\r\n\
+exit /b 1\r\n\
+\r\n\
+:do_remove\r\n\
+type nul > \"%STATE%\\remove_invoked\"\r\n\
+if exist \"%STATE%\\fail_forever\" goto :remove_done\r\n\
+type nul > \"%STATE%\\allow_add\"\r\n\
+:remove_done\r\n\
+exit /b 0\r\n\
+\r\n\
+:do_add\r\n\
+if exist \"%STATE%\\fail_forever\" exit /b 1\r\n\
+if exist \"%STATE%\\allow_add\" exit /b 0\r\n\
+exit /b 1\r\n";
+        fs::write(&script_path, script).expect("write fake cli script");
+        script_path
+    }
+
+    #[cfg(unix)]
+    fn write_fake_mcp_cli_script(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        let script_path = dir.join("fake-mcp-cli.sh");
+        let script = "#!/bin/sh\n\
+STATE=\"$3\"\n\
+if [ \"$2\" = \"remove\" ]; then\n\
+  touch \"$STATE/remove_invoked\"\n\
+  if [ ! -f \"$STATE/fail_forever\" ]; then\n\
+    touch \"$STATE/allow_add\"\n\
+  fi\n\
+  exit 0\n\
+fi\n\
+if [ \"$2\" = \"add\" ]; then\n\
+  if [ -f \"$STATE/fail_forever\" ]; then\n\
+    exit 1\n\
+  fi\n\
+  if [ -f \"$STATE/allow_add\" ]; then\n\
+    exit 0\n\
+  fi\n\
+  exit 1\n\
+fi\n\
+exit 1\n";
+        fs::write(&script_path, script).expect("write fake cli script");
+        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("chmod");
+        script_path
+    }
+
+    fn setup_fake_cli(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root =
+            env::temp_dir().join(format!("acrawl-mcp-install-{name}-{}", std::process::id()));
+        let state_dir = root.join("state");
+        let _ = fs::create_dir_all(&state_dir);
+        let script = write_fake_mcp_cli_script(&root);
+        (root, script, state_dir)
+    }
+
+    #[test]
+    fn run_cli_mcp_add_does_not_remove_when_first_add_succeeds() {
+        let (root, script, state_dir) = setup_fake_cli("add-success");
+        fs::write(state_dir.join("allow_add"), b"").expect("seed allow_add marker");
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+
+        let result = run_cli_mcp_add(
+            &script,
+            &["mcp", "add", &state_dir_str],
+            &["mcp", "remove", &state_dir_str],
+            "fake cli",
+        );
+
+        assert_eq!(
+            result.expect("add should succeed"),
+            "configured via `fake cli add`"
+        );
+        assert!(
+            !state_dir.join("remove_invoked").exists(),
+            "remove must not run when the first add already succeeded"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_cli_mcp_add_removes_and_retries_when_first_add_fails() {
+        let (root, script, state_dir) = setup_fake_cli("add-retry");
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+
+        let result = run_cli_mcp_add(
+            &script,
+            &["mcp", "add", &state_dir_str],
+            &["mcp", "remove", &state_dir_str],
+            "fake cli",
+        );
+
+        assert_eq!(
+            result.expect("add should succeed after remove+retry"),
+            "configured via `fake cli add` (replaced existing entry)"
+        );
+        assert!(
+            state_dir.join("remove_invoked").exists(),
+            "remove should run once the first add fails"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_cli_mcp_add_reports_manual_reinstall_when_retry_also_fails() {
+        let (root, script, state_dir) = setup_fake_cli("add-fail-forever");
+        fs::write(state_dir.join("fail_forever"), b"").expect("seed fail_forever marker");
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+
+        let error = run_cli_mcp_add(
+            &script,
+            &["mcp", "add", &state_dir_str],
+            &["mcp", "remove", &state_dir_str],
+            "fake cli",
+        )
+        .expect_err("add should fail even after remove+retry");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed after removing the previous `acrawl` entry"),
+            "unexpected error message: {error}"
+        );
+        assert!(
+            state_dir.join("remove_invoked").exists(),
+            "remove should still have run before giving up"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }
