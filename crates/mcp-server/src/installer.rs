@@ -587,20 +587,61 @@ fn prompt_scope() -> io::Result<Scope> {
     }
 }
 
+/// Read an existing JSON config file into a mutable object map.
+///
+/// Refuses to silently discard content that fails to parse (e.g. Zed/OpenCode
+/// configs that use `//` comments, which `serde_json` rejects) or that isn't
+/// a JSON object at the top level — callers must not fall back to `{}` and
+/// overwrite the file in either case, or a user's existing config is wiped.
+fn read_existing_json_object(path: &Path) -> io::Result<serde_json::Map<String, Value>> {
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let content = fs::read_to_string(path)?;
+    let parsed: Value = serde_json::from_str(&content).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "refusing to modify {}: existing file failed to parse as strict JSON ({error}). \
+                 If this file uses JSONC comments (e.g. Zed/OpenCode configs support `//`), \
+                 remove them or add the `acrawl` MCP server entry manually — acrawl will not \
+                 touch a config file it cannot safely parse.",
+                path.display()
+            ),
+        )
+    })?;
+    match parsed {
+        Value::Object(map) => Ok(map),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "refusing to modify {}: expected a JSON object at the top level, found {other}",
+                path.display()
+            ),
+        )),
+    }
+}
+
+/// Copy an existing config file to `<path>.bak` before it's overwritten, so a
+/// merge that produces an unwanted result still leaves a way to recover the
+/// original content.
+fn backup_existing_file(path: &Path) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut backup_os = path.as_os_str().to_os_string();
+    backup_os.push(".bak");
+    fs::copy(path, PathBuf::from(backup_os))?;
+    Ok(())
+}
+
 fn merge_json_config(
     path: &Path,
     root_key: &str,
     server_name: &str,
     entry: Value,
 ) -> io::Result<()> {
-    let existing: Value = if path.exists() {
-        let content = fs::read_to_string(path)?;
-        serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
-    } else {
-        json!({})
-    };
-
-    let mut doc = existing.as_object().cloned().unwrap_or_default();
+    let mut doc = read_existing_json_object(path)?;
     let servers = doc
         .entry(root_key)
         .or_insert_with(|| json!({}))
@@ -616,6 +657,7 @@ fn merge_json_config(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    backup_existing_file(path)?;
     let formatted = serde_json::to_string_pretty(&Value::Object(doc)).map_err(io::Error::other)?;
     fs::write(path, formatted.as_bytes())?;
     Ok(())
@@ -753,13 +795,7 @@ fn install_zed(acrawl_path: &str) -> io::Result<String> {
 
 fn install_openclaw(acrawl_path: &str) -> io::Result<String> {
     let config_path = openclaw_config_path();
-    let existing: Value = if config_path.exists() {
-        let content = fs::read_to_string(&config_path)?;
-        serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
-    } else {
-        json!({})
-    };
-    let mut doc = existing.as_object().cloned().unwrap_or_default();
+    let mut doc = read_existing_json_object(&config_path)?;
     let mcp = doc
         .entry("mcp")
         .or_insert_with(|| json!({}))
@@ -785,6 +821,7 @@ fn install_openclaw(acrawl_path: &str) -> io::Result<String> {
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }
+    backup_existing_file(&config_path)?;
     let formatted = serde_json::to_string_pretty(&Value::Object(doc)).map_err(io::Error::other)?;
     fs::write(&config_path, formatted.as_bytes())?;
     Ok(format!("wrote {}", config_path.display()))
@@ -1622,6 +1659,58 @@ mod tests {
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"]["other"]["command"], "other-server");
         assert_eq!(content["mcpServers"]["acrawl"]["command"], "acrawl");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_json_config_refuses_to_wipe_unparseable_existing_file() {
+        let dir =
+            env::temp_dir().join(format!("acrawl-mcp-install-badjson-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("bad.json");
+
+        // JSONC-style comment: valid for Zed/OpenCode, invalid strict JSON.
+        let original = "{\n  // a comment\n  \"mcpServers\": {}\n}";
+        fs::write(&path, original).unwrap();
+
+        let entry = json!({"command": "acrawl", "args": ["mcp"]});
+        let result = merge_json_config(&path, "mcpServers", "acrawl", entry);
+
+        assert!(result.is_err(), "expected merge to fail, not silently wipe");
+        let content_after = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            content_after, original,
+            "existing file must be untouched when it fails to parse"
+        );
+        let mut backup_os = path.as_os_str().to_os_string();
+        backup_os.push(".bak");
+        assert!(
+            !PathBuf::from(backup_os).exists(),
+            "no backup should be written when nothing was overwritten"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_json_config_backs_up_existing_file_before_overwrite() {
+        let dir = env::temp_dir().join(format!("acrawl-mcp-install-backup-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("backup_test.json");
+
+        let original = r#"{"mcpServers":{"other":{"command":"other-server"}}}"#;
+        fs::write(&path, original).unwrap();
+
+        let entry = json!({"command": "acrawl", "args": ["mcp"]});
+        merge_json_config(&path, "mcpServers", "acrawl", entry).unwrap();
+
+        let mut backup_os = path.as_os_str().to_os_string();
+        backup_os.push(".bak");
+        let backup_path = PathBuf::from(backup_os);
+        assert!(backup_path.exists(), "expected a .bak file to be written");
+        let backup_content = fs::read_to_string(&backup_path).unwrap();
+        assert_eq!(backup_content, original);
 
         let _ = fs::remove_dir_all(&dir);
     }
