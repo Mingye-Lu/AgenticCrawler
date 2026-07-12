@@ -521,25 +521,6 @@ impl AuthModal {
             _ => {}
         }
     }
-
-    fn title(&self) -> &str {
-        match &self.step {
-            AuthModalStep::ProviderSelect { .. } => " Auth ",
-            AuthModalStep::AuthMethodSelect { provider, .. }
-            | AuthModalStep::ApiKeyInput { provider, .. } => match provider {
-                ProviderKind::Anthropic => " Auth · Anthropic ",
-                ProviderKind::OpenAi => " Auth · OpenAI ",
-                ProviderKind::Other => " Auth · Other ",
-                ProviderKind::Preset(p) => p.display_name,
-            },
-            AuthModalStep::BaseUrlInput { .. } => " Auth · Base URL ",
-            AuthModalStep::OAuthWaiting { .. } => " Auth · Waiting ",
-            AuthModalStep::ModelFetchLoading { .. } => " Auth · Loading Models ",
-            AuthModalStep::ModelSelect { .. } => " Auth · Select Model ",
-            AuthModalStep::Success { .. } => " Auth · Success ",
-            AuthModalStep::Error { .. } => " Auth · Error ",
-        }
-    }
 }
 
 impl Modal for AuthModal {
