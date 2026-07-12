@@ -171,7 +171,7 @@ impl ChildTabPanel {
                     }
                 };
 
-                let updated = tab.entries.iter_mut().rev().find_map(|entry| match entry {
+                let updated = tab.entries.iter_mut().find_map(|entry| match entry {
                     TranscriptEntry::ToolCall {
                         name: entry_name,
                         status: status @ ToolCallStatus::Running,
@@ -435,6 +435,70 @@ mod tests {
                 assert!(matches!(status, ToolCallStatus::Success { .. }));
             }
             _ => panic!("Expected ToolCall(Success) entry"),
+        }
+    }
+
+    #[test]
+    fn test_tool_call_complete_resolves_parallel_same_name_calls_fifo() {
+        let mut panel = ChildTabPanel::default();
+        // Two parallel `navigate` calls started in order A then B.
+        panel.apply_event(
+            "child-1",
+            "goal",
+            &ChildEventKind::ToolCallStart {
+                name: "navigate".to_string(),
+                input_summary: "a.example".to_string(),
+            },
+        );
+        panel.apply_event(
+            "child-1",
+            "goal",
+            &ChildEventKind::ToolCallStart {
+                name: "navigate".to_string(),
+                input_summary: "b.example".to_string(),
+            },
+        );
+
+        // A's completion arrives first; it must resolve the FIRST (A) entry, not the last (B).
+        panel.apply_event(
+            "child-1",
+            "goal",
+            &ChildEventKind::ToolCallComplete {
+                name: "navigate".to_string(),
+                output_summary: "loaded a.example".to_string(),
+                is_error: false,
+            },
+        );
+
+        let tab = &panel.tabs[0];
+        // entries[0] is the initial Parent entry; entries[1] and [2] are the two ToolCalls.
+        match &tab.entries[1] {
+            TranscriptEntry::ToolCall {
+                input_summary,
+                status,
+                ..
+            } => {
+                assert_eq!(input_summary, "a.example");
+                assert!(
+                    matches!(status, ToolCallStatus::Success { .. }),
+                    "first (A) entry should be resolved by the first completion"
+                );
+            }
+            _ => panic!("Expected ToolCall(Success) entry for A"),
+        }
+        match &tab.entries[2] {
+            TranscriptEntry::ToolCall {
+                input_summary,
+                status,
+                ..
+            } => {
+                assert_eq!(input_summary, "b.example");
+                assert!(
+                    matches!(status, ToolCallStatus::Running),
+                    "second (B) entry should still be Running"
+                );
+            }
+            _ => panic!("Expected ToolCall(Running) entry for B"),
         }
     }
 
