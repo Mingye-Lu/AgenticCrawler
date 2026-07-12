@@ -244,11 +244,11 @@ pub fn resolve_page_map_scope_ref(
 pub fn region_scope_selector(token: &str) -> String {
     match token {
         "dialog" => {
-            "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+            "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]:popover-open"
                 .to_string()
         }
         "main" => "main, [role=\"main\"]".to_string(),
-        "sidebar" => "[role=\"complementary\"], aside, nav".to_string(),
+        "sidebar" => "[role=\"complementary\"], aside".to_string(),
         other => other.to_string(),
     }
 }
@@ -280,7 +280,10 @@ mod tests {
         // click(region="dialog") and page_map(scope="dialog") must agree on
         // what counts as a dialog, including `[popover]`-based ones.
         let selector = region_scope_selector("dialog");
-        assert!(selector.contains("[popover]"), "selector: {selector}");
+        assert!(
+            selector.contains("[popover]:popover-open"),
+            "selector: {selector}"
+        );
         assert!(
             selector.contains("[role=\"dialog\"]"),
             "selector: {selector}"
@@ -288,9 +291,9 @@ mod tests {
     }
 
     #[test]
-    fn region_scope_selector_sidebar_includes_nav() {
+    fn region_scope_selector_sidebar_excludes_nav() {
         let selector = region_scope_selector("sidebar");
-        assert!(selector.contains("nav"), "selector: {selector}");
+        assert!(!selector.contains("nav"), "selector: {selector}");
         assert!(
             selector.contains("[role=\"complementary\"]"),
             "selector: {selector}"

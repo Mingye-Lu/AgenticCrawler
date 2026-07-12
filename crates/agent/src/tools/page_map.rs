@@ -677,13 +677,13 @@ mod tests {
         assert_eq!(
             resolve_scope(Some("dialog"), &ctx).unwrap(),
             Some(
-                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]"
+                "dialog, [role=\"dialog\"], [role=\"alertdialog\"], [aria-modal=\"true\"], [popover]:popover-open"
                     .to_string(),
             )
         );
         assert_eq!(
             resolve_scope(Some("sidebar"), &ctx).unwrap(),
-            Some("[role=\"complementary\"], aside, nav".to_string())
+            Some("[role=\"complementary\"], aside".to_string())
         );
 
         for handle in ["@r2", "@r9"] {
