@@ -348,8 +348,15 @@ struct OpenAiStreamState {
     message_id: String,
     model: String,
     started: bool,
-    text_block_active: bool,
-    reasoning_block_active: bool,
+    /// Index of the currently open text block, if any. Tracked explicitly
+    /// instead of assuming "last opened block == only open block"
+    /// (`next_block_index - 1`), which breaks as soon as a tool block is
+    /// opened after a reasoning/text block while the earlier block is still
+    /// open.
+    text_block_index: Option<u32>,
+    /// Index of the currently open reasoning block, if any. Same rationale
+    /// as `text_block_index`.
+    reasoning_block_index: Option<u32>,
     next_block_index: u32,
     active_tools: HashMap<u32, u32>,
     input_tokens: u32,
@@ -362,8 +369,8 @@ impl OpenAiStreamState {
             message_id: String::new(),
             model: String::new(),
             started: false,
-            text_block_active: false,
-            reasoning_block_active: false,
+            text_block_index: None,
+            reasoning_block_index: None,
             next_block_index: 0,
             active_tools: HashMap::new(),
             input_tokens: 0,
@@ -450,16 +457,11 @@ impl OpenAiStreamState {
         }
         // Close reasoning block before text begins so reasoning precedes text
         // in the final message block ordering.
-        if self.reasoning_block_active {
-            self.reasoning_block_active = false;
-            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
-                index: self.next_block_index - 1,
-            }));
-        }
-        if !self.text_block_active {
-            self.text_block_active = true;
+        self.close_reasoning_block(events);
+        if self.text_block_index.is_none() {
             let idx = self.next_block_index;
             self.next_block_index += 1;
+            self.text_block_index = Some(idx);
             events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
                 index: idx,
                 content_block: OutputContentBlock::Text {
@@ -468,7 +470,7 @@ impl OpenAiStreamState {
             }));
         }
         events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
-            index: self.next_block_index - 1,
+            index: self.text_block_index.expect("text block just ensured"),
             delta: ContentBlockDelta::TextDelta {
                 text: content.clone(),
             },
@@ -482,21 +484,39 @@ impl OpenAiStreamState {
         if thinking.is_empty() {
             return;
         }
-        if !self.reasoning_block_active {
-            self.reasoning_block_active = true;
+        if self.reasoning_block_index.is_none() {
             let idx = self.next_block_index;
             self.next_block_index += 1;
+            self.reasoning_block_index = Some(idx);
             events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
                 index: idx,
                 content_block: OutputContentBlock::Reasoning,
             }));
         }
         events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
-            index: self.next_block_index - 1,
+            index: self
+                .reasoning_block_index
+                .expect("reasoning block just ensured"),
             delta: ContentBlockDelta::ThinkingDelta {
                 thinking: thinking.clone(),
             },
         }));
+    }
+
+    fn close_text_block(&mut self, events: &mut Vec<StreamEvent>) {
+        if let Some(index) = self.text_block_index.take() {
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index,
+            }));
+        }
+    }
+
+    fn close_reasoning_block(&mut self, events: &mut Vec<StreamEvent>) {
+        if let Some(index) = self.reasoning_block_index.take() {
+            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                index,
+            }));
+        }
     }
 
     fn emit_tool_call_events(&mut self, delta: &OpenAiDelta, events: &mut Vec<StreamEvent>) {
@@ -507,12 +527,12 @@ impl OpenAiStreamState {
             let tc_index = tc.index;
 
             if !self.active_tools.contains_key(&tc_index) {
-                if self.text_block_active {
-                    self.text_block_active = false;
-                    events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
-                        index: self.next_block_index - 1,
-                    }));
-                }
+                // A tool call ends any currently open reasoning or text block —
+                // both must be closed explicitly (not just text), otherwise a
+                // still-open reasoning block gets silently orphaned once a tool
+                // block index is layered on top of it.
+                self.close_reasoning_block(events);
+                self.close_text_block(events);
 
                 let block_idx = self.next_block_index;
                 self.active_tools.insert(tc_index, block_idx);
@@ -552,18 +572,8 @@ impl OpenAiStreamState {
     }
 
     fn emit_finish(&mut self, finish_reason: &str, events: &mut Vec<StreamEvent>) {
-        if self.reasoning_block_active {
-            self.reasoning_block_active = false;
-            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
-                index: self.next_block_index - 1,
-            }));
-        }
-        if self.text_block_active {
-            self.text_block_active = false;
-            events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
-                index: self.next_block_index - 1,
-            }));
-        }
+        self.close_reasoning_block(events);
+        self.close_text_block(events);
 
         let mut tool_indices: Vec<u32> = self.active_tools.values().copied().collect();
         tool_indices.sort_unstable();
@@ -1026,6 +1036,60 @@ mod tests {
         assert!(events
             .iter()
             .any(|e| matches!(e, StreamEvent::MessageStop(_))));
+    }
+
+    #[test]
+    fn sse_reasoning_then_tool_call_closes_both_blocks_independently() {
+        // A reasoning block opened first, followed directly by a tool call
+        // (no text in between), must have the reasoning block closed when the
+        // tool call starts -- and both the reasoning block and the tool block
+        // must each get exactly one ContentBlockStop, at their own index, by
+        // the time the stream finishes.
+        let mut state = OpenAiStreamState::new();
+
+        state.process_chunk(&make_chunk(
+            r#"{"id":"chatcmpl-4","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
+        ));
+
+        let events = state.process_chunk(&make_chunk(
+            r#"{"id":"chatcmpl-4","model":"gpt-4o","choices":[{"index":0,"delta":{"reasoning_content":"thinking..."},"finish_reason":null}]}"#,
+        ));
+        assert!(matches!(
+            events[0],
+            StreamEvent::ContentBlockStart(ref e) if e.index == 0
+                && matches!(e.content_block, OutputContentBlock::Reasoning)
+        ));
+
+        // Tool call starts while the reasoning block is still open — this
+        // must close the reasoning block (index 0) before opening the tool
+        // block (index 1), not silently orphan it.
+        let events = state.process_chunk(&make_chunk(
+            r#"{"id":"chatcmpl-4","model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_xyz","type":"function","function":{"name":"navigate","arguments":""}}]},"finish_reason":null}]}"#,
+        ));
+        assert!(matches!(
+            events[0],
+            StreamEvent::ContentBlockStop(ref e) if e.index == 0
+        ));
+        assert!(matches!(
+            events[1],
+            StreamEvent::ContentBlockStart(ref e) if e.index == 1
+                && matches!(&e.content_block, OutputContentBlock::ToolUse { .. })
+        ));
+
+        // Finish must close the tool block exactly once at its own index (1)
+        // and must not re-close (or fail to close) the reasoning block, which
+        // was already closed above.
+        let events = state.process_chunk(&make_chunk(
+            r#"{"id":"chatcmpl-4","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#,
+        ));
+        let stops: Vec<u32> = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::ContentBlockStop(s) => Some(s.index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stops, vec![1]);
     }
 
     #[test]
