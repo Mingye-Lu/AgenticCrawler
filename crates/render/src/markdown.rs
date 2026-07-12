@@ -421,7 +421,8 @@ impl MdWriter {
     }
 
     fn push_text(&mut self, text: &str) {
-        self.push_text_with_style(text, self.current_style());
+        let sanitized = sanitize_untrusted_text(text);
+        self.push_text_with_style(&sanitized, self.current_style());
     }
 
     fn push_text_with_style(&mut self, text: &str, style: Style) {
@@ -886,7 +887,7 @@ fn skip_escape_sequence(chars: &mut Peekable<Chars<'_>>) {
             // BEL (`\u{07}`) or ST (`ESC \`).
             chars.next();
             while let Some(next) = chars.next() {
-                if next == '\u{07}' {
+                if next == '\u{07}' || next == '\u{9c}' {
                     break;
                 }
                 if next == '\u{1b}' && chars.peek() == Some(&'\\') {
