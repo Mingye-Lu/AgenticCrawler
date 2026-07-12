@@ -991,7 +991,10 @@ fn evaluate_payload(value: &Value) -> &Value {
     value.get("value").unwrap_or(value)
 }
 
-fn js_string(value: &str) -> Result<String, ToolExecutionError> {
+/// Encode `value` as a JSON string literal suitable for splicing into a JS
+/// snippet (proper escaping of quotes, backslashes, control characters,
+/// etc.) — the safe alternative to ad hoc `.replace('\'', "\\'")` patching.
+pub(crate) fn js_string(value: &str) -> Result<String, ToolExecutionError> {
     serde_json::to_string(value).map_err(|e| ToolExecutionError::new(e.to_string()))
 }
 
