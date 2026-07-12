@@ -121,7 +121,7 @@ impl UrlClaimRegistry {
         match scope {
             CrawlScope::SinglePage { url } => {
                 let normalized = normalize_url(url).to_string();
-                check_and_insert_exact(&mut guard, &normalized, owner_id)?;
+                check_and_insert_exact(&mut guard, &normalized, Some(url), owner_id)?;
                 Ok(ClaimGuard {
                     registry: Arc::clone(&self.inner),
                     keys: vec![ClaimKey::Exact(normalized)],
@@ -139,7 +139,7 @@ impl UrlClaimRegistry {
 
                 // All-or-nothing: validate every URL before inserting any.
                 for url in &normalized_urls {
-                    check_exact(&guard, url, owner_id)?;
+                    check_exact(&guard, url, None, owner_id)?;
                 }
                 // Deduplicate within the submitted list; the LLM may
                 // accidentally list the same URL twice (or two URLs that
@@ -194,15 +194,20 @@ impl UrlClaimRegistry {
     }
 }
 
-fn check_exact(inner: &Inner, url: &str, _owner_id: &str) -> Result<(), ClaimConflict> {
+fn check_exact(
+    inner: &Inner,
+    normalized_url: &str,
+    raw_url: Option<&str>,
+    _owner_id: &str,
+) -> Result<(), ClaimConflict> {
     for entry in &inner.entries {
         match entry {
             Entry::Exact {
                 url: claimed,
                 owner,
-            } if claimed == url => {
+            } if claimed == normalized_url => {
                 return Err(ClaimConflict::ExactUrl {
-                    url: url.to_string(),
+                    url: normalized_url.to_string(),
                     owner: owner.clone(),
                 });
             }
@@ -210,14 +215,23 @@ fn check_exact(inner: &Inner, url: &str, _owner_id: &str) -> Result<(), ClaimCon
                 regex,
                 source,
                 owner,
-            } if regex.is_match(url) => {
-                return Err(ClaimConflict::PatternMatchesExact {
-                    regex: source.clone(),
-                    url: url.to_string(),
-                    owner: owner.clone(),
-                });
+            } => {
+                // Test the normalized URL against the pattern (the common
+                // case).  If that doesn't match, also test the raw
+                // pre-normalization URL — a pattern may include a fragment
+                // that `normalize_url` strips (e.g. `#section`), so the
+                // normalized URL no longer matches the regex.
+                let pattern_matches = regex.is_match(normalized_url)
+                    || raw_url.is_some_and(|raw| regex.is_match(raw));
+                if pattern_matches {
+                    return Err(ClaimConflict::PatternMatchesExact {
+                        regex: source.clone(),
+                        url: normalized_url.to_string(),
+                        owner: owner.clone(),
+                    });
+                }
             }
-            _ => {}
+            Entry::Exact { .. } => {}
         }
     }
     Ok(())
@@ -225,12 +239,13 @@ fn check_exact(inner: &Inner, url: &str, _owner_id: &str) -> Result<(), ClaimCon
 
 fn check_and_insert_exact(
     inner: &mut Inner,
-    url: &str,
+    normalized_url: &str,
+    raw_url: Option<&str>,
     owner_id: &str,
 ) -> Result<(), ClaimConflict> {
-    check_exact(inner, url, owner_id)?;
+    check_exact(inner, normalized_url, raw_url, owner_id)?;
     inner.entries.push(Entry::Exact {
-        url: url.to_string(),
+        url: normalized_url.to_string(),
         owner: owner_id.to_string(),
     });
     Ok(())
@@ -365,6 +380,34 @@ mod tests {
             ClaimConflict::ExactUrl { ref url, ref owner }
                 if url == "https://example.com/a" && owner == "child-1"
         ));
+    }
+
+    #[test]
+    fn exact_url_conflicts_with_existing_pattern_that_includes_fragment() {
+        // A pattern claimed with a fragment regex should block a later
+        // SinglePage claim whose normalized URL doesn't match the regex
+        // but whose raw URL does (because normalize_url strips fragments).
+        let registry = UrlClaimRegistry::new();
+        let _pat = registry
+            .try_claim(
+                &CrawlScope::UrlPattern {
+                    regex: r"^https://example\.com/a#section$".to_string(),
+                },
+                "child-1",
+            )
+            .unwrap();
+        let err = registry
+            .try_claim(
+                &CrawlScope::SinglePage {
+                    url: "https://example.com/a#section".to_string(),
+                },
+                "child-2",
+            )
+            .expect_err(
+                "raw URL with fragment should conflict with pattern \
+                 that includes the same fragment",
+            );
+        assert!(matches!(err, ClaimConflict::PatternMatchesExact { .. }));
     }
 
     #[test]
