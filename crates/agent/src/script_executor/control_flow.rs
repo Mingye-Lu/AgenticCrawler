@@ -85,17 +85,22 @@ impl ScriptExecutor {
     ) -> Pin<Box<dyn Future<Output = Result<(), ScriptExecutionError>> + Send + 'a>> {
         Box::pin(async move {
             while Self::is_truthy(&self.evaluate_expression(condition).await?) {
-                // Bump the step counter on every iteration regardless of
-                // whether the body contains a ToolCall — otherwise a body
-                // that only does Assign/Expression re-evaluation never
-                // advances step_counter, and this loop is bounded only by
-                // the wall-clock timeout in check_limits(), not max_steps.
-                self.step_counter.fetch_add(1, Ordering::Relaxed);
-                self.check_limits()?;
+                // Snapshot step_counter before the body. Only apply the
+                // synthetic iteration charge when the body did not otherwise
+                // advance the counter (i.e., no ToolCall) — a body that only
+                // does Assign/Expression re-evaluation never advances
+                // step_counter, and this loop would be bounded only by the
+                // wall-clock timeout in check_limits(), not max_steps.
+                let before = self.step_counter.load(Ordering::Relaxed);
 
                 for step in steps {
                     self.execute_node(step).await?;
                 }
+
+                if self.step_counter.load(Ordering::Relaxed) == before {
+                    self.step_counter.fetch_add(1, Ordering::Relaxed);
+                }
+                self.check_limits()?;
             }
 
             Ok(())
