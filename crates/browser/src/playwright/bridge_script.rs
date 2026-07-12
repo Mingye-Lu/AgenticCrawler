@@ -1402,16 +1402,25 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         await newContext.addInitScript(CONSOLE_CAPTURE_SOURCE);
 
         if (command.screen) {
-          await newContext.addInitScript(`
-            (() => {
-              // Shadow dims on the real screen object (preserves screen.orientation
-              // and other native accessors; see bootstrap note).
-              const dims = { width: ${command.screen.width}, height: ${command.screen.height}, availWidth: ${command.screen.width}, availHeight: ${command.screen.height}, colorDepth: 24, pixelDepth: 24 };
-              for (const k of Object.keys(dims)) {
-                try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
-              }
-            })();
-          `);
+          // Pass width/height as a serialized argument rather than
+          // interpolating them into the injected source text — same
+          // string-interpolation-into-JS-source pattern that was
+          // previously fixed for the ARIA-snapshot injection issue.
+          await newContext.addInitScript((screenDims) => {
+            // Shadow dims on the real screen object (preserves screen.orientation
+            // and other native accessors; see bootstrap note).
+            const dims = {
+              width: screenDims.width,
+              height: screenDims.height,
+              availWidth: screenDims.width,
+              availHeight: screenDims.height,
+              colorDepth: 24,
+              pixelDepth: 24,
+            };
+            for (const k of Object.keys(dims)) {
+              try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
+            }
+          }, { width: command.screen.width, height: command.screen.height });
         }
 
         // Restore localStorage manually (storageState only seeds on first navigation)
@@ -1780,6 +1789,32 @@ mod tests {
         assert!(
             PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("richEditor"),
             "Missing richEditor field in success payload"
+        );
+    }
+
+    #[test]
+    fn bridge_set_device_passes_screen_dims_as_evaluate_arg() {
+        // set_device previously interpolated command.screen.width/height
+        // directly into an addInitScript template-literal source string.
+        // Not currently reachable with untrusted values (the only Rust
+        // caller only ever supplies preset u32 constants), but it's the
+        // same string-interpolation-into-JS-source pattern that caused a
+        // previously-fixed ARIA-snapshot injection bug elsewhere in this
+        // codebase. Assert the values are now passed as a serialized
+        // addInitScript argument instead of spliced into the source text.
+        assert!(
+            !PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("width: ${command.screen.width}"),
+            "screen width must not be interpolated into JS source text"
+        );
+        assert!(
+            !PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("height: ${command.screen.height}"),
+            "screen height must not be interpolated into JS source text"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("addInitScript((screenDims) => {")
+                && PLAYWRIGHT_BRIDGE_NODE_SCRIPT
+                    .contains("{ width: command.screen.width, height: command.screen.height }"),
+            "expected set_device to pass screen dims as a serialized addInitScript argument"
         );
     }
 
