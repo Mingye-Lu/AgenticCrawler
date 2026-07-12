@@ -192,6 +192,26 @@ fn esc_from_auth_method_goes_back_to_provider_select() {
 }
 
 #[test]
+fn title_matches_through_direct_call_and_dyn_modal() {
+    let m = modal();
+    // Direct call resolves through the (sole) `Modal::title` impl.
+    assert_eq!(Modal::title(&m), " Auth ");
+    // Calling through `&dyn Modal` must produce the same title -- this is
+    // the scenario that broke when a private inherent `title` shadowed
+    // the trait method for direct calls but not for dyn dispatch.
+    let dyn_modal: &dyn Modal = &m;
+    assert_eq!(dyn_modal.title(), Modal::title(&m));
+
+    let openai_modal = modal_with_step(AuthModalStep::AuthMethodSelect {
+        provider: ProviderKind::OpenAi,
+        selected: 0,
+    });
+    assert_eq!(Modal::title(&openai_modal), " Auth · OpenAI ");
+    let dyn_openai: &dyn Modal = &openai_modal;
+    assert_eq!(dyn_openai.title(), Modal::title(&openai_modal));
+}
+
+#[test]
 fn esc_from_provider_select_closes_modal() {
     let mut modal = modal();
     assert_eq!(modal.handle_key(key(KeyCode::Esc)), ModalAction::Dismiss);
