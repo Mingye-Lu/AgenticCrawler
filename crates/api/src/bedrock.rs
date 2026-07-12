@@ -257,7 +257,7 @@ impl BedrockMessageStream {
             match self.response.chunk().await? {
                 Some(chunk) => {
                     self.buffer.extend_from_slice(&chunk);
-                    self.drain_frames();
+                    self.drain_frames()?;
                 }
                 None => {
                     self.done = true;
@@ -266,9 +266,12 @@ impl BedrockMessageStream {
         }
     }
 
-    fn drain_frames(&mut self) {
-        while let Some((payload, consumed)) = parse_event_frame(&self.buffer) {
+    fn drain_frames(&mut self) -> Result<(), ApiError> {
+        while let Some((headers, payload, consumed)) = parse_event_frame(&self.buffer) {
             self.buffer.drain(..consumed);
+            if let Some(error) = event_frame_error(&headers, &payload) {
+                return Err(error);
+            }
             if payload.is_empty() {
                 continue;
             }
@@ -276,6 +279,7 @@ impl BedrockMessageStream {
                 self.pending.push_back(event);
             }
         }
+        Ok(())
     }
 }
 
@@ -290,7 +294,18 @@ fn parse_stream_event_payload(payload: &[u8]) -> Option<StreamEvent> {
         })
 }
 
-fn parse_event_frame(data: &[u8]) -> Option<(Vec<u8>, usize)> {
+/// A single `vnd.amazon.eventstream` header (name, value-as-string).
+///
+/// AWS's event-stream framing signals mid-stream errors (throttling,
+/// validation, internal errors, etc.) via `:message-type` /
+/// `:exception-type` / `:error-code` headers rather than the JSON payload,
+/// so these must be parsed rather than skipped over.
+type EventStreamHeader = (String, String);
+
+/// Parses a `vnd.amazon.eventstream` frame: 4-byte total length, 4-byte
+/// headers length, 4-byte prelude CRC, headers block, payload, 4-byte
+/// message CRC. Returns `(headers, payload, total_bytes_consumed)`.
+fn parse_event_frame(data: &[u8]) -> Option<(Vec<EventStreamHeader>, Vec<u8>, usize)> {
     if data.len() < 12 {
         return None;
     }
@@ -303,11 +318,145 @@ fn parse_event_frame(data: &[u8]) -> Option<(Vec<u8>, usize)> {
     let headers_len = u32::from_be_bytes(data[4..8].try_into().ok()?) as usize;
     let payload_start = 12 + headers_len;
     let payload_end = total_len.checked_sub(4)?;
-    if payload_start > payload_end {
+    if payload_start > payload_end || payload_start > data.len() {
         return None;
     }
 
-    Some((data[payload_start..payload_end].to_vec(), total_len))
+    let headers = parse_event_stream_headers(&data[12..payload_start]);
+
+    Some((
+        headers,
+        data[payload_start..payload_end].to_vec(),
+        total_len,
+    ))
+}
+
+/// Parses the header block of a `vnd.amazon.eventstream` frame into
+/// `(name, value)` pairs. Each header is: 1-byte name length, name bytes,
+/// 1-byte value-type, then a type-dependent value. Unrecognized/malformed
+/// entries stop parsing (returning whatever headers were parsed so far)
+/// rather than panicking or misreading subsequent bytes.
+fn parse_event_stream_headers(mut data: &[u8]) -> Vec<EventStreamHeader> {
+    let mut headers = Vec::new();
+
+    while !data.is_empty() {
+        let Some((&name_len, rest)) = data.split_first() else {
+            break;
+        };
+        let name_len = name_len as usize;
+        if rest.len() < name_len + 1 {
+            break;
+        }
+        let name = String::from_utf8_lossy(&rest[..name_len]).into_owned();
+        let value_type = rest[name_len];
+        let mut rest = &rest[name_len + 1..];
+
+        let value = match value_type {
+            0 => "true".to_string(),
+            1 => "false".to_string(),
+            2 if !rest.is_empty() => {
+                let value = rest[0].to_string();
+                rest = &rest[1..];
+                value
+            }
+            3 if rest.len() >= 2 => {
+                let value = i16::from_be_bytes([rest[0], rest[1]]).to_string();
+                rest = &rest[2..];
+                value
+            }
+            4 if rest.len() >= 4 => {
+                let value = i32::from_be_bytes(rest[0..4].try_into().unwrap_or_default());
+                rest = &rest[4..];
+                value.to_string()
+            }
+            5 if rest.len() >= 8 => {
+                let value = i64::from_be_bytes(rest[0..8].try_into().unwrap_or_default());
+                rest = &rest[8..];
+                value.to_string()
+            }
+            6 | 7 if rest.len() >= 2 => {
+                let len = u16::from_be_bytes([rest[0], rest[1]]) as usize;
+                rest = &rest[2..];
+                if rest.len() < len {
+                    break;
+                }
+                let value = if value_type == 7 {
+                    String::from_utf8_lossy(&rest[..len]).into_owned()
+                } else {
+                    base64::engine::general_purpose::STANDARD.encode(&rest[..len])
+                };
+                rest = &rest[len..];
+                value
+            }
+            8 if rest.len() >= 8 => {
+                rest = &rest[8..];
+                String::new()
+            }
+            9 if rest.len() >= 16 => {
+                rest = &rest[16..];
+                String::new()
+            }
+            _ => break,
+        };
+
+        headers.push((name, value));
+        data = rest;
+    }
+
+    headers
+}
+
+/// If a frame's headers mark it as a Bedrock exception/error frame (per
+/// `vnd.amazon.eventstream`'s `:message-type` header), turns it into an
+/// `ApiError` instead of letting it be silently dropped.
+fn event_frame_error(headers: &[EventStreamHeader], payload: &[u8]) -> Option<ApiError> {
+    let message_type = headers
+        .iter()
+        .find(|(name, _)| name == ":message-type")
+        .map(|(_, value)| value.as_str());
+    if !matches!(message_type, Some("exception" | "error")) {
+        return None;
+    }
+
+    let exception_type = headers
+        .iter()
+        .find(|(name, _)| name == ":exception-type" || name == ":error-code")
+        .map(|(_, value)| value.clone());
+
+    let payload_json: Option<Value> = serde_json::from_slice(payload).ok();
+    let message = payload_json
+        .as_ref()
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .iter()
+                .find(|(name, _)| name == ":error-message")
+                .map(|(_, value)| value.clone())
+        })
+        .or_else(|| {
+            let text = String::from_utf8_lossy(payload).into_owned();
+            (!text.is_empty()).then_some(text)
+        });
+
+    let retryable = matches!(
+        exception_type.as_deref(),
+        Some(
+            "throttlingException"
+                | "modelTimeoutException"
+                | "serviceUnavailableException"
+                | "internalServerException"
+        )
+    );
+
+    Some(ApiError::Api {
+        status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        error_type: exception_type,
+        message,
+        body: String::from_utf8_lossy(payload).into_owned(),
+        retryable,
+    })
 }
 
 #[cfg(test)]
@@ -317,15 +466,39 @@ mod tests {
     use super::*;
 
     fn build_frame(payload: &[u8]) -> Vec<u8> {
-        let total_len = 12 + payload.len() + 4;
+        build_frame_with_headers(&[], payload)
+    }
+
+    /// Builds a `vnd.amazon.eventstream` frame with the given string-typed
+    /// headers (name, value) encoded ahead of the payload.
+    fn build_frame_with_headers(headers: &[(&str, &str)], payload: &[u8]) -> Vec<u8> {
+        let mut header_bytes = Vec::new();
+        for (name, value) in headers {
+            header_bytes.push(u8::try_from(name.len()).expect("header name fits in u8"));
+            header_bytes.extend_from_slice(name.as_bytes());
+            header_bytes.push(7); // value type: string
+            header_bytes.extend_from_slice(
+                &u16::try_from(value.len())
+                    .expect("header value fits in u16")
+                    .to_be_bytes(),
+            );
+            header_bytes.extend_from_slice(value.as_bytes());
+        }
+
+        let total_len = 12 + header_bytes.len() + payload.len() + 4;
         let mut frame = Vec::with_capacity(total_len);
         frame.extend_from_slice(
             &u32::try_from(total_len)
                 .expect("frame length should fit into u32")
                 .to_be_bytes(),
         );
+        frame.extend_from_slice(
+            &u32::try_from(header_bytes.len())
+                .expect("headers length should fit into u32")
+                .to_be_bytes(),
+        );
         frame.extend_from_slice(&0_u32.to_be_bytes());
-        frame.extend_from_slice(&0_u32.to_be_bytes());
+        frame.extend_from_slice(&header_bytes);
         frame.extend_from_slice(payload);
         frame.extend_from_slice(&0_u32.to_be_bytes());
         frame
@@ -378,11 +551,97 @@ mod tests {
             serde_json::to_vec(&StreamEvent::MessageStop(crate::types::MessageStopEvent {}))
                 .expect("serialize stream event");
         let frame = build_frame(&payload);
-        let (parsed_payload, consumed) = parse_event_frame(&frame).expect("parse frame");
+        let (headers, parsed_payload, consumed) = parse_event_frame(&frame).expect("parse frame");
 
         assert_eq!(consumed, frame.len());
+        assert!(headers.is_empty());
         assert_eq!(parsed_payload, payload);
         let parsed_event = parse_stream_event_payload(&parsed_payload).expect("stream event");
         assert!(matches!(parsed_event, StreamEvent::MessageStop(_)));
+    }
+
+    #[test]
+    fn test_parse_event_stream_headers_string_values() {
+        let frame = build_frame_with_headers(
+            &[
+                (":message-type", "exception"),
+                (":exception-type", "throttlingException"),
+            ],
+            b"{}",
+        );
+        let (headers, _payload, _consumed) = parse_event_frame(&frame).expect("parse frame");
+
+        assert_eq!(
+            headers,
+            vec![
+                (":message-type".to_string(), "exception".to_string()),
+                (
+                    ":exception-type".to_string(),
+                    "throttlingException".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_event_frame_error_none_for_normal_frame() {
+        let (headers, payload, _consumed) = parse_event_frame(&build_frame_with_headers(
+            &[(":event-type", "chunk")],
+            b"{}",
+        ))
+        .expect("parse frame");
+        assert!(event_frame_error(&headers, &payload).is_none());
+    }
+
+    #[test]
+    fn test_event_frame_error_surfaces_exception_frame() {
+        let payload = br#"{"message":"Too many requests, please wait and try again."}"#;
+        let frame = build_frame_with_headers(
+            &[
+                (":message-type", "exception"),
+                (":exception-type", "throttlingException"),
+            ],
+            payload,
+        );
+        let (headers, payload, _consumed) = parse_event_frame(&frame).expect("parse frame");
+
+        let error = event_frame_error(&headers, &payload).expect("exception frame is an error");
+        match error {
+            ApiError::Api {
+                error_type,
+                message,
+                retryable,
+                ..
+            } => {
+                assert_eq!(error_type.as_deref(), Some("throttlingException"));
+                assert_eq!(
+                    message.as_deref(),
+                    Some("Too many requests, please wait and try again.")
+                );
+                assert!(retryable, "throttlingException should be retryable");
+            }
+            other => panic!("expected ApiError::Api, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_event_frame_error_surfaces_validation_exception_as_non_retryable() {
+        let payload = br#"{"message":"malformed input request"}"#;
+        let frame = build_frame_with_headers(
+            &[
+                (":message-type", "exception"),
+                (":exception-type", "validationException"),
+            ],
+            payload,
+        );
+        let (headers, payload, _consumed) = parse_event_frame(&frame).expect("parse frame");
+
+        let error = event_frame_error(&headers, &payload).expect("exception frame is an error");
+        match error {
+            ApiError::Api { retryable, .. } => {
+                assert!(!retryable, "validationException should not be retryable");
+            }
+            other => panic!("expected ApiError::Api, got {other:?}"),
+        }
     }
 }
