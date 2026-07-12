@@ -852,6 +852,108 @@ async fn parallel_max_branches_enforced() {
 }
 
 #[tokio::test]
+async fn parallel_branch_error_preserves_completed_sibling_data() {
+    // Two branches finish successfully with real extracted data (no bridge calls at
+    // all, so nothing can race them out of completing), while a third branch performs
+    // several sequential tool calls before hitting a bridge error. Before the fix, any
+    // branch error caused `execute_parallel` to discard `branch_results` entirely via
+    // `first_error.or(cleanup_error)` before merging — so the two completed branches'
+    // data never reached `ScriptResult::extracted_data`. This asserts that data now
+    // survives even though the overall parallel block still reports failure.
+    let mock = MockBridge::new()
+        .with_evaluate_responses(vec![json!({"value": 1}), json!({"value": 2})])
+        .with_click_error("simulated click failure");
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, default_limits());
+
+    let result = executor
+        .execute(script(vec![ScriptNode::Parallel {
+            branches: vec![
+                vec![ScriptNode::Collect {
+                    value: literal(json!("branch_a_data")),
+                }],
+                vec![ScriptNode::Collect {
+                    value: literal(json!("branch_b_data")),
+                }],
+                vec![
+                    tool_call("execute_js", json!({"script": "1"}), None),
+                    tool_call("execute_js", json!({"script": "2"}), None),
+                    tool_call("click", json!({"selector": "#missing"}), None),
+                ],
+            ],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(result.error.is_some());
+    assert!(
+        result.extracted_data.contains(&json!("branch_a_data")),
+        "expected completed branch A data to survive a sibling branch error, got {:?}",
+        result.extracted_data
+    );
+    assert!(
+        result.extracted_data.contains(&json!("branch_b_data")),
+        "expected completed branch B data to survive a sibling branch error, got {:?}",
+        result.extracted_data
+    );
+}
+
+#[tokio::test]
+async fn parallel_completed_branch_bytes_still_charged_after_catch() {
+    // Regression test for the interaction between the sibling-error rollback fix
+    // (a05876b) and the completed-data-preservation fix (PR #144): a branch that
+    // actually completes and gets merged into the result must keep its output-byte
+    // charge, even though the parallel block as a whole fails. If the rollback
+    // blindly reset the counter to the pre-parallel snapshot instead of snapshot +
+    // merged bytes, branch_a's 15 bytes would be forgotten and a subsequent catch
+    // Collect that pushes the true combined total over the limit would wrongly
+    // succeed.
+    let tiny_limits = ScriptLimits {
+        max_output_bytes: 25,
+        ..default_limits()
+    };
+    let mock = MockBridge::new()
+        .with_evaluate_responses(vec![json!({"value": 1}), json!({"value": 2})])
+        .with_click_error("simulated click failure");
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, tiny_limits);
+
+    let result = executor
+        .execute(script(vec![ScriptNode::TryCatch {
+            try_steps: vec![ScriptNode::Parallel {
+                branches: vec![
+                    vec![ScriptNode::Collect {
+                        value: literal(json!("branch_a_data")),
+                    }],
+                    vec![
+                        tool_call("execute_js", json!({"script": "1"}), None),
+                        tool_call("execute_js", json!({"script": "2"}), None),
+                        tool_call("click", json!({"selector": "#missing"}), None),
+                    ],
+                ],
+            }],
+            catch_steps: Some(vec![ScriptNode::Collect {
+                value: literal(json!("error_caught")),
+            }]),
+            finally_steps: None,
+            error_var: None,
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("output size limit exceeded"),
+        "expected branch_a's 15 bytes plus catch's 14 bytes (29) to exceed the 25-byte \
+         budget, got: {:?}",
+        result.error
+    );
+}
+
+#[tokio::test]
 async fn step_limit_stops_execution() {
     let mock = MockBridge::new().with_evaluate_responses(vec![
         json!({"value": 1}),

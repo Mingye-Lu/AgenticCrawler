@@ -62,6 +62,15 @@ pub struct StoredProviderConfig {
     pub region: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aws_secret_access_key: Option<String>,
+    /// AWS `SigV4` session token (Bedrock), for temporary/STS credentials.
+    ///
+    /// Previously this was overloaded onto `base_url`, which meant a live AWS
+    /// session token could end up stored under the JSON key `"base_url"` on
+    /// disk. This field gives it a proper home; `provider::bedrock::build_client`
+    /// still falls back to `base_url` for existing on-disk configs that
+    /// already have a token stuffed there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -288,6 +297,55 @@ mod tests {
 
         let loaded = load_credentials_from_path(&cred_path).unwrap();
         assert_eq!(loaded, store);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    /// `session_token` must have its own on-disk JSON key ("`session_token`"),
+    /// distinct from `base_url`, and round-trip through save/load.
+    #[test]
+    fn test_bedrock_session_token_round_trip_and_has_own_json_key() {
+        let temp_dir = test_temp_dir("session_token_round_trip");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let cred_path = temp_dir.join("credentials.json");
+
+        let mut store = CredentialStore {
+            active_provider: Some("amazon-bedrock".to_string()),
+            providers: HashMap::new(),
+        };
+
+        let bedrock_config = StoredProviderConfig {
+            auth_method: "api_key".to_string(),
+            api_key: Some("AKIATEST".to_string()),
+            aws_secret_access_key: Some("secret".to_string()),
+            region: Some("us-east-1".to_string()),
+            session_token: Some("FQoGZXIvYXdzEXAMPLE".to_string()),
+            ..Default::default()
+        };
+        store
+            .providers
+            .insert("amazon-bedrock".to_string(), bedrock_config);
+
+        save_credentials_to_path(&store, &cred_path).unwrap();
+
+        let raw = fs::read_to_string(&cred_path).unwrap();
+        assert!(
+            raw.contains("\"session_token\""),
+            "session token must be stored under its own JSON key, not base_url"
+        );
+        assert!(
+            !raw.contains("\"base_url\""),
+            "base_url must not be written when unset"
+        );
+
+        let loaded = load_credentials_from_path(&cred_path).unwrap();
+        assert_eq!(loaded, store);
+        assert_eq!(
+            loaded.providers["amazon-bedrock"].session_token.as_deref(),
+            Some("FQoGZXIvYXdzEXAMPLE")
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
