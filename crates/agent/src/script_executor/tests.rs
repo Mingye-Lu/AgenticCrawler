@@ -814,6 +814,53 @@ async fn parallel_max_branches_enforced() {
 }
 
 #[tokio::test]
+async fn parallel_branch_error_preserves_completed_sibling_data() {
+    // Two branches finish successfully with real extracted data (no bridge calls at
+    // all, so nothing can race them out of completing), while a third branch performs
+    // several sequential tool calls before hitting a bridge error. Before the fix, any
+    // branch error caused `execute_parallel` to discard `branch_results` entirely via
+    // `first_error.or(cleanup_error)` before merging — so the two completed branches'
+    // data never reached `ScriptResult::extracted_data`. This asserts that data now
+    // survives even though the overall parallel block still reports failure.
+    let mock = MockBridge::new()
+        .with_evaluate_responses(vec![json!({"value": 1}), json!({"value": 2})])
+        .with_click_error("simulated click failure");
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, default_limits());
+
+    let result = executor
+        .execute(script(vec![ScriptNode::Parallel {
+            branches: vec![
+                vec![ScriptNode::Collect {
+                    value: literal(json!("branch_a_data")),
+                }],
+                vec![ScriptNode::Collect {
+                    value: literal(json!("branch_b_data")),
+                }],
+                vec![
+                    tool_call("execute_js", json!({"script": "1"}), None),
+                    tool_call("execute_js", json!({"script": "2"}), None),
+                    tool_call("click", json!({"selector": "#missing"}), None),
+                ],
+            ],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(result.error.is_some());
+    assert!(
+        result.extracted_data.contains(&json!("branch_a_data")),
+        "expected completed branch A data to survive a sibling branch error, got {:?}",
+        result.extracted_data
+    );
+    assert!(
+        result.extracted_data.contains(&json!("branch_b_data")),
+        "expected completed branch B data to survive a sibling branch error, got {:?}",
+        result.extracted_data
+    );
+}
+
+#[tokio::test]
 async fn step_limit_stops_execution() {
     let mock = MockBridge::new().with_evaluate_responses(vec![
         json!({"value": 1}),

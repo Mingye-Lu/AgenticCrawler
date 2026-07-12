@@ -106,8 +106,20 @@ impl ScriptExecutor {
                 .err();
             self.state.step = self.step_counter.load(Ordering::Relaxed);
 
-            if let Some(error) = first_error.or(cleanup_error) {
-                return Err(error);
+            // Merge every branch that completed successfully before deciding whether to
+            // return an error. Branches that finished before a sibling errored (or before
+            // cleanup failed) already did real work — extracted data, caught errors, output
+            // byte accounting — and must not be silently discarded just because the overall
+            // parallel block is reported as failed. Merging first (rather than bailing out
+            // early) means that data still reaches the caller via `ScriptResult`, which is
+            // built from `self.extracted_data`/`self.state` regardless of success or failure.
+            let completed_branches = branch_results.iter().filter(|result| result.is_some());
+            let completed_count = completed_branches.count();
+            if first_error.is_some() && completed_count > 0 {
+                eprintln!(
+                    "Warning: parallel script block failed after {completed_count}/{} branch(es) completed successfully; merging their partial results (extracted data, caught errors) instead of discarding them",
+                    branches.len()
+                );
             }
 
             for result in branch_results.into_iter().flatten() {
@@ -116,6 +128,10 @@ impl ScriptExecutor {
                 self.output_bytes += result.output_bytes;
             }
             self.state.items_collected = self.extracted_data.len();
+
+            if let Some(error) = first_error.or(cleanup_error) {
+                return Err(error);
+            }
 
             Ok(())
         })

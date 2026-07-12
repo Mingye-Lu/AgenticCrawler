@@ -248,14 +248,30 @@ fn execute_browser_tool(
     browser: &mut BrowserContext,
     rt: &tokio::runtime::Runtime,
     crawl_state: &mut agent::state::CrawlState,
-) -> Result<String, String> {
+) -> Result<Value, String> {
     rt.block_on(async {
         match registry
             .execute_async(name, input, browser, crawl_state)
             .await
         {
-            Ok(ToolEffect::Reply(output)) => Ok(output),
-            Ok(_) => Err(format!("tool `{name}` returned unsupported effect")),
+            Ok(ToolEffect::Reply(output)) => Ok(json!({
+                "content": [{ "type": "text", "text": output }],
+                "isError": false,
+            })),
+            Ok(ToolEffect::Vision(payload)) => Ok(json!({
+                "content": [
+                    {
+                        "type": "image",
+                        "data": payload.base64_data,
+                        "mimeType": payload.media_type,
+                    },
+                    { "type": "text", "text": payload.caption },
+                ],
+                "isError": false,
+            })),
+            Ok(other) => Err(format!(
+                "tool `{name}` returned unsupported effect type: {other:?}"
+            )),
             Err(e) => Err(e.to_string()),
         }
     })
@@ -999,11 +1015,7 @@ fn handle_tools_call(
         rt,
         crawl_state,
     ) {
-        Ok(output) => {
-            let result = json!({
-                "content": [{ "type": "text", "text": output }],
-                "isError": false,
-            });
+        Ok(result) => {
             send_response(&JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id,
