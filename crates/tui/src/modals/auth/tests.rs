@@ -195,7 +195,7 @@ fn esc_from_auth_method_goes_back_to_provider_select() {
 fn title_matches_through_direct_call_and_dyn_modal() {
     let m = modal();
     // Direct call resolves through the (sole) `Modal::title` impl.
-    assert_eq!(Modal::title(&m), " Auth ");
+    assert_eq!(m.title(), " Auth ");
     // Calling through `&dyn Modal` must produce the same title -- this is
     // the scenario that broke when a private inherent `title` shadowed
     // the trait method for direct calls but not for dyn dispatch.
@@ -206,7 +206,7 @@ fn title_matches_through_direct_call_and_dyn_modal() {
         provider: ProviderKind::OpenAi,
         selected: 0,
     });
-    assert_eq!(Modal::title(&openai_modal), " Auth · OpenAI ");
+    assert_eq!(openai_modal.title(), " Auth · OpenAI ");
     let dyn_openai: &dyn Modal = &openai_modal;
     assert_eq!(dyn_openai.title(), Modal::title(&openai_modal));
 }
