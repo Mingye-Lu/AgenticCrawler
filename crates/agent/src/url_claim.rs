@@ -8,7 +8,13 @@
 //! claim is released and another sibling may claim the same scope.
 //!
 //! Overlap policy:
-//! - exact-vs-exact: same URL string fails the second claim.
+//! - exact-vs-exact: same URL string fails the second claim. Exact URLs are
+//!   run through [`normalize_url`] (the same helper `page_map`/`navigate`
+//!   use for their own caching) before comparison and storage, so e.g.
+//!   `https://example.com/a` and `https://example.com/a#section` are
+//!   treated as the same claim rather than silently overlapping (see
+//!   `normalize_url` for exactly which fragment/URL forms collapse
+//!   together).
 //! - pattern-vs-pattern: identical regex source fails (conservative; subtly
 //!   different but semantically overlapping regexes are an accepted
 //!   footgun).
@@ -20,6 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use regex::Regex;
 
+use crate::tools::page_map::normalize_url;
 use crate::CrawlScope;
 
 /// Reason a claim was rejected. Surfaced to the LLM so it can adjust scope.
@@ -113,28 +120,39 @@ impl UrlClaimRegistry {
 
         match scope {
             CrawlScope::SinglePage { url } => {
-                check_and_insert_exact(&mut guard, url, owner_id)?;
+                let normalized = normalize_url(url).to_string();
+                check_and_insert_exact(&mut guard, &normalized, owner_id)?;
                 Ok(ClaimGuard {
                     registry: Arc::clone(&self.inner),
-                    keys: vec![ClaimKey::Exact(url.clone())],
+                    keys: vec![ClaimKey::Exact(normalized)],
                 })
             }
             CrawlScope::UrlList { urls } => {
+                // Normalize up front so overlap checks, storage, and the
+                // intra-list dedup below all agree on the canonical form
+                // (e.g. a trailing slash or `#fragment` shouldn't let two
+                // URLs that resolve to the same page both get claimed).
+                let normalized_urls: Vec<String> = urls
+                    .iter()
+                    .map(|url| normalize_url(url).to_string())
+                    .collect();
+
                 // All-or-nothing: validate every URL before inserting any.
-                for url in urls {
+                for url in &normalized_urls {
                     check_exact(&guard, url, owner_id)?;
                 }
                 // Deduplicate within the submitted list; the LLM may
-                // accidentally list the same URL twice.
+                // accidentally list the same URL twice (or two URLs that
+                // normalize to the same one).
                 let mut seen = std::collections::HashSet::new();
                 let mut keys = Vec::new();
-                for url in urls {
-                    if seen.insert(url.as_str()) {
+                for url in normalized_urls {
+                    if seen.insert(url.clone()) {
                         guard.entries.push(Entry::Exact {
                             url: url.clone(),
                             owner: owner_id.to_string(),
                         });
-                        keys.push(ClaimKey::Exact(url.clone()));
+                        keys.push(ClaimKey::Exact(url));
                     }
                 }
                 Ok(ClaimGuard {
@@ -312,6 +330,36 @@ mod tests {
                 "child-2",
             )
             .expect_err("duplicate claim should fail");
+        assert!(matches!(
+            err,
+            ClaimConflict::ExactUrl { ref url, ref owner }
+                if url == "https://example.com/a" && owner == "child-1"
+        ));
+    }
+
+    #[test]
+    fn single_page_claim_blocks_fragment_only_variant_of_claimed_url() {
+        let registry = UrlClaimRegistry::new();
+        let _g = registry
+            .try_claim(
+                &CrawlScope::SinglePage {
+                    url: "https://example.com/a".to_string(),
+                },
+                "child-1",
+            )
+            .expect("first claim should succeed");
+
+        // Same page, differing only by a plain (non-route) fragment — this
+        // must normalize to the same claim as "https://example.com/a" so
+        // sibling forks can't be handed overlapping scope.
+        let err = registry
+            .try_claim(
+                &CrawlScope::SinglePage {
+                    url: "https://example.com/a#section".to_string(),
+                },
+                "child-2",
+            )
+            .expect_err("fragment-only variant should collide with the claimed url");
         assert!(matches!(
             err,
             ClaimConflict::ExactUrl { ref url, ref owner }
