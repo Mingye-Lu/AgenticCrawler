@@ -4,7 +4,7 @@ use std::process::Stdio;
 
 use acrawl_core::child_stderr;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -142,6 +142,10 @@ impl McpStdioProcess {
         self.write_frame(&body).await
     }
 
+    // Raw protocol primitives kept for tests that exercise framing directly
+    // (without id correlation); production callers go through `request()`,
+    // which uses `read_response_matching` instead.
+    #[allow(dead_code)]
     pub async fn read_jsonrpc_message<T: DeserializeOwned>(&mut self) -> io::Result<T> {
         let payload = self.read_frame().await?;
         serde_json::from_slice(&payload)
@@ -162,8 +166,41 @@ impl McpStdioProcess {
         self.write_jsonrpc_message(notification).await
     }
 
+    #[allow(dead_code)]
     pub async fn read_response<T: DeserializeOwned>(&mut self) -> io::Result<JsonRpcResponse<T>> {
         self.read_jsonrpc_message().await
+    }
+
+    /// Read response frames until one whose `id` matches `expected_id` is
+    /// found, discarding any that don't.
+    ///
+    /// A request that a caller previously gave up on (e.g. after a timeout)
+    /// may still get a response from the child process later — the request
+    /// bytes were already written to stdin before the timeout fired, so the
+    /// child has no idea its caller stopped listening. Without this loop,
+    /// the next unrelated `request()` call would read that stale frame and
+    /// return its contents as if they belonged to its own request,
+    /// permanently desyncing every subsequent call on this connection by
+    /// one frame.
+    async fn read_response_matching<T: DeserializeOwned>(
+        &mut self,
+        expected_id: &JsonRpcId,
+    ) -> io::Result<JsonRpcResponse<T>> {
+        #[derive(Deserialize)]
+        struct IdProbe {
+            id: JsonRpcId,
+        }
+
+        loop {
+            let payload = self.read_frame().await?;
+            let probe: IdProbe = serde_json::from_slice(&payload)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            if &probe.id != expected_id {
+                continue;
+            }
+            return serde_json::from_slice(&payload)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
+        }
     }
 
     pub async fn request<TParams: Serialize, TResult: DeserializeOwned>(
@@ -172,9 +209,9 @@ impl McpStdioProcess {
         method: impl Into<String>,
         params: Option<TParams>,
     ) -> io::Result<JsonRpcResponse<TResult>> {
-        let request = JsonRpcRequest::new(id, method, params);
+        let request = JsonRpcRequest::new(id.clone(), method, params);
         self.send_request(&request).await?;
-        self.read_response().await
+        self.read_response_matching(&id).await
     }
 
     pub async fn initialize(
@@ -738,6 +775,79 @@ while True:
 
             let status = process.wait().await.expect("wait for exit");
             assert!(status.success());
+
+            cleanup_script(&script_path);
+        });
+    }
+
+    /// Server that first writes a "stale" response for an id that was never
+    /// requested (simulating a response left over in the pipe from a
+    /// previously timed-out request), then writes the real response for
+    /// whatever request it actually received.
+    fn write_stale_response_script() -> PathBuf {
+        let root = temp_dir();
+        fs::create_dir_all(&root).expect("temp dir");
+        let script_path = root.join("stale-response-mcp.py");
+        let script = [
+            "#!/usr/bin/env python3",
+            "import json, sys",
+            "",
+            "def read_message():",
+            "    header = b''",
+            r"    while not header.endswith(b'\r\n\r\n'):",
+            "        chunk = sys.stdin.buffer.read(1)",
+            "        if not chunk:",
+            "            return None",
+            "        header += chunk",
+            "    length = 0",
+            r"    for line in header.decode().split('\r\n'):",
+            r"        if line.lower().startswith('content-length:'):",
+            r"            length = int(line.split(':', 1)[1].strip())",
+            "    payload = sys.stdin.buffer.read(length)",
+            "    return json.loads(payload.decode())",
+            "",
+            "def send_message(message):",
+            "    payload = json.dumps(message).encode()",
+            r"    sys.stdout.buffer.write(f'Content-Length: {len(payload)}\r\n\r\n'.encode() + payload)",
+            "    sys.stdout.buffer.flush()",
+            "",
+            "request = read_message()",
+            "send_message({'jsonrpc': '2.0', 'id': 999999, 'result': {'tools': []}})",
+            "send_message({'jsonrpc': '2.0', 'id': request['id'], 'result': {'tools': [{",
+            "    'name': 'real',",
+            "    'description': 'the real response',",
+            "    'inputSchema': {'type': 'object'}",
+            "}]}})",
+            "",
+        ]
+        .join("\n");
+        fs::write(&script_path, script).expect("write script");
+        let mut permissions = fs::metadata(&script_path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("chmod");
+        script_path
+    }
+
+    #[test]
+    fn request_skips_stale_response_and_returns_the_matching_one() {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        runtime.block_on(async {
+            let script_path = write_stale_response_script();
+            let transport = script_transport(&script_path);
+            let mut process = McpStdioProcess::spawn(&transport).expect("spawn transport directly");
+
+            let response = process
+                .list_tools(JsonRpcId::Number(42), None)
+                .await
+                .expect("list_tools should skip the stale frame and return the matching one");
+
+            assert_eq!(response.id, JsonRpcId::Number(42));
+            let result = response.result.expect("result present");
+            assert_eq!(result.tools.len(), 1);
+            assert_eq!(result.tools[0].name, "real");
 
             cleanup_script(&script_path);
         });
