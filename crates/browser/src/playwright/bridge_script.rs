@@ -12,23 +12,71 @@ function parseHeadless() {
   return !(v === 'false' || v === '0' || v === 'no' || v === 'off');
 }
 
+// Minimal CSS.escape polyfill (per the CSSOM spec). resolveFillSelector
+// below builds selector strings in this Node.js process (matched via
+// pg.$(sel) directly), where the DOM's CSS.escape global used elsewhere in
+// this file (inside pg.evaluate() browser-context callbacks) is not
+// available. Used consistently for both id and quoted-attribute-value
+// interpolations so a field name/label containing e.g. a `"` character
+// fails to match cleanly instead of producing a broken/injected selector.
+function cssEscape(value) {
+  const string = String(value);
+  const { length } = string;
+  const firstCodeUnit = string.charCodeAt(0);
+  if (length === 1 && firstCodeUnit === 0x002d) {
+    return `\\${string}`;
+  }
+  let result = '';
+  for (let index = 0; index < length; index++) {
+    const codeUnit = string.charCodeAt(index);
+    if (codeUnit === 0x0000) {
+      result += '�';
+      continue;
+    }
+    if (
+      (codeUnit >= 0x0001 && codeUnit <= 0x001f) ||
+      codeUnit === 0x007f ||
+      (index === 0 && codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+      (index === 1 && codeUnit >= 0x0030 && codeUnit <= 0x0039 && firstCodeUnit === 0x002d)
+    ) {
+      result += `\\${codeUnit.toString(16)} `;
+      continue;
+    }
+    if (
+      codeUnit >= 0x0080 ||
+      codeUnit === 0x002d ||
+      codeUnit === 0x005f ||
+      (codeUnit >= 0x0030 && codeUnit <= 0x0039) ||
+      (codeUnit >= 0x0041 && codeUnit <= 0x005a) ||
+      (codeUnit >= 0x0061 && codeUnit <= 0x007a)
+    ) {
+      result += string.charAt(index);
+      continue;
+    }
+    result += `\\${string.charAt(index)}`;
+  }
+  return result;
+}
+
 async function resolveFillSelector(pg, raw) {
   if (/^[#.\[]/.test(raw) || /[\[\]:>~+]/.test(raw)) return raw;
   const lower = raw.toLowerCase();
+  const escapedRaw = cssEscape(raw);
+  const escapedLower = cssEscape(lower);
   const candidates = [
-    `#${raw}`,
-    `#${lower}`,
-    `[name="${raw}"]`,
-    `[name="${lower}"]`,
-    `input[name="${raw}"]`,
-    `input[name="${lower}"]`,
-    `textarea[name="${raw}"]`,
-    `textarea[name="${lower}"]`,
-    `select[name="${raw}"]`,
-    `select[name="${lower}"]`,
-    `[placeholder="${raw}"]`,
-    `input[aria-label="${raw}"]`,
-    `textarea[aria-label="${raw}"]`,
+    `#${escapedRaw}`,
+    `#${escapedLower}`,
+    `[name="${escapedRaw}"]`,
+    `[name="${escapedLower}"]`,
+    `input[name="${escapedRaw}"]`,
+    `input[name="${escapedLower}"]`,
+    `textarea[name="${escapedRaw}"]`,
+    `textarea[name="${escapedLower}"]`,
+    `select[name="${escapedRaw}"]`,
+    `select[name="${escapedLower}"]`,
+    `[placeholder="${escapedRaw}"]`,
+    `input[aria-label="${escapedRaw}"]`,
+    `textarea[aria-label="${escapedRaw}"]`,
   ];
   for (const sel of candidates) {
     try {
@@ -1756,6 +1804,32 @@ mod tests {
         assert!(
             PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("richEditor"),
             "Missing richEditor field in success payload"
+        );
+    }
+
+    #[test]
+    fn bridge_resolve_fill_selector_escapes_candidate_values() {
+        // resolveFillSelector previously built selectors like
+        // `[name="${raw}"]` via raw template literals without escaping, so
+        // a field name/label containing a `"` character would silently
+        // fail to match (or worse, break out of the attribute-value
+        // string) instead of erroring cleanly. It runs in the Node.js
+        // process directly (not inside a pg.evaluate() browser-context
+        // callback), so the DOM's CSS.escape global isn't available there
+        // — a local cssEscape() polyfill must be used instead.
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("function cssEscape(value)"),
+            "Missing cssEscape helper for the Node.js-side selector builder"
+        );
+        assert!(
+            !PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(r#"`[name="${raw}"]`"#)
+                && !PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(r#"`input[aria-label="${raw}"]`"#),
+            "resolveFillSelector candidates must not interpolate raw/lower unescaped"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(r#"`[name="${escapedRaw}"]`"#)
+                && PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains(r#"`input[aria-label="${escapedRaw}"]`"#),
+            "expected resolveFillSelector candidates to use cssEscape() output"
         );
     }
 
