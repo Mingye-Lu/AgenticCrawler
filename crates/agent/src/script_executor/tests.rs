@@ -784,6 +784,44 @@ async fn parallel_two_branches() {
 }
 
 #[tokio::test]
+async fn parallel_branches_share_output_byte_budget() {
+    // Each branch's own collected item (10 bytes: `"branch_a"`) fits under a
+    // per-branch view of the limit, but the two branches together (20 bytes)
+    // must not both succeed once the budget is properly shared.
+    let tiny_limits = ScriptLimits {
+        max_output_bytes: 15,
+        ..default_limits()
+    };
+    let mock = MockBridge::new();
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, tiny_limits);
+
+    let result = executor
+        .execute(script(vec![ScriptNode::Parallel {
+            branches: vec![
+                vec![ScriptNode::Collect {
+                    value: literal(json!("branch_a")),
+                }],
+                vec![ScriptNode::Collect {
+                    value: literal(json!("branch_b")),
+                }],
+            ],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(
+        result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("output size limit exceeded"),
+        "expected 'output size limit exceeded' in: {:?}",
+        result.error
+    );
+}
+
+#[tokio::test]
 async fn parallel_max_branches_enforced() {
     let mock = MockBridge::new();
     let bridge = make_shared_bridge(mock);
