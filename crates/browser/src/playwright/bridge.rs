@@ -606,6 +606,12 @@ impl PlaywrightBridge {
         path: &str,
         headers: Option<&BTreeMap<String, String>>,
     ) -> Result<String, BridgeError> {
+        if path.contains("..") {
+            return Err(BridgeError::Protocol(
+                "save_file path contains path traversal".into(),
+            ));
+        }
+
         let headers_json = headers
             .map(|map| serde_json::to_value(map).unwrap_or(serde_json::json!({})))
             .unwrap_or(serde_json::json!({}));
