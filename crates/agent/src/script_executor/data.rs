@@ -62,10 +62,36 @@
 //!
 //! If `base_url` is `"https://example.com"`, the input becomes `{ "url": "https://example.com" }`.
 
+use std::sync::atomic::Ordering;
+
 use super::{ScriptExecutionError, ScriptExecutor};
 use serde_json::Value;
 
 impl ScriptExecutor {
+    /// Atomically reserve `item_bytes` against the shared output-byte budget.
+    ///
+    /// Uses a compare-and-swap loop so concurrent callers (e.g. sibling `Parallel`
+    /// branches sharing the same `Arc<AtomicUsize>`) can never together exceed
+    /// `max_output_bytes`, even though each branch only sees its own item at a time.
+    fn reserve_output_bytes(&self, item_bytes: usize) -> Result<(), ScriptExecutionError> {
+        let max = self.limits.max_output_bytes;
+        let result =
+            self.output_bytes
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    if current + item_bytes > max {
+                        None
+                    } else {
+                        Some(current + item_bytes)
+                    }
+                });
+        match result {
+            Ok(_) => Ok(()),
+            Err(current) => Err(ScriptExecutionError::ToolError(format!(
+                "output size limit exceeded: {current} bytes accumulated, {item_bytes} bytes new, {max} bytes max"
+            ))),
+        }
+    }
+
     /// Push a value to the extracted data collection.
     ///
     /// Called by `Collect` nodes to accumulate extracted values.
@@ -81,13 +107,7 @@ impl ScriptExecutor {
     /// ```
     pub(super) fn push_extracted(&mut self, value: Value) -> Result<(), ScriptExecutionError> {
         let item_bytes = value.to_string().len();
-        if self.output_bytes + item_bytes > self.limits.max_output_bytes {
-            return Err(ScriptExecutionError::ToolError(format!(
-                "output size limit exceeded: {} bytes accumulated, {} bytes new, {} bytes max",
-                self.output_bytes, item_bytes, self.limits.max_output_bytes
-            )));
-        }
-        self.output_bytes += item_bytes;
+        self.reserve_output_bytes(item_bytes)?;
         self.extracted_data.push(value);
         self.state.items_collected = self.extracted_data.len();
         Ok(())
@@ -111,13 +131,7 @@ impl ScriptExecutor {
     /// ```
     pub(super) fn push_yielded(&mut self, value: Value) -> Result<(), ScriptExecutionError> {
         let item_bytes = value.to_string().len();
-        if self.output_bytes + item_bytes > self.limits.max_output_bytes {
-            return Err(ScriptExecutionError::ToolError(format!(
-                "output size limit exceeded: {} bytes accumulated, {} bytes new, {} bytes max",
-                self.output_bytes, item_bytes, self.limits.max_output_bytes
-            )));
-        }
-        self.output_bytes += item_bytes;
+        self.reserve_output_bytes(item_bytes)?;
         self.state.yielded_data.push(value.clone());
         let mut yielded_data = self.yielded_data.write().map_err(|error| {
             ScriptExecutionError::ToolError(format!("yield buffer lock poisoned: {error}"))
