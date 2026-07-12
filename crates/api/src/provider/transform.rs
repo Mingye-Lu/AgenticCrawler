@@ -4,6 +4,9 @@
 //! This module provides a trait-based system to apply provider-specific transformations
 //! to requests before sending them to the API.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use crate::types::MessageRequest;
 
 /// Trait for provider-specific message transformations.
@@ -46,22 +49,38 @@ impl ProviderTransform for NoOpTransform {
 /// Mistral-specific transform that scrubs tool call IDs to 9-char alphanumeric.
 ///
 /// Mistral has a constraint that tool call IDs must be exactly 9 alphanumeric characters.
-/// This transform strips non-alphanumeric characters and truncates/pads to exactly 9 chars.
 #[derive(Debug, Clone, Copy)]
 pub struct MistralTransform;
 
+/// Base36 alphabet (digits + lowercase letters) used to encode the hash into
+/// alphanumeric characters Mistral accepts.
+const BASE36_ALPHABET: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// Length Mistral requires for tool call IDs.
+const MISTRAL_ID_LEN: usize = 9;
+
 impl ProviderTransform for MistralTransform {
     fn transform_tool_call_id(&self, id: &str) -> String {
-        // Strip all non-alphanumeric characters
-        let alphanumeric: String = id.chars().filter(|c| c.is_alphanumeric()).collect();
+        // Upstream ids share a fixed prefix (e.g. `toolu_01…`, `call_…`), so
+        // simply stripping non-alphanumeric characters and taking the first 9
+        // leaves almost no entropy -- most of those 9 characters are the
+        // constant prefix. Instead, derive all 9 output characters from a
+        // deterministic hash of the *entire* original id, so every byte of
+        // the input id contributes to the output and near-identical ids
+        // (differing only in a suffix) don't collide.
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        let mut value = hasher.finish();
 
-        // If we have at least 9 alphanumeric chars, take the first 9
-        if alphanumeric.len() >= 9 {
-            alphanumeric.chars().take(9).collect()
-        } else {
-            // Pad with '0' to reach exactly 9 characters
-            format!("{alphanumeric:0<9}")
+        let base = BASE36_ALPHABET.len() as u64;
+        let mut chars = [b'0'; MISTRAL_ID_LEN];
+        for slot in chars.iter_mut().rev() {
+            let digit = usize::try_from(value % base).expect("value % 36 fits in usize");
+            *slot = BASE36_ALPHABET[digit];
+            value /= base;
         }
+
+        String::from_utf8(chars.to_vec()).expect("base36 alphabet is ASCII")
     }
 
     fn clone_boxed(&self) -> Box<dyn ProviderTransform> {
@@ -85,32 +104,64 @@ mod tests {
     }
 
     #[test]
-    fn test_mistral_transform_scrubs_tool_id() {
+    fn test_mistral_transform_output_is_nine_alphanumeric_chars() {
         let transform = MistralTransform;
 
-        // Long ID: take first 9 alphanumeric chars
+        for id in [
+            "call_abc123def456",
+            "call-abc-123-def-456",
+            "abc",
+            "abcdefghi",
+            "---",
+            "CallABC123",
+            "toolu_016a09aa2b3e4c5d",
+        ] {
+            let out = transform.transform_tool_call_id(id);
+            assert_eq!(out.len(), 9, "id {id:?} -> {out:?} must be 9 chars long");
+            assert!(
+                out.chars().all(|c| c.is_ascii_alphanumeric()),
+                "id {id:?} -> {out:?} must be alphanumeric"
+            );
+        }
+    }
+
+    #[test]
+    fn test_mistral_transform_is_deterministic() {
+        let transform = MistralTransform;
+        let id = "call_abc123def456";
         assert_eq!(
-            transform.transform_tool_call_id("call_abc123def456"),
-            "callabc12"
+            transform.transform_tool_call_id(id),
+            transform.transform_tool_call_id(id)
         );
+    }
 
-        // ID with non-alphanumeric: strip them, then take first 9
+    /// Regression test: upstream ids sharing a fixed prefix (e.g. `toolu_01…`,
+    /// `call_…`) must not collide just because their prefixes overlap. Taking
+    /// a positional prefix of the stripped id previously mapped
+    /// `call_abc123def456` and `call_abc999xyz789` to the same output
+    /// (`callabc12`), since both begin with `callabc12` once non-alphanumeric
+    /// characters are stripped.
+    #[test]
+    fn test_mistral_transform_does_not_collide_on_shared_prefix() {
+        let transform = MistralTransform;
+
+        let a = transform.transform_tool_call_id("call_abc123def456");
+        let b = transform.transform_tool_call_id("call_abc999xyz789");
+        assert_ne!(a, b, "ids sharing a common prefix must not collide");
+
+        // A larger sample of ids sharing the same "call_" prefix, varying
+        // only in a short random-looking suffix (the realistic shape of
+        // upstream tool-call ids), should be pairwise distinct.
+        let ids: Vec<String> = (0..50).map(|i| format!("call_{i:06}")).collect();
+        let outputs: std::collections::HashSet<String> = ids
+            .iter()
+            .map(|id| transform.transform_tool_call_id(id))
+            .collect();
         assert_eq!(
-            transform.transform_tool_call_id("call-abc-123-def-456"),
-            "callabc12"
+            outputs.len(),
+            ids.len(),
+            "expected all 50 prefix-sharing ids to map to distinct 9-char ids"
         );
-
-        // Short ID: pad with '0' to reach 9 chars
-        assert_eq!(transform.transform_tool_call_id("abc"), "abc000000");
-
-        // Exactly 9 alphanumeric: pass through
-        assert_eq!(transform.transform_tool_call_id("abcdefghi"), "abcdefghi");
-
-        // ID with only non-alphanumeric: becomes all '0's
-        assert_eq!(transform.transform_tool_call_id("---"), "000000000");
-
-        // Mixed case preserved
-        assert_eq!(transform.transform_tool_call_id("CallABC123"), "CallABC12");
     }
 
     #[test]
