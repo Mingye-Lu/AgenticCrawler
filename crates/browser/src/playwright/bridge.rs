@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::{Component, Path};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -606,7 +607,10 @@ impl PlaywrightBridge {
         path: &str,
         headers: Option<&BTreeMap<String, String>>,
     ) -> Result<String, BridgeError> {
-        if path.contains("..") {
+        if Path::new(path)
+            .components()
+            .any(|c| c == Component::ParentDir)
+        {
             return Err(BridgeError::Protocol(
                 "save_file path contains path traversal".into(),
             ));
