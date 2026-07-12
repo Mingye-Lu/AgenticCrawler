@@ -447,16 +447,29 @@ fn event_frame_error(headers: &[EventStreamHeader], payload: &[u8]) -> Option<Ap
                 | "modelTimeoutException"
                 | "serviceUnavailableException"
                 | "internalServerException"
+                | "modelStreamErrorException"
         )
     );
 
     Some(ApiError::Api {
-        status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        status: bedrock_exception_status(exception_type.as_deref()),
         error_type: exception_type,
         message,
         body: String::from_utf8_lossy(payload).into_owned(),
         retryable,
     })
+}
+
+/// Maps a Bedrock event-stream `:exception-type`/`:error-code` value to the
+/// HTTP status code that best represents it.
+fn bedrock_exception_status(exception_type: Option<&str>) -> reqwest::StatusCode {
+    match exception_type {
+        Some("validationException") => reqwest::StatusCode::BAD_REQUEST,
+        Some("throttlingException") => reqwest::StatusCode::TOO_MANY_REQUESTS,
+        Some("modelTimeoutException") => reqwest::StatusCode::GATEWAY_TIMEOUT,
+        Some("serviceUnavailableException") => reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        _ => reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 #[cfg(test)]
@@ -608,11 +621,13 @@ mod tests {
         let error = event_frame_error(&headers, &payload).expect("exception frame is an error");
         match error {
             ApiError::Api {
+                status,
                 error_type,
                 message,
                 retryable,
                 ..
             } => {
+                assert_eq!(status, reqwest::StatusCode::TOO_MANY_REQUESTS);
                 assert_eq!(error_type.as_deref(), Some("throttlingException"));
                 assert_eq!(
                     message.as_deref(),
@@ -638,10 +653,45 @@ mod tests {
 
         let error = event_frame_error(&headers, &payload).expect("exception frame is an error");
         match error {
-            ApiError::Api { retryable, .. } => {
+            ApiError::Api {
+                status, retryable, ..
+            } => {
+                assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
                 assert!(!retryable, "validationException should not be retryable");
             }
             other => panic!("expected ApiError::Api, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_bedrock_exception_status_mapping() {
+        assert_eq!(
+            bedrock_exception_status(Some("validationException")),
+            reqwest::StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            bedrock_exception_status(Some("throttlingException")),
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(
+            bedrock_exception_status(Some("modelTimeoutException")),
+            reqwest::StatusCode::GATEWAY_TIMEOUT
+        );
+        assert_eq!(
+            bedrock_exception_status(Some("serviceUnavailableException")),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            bedrock_exception_status(Some("internalServerException")),
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            bedrock_exception_status(Some("someOtherException")),
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert_eq!(
+            bedrock_exception_status(None),
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 }
