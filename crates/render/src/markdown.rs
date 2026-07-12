@@ -377,7 +377,13 @@ impl MdWriter {
             | Event::Html(text)
             | Event::InlineHtml(text)
             | Event::InlineMath(text)
-            | Event::DisplayMath(text) => state.current_cell.push_str(text.as_ref()),
+            | Event::DisplayMath(text) => {
+                // Entities (`&#x1b;`) are decoded by the parser after the source
+                // scrub, so cell text has to be sanitized here too.
+                state
+                    .current_cell
+                    .push_str(&sanitize_untrusted_text(text.as_ref()));
+            }
             Event::SoftBreak | Event::HardBreak => state.current_cell.push(' '),
             Event::End(TagEnd::Table) => {
                 self.render_table();
@@ -421,7 +427,8 @@ impl MdWriter {
     }
 
     fn push_text(&mut self, text: &str) {
-        self.push_text_with_style(text, self.current_style());
+        let sanitized = sanitize_untrusted_text(text);
+        self.push_text_with_style(&sanitized, self.current_style());
     }
 
     fn push_text_with_style(&mut self, text: &str, style: Style) {
@@ -886,7 +893,7 @@ fn skip_escape_sequence(chars: &mut Peekable<Chars<'_>>) {
             // BEL (`\u{07}`) or ST (`ESC \`).
             chars.next();
             while let Some(next) = chars.next() {
-                if next == '\u{07}' {
+                if next == '\u{07}' || next == '\u{9c}' {
                     break;
                 }
                 if next == '\u{1b}' && chars.peek() == Some(&'\\') {
@@ -1029,6 +1036,17 @@ mod tests {
             first.contains("1.") || first.starts_with('1'),
             "marker and content on same line: {first:?}"
         );
+    }
+
+    #[test]
+    fn render_lines_strips_decoded_entities_in_table_cells() {
+        let md = "| a |\n|---|\n| &#x1b;[31mRED |\n";
+        let rendered: String = render_lines(md)
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
+            .collect();
+        assert!(!rendered.contains('\u{1b}'), "rendered: {rendered:?}");
+        assert!(rendered.contains("RED"), "rendered: {rendered:?}");
     }
 
     #[test]
