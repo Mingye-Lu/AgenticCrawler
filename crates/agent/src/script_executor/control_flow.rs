@@ -2,6 +2,7 @@ use script::grammar::{Expression, ScriptNode};
 use serde_json::{Number, Value};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 
 use super::{ScriptExecutionError, ScriptExecutor};
 
@@ -84,6 +85,12 @@ impl ScriptExecutor {
     ) -> Pin<Box<dyn Future<Output = Result<(), ScriptExecutionError>> + Send + 'a>> {
         Box::pin(async move {
             while Self::is_truthy(&self.evaluate_expression(condition).await?) {
+                // Bump the step counter on every iteration regardless of
+                // whether the body contains a ToolCall — otherwise a body
+                // that only does Assign/Expression re-evaluation never
+                // advances step_counter, and this loop is bounded only by
+                // the wall-clock timeout in check_limits(), not max_steps.
+                self.step_counter.fetch_add(1, Ordering::Relaxed);
                 self.check_limits()?;
 
                 for step in steps {
