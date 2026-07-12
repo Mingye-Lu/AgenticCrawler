@@ -107,7 +107,12 @@ impl ScriptExecutor {
                 .err();
             self.state.step = self.step_counter.load(Ordering::Relaxed);
 
-            self.finish_parallel(branches.len(), branch_results, pre_parallel_bytes, first_error.or(cleanup_error))
+            self.finish_parallel(
+                branches.len(),
+                branch_results,
+                pre_parallel_bytes,
+                first_error.or(cleanup_error),
+            )
         })
     }
 
@@ -132,7 +137,10 @@ impl ScriptExecutor {
         error: Option<ScriptExecutionError>,
     ) -> Result<(), ScriptExecutionError> {
         if error.is_some() {
-            let completed_count = branch_results.iter().filter(|result| result.is_some()).count();
+            let completed_count = branch_results
+                .iter()
+                .filter(|result| result.is_some())
+                .count();
             if completed_count > 0 {
                 eprintln!(
                     "Warning: parallel script block failed after {completed_count}/{branch_count} branch(es) completed successfully; merging their partial results (extracted data, caught errors) instead of discarding them"
