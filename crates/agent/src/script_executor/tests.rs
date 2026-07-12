@@ -627,6 +627,45 @@ async fn while_loop_step_limit_terminates() {
 }
 
 #[tokio::test]
+async fn while_loop_without_tool_calls_is_bounded_by_step_limit() {
+    // A body with no ToolCall never advances step_counter through
+    // execute_node's ToolCall arm, so this loop must be bounded by
+    // execute_while_loop incrementing step_counter itself on every
+    // iteration -- otherwise it would only be caught by the (much larger)
+    // wall-clock timeout instead of max_steps. Use a short max_timeout_secs
+    // too, so if this regresses the test fails fast instead of hanging.
+    let mock = MockBridge::new();
+    let bridge = make_shared_bridge(mock);
+    let limits = ScriptLimits {
+        max_steps: 5,
+        max_timeout_secs: 2,
+        max_output_bytes: 1_048_576,
+        max_script_size_bytes: 1_048_576,
+        max_parallel_branches: 4,
+        max_nesting_depth: 10,
+        per_step_timeout_secs: 30,
+    };
+    let executor = make_executor(bridge, limits);
+
+    let result = executor
+        .execute(script(vec![ScriptNode::WhileLoop {
+            condition: literal(json!(true)),
+            steps: vec![ScriptNode::Assign {
+                variable: "x".to_string(),
+                value: literal(json!(1)),
+            }],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(
+        result.error.as_ref().unwrap().contains("step limit"),
+        "expected termination via max_steps, not the wall-clock timeout; got: {:?}",
+        result.error
+    );
+}
+
+#[tokio::test]
 async fn if_else_then_branch() {
     let mock = MockBridge::new();
     let bridge = make_shared_bridge(mock);
