@@ -206,6 +206,52 @@ for line in sys.stdin:
 }
 
 #[tokio::test]
+async fn save_file_rejects_path_traversal() {
+    // Mirrors ExtensionBridge::save_file's ".." rejection so both
+    // BrowserBackend implementations enforce the same contract regardless
+    // of which backend a caller goes through. The fake bridge server only
+    // handles "close" — if save_file() ever sent a "save_file" command for
+    // a traversal path, this test would hang/fail rather than silently pass.
+    let script_path = write_python_script(
+        "save-file-guard",
+        r#"import json
+import sys
+print(json.dumps({"event": "bridge_bootstrap", "ok": True}), flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command.get("action") == "close":
+        print(json.dumps({"event": "bridge_response", "ok": True}), flush=True)
+        break
+"#,
+    );
+
+    let mut bridge = PlaywrightBridge::new_with_invocation(
+        python_program(),
+        vec![script_path.to_string_lossy().into_owned()],
+        Duration::from_secs(2),
+    )
+    .await
+    .expect("bridge should bootstrap");
+
+    let result = bridge
+        .save_file("https://example.com/file", "../evil.txt", None)
+        .await;
+
+    match result {
+        Err(BridgeError::Protocol(message)) => {
+            assert!(
+                message.contains("path traversal"),
+                "unexpected message: {message}"
+            );
+        }
+        other => panic!("expected Protocol error for path traversal, got {other:?}"),
+    }
+
+    bridge.close().await.expect("close should succeed");
+    cleanup_temp_script(&script_path);
+}
+
+#[tokio::test]
 async fn command_timeout_does_not_desync_next_response() {
     // Regression test for issue #69: a command whose read times out client-side
     // still gets a response from the bridge process eventually (it's just late).
