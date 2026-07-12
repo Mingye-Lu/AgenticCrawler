@@ -85,8 +85,29 @@ pub async fn poll_for_access_token(
             .send()
             .await
             .map_err(ApiError::Http)?;
-        let response = ensure_success(response).await?;
-        let token_response: AccessTokenResponse = response.json().await.map_err(ApiError::Http)?;
+        let status = response.status();
+        let body = response.bytes().await.map_err(ApiError::Http)?;
+        let token_response: AccessTokenResponse = match serde_json::from_slice(&body) {
+            Ok(parsed) => parsed,
+            Err(_) if !status.is_success() => {
+                return Err(ApiError::Api {
+                    status,
+                    error_type: None,
+                    message: None,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                    retryable: matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504),
+                });
+            }
+            Err(_) => {
+                return Err(ApiError::Api {
+                    status,
+                    error_type: Some("invalid_json".to_string()),
+                    message: None,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                    retryable: false,
+                });
+            }
+        };
         if let Some(token) = &token_response.access_token {
             if !token.is_empty() {
                 return Ok(token.clone());
@@ -254,7 +275,7 @@ mod tests {
             "{\"message\":\"Bad creds\"}"
         );
         let (base_url, _rx) = spawn_test_server(response);
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let url = format!("{base_url}/copilot_internal/v2/token");
 
         // Hit the local test server directly rather than the hardcoded
@@ -296,7 +317,7 @@ mod tests {
             "{\"message\":\"oh no\"}"
         );
         let (base_url, _rx) = spawn_test_server(response);
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
 
         let raw_response = client
             .post(&base_url)
