@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::{future::Future, pin::Pin};
 
 use script::grammar::ScriptNode;
@@ -68,6 +69,7 @@ impl ScriptExecutor {
                     start_time: self.start_time,
                     step_counter: self.step_counter.clone(),
                     cancel_token: self.cancel_token.clone(),
+                    registry: Arc::clone(&self.registry),
                 };
                 let branch_steps = branch.clone();
 
