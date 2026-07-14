@@ -2,6 +2,7 @@ use std::fmt::Write as _;
 
 use crate::aria::node::{AriaNode, AriaStates};
 
+const COLLAPSE_HOMOGENEOUS_THRESHOLD: usize = 5;
 const MAX_CHILDREN_PER_PARENT: usize = 50;
 const MAX_TOTAL_NODES: usize = 2_000;
 const DEGRADED_DEPTH: usize = 1;
@@ -64,6 +65,36 @@ fn serialize_node(
         lines.push(format!("{child_indent}/url: {url}"));
     }
 
+    if should_collapse_children(&node.children).is_some() {
+        let ref_child_count = node
+            .children
+            .iter()
+            .filter(|child| child.ref_id.is_some())
+            .count();
+        let collapsed_count = node.children.len() - ref_child_count + node.omitted_children;
+
+        if collapsed_count > 0 {
+            let indent = "  ".repeat(current_depth + 1);
+            match &node.name {
+                Some(name) if node.role == "heading" => {
+                    let escaped_name = escape_name(name);
+                    lines.push(format!(
+                        "{indent}- [{collapsed_count} children collapsed — use read_content(heading={escaped_name}) to expand]"
+                    ));
+                }
+                _ => {
+                    lines.push(format!("{indent}- [{collapsed_count} children collapsed]"));
+                }
+            }
+        }
+
+        for child in node.children.iter().filter(|child| child.ref_id.is_some()) {
+            serialize_node(child, current_depth + 1, max_depth, lines);
+        }
+
+        return;
+    }
+
     if max_depth.is_some_and(|max| current_depth >= max) {
         push_omitted_marker(
             lines,
@@ -80,6 +111,43 @@ fn serialize_node(
     let omitted_children =
         node.omitted_children + node.children.len().saturating_sub(MAX_CHILDREN_PER_PARENT);
     push_omitted_marker(lines, current_depth + 1, omitted_children);
+}
+
+const NON_INTERACTIVE_COLLAPSIBLE_ROLES: &[&str] = &[
+    "generic",
+    "text",
+    "listitem",
+    "paragraph",
+    "none",
+    "presentation",
+    "cell",
+    "row",
+    "group",
+];
+
+fn should_collapse_children(children: &[AriaNode]) -> Option<(String, usize)> {
+    let unref_children: Vec<&AriaNode> = children.iter().filter(|c| c.ref_id.is_none()).collect();
+
+    if unref_children.len() < COLLAPSE_HOMOGENEOUS_THRESHOLD {
+        return None;
+    }
+
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for child in &unref_children {
+        *counts.entry(child.role.as_str()).or_insert(0) += 1;
+    }
+
+    let (dominant_role, count) = counts.into_iter().max_by_key(|(_, count)| *count)?;
+
+    if count * 5 < unref_children.len() * 4 {
+        return None;
+    }
+
+    if !NON_INTERACTIVE_COLLAPSIBLE_ROLES.contains(&dominant_role) {
+        return None;
+    }
+
+    Some((dominant_role.to_string(), count))
 }
 
 fn render_states(states: &AriaStates) -> Vec<String> {
@@ -128,6 +196,13 @@ fn count_emitted_nodes(node: &AriaNode, max_depth: Option<usize>, current_depth:
     let mut count = 1;
 
     if node.role == "text" {
+        return count;
+    }
+
+    if should_collapse_children(&node.children).is_some() {
+        if !node.children.is_empty() || node.omitted_children > 0 {
+            count += 1;
+        }
         return count;
     }
 
@@ -546,5 +621,191 @@ mod tests {
         .join("\n");
 
         assert_eq!(to_yaml(&tree, None), expected);
+    }
+
+    fn leaf(role: &str, ref_id: Option<&str>) -> AriaNode {
+        AriaNode {
+            role: role.to_string(),
+            name: None,
+            states: AriaStates::default(),
+            ref_id: ref_id.map(str::to_string),
+            url: None,
+            frame_id: None,
+            offscreen: false,
+            children: Vec::new(),
+            omitted_children: 0,
+        }
+    }
+
+    #[test]
+    fn test_collapse_homogeneous_generic_children() {
+        let children = (0..10).map(|_| leaf("generic", None)).collect();
+        let tree = ref_el("region", "Log", "e1", children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert_eq!(
+            yaml,
+            "- region \"Log\" [ref=e1]:\n  - [10 children collapsed]"
+        );
+    }
+
+    #[test]
+    fn test_collapse_homogeneous_listitem_children() {
+        let children = (0..8).map(|_| leaf("listitem", None)).collect();
+        let tree = ref_el("list", "Items", "e2", children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert_eq!(
+            yaml,
+            "- list \"Items\" [ref=e2]:\n  - [8 children collapsed]"
+        );
+    }
+
+    #[test]
+    fn test_collapse_heading_container_uses_read_content_hint() {
+        let children = (0..10).map(|_| leaf("generic", None)).collect();
+        let tree = ref_el("heading", "Log", "e1", children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert_eq!(
+            yaml,
+            "- heading \"Log\" [ref=e1]:\n  - [10 children collapsed — use read_content(heading=\"Log\") to expand]"
+        );
+    }
+
+    #[test]
+    fn test_collapse_hint_name_escaped_and_truncated() {
+        let children = (0..10).map(|_| leaf("generic", None)).collect();
+        let long_name = "a".repeat(250);
+        let tree = ref_el("heading", &long_name, "e1", children);
+
+        let yaml = to_yaml(&tree, None);
+
+        let expected_name = format!("{}…", "a".repeat(199));
+        assert_eq!(
+            yaml,
+            format!(
+                "- heading \"{expected_name}\" [ref=e1]:\n  - [10 children collapsed — use read_content(heading=\"{expected_name}\") to expand]"
+            )
+        );
+    }
+
+    #[test]
+    fn test_no_collapse_below_threshold() {
+        let children = (0..3).map(|_| leaf("generic", None)).collect();
+        let tree = node("region", Some("Log"), children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert!(!yaml.contains("children collapsed"));
+        assert_eq!(yaml.lines().count(), 4);
+    }
+
+    #[test]
+    fn test_no_collapse_mixed_roles() {
+        let mut children: Vec<AriaNode> = (0..4).map(|_| leaf("generic", None)).collect();
+        children.extend((0..2).map(|_| leaf("button", None)));
+        children.extend((0..3).map(|_| leaf("link", None)));
+        let tree = node("region", Some("Mixed"), children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert!(!yaml.contains("children collapsed"));
+        assert_eq!(yaml.lines().count(), 10);
+    }
+
+    #[test]
+    fn test_collapse_without_parent_ref_id() {
+        let children = (0..20).map(|_| leaf("generic", None)).collect();
+        let tree = node("region", Some("Log"), children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert_eq!(yaml, "- region \"Log\":\n  - [20 children collapsed]");
+    }
+
+    #[test]
+    fn test_collapse_preserves_ref_child_sibling() {
+        let mut children: Vec<AriaNode> = (0..6).map(|_| leaf("text", None)).collect();
+        children.push(ref_link("Learn more", "e1", "/learn-more"));
+        let tree = node("region", Some("Log"), children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert!(yaml.contains("6 children collapsed"));
+        assert!(yaml.contains("link \"Learn more\" [ref=e1]:"));
+        assert!(yaml.contains("/url: /learn-more"));
+    }
+
+    #[test]
+    fn test_collapse_preserves_walker_omitted_children() {
+        let mut node = node(
+            "log",
+            Some("Events"),
+            (0..10).map(|_| leaf("text", None)).collect(),
+        );
+        node.omitted_children = 42; // walker already capped at 50, this holds the hidden tail
+
+        let yaml = to_yaml(&node, None);
+
+        assert!(yaml.contains("52 children collapsed"));
+    }
+
+    #[test]
+    fn test_no_collapse_when_all_children_have_ref_ids() {
+        let children: Vec<AriaNode> = (0..10)
+            .map(|idx| leaf("listitem", Some(&format!("e{idx}"))))
+            .collect();
+
+        assert!(should_collapse_children(&children).is_none());
+    }
+
+    #[test]
+    fn test_collapse_triggers_when_most_children_lack_ref_ids() {
+        let mut children: Vec<AriaNode> = (0..8).map(|_| leaf("text", None)).collect();
+        children.push(leaf("text", Some("e1")));
+
+        assert!(should_collapse_children(&children).is_some());
+    }
+
+    #[test]
+    fn test_count_emitted_nodes_counts_collapsed_subtree_as_one() {
+        let children: Vec<AriaNode> = (0..2000).map(|_| leaf("text", None)).collect();
+        let tree = ref_el("region", "Log", "e1", children);
+
+        assert_eq!(count_emitted_nodes(&tree, None, 0), 2);
+    }
+
+    #[test]
+    fn test_collapse_survives_degraded_depth_truncation() {
+        let children: Vec<AriaNode> = (0..2000).map(|_| leaf("text", None)).collect();
+        let tree = node(
+            "main",
+            Some(""),
+            vec![ref_el("region", "Log", "e1", children)],
+        );
+
+        let yaml = to_yaml(&tree, None);
+
+        assert!(yaml.contains("2000 children collapsed"));
+    }
+
+    #[test]
+    fn test_collapse_preserves_non_collapsible_children() {
+        let mut children: Vec<AriaNode> = (0..2)
+            .map(|idx| make_button(&format!("Button {idx}"), &format!("e{idx}")))
+            .collect();
+        children
+            .extend((0..2).map(|idx| ref_link(&format!("Link {idx}"), &format!("l{idx}"), "/x")));
+        let tree = node("toolbar", Some("Actions"), children);
+
+        let yaml = to_yaml(&tree, None);
+
+        assert!(!yaml.contains("children collapsed"));
+        assert!(yaml.contains("button \"Button 0\""));
+        assert!(yaml.contains("link \"Link 0\""));
     }
 }
