@@ -81,7 +81,12 @@ pub trait BrowserBackend: Debug {
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError>;
     async fn new_page(&mut self, url: Option<&str>) -> Result<usize, BridgeError>;
     async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError>;
-    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError>;
+    async fn scroll(
+        &mut self,
+        direction: &str,
+        pixels: i64,
+        selector: Option<&str>,
+    ) -> Result<(), BridgeError>;
     /// `depth` is the requested ARIA walk depth (schema: default 5, max 10);
     /// `None` lets the in-page walk apply its own default.
     async fn page_map(

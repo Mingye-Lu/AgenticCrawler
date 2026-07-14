@@ -217,7 +217,25 @@ impl BrowserBackend for ExtensionBridge {
             .await
     }
 
-    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError> {
+    async fn scroll(
+        &mut self,
+        direction: &str,
+        pixels: i64,
+        selector: Option<&str>,
+    ) -> Result<(), BridgeError> {
+        if let Some(selector) = selector {
+            let delta = if direction == "up" { -pixels } else { pixels };
+            let selector_json = serde_json::to_string(selector)
+                .map_err(|e| BridgeError::Protocol(format!("failed to encode selector: {e}")))?;
+            let script = format!(
+                "(() => {{ const el = document.querySelector({selector_json}); if (!el) throw new Error('scroll selector not found: ' + {selector_json}); el.scrollBy(0, {delta}); }})()"
+            );
+            let response = self
+                .send_command("execute_js", json!({ "script": script }))
+                .await?;
+            Self::require_result(response, "execute_js")?;
+            return Ok(());
+        }
         self.expect_unit(
             "scroll",
             json!({
