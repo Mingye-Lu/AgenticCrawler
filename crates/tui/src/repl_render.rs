@@ -23,7 +23,7 @@ use crate::tool_format::{format_tool_success_line, tool_input_summary};
 use crate::tool_pairing::{build_tool_result_index, ToolResultInfo};
 
 use super::repl_app::{
-    HeaderSnapshot, ReplTuiState, ToolCallStatus, SLASH_OVERLAY_HINT_TEXT,
+    HeaderSnapshot, ReplTuiState, SelectionState, ToolCallStatus, SLASH_OVERLAY_HINT_TEXT,
     SLASH_OVERLAY_VISIBLE_ITEMS, WELCOME_BOX_MAX_WIDTH, WELCOME_BOX_MIN_WIDTH,
     WELCOME_BOX_SIDE_GUTTER,
 };
@@ -708,6 +708,83 @@ pub(super) fn copy_osc52(text: &str) {
     let _ = io::Write::flush(&mut io::stdout());
 }
 
+/// Paint the highlight for the active text selection within `inner` (a
+/// transcript viewport, either the main chat or a child view) and, if a
+/// copy is pending, extract the selected text from `wrapped_text` and
+/// write it to the clipboard via OSC 52. Shared by `draw_chat` and
+/// `draw_child_view`, which each have their own transcript viewport and
+/// scroll offset but otherwise compute this identically.
+fn render_selection_and_copy(
+    frame: &mut ratatui::Frame<'_>,
+    inner: Rect,
+    selection: &mut SelectionState,
+    scroll_offset: usize,
+    wrapped_text: &[String],
+) {
+    let (Some(anchor), Some(end)) = (selection.anchor, selection.end) else {
+        return;
+    };
+    let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
+        (anchor, end)
+    } else {
+        (end, anchor)
+    };
+    let viewport_h = usize::from(inner.height);
+    let max_col = inner.width.saturating_sub(1);
+    if s_end.1 >= scroll_offset && s_start.1 < scroll_offset + viewport_h {
+        let vis_first = s_start.1.max(scroll_offset) - scroll_offset;
+        let vis_last = (s_end.1 - scroll_offset).min(viewport_h.saturating_sub(1));
+        let highlight_bg = Color::Rgb(50, 80, 130);
+        let buf = frame.buffer_mut();
+        for screen_row in vis_first..=vis_last {
+            let abs_row = scroll_offset + screen_row;
+            let c0 = if abs_row == s_start.1 { s_start.0 } else { 0 };
+            let c1 = if abs_row == s_end.1 {
+                s_end.0.min(max_col)
+            } else {
+                max_col
+            };
+            let y = inner.y + u16::try_from(screen_row).unwrap_or(0);
+            for col in c0..=c1 {
+                let x = inner.x + col;
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_bg(highlight_bg);
+                }
+            }
+        }
+    }
+
+    if selection.pending_copy.take().is_some() {
+        let text = (s_start.1..=s_end.1)
+            .filter_map(|row| wrapped_text.get(row).map(|line| (row, line)))
+            .map(|(row, line)| {
+                let start = if row == s_start.1 {
+                    usize::from(s_start.0)
+                } else {
+                    0
+                };
+                let end_col = if row == s_end.1 {
+                    usize::from(s_end.0) + 1
+                } else {
+                    usize::MAX
+                };
+                line.chars()
+                    .skip(start)
+                    .take(end_col.saturating_sub(start))
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.trim().is_empty() {
+            copy_osc52(&text);
+        }
+        selection.anchor = None;
+        selection.end = None;
+    }
+}
+
 pub(super) fn suspend_for_stdout(
     terminal: &mut DefaultTerminal,
     f: impl FnOnce(),
@@ -1149,67 +1226,13 @@ pub(super) fn draw_child_view(frame: &mut ratatui::Frame<'_>, state: &mut ReplTu
         tab.list_state.offset()
     };
 
-    if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {
-        let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
-            (anchor, end)
-        } else {
-            (end, anchor)
-        };
-        let viewport_h = usize::from(main_inner.height);
-        let max_col = main_inner.width.saturating_sub(1);
-        if s_end.1 >= scroll_offset && s_start.1 < scroll_offset + viewport_h {
-            let vis_first = s_start.1.max(scroll_offset) - scroll_offset;
-            let vis_last = (s_end.1 - scroll_offset).min(viewport_h.saturating_sub(1));
-            let highlight_bg = ratatui::style::Color::Rgb(50, 80, 130);
-            let buf = frame.buffer_mut();
-            for screen_row in vis_first..=vis_last {
-                let abs_row = scroll_offset + screen_row;
-                let c0 = if abs_row == s_start.1 { s_start.0 } else { 0 };
-                let c1 = if abs_row == s_end.1 {
-                    s_end.0.min(max_col)
-                } else {
-                    max_col
-                };
-                let y = main_inner.y + u16::try_from(screen_row).unwrap_or(0);
-                for col in c0..=c1 {
-                    let x = main_inner.x + col;
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_bg(highlight_bg);
-                    }
-                }
-            }
-        }
-
-        if state.selection.pending_copy.take().is_some() {
-            let text = (s_start.1..=s_end.1)
-                .filter_map(|row| wrapped_text.get(row).map(|line| (row, line)))
-                .map(|(row, line)| {
-                    let start = if row == s_start.1 {
-                        usize::from(s_start.0)
-                    } else {
-                        0
-                    };
-                    let end_col = if row == s_end.1 {
-                        usize::from(s_end.0) + 1
-                    } else {
-                        usize::MAX
-                    };
-                    line.chars()
-                        .skip(start)
-                        .take(end_col.saturating_sub(start))
-                        .collect::<String>()
-                        .trim_end()
-                        .to_string()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !text.trim().is_empty() {
-                copy_osc52(&text);
-            }
-            state.selection.anchor = None;
-            state.selection.end = None;
-        }
-    }
+    render_selection_and_copy(
+        frame,
+        main_inner,
+        &mut state.selection,
+        scroll_offset,
+        &wrapped_text,
+    );
 
     let footer_spans = vec![
         ratatui::text::Span::styled(
@@ -1345,68 +1368,14 @@ pub(super) fn draw_chat(
         frame.render_widget(Paragraph::new(hint_line), hint_area);
     }
 
-    if let (Some(anchor), Some(end)) = (state.selection.anchor, state.selection.end) {
-        let (s_start, s_end) = if (anchor.1, anchor.0) <= (end.1, end.0) {
-            (anchor, end)
-        } else {
-            (end, anchor)
-        };
-        let scroll_off = state.list_state.offset();
-        let viewport_h = usize::from(main_inner.height);
-        let max_col = main_inner.width.saturating_sub(1);
-        if s_end.1 >= scroll_off && s_start.1 < scroll_off + viewport_h {
-            let vis_first = s_start.1.max(scroll_off) - scroll_off;
-            let vis_last = (s_end.1 - scroll_off).min(viewport_h.saturating_sub(1));
-            let highlight_bg = Color::Rgb(50, 80, 130);
-            let buf = frame.buffer_mut();
-            for screen_row in vis_first..=vis_last {
-                let abs_row = scroll_off + screen_row;
-                let c0 = if abs_row == s_start.1 { s_start.0 } else { 0 };
-                let c1 = if abs_row == s_end.1 {
-                    s_end.0.min(max_col)
-                } else {
-                    max_col
-                };
-                let y = main_inner.y + u16::try_from(screen_row).unwrap_or(0);
-                for col in c0..=c1 {
-                    let x = main_inner.x + col;
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_bg(highlight_bg);
-                    }
-                }
-            }
-        }
-
-        if state.selection.pending_copy.take().is_some() {
-            let text = (s_start.1..=s_end.1)
-                .filter_map(|row| wrapped_text.get(row).map(|line| (row, line)))
-                .map(|(row, line)| {
-                    let start = if row == s_start.1 {
-                        usize::from(s_start.0)
-                    } else {
-                        0
-                    };
-                    let end = if row == s_end.1 {
-                        usize::from(s_end.0) + 1
-                    } else {
-                        usize::MAX
-                    };
-                    line.chars()
-                        .skip(start)
-                        .take(end.saturating_sub(start))
-                        .collect::<String>()
-                        .trim_end()
-                        .to_string()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            if !text.trim().is_empty() {
-                copy_osc52(&text);
-            }
-            state.selection.anchor = None;
-            state.selection.end = None;
-        }
-    }
+    let scroll_off = state.list_state.offset();
+    render_selection_and_copy(
+        frame,
+        main_inner,
+        &mut state.selection,
+        scroll_off,
+        &wrapped_text,
+    );
 
     // Busy indicator overlay at bottom-right of transcript
     if state.busy {
