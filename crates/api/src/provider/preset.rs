@@ -5,6 +5,18 @@ pub enum AuthHeaderFormat {
     AzureApiKey,
 }
 
+/// Where the client should read the request credential from.
+///
+/// Most providers authenticate with a plain API key, but some (e.g. GitHub
+/// Copilot's device-code flow) issue an OAuth access token instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialSource {
+    /// Use `StoredProviderConfig::api_key`.
+    ApiKey,
+    /// Use `StoredProviderConfig::oauth`'s access token.
+    OAuthAccessToken,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderProtocol {
     Anthropic,
@@ -26,6 +38,10 @@ pub enum ProviderCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
+// `base_url_resolver` is an `Option<fn(...) -> String>` used purely as static
+// per-preset configuration data (never compared for behavioral purposes), so
+// the derived, address-based fn-pointer equality is intentional here.
+#[allow(unpredictable_function_pointer_comparisons)]
 pub struct ProviderPreset {
     pub id: &'static str,
     pub display_name: &'static str,
@@ -40,6 +56,17 @@ pub struct ProviderPreset {
     pub protocol: ProviderProtocol,
     pub category: ProviderCategory,
     pub transform_id: Option<&'static str>,
+    /// Static headers sent on every request to this provider (in addition to
+    /// the auth header), e.g. GitLab Duo's `X-Gitlab-*` feature headers or
+    /// Copilot's `Copilot-Integration-Id`.
+    pub extra_headers: &'static [(&'static str, &'static str)],
+    /// Where to read the request credential from (API key vs OAuth token).
+    pub credential_source: CredentialSource,
+    /// Optional resolver that computes this provider's `base_url` from the
+    /// stored config (e.g. Azure `OpenAI`'s `{resource_name}`/`{deployment_name}`
+    /// URL template). When `None`, the caller falls back to
+    /// `config.base_url` and then `preset.base_url`.
+    pub base_url_resolver: Option<fn(&crate::credentials::StoredProviderConfig) -> String>,
 }
 
 static BUILTIN_PRESETS: [ProviderPreset; 25] = [
@@ -57,6 +84,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::Anthropic,
         category: ProviderCategory::Popular,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "openai",
@@ -72,6 +102,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::OpenAiResponses,
         category: ProviderCategory::Popular,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "google",
@@ -87,6 +120,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::Gemini,
         category: ProviderCategory::Popular,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "amazon-bedrock",
@@ -102,6 +138,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::Bedrock,
         category: ProviderCategory::Enterprise,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "other",
@@ -117,6 +156,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Other,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "groq",
@@ -132,6 +174,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "cerebras",
@@ -147,6 +192,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "deepinfra",
@@ -162,6 +210,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "togetherai",
@@ -177,6 +228,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::OssHosting,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "perplexity",
@@ -192,6 +246,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "xai",
@@ -207,6 +264,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "deepseek",
@@ -222,6 +282,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Popular,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "cohere",
@@ -237,6 +300,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "vercel",
@@ -252,6 +318,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Gateway,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "openrouter",
@@ -267,6 +336,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Gateway,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "venice",
@@ -282,6 +354,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Other,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "alibaba",
@@ -297,6 +372,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Other,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "sap",
@@ -312,6 +390,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Enterprise,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "mistral",
@@ -327,6 +408,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Specialized,
         transform_id: Some("mistral"),
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "cloudflare",
@@ -342,6 +426,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Gateway,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "cloudflare-gateway",
@@ -357,6 +444,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Gateway,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "gitlab",
@@ -372,6 +462,12 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Enterprise,
         transform_id: None,
+        extra_headers: &[
+            ("X-Gitlab-Authentication-Type", "oidc"),
+            ("X-Gitlab-Duo-Chat-Feature", "code_suggestions"),
+        ],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "azure",
@@ -387,6 +483,9 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Enterprise,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: Some(azure_base_url),
     },
     ProviderPreset {
         id: "copilot",
@@ -402,6 +501,12 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::ChatCompletions,
         category: ProviderCategory::Enterprise,
         transform_id: None,
+        extra_headers: &[
+            ("Copilot-Integration-Id", "acrawl"),
+            ("editor-version", "acrawl/1.0.0"),
+        ],
+        credential_source: CredentialSource::OAuthAccessToken,
+        base_url_resolver: None,
     },
     ProviderPreset {
         id: "vertex",
@@ -417,8 +522,22 @@ static BUILTIN_PRESETS: [ProviderPreset; 25] = [
         protocol: ProviderProtocol::Gemini,
         category: ProviderCategory::Enterprise,
         transform_id: None,
+        extra_headers: &[],
+        credential_source: CredentialSource::ApiKey,
+        base_url_resolver: None,
     },
 ];
+
+/// Resolves Azure `OpenAI`'s `base_url` from the stored config's
+/// `resource_name`/`deployment_name` fields, matching Azure's
+/// `https://{resource}.openai.azure.com/openai/deployments/{deployment}`
+/// endpoint shape. Falls back to the same defaults previously hardcoded in
+/// `factory.rs` when a field is unset.
+fn azure_base_url(config: &crate::credentials::StoredProviderConfig) -> String {
+    let resource = config.resource_name.as_deref().unwrap_or("default");
+    let deployment = config.deployment_name.as_deref().unwrap_or("gpt-4o");
+    format!("https://{resource}.openai.azure.com/openai/deployments/{deployment}")
+}
 
 /// How to add a new provider:
 /// 1. Add a `ProviderPreset` entry to `BUILTIN_PRESETS` and keep the array size in sync.
@@ -441,6 +560,7 @@ pub fn find_preset(provider_id: &str) -> Option<&'static ProviderPreset> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credentials::StoredProviderConfig;
 
     #[test]
     fn test_builtin_presets_contains_anthropic() {
@@ -647,12 +767,51 @@ mod tests {
         assert!(p.chat_path.contains("api-version="));
     }
 
+    /// Azure's `{resource_name}`/`{deployment_name}` URL templating is
+    /// expressed as a `base_url_resolver` function on the preset, not as an
+    /// `if preset.id == "azure"` branch in factory.rs.
+    #[test]
+    fn test_azure_base_url_resolver_is_data_driven() {
+        let p = find_preset("azure").expect("azure preset should exist");
+        let resolve = p
+            .base_url_resolver
+            .expect("azure preset should carry a base_url_resolver");
+
+        let config = StoredProviderConfig {
+            resource_name: Some("myresource".into()),
+            deployment_name: Some("gpt4".into()),
+            ..Default::default()
+        };
+        let resolved = resolve(&config);
+        assert!(resolved.contains("myresource.openai.azure.com"));
+        assert!(resolved.contains("/deployments/gpt4"));
+
+        // Falls back to the same defaults previously hardcoded in factory.rs.
+        let default_config = StoredProviderConfig::default();
+        let resolved_default = resolve(&default_config);
+        assert!(resolved_default.contains("default.openai.azure.com"));
+        assert!(resolved_default.contains("/deployments/gpt-4o"));
+    }
+
     #[test]
     fn test_gitlab_preset_exists() {
         let p = find_preset("gitlab").expect("gitlab preset should exist");
         assert!(p.base_url.contains("gitlab.com"));
         assert!(matches!(p.category, ProviderCategory::Enterprise));
         assert!(!p.supports_tools);
+    }
+
+    /// GitLab's static Duo feature headers live on the preset's
+    /// `extra_headers`, not as an `if preset.id == "gitlab"` branch.
+    #[test]
+    fn test_gitlab_extra_headers_are_data_driven() {
+        let p = find_preset("gitlab").expect("gitlab preset should exist");
+        assert!(p
+            .extra_headers
+            .contains(&("X-Gitlab-Authentication-Type", "oidc")));
+        assert!(p
+            .extra_headers
+            .contains(&("X-Gitlab-Duo-Chat-Feature", "code_suggestions")));
     }
 
     #[test]
@@ -663,6 +822,20 @@ mod tests {
         assert!(matches!(p.category, ProviderCategory::Enterprise));
         assert!(p.supports_tools);
         assert!(p.api_key_env_var.is_none());
+    }
+
+    /// Copilot's static feature headers and OAuth-sourced credential live on
+    /// the preset, not as an `if preset.id == "copilot"` branch.
+    #[test]
+    fn test_copilot_extra_headers_and_credential_source_are_data_driven() {
+        let p = find_preset("copilot").expect("copilot preset should exist");
+        assert!(p
+            .extra_headers
+            .contains(&("Copilot-Integration-Id", "acrawl")));
+        assert!(p
+            .extra_headers
+            .contains(&("editor-version", "acrawl/1.0.0")));
+        assert_eq!(p.credential_source, CredentialSource::OAuthAccessToken);
     }
 
     #[test]
