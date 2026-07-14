@@ -17,7 +17,7 @@ use api::{
 };
 use api::{OutputContentBlock, ToolChoice, ToolDefinition};
 use browser::{BrowserBackend, BrowserContext, PlaywrightBridge};
-use runtime::{encode_mcp_frame, read_mcp_frame};
+use runtime::{encode_mcp_frame, read_mcp_frame, settings_get_reasoning_effort};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -702,10 +702,9 @@ fn reasoning_effort_for_model(
         return None;
     }
 
-    runtime::load_settings()
-        .reasoning_effort
-        .as_deref()
-        .and_then(|value| api::ReasoningEffort::from_str(value).ok())
+    let settings = runtime::load_settings();
+    api::ReasoningEffort::from_str(settings_get_reasoning_effort(&settings))
+        .ok()
         .or(Some(api::ReasoningEffort::High))
 }
 
