@@ -11,7 +11,10 @@ pub async fn execute(
     browser: &mut BrowserContext,
     crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
-    let _ = input;
+    let widen = input
+        .get("widen")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
 
     browser.ref_map_mut().clear();
 
@@ -29,7 +32,7 @@ pub async fn execute(
         crawl_state,
         InteractionKind::Passive,
         None,
-        false,
+        widen,
     )
     .await?;
 

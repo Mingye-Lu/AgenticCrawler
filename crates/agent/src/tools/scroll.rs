@@ -34,6 +34,10 @@ pub async fn execute(
     crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let (direction, pixels) = parse_input(input)?;
+    let widen = input
+        .get("widen")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
 
     browser
         .acquire_bridge()
@@ -49,7 +53,7 @@ pub async fn execute(
         crawl_state,
         InteractionKind::Passive,
         None,
-        false,
+        widen,
     )
     .await?;
 
