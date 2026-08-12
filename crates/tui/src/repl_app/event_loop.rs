@@ -1165,6 +1165,55 @@ impl ReplTuiState {
             self.slash_overlay = None;
         }
     }
+
+    pub(super) fn push_user_line(&mut self, text: &str) {
+        self.ui_state = AppUiState::ChatMode;
+        self.messages
+            .push(ConversationMessage::user_text(text.trim()));
+        self.follow_bottom = true;
+    }
+
+    pub(super) fn push_system(&mut self, msg: &str) {
+        self.ui_state = AppUiState::ChatMode;
+        let text = if msg.is_empty() {
+            " ".to_string()
+        } else {
+            msg.to_string()
+        };
+        self.messages.push(ConversationMessage {
+            role: MessageRole::System,
+            blocks: vec![ContentBlock::Text { text }],
+            usage: None,
+        });
+        self.follow_bottom = true;
+    }
+
+    pub(super) fn push_system_card(&mut self, title: impl Into<String>, report: &str) {
+        self.ui_state = AppUiState::ChatMode;
+        let title = title.into();
+        let rows = parse_report_rows(report)
+            .into_iter()
+            .map(|(label, value)| {
+                if value.is_empty() {
+                    label
+                } else {
+                    format!("{label}: {value}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = if rows.is_empty() {
+            title
+        } else {
+            format!("{title}\n{rows}")
+        };
+        self.messages.push(ConversationMessage {
+            role: MessageRole::System,
+            blocks: vec![ContentBlock::Text { text }],
+            usage: None,
+        });
+        self.follow_bottom = true;
+    }
 }
 
 /// Interactive REPL using Ratatui. Requires a TTY on stdout - the caller must gate accordingly.
