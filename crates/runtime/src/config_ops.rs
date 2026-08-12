@@ -26,7 +26,7 @@ use crate::settings::{
 
 const REASONING_EFFORT_VALUES: &[&str] = &["high", "medium", "low"];
 const BROWSER_BACKEND_VALUES: &[&str] = &["extension"];
-const BUDGET_ENFORCEMENT_VALUES: &[&str] = &["warn", "block"];
+const BUDGET_ENFORCEMENT_VALUES: &[&str] = &["warn", "block", "route_down"];
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -1285,6 +1285,22 @@ mod tests {
             err,
             ConfigError::BadValue { key, value, .. } if key == "model" && value == "gpt-5"
         ));
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn budget_enforcement_accepts_route_down() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        config_set("optimization.budget_enforcement", "route_down")
+            .expect("route_down should be a valid budget_enforcement value");
+        assert_eq!(
+            config_get("optimization.budget_enforcement", false).expect("get budget_enforcement"),
+            "\"route_down\""
+        );
 
         cleanup_temp_dir(&temp_dir);
     }
