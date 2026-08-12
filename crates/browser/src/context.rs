@@ -99,6 +99,11 @@ impl BrowserContext {
         self.current_url.as_deref()
     }
 
+    #[must_use]
+    pub fn is_browser_loaded(&self) -> bool {
+        self.browser_has_url.is_some()
+    }
+
     pub fn set_page_index(&mut self, page_index: usize) {
         self.page_index = page_index;
     }
