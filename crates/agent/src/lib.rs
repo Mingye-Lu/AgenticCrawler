@@ -106,7 +106,8 @@ fn navigation_tools() -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "direction": { "type": "string", "enum": ["up", "down"], "description": "Scroll direction. 'down' reveals content below the viewport; 'up' scrolls back toward the top." },
-                    "pixels": { "type": "integer", "description": "Number of pixels to scroll (default: 500). Use 300–800 for a normal page scroll; larger values for quickly reaching page bottom." }
+                    "pixels": { "type": "integer", "description": "Number of pixels to scroll (default: 500). Use 300–800 for a normal page scroll; larger values for quickly reaching page bottom." },
+                    "selector": { "type": "string", "description": "Optional CSS selector to scroll a specific element (e.g. a modal or sidebar) instead of the page viewport. Use when a modal, overlay, or internal scroll container is open and the page viewport is locked behind it." }
                 },
                 "additionalProperties": false
             }),

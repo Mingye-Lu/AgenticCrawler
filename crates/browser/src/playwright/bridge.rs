@@ -283,12 +283,20 @@ impl PlaywrightBridge {
         )))
     }
 
-    pub async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError> {
-        let cmd = serde_json::json!({
+    pub async fn scroll(
+        &mut self,
+        direction: &str,
+        pixels: i64,
+        selector: Option<&str>,
+    ) -> Result<(), BridgeError> {
+        let mut cmd = serde_json::json!({
             "action": "scroll",
             "direction": direction,
             "pixels": pixels,
         });
+        if let Some(sel) = selector {
+            cmd["selector"] = serde_json::Value::String(sel.to_string());
+        }
         self.send_raw_command(&cmd).await?;
         Ok(())
     }

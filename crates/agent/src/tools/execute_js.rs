@@ -273,7 +273,12 @@ mod tests {
             async fn close_page(&mut self, _page_index: usize) -> Result<(), BridgeError> {
                 Ok(())
             }
-            async fn scroll(&mut self, _direction: &str, _pixels: i64) -> Result<(), BridgeError> {
+            async fn scroll(
+                &mut self,
+                _direction: &str,
+                _pixels: i64,
+                _selector: Option<&str>,
+            ) -> Result<(), BridgeError> {
                 Ok(())
             }
             async fn page_map(
