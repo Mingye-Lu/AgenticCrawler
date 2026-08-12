@@ -1,5 +1,8 @@
+use std::borrow::Cow;
 use std::fmt::Write as FmtWrite;
 use std::io::{self, Write};
+use std::iter::Peekable;
+use std::str::Chars;
 
 use crossterm::cursor::{MoveToColumn, RestorePosition, SavePosition};
 use crossterm::style::{Color as CtColor, Print, ResetColor, SetForegroundColor};
@@ -134,8 +137,19 @@ pub fn render_lines(markdown: &str) -> Vec<Line<'static>> {
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
 
+    // Single sanitization choke point: strip ANSI/C0 control sequences from
+    // the raw markdown *before* it reaches the parser. Untrusted content
+    // (e.g. scraped page text echoed back by the model) can carry raw ESC
+    // bytes, and the markdown tokenizer can split an escape sequence across
+    // multiple events (e.g. a stray `[` inside an OSC/CSI payload gets
+    // tokenized as link syntax), so sanitizing per-`Event` after parsing is
+    // not reliable. Scrubbing the source string first guarantees every
+    // caller of `render_lines`/`markdown_to_ansi` is protected without an
+    // opt-in per-caller `strip_ansi()` call.
+    let sanitized = sanitize_untrusted_text(markdown);
+
     let mut writer = MdWriter::default();
-    for event in Parser::new_ext(markdown, opts) {
+    for event in Parser::new_ext(&sanitized, opts) {
         writer.handle_event(event);
     }
     writer.finish()
@@ -407,7 +421,8 @@ impl MdWriter {
     }
 
     fn push_text(&mut self, text: &str) {
-        self.push_text_with_style(text, self.current_style());
+        let sanitized = sanitize_untrusted_text(text);
+        self.push_text_with_style(&sanitized, self.current_style());
     }
 
     fn push_text_with_style(&mut self, text: &str, style: Style) {
@@ -840,20 +855,89 @@ pub fn strip_ansi(input: &str) -> String {
 
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for next in chars.by_ref() {
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
+            skip_escape_sequence(&mut chars);
         } else {
             output.push(ch);
         }
     }
 
     output
+}
+
+/// Consume an ANSI escape sequence (everything after the leading `ESC`)
+/// from `chars`, recognizing CSI (`ESC [ ... final-byte`), OSC/DCS/SOS/PM/APC
+/// (`ESC ] | P | X | ^ | _ ... BEL-or-ST`), and generic two-character
+/// escapes (`ESC` + one byte). This is shared by [`strip_ansi`] and
+/// [`sanitize_untrusted_text`] so both stay in sync on what counts as a
+/// "complete" escape sequence.
+fn skip_escape_sequence(chars: &mut Peekable<Chars<'_>>) {
+    match chars.peek() {
+        Some('[') => {
+            // CSI: consume parameter/intermediate bytes up to and including
+            // the final byte (`@`..=`~`).
+            chars.next();
+            for next in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&next) {
+                    break;
+                }
+            }
+        }
+        Some(']' | 'P' | 'X' | '^' | '_') => {
+            // OSC/DCS/SOS/PM/APC: consume until the string is terminated by
+            // BEL (`\u{07}`) or ST (`ESC \`).
+            chars.next();
+            while let Some(next) = chars.next() {
+                if next == '\u{07}' || next == '\u{9c}' {
+                    break;
+                }
+                if next == '\u{1b}' && chars.peek() == Some(&'\\') {
+                    chars.next();
+                    break;
+                }
+            }
+        }
+        Some(_) => {
+            // Generic two-byte escape (Fe/Fp/nF forms), e.g. `ESC c`, `ESC =`.
+            chars.next();
+        }
+        None => {}
+    }
+}
+
+/// Strip every C0 control character (except tab and newline, which are used
+/// for formatting) and every ANSI escape sequence from `text`. This is the
+/// single sanitization choke point applied to all text-bearing markdown
+/// events before they become terminal output, so untrusted content (e.g.
+/// scraped web text echoed back by the model) can never inject terminal
+/// control/escape sequences.
+fn sanitize_untrusted_text(input: &str) -> Cow<'_, str> {
+    if !input
+        .chars()
+        .any(|ch| ch == '\u{1b}' || is_stripped_control(ch))
+    {
+        return Cow::Borrowed(input);
+    }
+
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            skip_escape_sequence(&mut chars);
+        } else if !is_stripped_control(ch) {
+            output.push(ch);
+        }
+    }
+
+    Cow::Owned(output)
+}
+
+/// True for C0 control characters (other than tab/newline) and the DEL/C1
+/// control range, i.e. everything a well-behaved terminal writer should
+/// never emit verbatim from untrusted input.
+fn is_stripped_control(ch: char) -> bool {
+    let c = ch as u32;
+    (c < 0x20 && ch != '\t' && ch != '\n') || c == 0x7f || (0x80..=0x9f).contains(&c)
 }
 
 #[cfg(test)]
@@ -946,6 +1030,48 @@ mod tests {
             first.contains("1.") || first.starts_with('1'),
             "marker and content on same line: {first:?}"
         );
+    }
+
+    #[test]
+    fn render_lines_strips_injected_escape_sequences_from_text() {
+        // Untrusted content (e.g. echoed scraped page text) can carry raw
+        // ESC bytes. Every text-bearing event must be sanitized so these
+        // never reach the terminal, regardless of which code path (plain
+        // text, table cell, code block) the content flows through.
+        let md = "Title: evil\u{1b}[31mRED\u{1b}]0;pwned\u{07} tail\n";
+        let lines = render_lines(md);
+        let plain: String = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(
+            !plain.contains('\u{1b}'),
+            "expected no raw ESC bytes in rendered spans: {plain:?}"
+        );
+        assert!(
+            plain.contains("evilRED"),
+            "text content preserved: {plain:?}"
+        );
+        assert!(plain.contains("tail"), "text content preserved: {plain:?}");
+        assert!(
+            !plain.contains("pwned"),
+            "OSC payload should not leak into rendered text: {plain:?}"
+        );
+
+        let ansi = text_to_ansi(&lines);
+        // Only legitimate styling escapes (from write_style) should be
+        // present in the final ANSI string, never the raw bytes we fed in.
+        assert!(
+            !ansi.contains("\u{1b}]0;pwned"),
+            "OSC injection must not survive into the ANSI stream: {ansi:?}"
+        );
+    }
+
+    #[test]
+    fn strip_ansi_removes_osc_sequences() {
+        let input = "before\u{1b}]0;window-title\u{07}after";
+        assert_eq!(strip_ansi(input), "beforeafter");
     }
 
     #[test]
