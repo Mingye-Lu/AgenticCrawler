@@ -13,15 +13,15 @@ use crate::settings::{
     settings_get_compaction_preserve_recent_tokens, settings_get_compaction_prune_max_output_chars,
     settings_get_compaction_prune_protect_tokens, settings_get_compound_enrichment,
     settings_get_confidence_tracking, settings_get_content_aware_profiles,
-    settings_get_failure_classification, settings_get_fork_child_max_steps,
-    settings_get_fork_wait_timeout_secs, settings_get_headless, settings_get_html_diff_mode,
-    settings_get_loop_detection, settings_get_loop_detection_window,
+    settings_get_extension_bridge_port, settings_get_failure_classification,
+    settings_get_fork_child_max_steps, settings_get_fork_wait_timeout_secs, settings_get_headless,
+    settings_get_html_diff_mode, settings_get_loop_detection, settings_get_loop_detection_window,
     settings_get_loop_nudge_threshold, settings_get_max_concurrent_per_parent,
     settings_get_max_fork_depth, settings_get_max_steps, settings_get_max_total_agents,
     settings_get_output_dir, settings_get_page_fingerprinting,
     settings_get_per_agent_cost_tracking, settings_get_planning_interval,
-    settings_get_self_healing, settings_get_self_healing_max_retries, OptimizationSettings,
-    ScriptSettings, Settings,
+    settings_get_reasoning_effort, settings_get_self_healing,
+    settings_get_self_healing_max_retries, OptimizationSettings, ScriptSettings, Settings,
 };
 
 const REASONING_EFFORT_VALUES: &[&str] = &["high", "medium", "low"];
@@ -932,10 +932,7 @@ fn effective_value(settings: &Settings, key: &str) -> Value {
         "headless" => json!(settings_get_headless(settings)),
         "max_steps" => json!(settings_get_max_steps(settings)),
         "model" => json!(settings.model.clone()),
-        "reasoning_effort" => json!(settings
-            .reasoning_effort
-            .clone()
-            .unwrap_or_else(|| "high".to_string())),
+        "reasoning_effort" => json!(settings_get_reasoning_effort(settings)),
         "output_dir" => json!(settings_get_output_dir(settings)),
         "auto_compact_input_tokens" => json!(settings_get_auto_compact_tokens(settings)),
         "max_concurrent_per_parent" => json!(settings_get_max_concurrent_per_parent(settings)),
@@ -944,7 +941,7 @@ fn effective_value(settings: &Settings, key: &str) -> Value {
         "fork_child_max_steps" => json!(settings_get_fork_child_max_steps(settings)),
         "fork_wait_timeout_secs" => json!(settings_get_fork_wait_timeout_secs(settings)),
         "extension_bridge_token" => json!(settings.extension_bridge_token.clone()),
-        "extension_bridge_port" => json!(settings.extension_bridge_port.unwrap_or(19_876)),
+        "extension_bridge_port" => json!(settings_get_extension_bridge_port(settings)),
         "browser_backend" => json!(settings.browser_backend.clone()),
         "compaction_prune_protect_tokens" => {
             json!(settings_get_compaction_prune_protect_tokens(settings))
@@ -1022,12 +1019,7 @@ fn effective_settings(settings: &Settings) -> Settings {
         headless: Some(settings_get_headless(settings)),
         max_steps: Some(settings_get_max_steps(settings)),
         model: settings.model.clone(),
-        reasoning_effort: Some(
-            settings
-                .reasoning_effort
-                .clone()
-                .unwrap_or_else(|| "high".to_string()),
-        ),
+        reasoning_effort: Some(settings_get_reasoning_effort(settings).to_string()),
         output_dir: Some(settings_get_output_dir(settings).to_string()),
         auto_compact_input_tokens: Some(settings_get_auto_compact_tokens(settings)),
         max_concurrent_per_parent: Some(settings_get_max_concurrent_per_parent(settings)),
@@ -1036,7 +1028,7 @@ fn effective_settings(settings: &Settings) -> Settings {
         fork_child_max_steps: Some(settings_get_fork_child_max_steps(settings)),
         fork_wait_timeout_secs: Some(settings_get_fork_wait_timeout_secs(settings)),
         extension_bridge_token: settings.extension_bridge_token.clone(),
-        extension_bridge_port: Some(settings.extension_bridge_port.unwrap_or(19_876)),
+        extension_bridge_port: Some(settings_get_extension_bridge_port(settings)),
         browser_backend: settings.browser_backend.clone(),
         compaction_prune_protect_tokens: Some(
             settings_get_compaction_prune_protect_tokens(settings) as u64,
@@ -1270,6 +1262,24 @@ mod tests {
 
         assert_eq!(config_get("max_steps", false).expect("raw get"), "null");
         assert_eq!(config_get("max_steps", true).expect("effective get"), "50");
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn reasoning_effort_and_extension_bridge_port_defaults_come_from_settings_getters() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        assert_eq!(
+            config_get("reasoning_effort", true).expect("effective get"),
+            "\"high\""
+        );
+        assert_eq!(
+            config_get("extension_bridge_port", true).expect("effective get"),
+            "19876"
+        );
 
         cleanup_temp_dir(&temp_dir);
     }

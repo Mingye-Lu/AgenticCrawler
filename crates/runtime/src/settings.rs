@@ -364,6 +364,12 @@ pub fn settings_get_max_steps(s: &Settings) -> u32 {
     s.max_steps.unwrap_or(50)
 }
 
+/// Get `reasoning_effort` setting, with default fallback.
+#[must_use]
+pub fn settings_get_reasoning_effort(s: &Settings) -> &str {
+    s.reasoning_effort.as_deref().unwrap_or("high")
+}
+
 /// Get `output_dir` setting, with default fallback.
 #[must_use]
 pub fn settings_get_output_dir(s: &Settings) -> &str {
@@ -431,6 +437,12 @@ pub fn settings_get_fork_child_max_steps(s: &Settings) -> u32 {
 #[must_use]
 pub fn settings_get_fork_wait_timeout_secs(s: &Settings) -> u32 {
     s.fork_wait_timeout_secs.unwrap_or(60)
+}
+
+/// Get `extension_bridge_port` setting, with default fallback.
+#[must_use]
+pub fn settings_get_extension_bridge_port(s: &Settings) -> u16 {
+    s.extension_bridge_port.unwrap_or(19_876)
 }
 
 /// Get `compaction_prune_protect_tokens` setting, with default fallback.
