@@ -38,7 +38,7 @@ impl LiveCli {
         let mut spinner = Spinner::new();
         let mut stdout = io::stdout();
         spinner.tick(
-            "馃暦锔廡hinking...",
+            "🕷️Thinking...",
             TerminalRenderer::new().color_theme(),
             &mut stdout,
         )?;
@@ -46,11 +46,7 @@ impl LiveCli {
         match result {
             Ok(summary) => {
                 self.capture_child_sessions();
-                spinner.finish(
-                    "鉁匘one",
-                    TerminalRenderer::new().color_theme(),
-                    &mut stdout,
-                )?;
+                spinner.finish("✅Done", TerminalRenderer::new().color_theme(), &mut stdout)?;
                 println!();
                 if let Some(event) = summary.auto_compaction {
                     println!(
@@ -63,7 +59,7 @@ impl LiveCli {
             }
             Err(error) => {
                 spinner.fail(
-                    "鉂孯equest failed",
+                    "❌Request failed",
                     TerminalRenderer::new().color_theme(),
                     &mut stdout,
                 )?;

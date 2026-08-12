@@ -1,4 +1,4 @@
-//! `ChannelSink` 鈥?bridges runtime events to the TUI via channel.
+//! `ChannelSink` — bridges runtime events to the TUI via channel.
 
 use std::sync::mpsc;
 

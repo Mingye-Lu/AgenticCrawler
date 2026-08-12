@@ -49,7 +49,7 @@ pub fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)
                     io::ErrorKind::AddrInUse,
                     format!(
                         "Port {preferred_port} is already in use. \
-                         A previous auth session may still be running 鈥?\
+                         A previous auth session may still be running — \
                          close it or kill the process using the port, then retry."
                     ),
                 ));
@@ -60,7 +60,7 @@ pub fn bind_oauth_listener(preferred_port: u16) -> io::Result<(TcpListener, u16)
     unreachable!()
 }
 
-/// Result of provider selection 鈥?either a legacy enum variant or a preset provider.
+/// Result of provider selection — either a legacy enum variant or a preset provider.
 #[derive(Debug, Clone)]
 pub enum ProviderChoice {
     Legacy(Provider),
@@ -85,7 +85,7 @@ pub fn run_auth_cli(provider: Option<&str>) -> Result<(), Box<dyn std::error::Er
         ProviderChoice::Legacy(target) => run_auth_for_provider(target)?,
         ProviderChoice::Preset(ref preset) => run_preset_auth(preset)?,
     }
-    eprintln!("鉁?{label} credentials configured successfully.");
+    eprintln!("✓ {label} credentials configured successfully.");
     Ok(())
 }
 
@@ -354,7 +354,7 @@ pub fn interactive_login_prompt(choice: &ProviderChoice) -> Result<(), Box<dyn s
             io::stdin().read_line(&mut answer)?;
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err("authentication required 鈥?run `acrawl auth anthropic`".into());
+                return Err("authentication required — run `acrawl auth anthropic`".into());
             }
             run_auth_for_provider(Provider::Anthropic)
         }
@@ -369,7 +369,7 @@ pub fn interactive_login_prompt(choice: &ProviderChoice) -> Result<(), Box<dyn s
             io::stdin().read_line(&mut answer)?;
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
-                return Err("authentication required 鈥?run `acrawl auth other`".into());
+                return Err("authentication required — run `acrawl auth other`".into());
             }
             run_auth_for_provider(Provider::Other)
         }
@@ -384,7 +384,7 @@ pub fn interactive_login_prompt(choice: &ProviderChoice) -> Result<(), Box<dyn s
             let answer = answer.trim();
             if !answer.is_empty() && !answer.eq_ignore_ascii_case("y") {
                 return Err(
-                    format!("authentication required 鈥?run `acrawl auth {}`", preset.id).into(),
+                    format!("authentication required — run `acrawl auth {}`", preset.id).into(),
                 );
             }
             run_preset_auth(preset)
@@ -679,7 +679,7 @@ mod tests {
         let presets = api::builtin_presets();
         assert!(!presets.is_empty(), "should have presets");
         for p in &presets {
-            // Every preset has some category 鈥?verify it compiles and returns a value
+            // Every preset has some category — verify it compiles and returns a value
             let _ = format!("{:?}", p.category);
         }
     }
