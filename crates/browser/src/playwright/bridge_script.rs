@@ -1165,6 +1165,68 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
       continue;
     }
 
+    if (command.action === 'wait_for_text') {
+      try {
+        const timeout = command.timeout_ms || 5000;
+        const pattern = command.text_pattern;
+        const selector = command.selector;
+        const start = Date.now();
+        let found = false;
+        while (Date.now() - start < timeout) {
+          let text;
+          if (selector) {
+            try {
+              text = await page.evaluate((sel) => {
+                const els = document.querySelectorAll(sel);
+                return Array.from(els).map((el) => (el.textContent || '').trim()).join(' ');
+              }, selector);
+            } catch (e) {
+              text = '';
+            }
+          } else {
+            try {
+              text = await page.evaluate(() => {
+                if (!document.body) return '';
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                  acceptNode: function(node) {
+                    const el = node.parentElement;
+                    if (!el) return NodeFilter.FILTER_REJECT;
+                    const tag = el.tagName;
+                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE' || tag === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+                    let parent = el.parentElement;
+                    while (parent && parent !== document.body) {
+                      const ps = window.getComputedStyle(parent);
+                      if (ps.display === 'none' || ps.visibility === 'hidden') return NodeFilter.FILTER_REJECT;
+                      parent = parent.parentElement;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                  }
+                });
+                let result = '';
+                while (walker.nextNode()) {
+                  result += walker.currentNode.textContent;
+                }
+                return result.trim();
+              });
+            } catch (e) {
+              text = '';
+            }
+          }
+          if (text && text.includes(pattern)) {
+            found = true;
+            break;
+          }
+          await new Promise(r => setTimeout(r, 250));
+        }
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { found } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'wait_for_text_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
     if (command.action === 'select_option') {
       try {
         await page.selectOption(command.selector, command.value);

@@ -126,16 +126,17 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "wait",
-            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached) or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires, unless `silent: true` is set for a time-only wait, in which case only the completion signal is returned.",
+            description: "Wait for a DOM element to reach a specified state (visible, hidden, attached, detached), wait for text content to match a pattern, or pause for a fixed duration. Use after actions that trigger asynchronous page changes such as form submissions, AJAX requests, or animations. Returns post-action page_state showing the resulting URL, title, and structural diff once the condition is met or the timeout expires, unless `silent: true` is set for a time-only wait, in which case only the completion signal is returned.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "selector": { "type": "string", "description": "CSS selector of the element to wait for (e.g. \".results-loaded\", \"#spinner\"). Mutually exclusive with 'seconds' — provide one or the other." },
                     "seconds": { "type": "number", "description": "Fixed number of seconds to wait (max 300). Use when no specific element signals completion. Mutually exclusive with 'selector'." },
+                    "text_pattern": { "type": "string", "description": "Substring to match in the element's text content. Polls every 250ms until found or timeout expires. Use with `selector` to target a specific element, or alone to scan the full page body text. Mutually exclusive with `state` — use one or the other." },
                     "state": {
                         "type": "string",
                         "enum": ["visible", "hidden", "attached", "detached"],
-                        "description": "Target state to wait for. 'attached' (default) = element exists in DOM; 'visible' = element is rendered and not hidden; 'hidden' = element is no longer visible; 'detached' = element removed from DOM. Use 'hidden' to wait for loading spinners to disappear."
+                        "description": "Target state to wait for. Requires `selector`. Mutually exclusive with `text_pattern` — use `state` for DOM state changes, `text_pattern` for text content matching."
                     },
                     "silent": {
                         "type": "boolean",
@@ -144,7 +145,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `state: \"hidden\"` to wait for an element to disappear (e.g. a loading spinner). Set `silent: true` for simple timed pauses to suppress the page_state and save context tokens. Has no effect when a `selector` is provided."),
+            instructions: Some("Use after actions that trigger page changes (form submits, AJAX requests). Pass `selector` to wait for an element, or `seconds` for a fixed delay. Use `state: \"visible\"` to wait until the element is actually visible (not just in the DOM). Use `text_pattern` with or without `selector` to poll until specific text appears on the page (e.g., wait for a status badge to change from \"running\" to \"completed\"). Set `silent: true` for simple timed pauses to suppress the page_state and save context tokens. Has no effect when a `selector` is provided."),
         },
     ]
 }
