@@ -23,6 +23,9 @@ pub struct ObservationMockBackend {
     pub last_save_file_headers: Option<BTreeMap<String, String>>,
     pub save_file_headers_sink: Option<SaveFileHeadersRecord>,
     pub evaluate_scripts_sink: Option<EvaluateScriptsRecord>,
+    /// When set, `set_seq` returns this error instead of succeeding, so
+    /// tests can exercise the "bridge rejected the seq push" path.
+    pub fail_set_seq: bool,
 }
 
 #[async_trait]
@@ -31,6 +34,11 @@ impl BrowserBackend for ObservationMockBackend {
         Ok(std::mem::take(&mut self.observations))
     }
     async fn set_seq(&mut self, _seq: u64) -> Result<(), BridgeError> {
+        if self.fail_set_seq {
+            return Err(BridgeError::Protocol(
+                "simulated set_seq failure".to_string(),
+            ));
+        }
         Ok(())
     }
     async fn navigate(&mut self, _: &str) -> Result<PageInfo, BridgeError> {
@@ -155,6 +163,19 @@ pub fn browser_with_observations(observations: Vec<ObservationEvent>) -> Browser
         last_save_file_headers: None,
         save_file_headers_sink: None,
         evaluate_scripts_sink: None,
+        fail_set_seq: false,
+    }) as Box<dyn BrowserBackend + Send>));
+    BrowserContext::new(bridge)
+}
+
+#[must_use]
+pub fn browser_with_failing_set_seq() -> BrowserContext {
+    let bridge: SharedBridge = Arc::new(Mutex::new(Box::new(ObservationMockBackend {
+        observations: Vec::new(),
+        last_save_file_headers: None,
+        save_file_headers_sink: None,
+        evaluate_scripts_sink: None,
+        fail_set_seq: true,
     }) as Box<dyn BrowserBackend + Send>));
     BrowserContext::new(bridge)
 }
@@ -169,6 +190,7 @@ pub fn browser_with_save_file_header_recorder(
         last_save_file_headers: None,
         save_file_headers_sink: Some(sink.clone()),
         evaluate_scripts_sink: None,
+        fail_set_seq: false,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
 }
@@ -187,6 +209,7 @@ pub fn browser_with_evaluate_recorder() -> (BrowserContext, EvaluateScriptsRecor
         last_save_file_headers: None,
         save_file_headers_sink: None,
         evaluate_scripts_sink: Some(sink.clone()),
+        fail_set_seq: false,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
 }
