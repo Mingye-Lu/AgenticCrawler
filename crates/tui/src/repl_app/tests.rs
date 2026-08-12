@@ -1166,6 +1166,61 @@ fn tool_call_complete_updates_in_place_error() {
 }
 
 #[test]
+fn tool_call_complete_resolves_parallel_same_name_calls_fifo() {
+    let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+    let mut state = ReplTuiState::new();
+
+    // Two parallel `navigate` calls started in order A then B.
+    tx.send(ReplTuiEvent::ToolCallStart {
+        name: "navigate".to_string(),
+        input: r#"{"url":"https://a.example"}"#.to_string(),
+    })
+    .unwrap();
+    tx.send(ReplTuiEvent::ToolCallStart {
+        name: "navigate".to_string(),
+        input: r#"{"url":"https://b.example"}"#.to_string(),
+    })
+    .unwrap();
+    state.drain_events(&rx);
+    assert_eq!(state.live_tool_calls.len(), 2);
+
+    // A's completion arrives first; it must resolve the FIRST (A) entry, not the last (B).
+    tx.send(ReplTuiEvent::ToolCallComplete {
+        name: "navigate".to_string(),
+        output: "loaded a.example".to_string(),
+        is_error: false,
+    })
+    .unwrap();
+    state.drain_events(&rx);
+
+    assert!(
+        matches!(
+            state.live_tool_calls[0],
+            (_, _, ToolCallStatus::Success { .. })
+        ),
+        "first (A) entry should be resolved by the first completion"
+    );
+    assert!(
+        matches!(state.live_tool_calls[1], (_, _, ToolCallStatus::Running)),
+        "second (B) entry should still be Running"
+    );
+
+    // B's completion arrives second; it must resolve the remaining (B) entry.
+    tx.send(ReplTuiEvent::ToolCallComplete {
+        name: "navigate".to_string(),
+        output: "loaded b.example".to_string(),
+        is_error: false,
+    })
+    .unwrap();
+    state.drain_events(&rx);
+
+    assert!(matches!(
+        state.live_tool_calls[1],
+        (_, _, ToolCallStatus::Success { .. })
+    ));
+}
+
+#[test]
 fn goal_title_shows_reasoning_effort_for_reasoning_model() {
     let header = super::HeaderSnapshot {
         model: "gpt-5.3-codex".to_string(),
