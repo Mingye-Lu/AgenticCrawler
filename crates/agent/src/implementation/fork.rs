@@ -488,7 +488,7 @@ impl CrawlerAgent {
     /// snapshots. Does NOT join, cancel, or otherwise mutate the running
     /// children — safe to call between any steps.
     // async is required to match the dispatch signature in dispatch_tool_effect.
-    #[allow(clippy::unused_async)]
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
     pub(super) async fn handle_status_effect(
         &mut self,
         spec: StatusSpec,

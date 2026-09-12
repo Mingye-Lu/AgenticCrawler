@@ -85,7 +85,8 @@ impl WsBridgeServer {
     ///
     /// Returns `WsBridgeError::Bind` if the TCP listener cannot bind, or
     /// `WsBridgeError::BridgeFileWrite` if the discovery file cannot be written.
-    #[allow(clippy::unused_async)]
+    // async keeps the tokio::spawn below inside a runtime context at poll time.
+    #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
     pub async fn start(port: u16, token: String) -> Result<Self, WsBridgeError> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let listener = try_bind_with_retry(addr).map_err(WsBridgeError::Bind)?;
