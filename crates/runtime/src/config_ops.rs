@@ -141,6 +141,10 @@ const KEY_SPECS: &[KeySpec] = &[
         kind: ValueKind::U16,
     },
     KeySpec {
+        key: "extension_bridge_connect_timeout_secs",
+        kind: ValueKind::U64,
+    },
+    KeySpec {
         key: "browser_backend",
         kind: ValueKind::NullableEnum(BROWSER_BACKEND_VALUES),
     },
@@ -464,6 +468,9 @@ fn apply_set(settings: &mut Settings, spec: &KeySpec, value: &str) -> Result<(),
         ("extension_bridge_port", ValueKind::U16) => {
             settings.extension_bridge_port = Some(parse_u16(spec.key, value)?);
         }
+        ("extension_bridge_connect_timeout_secs", ValueKind::U64) => {
+            settings.extension_bridge_connect_timeout_secs = Some(parse_u64(spec.key, value)?);
+        }
         ("browser_backend", ValueKind::NullableEnum(allowed)) => {
             settings.browser_backend = parse_nullable_enum(spec.key, value, allowed)?;
         }
@@ -590,6 +597,9 @@ fn apply_unset(settings: &mut Settings, key: &str) {
         "fork_wait_timeout_secs" => settings.fork_wait_timeout_secs = None,
         "extension_bridge_token" => settings.extension_bridge_token = None,
         "extension_bridge_port" => settings.extension_bridge_port = None,
+        "extension_bridge_connect_timeout_secs" => {
+            settings.extension_bridge_connect_timeout_secs = None;
+        }
         "browser_backend" => settings.browser_backend = None,
         "compaction_prune_protect_tokens" => settings.compaction_prune_protect_tokens = None,
         "compaction_prune_max_output_chars" => settings.compaction_prune_max_output_chars = None,
@@ -774,6 +784,9 @@ fn stored_value(settings: &Settings, key: &str) -> Value {
         "fork_wait_timeout_secs" => json!(settings.fork_wait_timeout_secs),
         "extension_bridge_token" => json!(settings.extension_bridge_token),
         "extension_bridge_port" => json!(settings.extension_bridge_port),
+        "extension_bridge_connect_timeout_secs" => {
+            json!(settings.extension_bridge_connect_timeout_secs)
+        }
         "browser_backend" => json!(settings.browser_backend),
         "compaction_prune_protect_tokens" => json!(settings.compaction_prune_protect_tokens),
         "compaction_prune_max_output_chars" => json!(settings.compaction_prune_max_output_chars),
@@ -945,6 +958,9 @@ fn effective_value(settings: &Settings, key: &str) -> Value {
         "fork_wait_timeout_secs" => json!(settings_get_fork_wait_timeout_secs(settings)),
         "extension_bridge_token" => json!(settings.extension_bridge_token.clone()),
         "extension_bridge_port" => json!(settings.extension_bridge_port.unwrap_or(19_876)),
+        "extension_bridge_connect_timeout_secs" => {
+            json!(settings.extension_bridge_connect_timeout_secs.unwrap_or(30))
+        }
         "browser_backend" => json!(settings.browser_backend.clone()),
         "compaction_prune_protect_tokens" => {
             json!(settings_get_compaction_prune_protect_tokens(settings))
@@ -1037,6 +1053,9 @@ fn effective_settings(settings: &Settings) -> Settings {
         fork_wait_timeout_secs: Some(settings_get_fork_wait_timeout_secs(settings)),
         extension_bridge_token: settings.extension_bridge_token.clone(),
         extension_bridge_port: Some(settings.extension_bridge_port.unwrap_or(19_876)),
+        extension_bridge_connect_timeout_secs: Some(
+            settings.extension_bridge_connect_timeout_secs.unwrap_or(30),
+        ),
         browser_backend: settings.browser_backend.clone(),
         compaction_prune_protect_tokens: Some(
             settings_get_compaction_prune_protect_tokens(settings) as u64,
