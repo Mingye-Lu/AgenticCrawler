@@ -121,6 +121,11 @@ pub struct CrawlerAgent {
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
     child_control_registry: Option<crate::child_events::ChildControlRegistry>,
     extension_mode: bool,
+    /// When running in extension mode, the dedicated page index this agent
+    /// should operate on. `None` (default) targets page 0. `run_goal` sets this
+    /// to a freshly-allocated page so its navigation never clobbers the
+    /// persistent MCP session's page.
+    extension_page_index: Option<usize>,
     is_child: bool,
     pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     prompt_override_slot: Arc<Mutex<Option<Vec<String>>>>,
@@ -163,6 +168,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            extension_page_index: None,
             is_child: false,
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             prompt_override_slot,

@@ -5,7 +5,7 @@
 //! configured port/token, wait for the extension to dial in, then hand out a
 //! [`SharedBridge`]. This module owns them so neither front end reimplements it.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use browser::{
@@ -21,6 +21,18 @@ pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
 #[must_use]
 pub fn extension_backend_selected() -> bool {
     runtime::load_settings().browser_backend.as_deref() == Some(EXTENSION_BACKEND)
+}
+
+/// Generates and persists an `extension_bridge_token` if one is not already
+/// set. Called when the user enables the extension backend via
+/// `acrawl config set browser_backend extension`, so that a subsequent
+/// `acrawl config get extension_bridge_token` returns a usable token instead of
+/// `null` — the token would otherwise only be minted on the first browser tool
+/// call, which is the very call that needs the token to authenticate.
+#[must_use]
+pub fn ensure_bridge_token() -> String {
+    let (_, token) = resolve_bridge_config();
+    token
 }
 
 /// Generates and persists a token on first use so the copy already stored in
@@ -62,12 +74,23 @@ fn describe_bind_conflict(port: u16, error: &str) -> String {
 pub struct ExtensionBridgeManager {
     server: WsBridgeServer,
     token: String,
+    /// Lazily-created [`SharedBridge`], cached so that every consumer (direct
+    /// tools, script execution, and `run_goal`) shares a single
+    /// [`ExtensionBridge`] — and therefore a single monotonically-increasing
+    /// command-id counter. Creating a fresh bridge per consumer would restart
+    /// command IDs at 1 while `run_ws_session` indexes pending responders only
+    /// by ID, letting overlapping commands overwrite each other's responder.
+    shared_bridge: OnceLock<SharedBridge>,
 }
 
 impl ExtensionBridgeManager {
     pub async fn start(port: u16, token: String) -> Result<Self, String> {
         match WsBridgeServer::start(port, token.clone()).await {
-            Ok(server) => Ok(Self { server, token }),
+            Ok(server) => Ok(Self {
+                server,
+                token,
+                shared_bridge: OnceLock::new(),
+            }),
             Err(error) => Err(describe_bind_conflict(port, &error.to_string())),
         }
     }
@@ -101,10 +124,15 @@ impl ExtensionBridgeManager {
     /// the connection state per command, not at construction time.
     #[must_use]
     pub fn shared_bridge(&self) -> SharedBridge {
-        let bridge = ExtensionBridge::new(self.server.command_sender(), self.connection_watcher());
-        Arc::new(tokio::sync::Mutex::new(
-            Box::new(bridge) as Box<dyn BrowserBackend + Send>
-        ))
+        self.shared_bridge
+            .get_or_init(|| {
+                let bridge =
+                    ExtensionBridge::new(self.server.command_sender(), self.connection_watcher());
+                Arc::new(tokio::sync::Mutex::new(
+                    Box::new(bridge) as Box<dyn BrowserBackend + Send>
+                ))
+            })
+            .clone()
     }
 
     pub async fn wait_for_connection(&mut self, timeout: Duration) -> bool {

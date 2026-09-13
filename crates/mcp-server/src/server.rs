@@ -52,6 +52,15 @@ enum TransportMode {
     LineDelimited,
 }
 
+/// Which browser backend owns the session's current `BrowserContext`. Tracked
+/// so `ensure_browser_context` can rebuild the context when the persisted
+/// `browser_backend` selection changes mid-process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserBackendKind {
+    CloakBrowser,
+    Extension,
+}
+
 fn set_output_mode(mode: TransportMode) {
     match OUTPUT_MODE.lock() {
         Ok(mut guard) => *guard = mode,
@@ -311,25 +320,37 @@ fn ensure_extension_bridge(
 
 fn ensure_browser_context(
     browser: &mut Option<BrowserContext>,
+    backend: &mut Option<BrowserBackendKind>,
     bridge_manager: &mut Option<ExtensionBridgeManager>,
     rt: &tokio::runtime::Runtime,
 ) -> Result<(), String> {
-    if browser.is_some() {
+    let selected = if extension_backend_selected() {
+        BrowserBackendKind::Extension
+    } else {
+        BrowserBackendKind::CloakBrowser
+    };
+
+    // Reuse the existing context only while it still matches the persisted
+    // backend selection. When the user flips `browser_backend` mid-process the
+    // old context (CloakBrowser or extension) is stale and must be rebuilt.
+    if browser.is_some() && *backend == Some(selected) {
         return Ok(());
     }
 
-    let shared = if extension_backend_selected() {
-        ensure_extension_bridge(bridge_manager, rt)?
-    } else {
-        let bridge = rt
-            .block_on(PlaywrightBridge::new())
-            .map_err(|e| e.to_string())?;
-        std::sync::Arc::new(tokio::sync::Mutex::new(
-            Box::new(bridge) as Box<dyn BrowserBackend + Send>
-        ))
+    let shared = match selected {
+        BrowserBackendKind::Extension => ensure_extension_bridge(bridge_manager, rt)?,
+        BrowserBackendKind::CloakBrowser => {
+            let bridge = rt
+                .block_on(PlaywrightBridge::new())
+                .map_err(|e| e.to_string())?;
+            std::sync::Arc::new(tokio::sync::Mutex::new(
+                Box::new(bridge) as Box<dyn BrowserBackend + Send>
+            ))
+        }
     };
 
     *browser = Some(BrowserContext::new(shared));
+    *backend = Some(selected);
     Ok(())
 }
 
@@ -338,6 +359,7 @@ fn execute_script_tool(
     input: &Value,
     script_manager: &mut ScriptManager,
     browser: &mut Option<BrowserContext>,
+    backend: &mut Option<BrowserBackendKind>,
     bridge_manager: &mut Option<ExtensionBridgeManager>,
     rt: &tokio::runtime::Runtime,
 ) -> Result<String, String> {
@@ -364,7 +386,7 @@ fn execute_script_tool(
                 Err(e) => return Err(e.to_string()),
             };
 
-            ensure_browser_context(browser, bridge_manager, rt)
+            ensure_browser_context(browser, backend, bridge_manager, rt)
                 .map_err(|e| format!("failed to launch browser for script: {e}"))?;
 
             let browser_ctx = browser.as_ref().unwrap().clone();
@@ -939,9 +961,41 @@ impl GoalExecutor for RealGoalExecutor {
                 RunGoalExecutionError::Internal(format!("failed to create tokio runtime: {error}"))
             })?;
 
-        runtime
-            .block_on(agent.run_with_system_prompt(&request.goal, api_client, system_prompt))
-            .map_err(|error| RunGoalExecutionError::Crawl(error.to_string()))
+        // Give the goal its own extension tab so its navigation never replaces
+        // the persistent MCP session's page (index 0), which direct/script tools
+        // may still be using. The tab is closed again after the goal completes.
+        let isolated_page = match &self.extension_bridge {
+            Some(bridge) => {
+                let index = runtime
+                    .block_on(async {
+                        let mut guard = bridge.lock().await;
+                        guard.new_page(None).await
+                    })
+                    .map_err(|error| {
+                        RunGoalExecutionError::Internal(format!(
+                            "failed to allocate isolated extension page: {error}"
+                        ))
+                    })?;
+                agent.set_extension_page_index(index);
+                Some(index)
+            }
+            None => None,
+        };
+
+        let result = runtime.block_on(agent.run_with_system_prompt(
+            &request.goal,
+            api_client,
+            system_prompt,
+        ));
+
+        if let (Some(bridge), Some(index)) = (&self.extension_bridge, isolated_page) {
+            let _ = runtime.block_on(async {
+                let mut guard = bridge.lock().await;
+                guard.close_page(index).await
+            });
+        }
+
+        result.map_err(|error| RunGoalExecutionError::Crawl(error.to_string()))
     }
 }
 
@@ -962,6 +1016,7 @@ fn handle_run_goal(id: Option<Value>, arguments: Value, extension_bridge: Option
 struct McpSession {
     registry: ToolRegistry,
     browser: Option<BrowserContext>,
+    backend: Option<BrowserBackendKind>,
     bridge_manager: Option<ExtensionBridgeManager>,
     script_manager: ScriptManager,
     crawl_state: agent::state::CrawlState,
@@ -987,6 +1042,20 @@ fn handle_tools_call(
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     if name == "run_goal" {
+        // Validate arguments BEFORE waiting on the extension bridge. A malformed
+        // request (missing `goal`, unknown tool, out-of-range `max_steps`) must
+        // return an immediate -32602 rather than block for the full connect
+        // timeout and then surface a misleading bridge error.
+        if let Err(outcome) = parse_run_goal_request(&arguments) {
+            match outcome {
+                RunGoalOutcome::JsonRpcError { code, message } => {
+                    send_error(id, code, message);
+                    return;
+                }
+                RunGoalOutcome::ToolResult(_) => {}
+            }
+        }
+
         let extension_bridge = if extension_backend_selected() {
             match ensure_extension_bridge(&mut session.bridge_manager, rt) {
                 Ok(bridge) => Some(bridge),
@@ -1031,6 +1100,7 @@ fn handle_tools_call(
             &arguments,
             &mut session.script_manager,
             &mut session.browser,
+            &mut session.backend,
             &mut session.bridge_manager,
             rt,
         ) {
@@ -1062,7 +1132,12 @@ fn handle_tools_call(
         return;
     }
 
-    if let Err(e) = ensure_browser_context(&mut session.browser, &mut session.bridge_manager, rt) {
+    if let Err(e) = ensure_browser_context(
+        &mut session.browser,
+        &mut session.backend,
+        &mut session.bridge_manager,
+        rt,
+    ) {
         let result = json!({
             "content": [{ "type": "text", "text": format!("Error: failed to launch browser — {e}") }],
             "isError": true,
@@ -1120,6 +1195,7 @@ pub fn run_mcp_server() {
     let mut session = McpSession {
         registry: ToolRegistry::new_with_core_tools(),
         browser: None,
+        backend: None,
         bridge_manager: None,
         script_manager: ScriptManager::new(script_settings),
         crawl_state: agent::state::CrawlState::default(),
@@ -1214,9 +1290,10 @@ mod tests {
             .build()
             .expect("build runtime");
         let mut browser: Option<BrowserContext> = None;
+        let mut backend: Option<BrowserBackendKind> = None;
         let mut bridge_manager: Option<ExtensionBridgeManager> = None;
 
-        let error = ensure_browser_context(&mut browser, &mut bridge_manager, &rt)
+        let error = ensure_browser_context(&mut browser, &mut backend, &mut bridge_manager, &rt)
             .expect_err("must not silently substitute the bundled browser");
 
         assert!(error.contains("did not connect"), "{error}");
