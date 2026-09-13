@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.5] - 2026-09-12
+
+### Added
+
+- **acrawl MCP skill package** (`skills/acrawl-mcp/`): a progressive-disclosure guide that teaches AI agents to drive the built-in MCP server. `SKILL.md` carries execution-mode selection (manual tool calls / `run_script` / `run_goal`), the observe-act-verify loop around `page_state`, token-economy guidance for the `content_depth` / `page_map_depth` / `format` dials, the `@eN` / `@rN` / `@logN` / `@wsN` reference families, and `seq`-based temporal filtering. Four reference files document all 39 MCP tools with exact parameter names and defaults, the script DSL with executed examples, 13 end-to-end workflows, and installation plus configuration.
+- **MCP-specific behaviour notes**: the MCP dispatcher goes straight to the tool registry rather than through the agent loop, so several documented conveniences behave differently there. `run_script` requires `schema_version` as integer `1` rather than the `version: "1.0"` its tool description advertises, and rejects an empty `steps` array; `limits` is an all-or-nothing object rather than a patch, since five of its seven fields have no serde defaults; `$var` substitution replaces whole strings only and preserves type, while `js_eval` receives no DSL variables at all; `@rN` / `@logN` / `@wsN` refs are positional within the most recent listing rather than stable identifiers; numeric `since` filtering is inclusive over `[since, until)`; scripts may call only 17 of the 31 browser tools, excluding every DevTools tool plus `refresh` and `set_device`; `run_script(name:)` and `save_as` are not wired up; `script_status` returns capitalized statuses with no `extracted_data` field; `cancel_script` is cooperative rather than immediate and preserves collected data; `save_script` checks JSON shape but not semantics; and self-healing, action caching, loop detection and budget enforcement reach `run_goal` only.
+- **Concurrency guidance for scripts**: browser scripts must run sequentially over MCP. Concurrent `run_script` calls share the session's single browser tab, so they can silently return data from one another's pages, and `parallel` nodes fail page teardown with two or more branches. `run_goal` remains the supported parallelism path, since its sub-agents each get their own tab.
+
+This release is documentation only. No source changed, so the binaries are functionally identical to v0.13.4.
+
 ## [0.13.4] - 2026-07-31
 
 ### Fixed
@@ -930,6 +940,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.13.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.5
 [0.13.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.4
 [0.13.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.3
 [0.13.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.2
