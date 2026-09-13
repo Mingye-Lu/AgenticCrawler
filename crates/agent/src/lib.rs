@@ -3,6 +3,7 @@ pub mod agent;
 pub mod aria;
 pub mod child_events;
 pub mod confidence;
+pub mod extension_bridge;
 pub mod failure_classifier;
 pub mod loop_detector;
 pub mod manager;
@@ -43,6 +44,9 @@ pub use agent::{AgentHandle, AgentState, CrawlAgent, CrawlError, CrawlResult, Cr
 pub use child_events::{
     ChildControlRegistry, ChildEvent, ChildEventKind, ChildEventSender, ChildLifecycle,
     ChildSnapshot, ChildSnapshotRegistry,
+};
+pub use extension_bridge::{
+    connect_timeout, extension_backend_selected, ExtensionBridgeManager, EXTENSION_BACKEND,
 };
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};

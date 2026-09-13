@@ -668,6 +668,19 @@ The browser tools share a persistent session across calls. `run_goal` creates it
 
 **Requirements:** The 38 browser and script tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
 
+#### Using your real browser from MCP
+
+The MCP server honours `browser_backend`, so MCP clients can drive your own logged-in browser instead of the bundled headless one:
+
+```bash
+acrawl config set browser_backend extension   # route MCP browser tools through the extension
+acrawl config get extension_bridge_token      # paste this into the extension's options page
+```
+
+The bridge server starts on the first browser tool call and waits up to `extension_bridge_connect_timeout_secs` (default 30) for the extension to connect. If it never connects, the tool call returns an actionable error rather than silently falling back to CloakBrowser — extension mode exists to reuse your authenticated session, so substituting a different browser would be misleading.
+
+The Chrome extension serves one process at a time. If an `acrawl` REPL already owns the bridge, the MCP server reports the conflicting owner instead of competing for the port. Run `acrawl config unset browser_backend` to go back to CloakBrowser.
+
 ## Usage
 
 ```
@@ -776,6 +789,7 @@ Created with defaults on first run.
 | `fork_wait_timeout_secs` | `60` | Timeout for `wait_for_subagents` |
 | `browser_backend` | `null` | Active browser backend: `"extension"` or `null` (CloakBrowser) |
 | `extension_bridge_port` | `19876` | Port for Chrome extension bridge WebSocket server |
+| `extension_bridge_connect_timeout_secs` | `30` | How long to wait for the extension to connect before failing a browser tool call in extension mode |
 
 All fields are optional; omitting a field uses the default. The `optimization` block accepts a nested object with the following fields (all default to `false`/`0`/`null`, safe to omit entirely):
 

@@ -21,8 +21,8 @@ use crate::error::CliError;
 use crate::output_sink::ChannelSink;
 use crate::session_mgr::{create_managed_session_handle, SessionHandle};
 use acrawl_core::ToolSpec;
-use agent::{mvp_tool_specs, ChildControlRegistry, ChildEvent, ExtensionBridge};
-use browser::{BrowserBackend, BrowserState, SharedBridge, WsBridgeServer};
+use agent::{mvp_tool_specs, ChildControlRegistry, ChildEvent, ExtensionBridgeManager};
+use browser::{BrowserState, SharedBridge};
 use render::sink::{OutputSink, StdoutSink};
 
 use crate::events::ReplTuiEvent;
@@ -96,7 +96,7 @@ pub struct LiveCli {
     child_control_registry: Option<ChildControlRegistry>,
     pending_title: Arc<Mutex<Option<String>>>,
     title_dispatched: bool,
-    ws_bridge_server: Option<WsBridgeServer>,
+    ws_bridge_server: Option<ExtensionBridgeManager>,
     pending_extension_state: Option<BrowserState>,
     extension_bridge_initialized: bool,
 }
@@ -334,14 +334,7 @@ impl LiveCli {
             return Err("extension bridge server is not running".to_string());
         };
 
-        let sender = server.command_sender();
-        let connected = server.connection_watcher();
-        let bridge = ExtensionBridge::new(sender, connected);
-        let shared: SharedBridge = Arc::new(tokio::sync::Mutex::new(
-            Box::new(bridge) as Box<dyn BrowserBackend + Send>
-        ));
-
-        Ok((shared, self.pending_extension_state.take()))
+        Ok((server.shared_bridge(), self.pending_extension_state.take()))
     }
 
     pub fn activate_extension_bridge(&mut self, shared: SharedBridge) {
@@ -364,6 +357,6 @@ impl LiveCli {
     pub fn extension_connection_watch(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
         self.ws_bridge_server
             .as_ref()
-            .map(WsBridgeServer::connection_watcher)
+            .map(ExtensionBridgeManager::connection_watcher)
     }
 }
