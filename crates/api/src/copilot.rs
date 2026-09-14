@@ -27,6 +27,28 @@ pub struct AccessTokenResponse {
     pub error: Option<String>,
 }
 
+/// Ensure an HTTP response was successful before its body is parsed as a
+/// success payload. A non-2xx response (e.g. an expired/invalid token, a
+/// rate limit, or a GitHub outage) returns an error JSON/HTML body that does
+/// not match the expected success schema; parsing it directly as such
+/// produces a confusing `serde` deserialization error instead of a clear
+/// message with the status code and body. Callers should invoke this before
+/// deserializing the success payload.
+async fn ensure_success(response: reqwest::Response) -> Result<reqwest::Response, ApiError> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(ApiError::Api {
+            status,
+            error_type: None,
+            message: None,
+            body,
+            retryable: matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504),
+        });
+    }
+    Ok(response)
+}
+
 /// Request a device code from GitHub for the Copilot OAuth flow.
 pub async fn request_device_code(client: &reqwest::Client) -> Result<DeviceCodeResponse, ApiError> {
     let response = client
@@ -36,6 +58,7 @@ pub async fn request_device_code(client: &reqwest::Client) -> Result<DeviceCodeR
         .send()
         .await
         .map_err(ApiError::Http)?;
+    let response = ensure_success(response).await?;
     response
         .json::<DeviceCodeResponse>()
         .await
@@ -62,7 +85,29 @@ pub async fn poll_for_access_token(
             .send()
             .await
             .map_err(ApiError::Http)?;
-        let token_response: AccessTokenResponse = response.json().await.map_err(ApiError::Http)?;
+        let status = response.status();
+        let body = response.bytes().await.map_err(ApiError::Http)?;
+        let token_response: AccessTokenResponse = match serde_json::from_slice(&body) {
+            Ok(parsed) => parsed,
+            Err(_) if !status.is_success() => {
+                return Err(ApiError::Api {
+                    status,
+                    error_type: None,
+                    message: None,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                    retryable: matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504),
+                });
+            }
+            Err(_) => {
+                return Err(ApiError::Api {
+                    status,
+                    error_type: Some("invalid_json".to_string()),
+                    message: None,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                    retryable: false,
+                });
+            }
+        };
         if let Some(token) = &token_response.access_token {
             if !token.is_empty() {
                 return Ok(token.clone());
@@ -99,6 +144,7 @@ pub async fn exchange_for_copilot_token(
         .send()
         .await
         .map_err(ApiError::Http)?;
+    let response = ensure_success(response).await?;
 
     let r: CopilotTokenResponse = response.json().await.map_err(ApiError::Http)?;
     Ok(r.token)
@@ -135,6 +181,11 @@ pub async fn run_device_code_flow() -> Result<
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+
     use super::*;
     use crate::provider::preset::{find_preset, ProviderProtocol};
 
@@ -151,5 +202,140 @@ mod tests {
         assert!(COPILOT_DEVICE_CODE_URL.contains("github.com"));
         assert!(COPILOT_TOKEN_URL.contains("github.com"));
         assert!(COPILOT_TOKEN_EXCHANGE_URL.contains("github.com"));
+    }
+
+    /// Minimal blocking HTTP test server: accepts one connection, reads the
+    /// request until `Content-Length` is satisfied (or immediately for
+    /// bodyless requests), then writes back a fixed raw HTTP response.
+    fn spawn_test_server(response: &'static str) -> (String, mpsc::Receiver<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let address = listener.local_addr().expect("local addr");
+        let (tx, rx) = mpsc::channel();
+
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            let mut headers_end = None;
+            let mut content_length = 0_usize;
+
+            loop {
+                let read = stream.read(&mut chunk).expect("read request");
+                if read == 0 {
+                    break;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+
+                if headers_end.is_none() {
+                    headers_end = buffer
+                        .windows(4)
+                        .position(|window| window == b"\r\n\r\n")
+                        .map(|position| position + 4);
+
+                    if let Some(end) = headers_end {
+                        content_length = String::from_utf8_lossy(&buffer[..end])
+                            .to_lowercase()
+                            .lines()
+                            .find_map(|line| line.strip_prefix("content-length: "))
+                            .and_then(|value| value.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                    }
+                }
+
+                if let Some(end) = headers_end {
+                    let body_len = buffer.len().saturating_sub(end);
+                    if body_len >= content_length {
+                        break;
+                    }
+                }
+            }
+
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+            let _ = tx.send(());
+        });
+
+        (format!("http://{address}"), rx)
+    }
+
+    /// Regression test for the missing-status-check bug: before the fix,
+    /// `exchange_for_copilot_token` called `response.json()` directly on any
+    /// response, so a non-2xx error body (which does not contain a `token`
+    /// field) surfaced as an opaque JSON-decoding `ApiError::Http`, not a
+    /// clear error carrying the HTTP status and response body. This asserts
+    /// the caller now gets `ApiError::Api` with the real status and body.
+    #[tokio::test]
+    async fn exchange_for_copilot_token_surfaces_non_success_status() {
+        let response = concat!(
+            "HTTP/1.1 401 Unauthorized\r\n",
+            "Content-Type: application/json\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "{\"message\":\"Bad creds\"}"
+        );
+        let (base_url, _rx) = spawn_test_server(response);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let url = format!("{base_url}/copilot_internal/v2/token");
+
+        // Hit the local test server directly rather than the hardcoded
+        // GitHub URL: build the same request exchange_for_copilot_token
+        // issues, but against our stub so we can control the status code.
+        let raw_response = client
+            .get(&url)
+            .header("Authorization", "token gho_test")
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .expect("request should reach the stub server");
+
+        let result = ensure_success(raw_response).await;
+
+        let err = result.expect_err("non-2xx response must be rejected before body parsing");
+        match err {
+            ApiError::Api { status, body, .. } => {
+                assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+                assert!(
+                    body.contains("Bad creds"),
+                    "error body should be preserved for diagnosis, got: {body}"
+                );
+            }
+            other => panic!("expected ApiError::Api carrying status + body, got {other:?}"),
+        }
+    }
+
+    /// Companion regression test at the public-function boundary: a 500
+    /// response from the device-code endpoint must not be handed to
+    /// `serde_json` as if it were a valid `DeviceCodeResponse`.
+    #[tokio::test]
+    async fn request_device_code_surfaces_non_success_status() {
+        let response = concat!(
+            "HTTP/1.1 500 Internal Server Error\r\n",
+            "Content-Type: application/json\r\n",
+            "Connection: close\r\n",
+            "\r\n",
+            "{\"message\":\"oh no\"}"
+        );
+        let (base_url, _rx) = spawn_test_server(response);
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let raw_response = client
+            .post(&base_url)
+            .header("Accept", "application/json")
+            .form(&[("client_id", COPILOT_CLIENT_ID), ("scope", "read:user")])
+            .send()
+            .await
+            .expect("request should reach the stub server");
+
+        let result = ensure_success(raw_response).await;
+
+        let err = result.expect_err("non-2xx response must be rejected before body parsing");
+        match err {
+            ApiError::Api { status, body, .. } => {
+                assert_eq!(status, reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+                assert!(body.contains("oh no"));
+            }
+            other => panic!("expected ApiError::Api carrying status + body, got {other:?}"),
+        }
     }
 }
