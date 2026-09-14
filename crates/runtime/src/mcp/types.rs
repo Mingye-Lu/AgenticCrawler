@@ -264,6 +264,11 @@ pub enum McpServerManagerError {
     UnknownServer {
         server_name: String,
     },
+    DuplicateToolPrefix {
+        prefix: String,
+        first_server: String,
+        second_server: String,
+    },
 }
 
 impl std::fmt::Display for McpServerManagerError {
@@ -299,6 +304,16 @@ impl std::fmt::Display for McpServerManagerError {
                 write!(f, "unknown MCP tool `{qualified_name}`")
             }
             Self::UnknownServer { server_name } => write!(f, "unknown MCP server `{server_name}`"),
+            Self::DuplicateToolPrefix {
+                prefix,
+                first_server,
+                second_server,
+            } => write!(
+                f,
+                "MCP servers `{first_server}` and `{second_server}` both normalize to the tool \
+                 prefix `{prefix}` — rename one of them in your MCP config so their tools don't \
+                 silently overwrite each other"
+            ),
         }
     }
 }
@@ -311,7 +326,8 @@ impl std::error::Error for McpServerManagerError {
             | Self::InvalidResponse { .. }
             | Self::Timeout { .. }
             | Self::UnknownTool { .. }
-            | Self::UnknownServer { .. } => None,
+            | Self::UnknownServer { .. }
+            | Self::DuplicateToolPrefix { .. } => None,
         }
     }
 }
