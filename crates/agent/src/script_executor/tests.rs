@@ -513,6 +513,41 @@ async fn for_loop_correct_iterations() {
 }
 
 #[tokio::test]
+async fn for_loop_with_tool_calls_builds_registry_once() {
+    let before = crate::registry::NEW_WITH_CORE_TOOLS_CALLS.with(std::cell::Cell::get);
+
+    let mock = MockBridge::new();
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, default_limits());
+
+    let result = executor
+        .execute(script(vec![ScriptNode::ForLoop {
+            variable: "i".to_string(),
+            from: literal(json!(0)),
+            to: literal(json!(5)),
+            steps: vec![tool_call(
+                "scroll",
+                json!({"direction": "down", "pixels": 100}),
+                None,
+            )],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Completed);
+    assert_eq!(result.steps_executed, 5);
+
+    let after = crate::registry::NEW_WITH_CORE_TOOLS_CALLS.with(std::cell::Cell::get);
+    // ToolRegistry::new_with_core_tools() must be called exactly once for
+    // the whole script run (in ScriptExecutor::new), not once per ForLoop
+    // iteration / ToolCall node execution.
+    assert_eq!(
+        after - before,
+        1,
+        "expected exactly one ToolRegistry build for a 5-iteration ForLoop with a ToolCall body"
+    );
+}
+
+#[tokio::test]
 async fn for_each_iterates_array() {
     let mock = MockBridge::new();
     let bridge = make_shared_bridge(mock);
