@@ -6,6 +6,13 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content_overlay.js"],
+      "run_at": "document_start"
+    }
+  ],
   "options_page": "options.html",
   "action": {
     "default_popup": "options.html",

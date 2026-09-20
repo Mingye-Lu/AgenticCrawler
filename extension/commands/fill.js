@@ -47,6 +47,10 @@ async function handleFill(tabId, payload) {
         }
         return document.querySelector(raw);
       }
+      function rectOf(el) {
+        const r = el.getBoundingClientRect();
+        return { x: r.left, y: r.top, width: r.width, height: r.height };
+      }
       const el = resolveElement(${JSON.stringify(selector)});
       if (!el) {
         return { ok: false, error: 'Element not found' };
@@ -60,7 +64,7 @@ async function handleFill(tabId, payload) {
         el.value = ${JSON.stringify(value)};
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
-        return { ok: true };
+        return { ok: true, rect: rectOf(el) };
       }
 
       if (!(el instanceof HTMLInputElement) && !(el instanceof HTMLTextAreaElement)) {
@@ -80,7 +84,7 @@ async function handleFill(tabId, payload) {
 
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true };
+      return { ok: true, rect: rectOf(el) };
     })()`,
     returnByValue: true,
   });
@@ -90,5 +94,6 @@ async function handleFill(tabId, payload) {
     throw new Error(result?.error ?? 'fill failed');
   }
 
+  overlayFlash(tabId, result.rect);
   return { filled: true };
 }

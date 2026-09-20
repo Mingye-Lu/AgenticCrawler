@@ -36,7 +36,13 @@ async function handleScreenshot(tabId, payload) {
     }
   }
 
-  const result = await cdp(tabId, 'Page.captureScreenshot', captureOpts);
+  await overlaySuspend(tabId, true);
+  let result;
+  try {
+    result = await cdp(tabId, 'Page.captureScreenshot', captureOpts);
+  } finally {
+    await overlaySuspend(tabId, false);
+  }
 
   const base64 = result.data;
   if (!base64) throw new Error('captureScreenshot returned no data');

@@ -21,7 +21,8 @@ try {
     'commands/click_at.js',
     'commands/cookies.js',
     'commands/set_device.js',
-    'commands/poll_observations.js'
+    'commands/poll_observations.js',
+    'commands/overlay.js'
   );
 } catch (e) {
   console.error('Failed to import command scripts:', e);
@@ -335,7 +336,7 @@ async function connect(timeoutMs = 0) {
       }
       wsConnected = true;
       reconnectDelay = 1000;
-      setBadge('', '#00aa00');
+      setBadge('ON', '#00aa00');
       startKeepalive();
       finish(true);
     };
@@ -442,6 +443,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message && message.type === 'acrawl_overlay_hello') {
+    sendResponse(overlayHello(_sender));
+    return false;
+  }
+
   return false;
 });
 
@@ -476,7 +482,13 @@ async function handleCommand(cmd) {
         result = await handleClosePage(cmd.payload || {});
         break;
       case 'switch_tab':
-        result = await handleSwitchTab(cmd.payload || {});
+        {
+          const previousTabId = getActiveTabId();
+          result = await handleSwitchTab(cmd.payload || {});
+          const tabId = getActiveTabId();
+          if (previousTabId && previousTabId !== tabId) overlayClear(previousTabId);
+          if (tabId) overlayActivity(tabId);
+        }
         break;
       case 'close':
         result = await handleClose();
@@ -495,6 +507,7 @@ async function handleCommand(cmd) {
         }
         await assertInAgentGroup(tabId);
         await ensureObservationEnabled(tabId);
+        if (cmd.action !== 'poll_observations') overlayActivity(tabId);
         switch (cmd.action) {
           case 'navigate':
             result = await handleNavigate(tabId, cmd.payload || {});
@@ -564,6 +577,9 @@ async function handleCommand(cmd) {
             break;
           case 'poll_observations':
             result = await handlePollObservations(tabId, cmd.payload || {});
+            break;
+          case 'highlight_changes':
+            result = await handleHighlightChanges(tabId, cmd.payload || {});
             break;
           default:
             sendResponse(cmd.id, false, null, `Unknown action: ${cmd.action}`);
@@ -706,6 +722,7 @@ async function handleClosePage(payload) {
   if (tabId) {
     // A tab the user moved out of the group is theirs: revoke it, never close it.
     await assertInAgentGroup(tabId);
+    await overlayClear(tabId);
     delete managedTabs[pageIndex];
     await releaseTab(tabId);
     await saveState();

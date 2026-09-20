@@ -27,6 +27,7 @@ async function handleHover(tabId, payload) {
     throw new Error(`Element not found: ${selector}`);
   }
 
+  overlayRipple(tabId, coords.x, coords.y, 'hover');
   await cdp(tabId, 'Input.dispatchMouseEvent', {
     type: 'mouseMoved',
     x: coords.x,

@@ -6,6 +6,16 @@ const saveButton = document.getElementById('save');
 const testButton = document.getElementById('test');
 const statusSpan = document.getElementById('status');
 
+// Display toggles persist immediately; the service worker picks them up via storage.onChanged.
+const toggleKeys = ['showIndicators', 'highlightChanges'];
+chrome.storage.local.get(Object.fromEntries(toggleKeys.map((key) => [key, true])), (items) => {
+  for (const key of toggleKeys) {
+    const box = document.getElementById(key);
+    box.checked = items[key] !== false;
+    box.addEventListener('change', () => chrome.storage.local.set({ [key]: box.checked }));
+  }
+});
+
 // Load settings on page load
 document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.local.get({ port: 19876, token: '' }, (items) => {
