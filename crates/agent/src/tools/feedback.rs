@@ -14,6 +14,7 @@ use crate::BrowserContext;
 use super::page_map::{apply_page_map_caps, normalize_url};
 
 const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(3);
+const HIGHLIGHT_TIMEOUT: Duration = Duration::from_millis(500);
 const FEEDBACK_TREE_DEPTH: usize = 5;
 const DIFF_SNIPPET_DEPTH: usize = 2;
 const MAX_DIFF_ITEMS: usize = 30;
@@ -313,34 +314,66 @@ fn full_snapshot_value(root: &AriaNode) -> Value {
 
 #[must_use]
 pub fn build_diff_page_state(prev: Option<&AriaNode>, curr: Option<&AriaNode>) -> Value {
+    diff_page_state(prev, curr).0
+}
+
+/// Like [`build_diff_page_state`], but also returns the structured diff when it
+/// is a real element-level diff worth highlighting in the browser (not a
+/// whole-page replacement or a full-snapshot fallback).
+fn diff_page_state(
+    prev: Option<&AriaNode>,
+    curr: Option<&AriaNode>,
+) -> (Value, Option<AriaTreeDiff>) {
     match (prev, curr) {
-        (None, None) => Value::String("no visible change".to_string()),
+        (None, None) => (Value::String("no visible change".to_string()), None),
         (None, Some(curr)) => {
             let mut diff = AriaTreeDiff::default();
             push_added_subtree(&mut diff, curr, &[]);
-            Value::String(render_diff(&diff))
+            (Value::String(render_diff(&diff)), None)
         }
         (Some(prev), None) => {
             let mut diff = AriaTreeDiff::default();
             push_removed_subtree(&mut diff, prev, &[]);
-            Value::String(render_diff(&diff))
+            (Value::String(render_diff(&diff)), None)
         }
         (Some(prev), Some(curr)) => {
             if !same_identity(prev, curr, &[]) {
                 let mut diff = AriaTreeDiff::default();
                 push_removed_subtree(&mut diff, prev, &[]);
                 push_added_subtree(&mut diff, curr, &[]);
-                return Value::String(render_diff(&diff));
+                return (Value::String(render_diff(&diff)), None);
             }
 
             let diff = diff_trees(prev, curr);
             if should_fallback(&diff) {
-                full_snapshot_value(curr)
+                (full_snapshot_value(curr), None)
             } else {
-                Value::String(render_diff(&diff))
+                (Value::String(render_diff(&diff)), Some(diff))
             }
         }
     }
+}
+
+/// DOM ref ids (`eN`) of added and state-changed elements. Nodes that only have
+/// an identity key (no stamped ref) cannot be located in the page and are dropped.
+fn highlight_refs(diff: &AriaTreeDiff) -> (Vec<String>, Vec<String>) {
+    fn is_dom_ref(id: &str) -> bool {
+        id.strip_prefix('e')
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+    }
+    let added = diff
+        .added
+        .iter()
+        .map(|(id, _)| id.clone())
+        .filter(|id| is_dom_ref(id))
+        .collect();
+    let changed = diff
+        .changed
+        .iter()
+        .map(|change| change.ref_id.clone())
+        .filter(|id| is_dom_ref(id))
+        .collect();
+    (added, changed)
 }
 
 fn fallback_value() -> Value {
@@ -450,7 +483,7 @@ fn page_state_from_feedback_map(
     interacted_selector: Option<&str>,
     widen: bool,
     mut pm: Value,
-) -> Value {
+) -> (Value, Option<AriaTreeDiff>) {
     // Enrich in place before caching so stored snapshots preserve regions and
     // active_dialog for later scoped interactions.
     super::page_map::enrich_semantic_sections(&mut pm);
@@ -469,7 +502,7 @@ fn page_state_from_feedback_map(
     let Some(mut current_tree) = pm.get("tree").and_then(parse_raw_tree) else {
         let page_state = build_page_state_from_map(pm.clone());
         browser.set_page_snapshot(&cache_key, None, pm);
-        return page_state;
+        return (page_state, None);
     };
     assign_refs_and_prune(&mut current_tree, browser.ref_map_mut());
 
@@ -495,20 +528,43 @@ fn page_state_from_feedback_map(
         widen,
     );
 
-    let page_state = match previous_tree.as_ref() {
-        Some(previous_tree) => build_diff_page_state(
+    // Highlights come from the full-page trees so changes outside the interacted
+    // scope (toasts, new dialogs) are boxed even though the model's diff is scoped.
+    let highlight_diff = previous_tree
+        .as_ref()
+        .and_then(|previous_tree| diff_page_state(Some(previous_tree), Some(&current_tree)).1);
+
+    let (page_state, _) = match previous_tree.as_ref() {
+        Some(previous_tree) => diff_page_state(
             scoped_tree(previous_tree, previous_snapshot.as_ref(), &scope),
             scoped_tree(&current_tree, Some(&pm), &scope),
         ),
-        None => scoped_tree(&current_tree, Some(&pm), &scope)
-            .map_or_else(|| full_snapshot_value(&current_tree), full_snapshot_value),
+        None => (
+            scoped_tree(&current_tree, Some(&pm), &scope)
+                .map_or_else(|| full_snapshot_value(&current_tree), full_snapshot_value),
+            None,
+        ),
     };
 
     browser.set_page_snapshot(&cache_key, None, pm);
     // Feedback snapshots are always full-page, so the freshly walked tree is
     // the new diff/fingerprint baseline.
     crawl_state.last_aria_tree = Some(current_tree);
-    page_state
+    (page_state, highlight_diff)
+}
+
+/// Asks the backend to box added/changed elements in the page (extension mode
+/// only; other backends no-op). Never fails or delays the tool call for long.
+async fn highlight_changes_best_effort(browser: &mut BrowserContext, diff: &AriaTreeDiff) {
+    let (added, changed) = highlight_refs(diff);
+    if added.is_empty() && changed.is_empty() {
+        return;
+    }
+    let _ = timeout(HIGHLIGHT_TIMEOUT, async {
+        let mut bridge = browser.acquire_bridge().await.ok()?;
+        bridge.highlight_changes(&added, &changed).await.ok()
+    })
+    .await;
 }
 
 /// Best-effort post-action page state for interaction tool responses.
@@ -531,8 +587,11 @@ pub(crate) async fn post_action_page_state(
 
     match result {
         Ok(Ok(pm)) => {
-            let page_state =
+            let (page_state, diff) =
                 page_state_from_feedback_map(browser, crawl_state, interacted_selector, widen, pm);
+            if let Some(diff) = diff {
+                highlight_changes_best_effort(browser, &diff).await;
+            }
             if let Some(msg) = audit_silent_submission(browser, interaction_kind, &page_state).await
             {
                 return Err(ToolExecutionError::new(msg.to_string()));
@@ -626,8 +685,9 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::{
-        build_diff_page_state, build_page_state_from_map, fallback_value, post_action_page_state,
-        InteractionKind, FEEDBACK_TREE_DEPTH, RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE,
+        build_diff_page_state, build_page_state_from_map, fallback_value, highlight_refs,
+        post_action_page_state, AriaTreeDiff, InteractionKind, StateChange, FEEDBACK_TREE_DEPTH,
+        RECAPTCHA_V3_SILENT_SUBMISSION_MESSAGE,
     };
     use crate::aria::{to_yaml, AriaNode, AriaStates};
     use crate::state::CrawlState;
@@ -1064,6 +1124,29 @@ mod tests {
 
         assert!(rendered.contains("added:"));
         assert!(rendered.contains("dialog \"Confirm delete\""));
+    }
+
+    #[test]
+    fn highlight_refs_keep_only_stamped_dom_refs() {
+        let diff = AriaTreeDiff {
+            added: vec![
+                ("e7".to_string(), String::new()),
+                ("button|Go|".to_string(), String::new()),
+            ],
+            removed: vec![("e9".to_string(), String::new())],
+            changed: vec![StateChange {
+                ref_id: "e12".to_string(),
+                role: "checkbox".to_string(),
+                name: None,
+                before: String::new(),
+                after: String::new(),
+            }],
+        };
+
+        let (added, changed) = highlight_refs(&diff);
+
+        assert_eq!(added, vec!["e7"]);
+        assert_eq!(changed, vec!["e12"]);
     }
 
     #[test]
