@@ -39,6 +39,12 @@ const managedTabs = {};
 let nextPageIndex = 0;
 let activePageIndex = 0;
 
+// Tab group boundary: the agent controls exactly the tabs in this group.
+const GROUP_TITLE = 'acrawl';
+let agentGroupId = null;
+const adoptedTabs = new Set(); // tabIds the user/popups put in the group; never closed by acrawl
+let groupingInFlight = 0; // >0 while we are grouping a tab; tab listeners ignore events then
+
 // Observation buffers: tabId -> { events: [], currentBytes: 0 }
 const observationBuffers = new Map();
 const observationRequestMetadata = new Map();
@@ -597,16 +603,51 @@ function getActiveTabId() {
 
 // ----------- Tab management -----------
 
+async function getAgentGroup() {
+  if (agentGroupId === null) return null;
+  try {
+    return await chrome.tabGroups.get(agentGroupId);
+  } catch {
+    agentGroupId = null;
+    return null;
+  }
+}
+
+async function addToAgentGroup(tabId) {
+  groupingInFlight++;
+  try {
+    const group = await getAgentGroup();
+    if (group) {
+      await chrome.tabs.group({ groupId: group.id, tabIds: [tabId] });
+    } else {
+      agentGroupId = await chrome.tabs.group({ tabIds: [tabId] });
+      await chrome.tabGroups.update(agentGroupId, { title: GROUP_TITLE, color: 'orange' });
+    }
+  } finally {
+    groupingInFlight--;
+  }
+}
+
 async function handleNewPage(payload) {
   const url = payload.url || 'about:blank';
+  const group = await getAgentGroup();
   const tab = await new Promise((resolve, reject) => {
-    chrome.tabs.create({ url, active: false }, (t) => {
+    const props = { url, active: false };
+    if (group) props.windowId = group.windowId; // tabs.group cannot span windows
+    chrome.tabs.create(props, (t) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else resolve(t);
     });
   });
   const pageIndex = nextPageIndex++;
   managedTabs[pageIndex] = tab.id;
+  try {
+    await addToAgentGroup(tab.id);
+  } catch (e) {
+    delete managedTabs[pageIndex];
+    await chrome.tabs.remove(tab.id).catch(() => {});
+    throw e;
+  }
   activePageIndex = pageIndex;
   await saveState();
   return { pageIndex };
@@ -709,6 +750,8 @@ async function saveState() {
       managedTabs: JSON.parse(JSON.stringify(managedTabs)),
       nextPageIndex,
       activePageIndex,
+      agentGroupId,
+      adoptedTabs: [...adoptedTabs],
     }, resolve);
   });
 }
@@ -716,7 +759,13 @@ async function saveState() {
 async function loadState() {
   return new Promise((resolve) => {
     chrome.storage.session.get(
-      { managedTabs: {}, nextPageIndex: 0, activePageIndex: 0 },
+      {
+        managedTabs: {},
+        nextPageIndex: 0,
+        activePageIndex: 0,
+        agentGroupId: null,
+        adoptedTabs: [],
+      },
       resolve
     );
   });
@@ -727,6 +776,8 @@ async function restoreState() {
   Object.assign(managedTabs, state.managedTabs);
   nextPageIndex = state.nextPageIndex;
   activePageIndex = state.activePageIndex;
+  agentGroupId = state.agentGroupId;
+  state.adoptedTabs.forEach((id) => adoptedTabs.add(id));
 }
 
 // ----------- Alarms watchdog -----------
