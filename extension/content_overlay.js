@@ -155,7 +155,8 @@
     for (const [ref, kind] of jobs) {
       if (!REF_RE.test(ref)) continue;
       const hit = findRef(ref, document, []);
-      if (!hit) continue;
+      // A box over the whole page is noise: the diff root (BODY/HTML) is never a real change.
+      if (!hit || hit.el === hit.el.ownerDocument.body || hit.el === hit.el.ownerDocument.documentElement) continue;
       const box = { div: add('box ' + kind, {}), el: hit.el, frames: hit.frames };
       place(box);
       boxes.push(box);
