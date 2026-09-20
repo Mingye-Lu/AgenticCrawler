@@ -16,9 +16,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// One retry: right after a navigation the content script may not be listening yet,
+// and a dropped ripple/border is otherwise silent.
 function overlaySend(tabId, msg) {
-  return chrome.tabs
-    .sendMessage(tabId, { type: 'acrawl_overlay', ...msg }, { frameId: 0 })
+  const send = () => chrome.tabs.sendMessage(tabId, { type: 'acrawl_overlay', ...msg }, { frameId: 0 });
+  return send()
+    .catch(() => new Promise((resolve) => setTimeout(resolve, 150)).then(send))
     .catch(() => {});
 }
 
