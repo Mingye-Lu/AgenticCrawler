@@ -743,7 +743,9 @@ async function handleSwitchTab(payload) {
   });
   activePageIndex = index;
   await saveState();
-  return { switched: true, pageIndex: index };
+  // Indices are sparse once tabs close or leave the group; report the valid ones.
+  const pageIndices = Object.keys(managedTabs).map(Number).sort((a, b) => a - b);
+  return { switched: true, pageIndex: index, tab_count: pageIndices.length, page_indices: pageIndices };
 }
 
 async function handleClose() {
