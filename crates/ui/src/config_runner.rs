@@ -55,7 +55,17 @@ fn run_config_inner(action: ConfigAction, json: bool) -> Result<(), ConfigError>
             }
             Ok(())
         }
-        ConfigAction::Set { key, value } => config_set(&key, &value),
+        ConfigAction::Set { key, value } => {
+            config_set(&key, &value)?;
+            // Enabling the extension backend should mint the bridge token right
+            // away so `config get extension_bridge_token` returns a real value
+            // instead of `null` (token generation otherwise only happens on the
+            // first browser tool call, which is what needs the token to connect).
+            if key == "browser_backend" && value == "extension" {
+                let _ = agent::extension_bridge::ensure_bridge_token();
+            }
+            Ok(())
+        }
         ConfigAction::Unset { key } => config_unset(&key),
         ConfigAction::Path => {
             let path = config_path();

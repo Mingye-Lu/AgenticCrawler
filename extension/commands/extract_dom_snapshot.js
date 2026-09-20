@@ -106,7 +106,7 @@ async function handleExtractDomSnapshot(tabId, payload) {
   });
 
   if (res.exceptionDetails) {
-    throw new Error(res.exceptionDetails.text || 'extract_dom_snapshot script threw exception');
+    throw new Error(cdpExceptionMessage(res.exceptionDetails, 'extract_dom_snapshot script threw exception'));
   }
 
   return res.result?.value || { elements: [] };

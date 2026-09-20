@@ -92,7 +92,7 @@ impl WsBridgeServer {
         let listener = try_bind_with_retry(addr).map_err(WsBridgeError::Bind)?;
         let actual_port = listener.local_addr().map_err(WsBridgeError::Bind)?.port();
 
-        let bridge_file_path = config_home_dir().join("bridge.json");
+        let bridge_file_path = bridge_file_path();
         let bridge_info = serde_json::json!({
             "port": actual_port,
             "pid": std::process::id(),
@@ -328,11 +328,17 @@ fn bind_with_reuse(addr: SocketAddr) -> std::io::Result<TcpListener> {
     TcpListener::from_std(socket.into())
 }
 
+/// Bind `addr`, retrying once after a short delay to ride out a predecessor's
+/// socket teardown.
+///
+/// Never deletes `bridge.json` on conflict: it is only a discovery record, so
+/// removing it cannot free a bound port and would discard the record of the
+/// process that legitimately owns that port. The winner of the bind rewrites
+/// the file in [`WsBridgeServer::start`].
 fn try_bind_with_retry(addr: SocketAddr) -> std::io::Result<TcpListener> {
     match bind_with_reuse(addr) {
         Ok(listener) => Ok(listener),
         Err(e) if is_port_conflict(&e) => {
-            clean_stale_bridge_file(addr.port());
             std::thread::sleep(std::time::Duration::from_millis(200));
             bind_with_reuse(addr)
         }
@@ -344,17 +350,28 @@ fn is_port_conflict(e: &std::io::Error) -> bool {
     matches!(e.raw_os_error(), Some(10048 | 10013 | 98 | 48))
 }
 
-fn clean_stale_bridge_file(expected_port: u16) {
-    let bridge_file = config_home_dir().join("bridge.json");
-    let Ok(content) = std::fs::read_to_string(&bridge_file) else {
-        return;
-    };
-    let Ok(info) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return;
-    };
-    if info["port"].as_u64() == Some(u64::from(expected_port)) {
-        let _ = std::fs::remove_file(&bridge_file);
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeFileInfo {
+    pub port: u16,
+    pub pid: u32,
+}
+
+#[must_use]
+pub fn bridge_file_path() -> PathBuf {
+    config_home_dir().join("bridge.json")
+}
+
+/// Read the bridge discovery record written by the port's current owner.
+///
+/// Advisory only: a crashed process leaves the file behind, so `pid` is a hint
+/// for reporting ownership, never proof that a server is live.
+#[must_use]
+pub fn read_bridge_file() -> Option<BridgeFileInfo> {
+    let content = std::fs::read_to_string(bridge_file_path()).ok()?;
+    let info = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    let port = u16::try_from(info["port"].as_u64()?).ok()?;
+    let pid = u32::try_from(info["pid"].as_u64()?).ok()?;
+    Some(BridgeFileInfo { port, pid })
 }
 
 // ---------------------------------------------------------------------------
@@ -532,5 +549,49 @@ mod tests {
         let map = limiter.lock().await;
         assert!(map[&ip1].failures >= 5);
         assert!(map[&ip2].failures < 5);
+    }
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn failed_bind_preserves_existing_owner_discovery_record() {
+        let _guard = env_lock();
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+
+        let temp =
+            std::env::temp_dir().join(format!("acrawl_ws_bridge_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("create temp config home");
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp);
+
+        let first = rt
+            .block_on(WsBridgeServer::start(0, "token-a".to_string()))
+            .expect("first bridge server starts on an ephemeral port");
+        let owner = read_bridge_file().expect("first server writes a discovery record");
+        assert_eq!(owner.port, first.port());
+        assert_eq!(owner.pid, std::process::id());
+
+        let second = rt.block_on(WsBridgeServer::start(first.port(), "token-b".to_string()));
+        assert!(
+            second.is_err(),
+            "binding an already-owned port must fail rather than steal the port"
+        );
+        assert_eq!(
+            read_bridge_file(),
+            Some(owner),
+            "a failed bind must leave the live owner's discovery record untouched"
+        );
+
+        drop(first);
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

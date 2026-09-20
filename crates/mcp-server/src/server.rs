@@ -7,16 +7,17 @@ use acrawl_core::{
     ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage, MessageRole,
     RuntimeError, TokenUsage, ToolEffect, ToolSpec,
 };
+use agent::extension_bridge::{connect_timeout, extension_backend_selected};
 use agent::script_manager::ScriptManager;
 use agent::{mvp_tool_specs, ToolRegistry};
-use agent::{CrawlResult, CrawlerAgent};
+use agent::{CrawlResult, CrawlerAgent, ExtensionBridgeManager};
 use api::provider::{model_api_id, ProviderClient, ProviderRegistry};
 use api::{
     ContentBlockDelta, ContentBlockDeltaEvent, InputContentBlock, InputMessage, MessageRequest,
     StreamEvent,
 };
 use api::{OutputContentBlock, ToolChoice, ToolDefinition};
-use browser::{BrowserBackend, BrowserContext, PlaywrightBridge};
+use browser::{BrowserBackend, BrowserContext, PlaywrightBridge, SharedBridge};
 use runtime::{encode_mcp_frame, read_mcp_frame};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -49,6 +50,15 @@ const SCRIPT_TOOLS: &[&str] = &[
 enum TransportMode {
     Framed,
     LineDelimited,
+}
+
+/// Which browser backend owns the session's current `BrowserContext`. Tracked
+/// so `ensure_browser_context` can rebuild the context when the persisted
+/// `browser_backend` selection changes mid-process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BrowserBackendKind {
+    CloakBrowser,
+    Extension,
 }
 
 fn set_output_mode(mode: TransportMode) {
@@ -277,11 +287,80 @@ fn execute_browser_tool(
     })
 }
 
+/// Extension mode drives the user's own logged-in browser, so silently falling
+/// back to the bundled headless browser would crawl with a different, usually
+/// unauthenticated session. Every failure path reports instead of substituting.
+fn ensure_extension_bridge(
+    bridge_manager: &mut Option<ExtensionBridgeManager>,
+    rt: &tokio::runtime::Runtime,
+) -> Result<SharedBridge, String> {
+    if bridge_manager.is_none() {
+        *bridge_manager = Some(rt.block_on(ExtensionBridgeManager::start_from_settings())?);
+    }
+    let manager = bridge_manager
+        .as_mut()
+        .ok_or_else(|| "extension bridge manager missing after start".to_string())?;
+
+    if !manager.is_connected() {
+        let timeout = connect_timeout();
+        if !rt.block_on(manager.wait_for_connection(timeout)) {
+            return Err(format!(
+                "extension mode is enabled but the acrawl Bridge extension did not connect \
+                 within {secs}s on port {port}. Load the extension and set its token to \
+                 `extension_bridge_token` from settings.json. To use the bundled headless \
+                 browser instead, run `acrawl config unset browser_backend`.",
+                secs = timeout.as_secs(),
+                port = manager.port(),
+            ));
+        }
+    }
+
+    Ok(manager.shared_bridge())
+}
+
+fn ensure_browser_context(
+    browser: &mut Option<BrowserContext>,
+    backend: &mut Option<BrowserBackendKind>,
+    bridge_manager: &mut Option<ExtensionBridgeManager>,
+    rt: &tokio::runtime::Runtime,
+) -> Result<(), String> {
+    let selected = if extension_backend_selected() {
+        BrowserBackendKind::Extension
+    } else {
+        BrowserBackendKind::CloakBrowser
+    };
+
+    // Reuse the existing context only while it still matches the persisted
+    // backend selection. When the user flips `browser_backend` mid-process the
+    // old context (CloakBrowser or extension) is stale and must be rebuilt.
+    if browser.is_some() && *backend == Some(selected) {
+        return Ok(());
+    }
+
+    let shared = match selected {
+        BrowserBackendKind::Extension => ensure_extension_bridge(bridge_manager, rt)?,
+        BrowserBackendKind::CloakBrowser => {
+            let bridge = rt
+                .block_on(PlaywrightBridge::new())
+                .map_err(|e| e.to_string())?;
+            std::sync::Arc::new(tokio::sync::Mutex::new(
+                Box::new(bridge) as Box<dyn BrowserBackend + Send>
+            ))
+        }
+    };
+
+    *browser = Some(BrowserContext::new(shared));
+    *backend = Some(selected);
+    Ok(())
+}
+
 fn execute_script_tool(
     name: &str,
     input: &Value,
     script_manager: &mut ScriptManager,
     browser: &mut Option<BrowserContext>,
+    backend: &mut Option<BrowserBackendKind>,
+    bridge_manager: &mut Option<ExtensionBridgeManager>,
     rt: &tokio::runtime::Runtime,
 ) -> Result<String, String> {
     match name {
@@ -307,20 +386,8 @@ fn execute_script_tool(
                 Err(e) => return Err(e.to_string()),
             };
 
-            // Ensure browser is initialized for script execution
-            if browser.is_none() {
-                match rt.block_on(PlaywrightBridge::new()) {
-                    Ok(bridge) => {
-                        let shared = std::sync::Arc::new(tokio::sync::Mutex::new(
-                            Box::new(bridge) as Box<dyn BrowserBackend + Send>
-                        ));
-                        *browser = Some(BrowserContext::new(shared));
-                    }
-                    Err(e) => {
-                        return Err(format!("failed to launch browser for script: {e}"));
-                    }
-                }
-            }
+            ensure_browser_context(browser, backend, bridge_manager, rt)
+                .map_err(|e| format!("failed to launch browser for script: {e}"))?;
 
             let browser_ctx = browser.as_ref().unwrap().clone();
             match rt.block_on(async { script_manager.spawn_script(task, browser_ctx) }) {
@@ -393,7 +460,9 @@ pub trait GoalExecutor {
     fn execute(&self, request: &RunGoalRequest) -> Result<CrawlResult, RunGoalExecutionError>;
 }
 
-pub struct RealGoalExecutor;
+pub struct RealGoalExecutor {
+    extension_bridge: Option<SharedBridge>,
+}
 
 fn resolve_model(model: Option<&str>) -> Result<String, String> {
     if let Some(m) = model {
@@ -875,6 +944,10 @@ impl GoalExecutor for RealGoalExecutor {
         if let Some(max_steps) = request.max_steps {
             agent = agent.with_max_steps(max_steps);
         }
+        if let Some(bridge) = self.extension_bridge.clone() {
+            agent.set_shared_bridge(bridge);
+            agent.set_extension_mode(true);
+        }
 
         let _guard = match JOB_MUTEX.lock() {
             Ok(guard) => guard,
@@ -888,15 +961,48 @@ impl GoalExecutor for RealGoalExecutor {
                 RunGoalExecutionError::Internal(format!("failed to create tokio runtime: {error}"))
             })?;
 
-        runtime
-            .block_on(agent.run_with_system_prompt(&request.goal, api_client, system_prompt))
-            .map_err(|error| RunGoalExecutionError::Crawl(error.to_string()))
+        // Give the goal its own extension tab so its navigation never replaces
+        // the persistent MCP session's page (index 0), which direct/script tools
+        // may still be using. The tab is closed again after the goal completes.
+        let isolated_page = match &self.extension_bridge {
+            Some(bridge) => {
+                let index = runtime
+                    .block_on(async {
+                        let mut guard = bridge.lock().await;
+                        guard.new_page(None).await
+                    })
+                    .map_err(|error| {
+                        RunGoalExecutionError::Internal(format!(
+                            "failed to allocate isolated extension page: {error}"
+                        ))
+                    })?;
+                agent.set_extension_page_index(index);
+                Some(index)
+            }
+            None => None,
+        };
+
+        let result = runtime.block_on(agent.run_with_system_prompt(
+            &request.goal,
+            api_client,
+            system_prompt,
+        ));
+
+        if let (Some(bridge), Some(index)) = (&self.extension_bridge, isolated_page) {
+            let _ = runtime.block_on(async {
+                let mut guard = bridge.lock().await;
+                guard.close_page(index).await
+            });
+        }
+
+        result.map_err(|error| RunGoalExecutionError::Crawl(error.to_string()))
     }
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn handle_run_goal(id: Option<Value>, arguments: Value) {
-    match execute_run_goal(&RealGoalExecutor, &arguments) {
+fn handle_run_goal(id: Option<Value>, arguments: Value, extension_bridge: Option<SharedBridge>) {
+    let executor = RealGoalExecutor { extension_bridge };
+    match execute_run_goal(&executor, &arguments) {
         RunGoalOutcome::ToolResult(response) => send_response(&JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
             id,
@@ -907,15 +1013,21 @@ fn handle_run_goal(id: Option<Value>, arguments: Value) {
     }
 }
 
+struct McpSession {
+    registry: ToolRegistry,
+    browser: Option<BrowserContext>,
+    backend: Option<BrowserBackendKind>,
+    bridge_manager: Option<ExtensionBridgeManager>,
+    script_manager: ScriptManager,
+    crawl_state: agent::state::CrawlState,
+}
+
 #[allow(clippy::too_many_lines)]
 fn handle_tools_call(
     id: Option<Value>,
     params: Option<Value>,
-    registry: &ToolRegistry,
-    browser: &mut Option<BrowserContext>,
-    script_manager: &mut ScriptManager,
+    session: &mut McpSession,
     rt: &tokio::runtime::Runtime,
-    crawl_state: &mut agent::state::CrawlState,
 ) {
     let Some(params) = params else {
         send_error(id, -32602, "missing params".to_string());
@@ -930,7 +1042,36 @@ fn handle_tools_call(
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
     if name == "run_goal" {
-        handle_run_goal(id, arguments);
+        // Validate arguments BEFORE waiting on the extension bridge. A malformed
+        // request (missing `goal`, unknown tool, out-of-range `max_steps`) must
+        // return an immediate -32602 rather than block for the full connect
+        // timeout and then surface a misleading bridge error.
+        if let Err(outcome) = parse_run_goal_request(&arguments) {
+            match outcome {
+                RunGoalOutcome::JsonRpcError { code, message } => {
+                    send_error(id, code, message);
+                    return;
+                }
+                RunGoalOutcome::ToolResult(_) => {}
+            }
+        }
+
+        let extension_bridge = if extension_backend_selected() {
+            match ensure_extension_bridge(&mut session.bridge_manager, rt) {
+                Ok(bridge) => Some(bridge),
+                Err(e) => {
+                    send_error(
+                        id,
+                        -32603,
+                        format!("failed to attach extension bridge: {e}"),
+                    );
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        handle_run_goal(id, arguments, extension_bridge);
         return;
     }
 
@@ -954,7 +1095,15 @@ fn handle_tools_call(
     }
 
     if SCRIPT_TOOLS.contains(&name) {
-        match execute_script_tool(name, &arguments, script_manager, browser, rt) {
+        match execute_script_tool(
+            name,
+            &arguments,
+            &mut session.script_manager,
+            &mut session.browser,
+            &mut session.backend,
+            &mut session.bridge_manager,
+            rt,
+        ) {
             Ok(output) => {
                 let result = json!({
                     "content": [{ "type": "text", "text": output }],
@@ -983,37 +1132,32 @@ fn handle_tools_call(
         return;
     }
 
-    if browser.is_none() {
-        match rt.block_on(PlaywrightBridge::new()) {
-            Ok(bridge) => {
-                let shared = std::sync::Arc::new(tokio::sync::Mutex::new(
-                    Box::new(bridge) as Box<dyn BrowserBackend + Send>
-                ));
-                *browser = Some(BrowserContext::new(shared));
-            }
-            Err(e) => {
-                let result = json!({
-                    "content": [{ "type": "text", "text": format!("Error: failed to launch browser — {e}") }],
-                    "isError": true,
-                });
-                send_response(&JsonRpcResponse {
-                    jsonrpc: "2.0".to_string(),
-                    id,
-                    result: Some(result),
-                    error: None,
-                });
-                return;
-            }
-        }
+    if let Err(e) = ensure_browser_context(
+        &mut session.browser,
+        &mut session.backend,
+        &mut session.bridge_manager,
+        rt,
+    ) {
+        let result = json!({
+            "content": [{ "type": "text", "text": format!("Error: failed to launch browser — {e}") }],
+            "isError": true,
+        });
+        send_response(&JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(result),
+            error: None,
+        });
+        return;
     }
 
     match execute_browser_tool(
         name,
         &arguments,
-        registry,
-        browser.as_mut().unwrap(),
+        &session.registry,
+        session.browser.as_mut().unwrap(),
         rt,
-        crawl_state,
+        &mut session.crawl_state,
     ) {
         Ok(result) => {
             send_response(&JsonRpcResponse {
@@ -1046,12 +1190,16 @@ pub fn run_mcp_server() {
         .build()
         .expect("failed to create tokio runtime");
 
-    let mut browser: Option<BrowserContext> = None;
-    let mut crawl_state = agent::state::CrawlState::default();
-    let registry = ToolRegistry::new_with_core_tools();
     let settings = runtime::load_settings();
     let script_settings = settings.script.unwrap_or_default();
-    let mut script_manager = ScriptManager::new(script_settings);
+    let mut session = McpSession {
+        registry: ToolRegistry::new_with_core_tools(),
+        browser: None,
+        backend: None,
+        bridge_manager: None,
+        script_manager: ScriptManager::new(script_settings),
+        crawl_state: agent::state::CrawlState::default(),
+    };
 
     let stdin = io::stdin().lock();
     let mut reader = BufReader::new(stdin);
@@ -1090,15 +1238,7 @@ pub fn run_mcp_server() {
             "notifications/initialized" => {}
             "tools/list" => tools_list_response(request.id),
             "tools/call" => {
-                handle_tools_call(
-                    request.id,
-                    request.params,
-                    &registry,
-                    &mut browser,
-                    &mut script_manager,
-                    &rt,
-                    &mut crawl_state,
-                );
+                handle_tools_call(request.id, request.params, &mut session, &rt);
             }
             method => {
                 send_error(request.id, -32601, format!("method not found: {method}"));
@@ -1118,6 +1258,77 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         set_output_mode(TransportMode::Framed);
         f()
+    }
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn extension_backend_reports_instead_of_falling_back_to_cloakbrowser() {
+        let _guard = env_lock();
+        let temp = std::env::temp_dir().join(format!("acrawl_mcp_ext_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("create temp config home");
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp);
+        std::fs::write(
+            temp.join("settings.json"),
+            r#"{"browser_backend":"extension","extension_bridge_port":0,"extension_bridge_connect_timeout_secs":0}"#,
+        )
+        .expect("write settings");
+
+        assert!(
+            extension_backend_selected(),
+            "settings.json must drive backend selection in MCP mode"
+        );
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let mut browser: Option<BrowserContext> = None;
+        let mut backend: Option<BrowserBackendKind> = None;
+        let mut bridge_manager: Option<ExtensionBridgeManager> = None;
+
+        let error = ensure_browser_context(&mut browser, &mut backend, &mut bridge_manager, &rt)
+            .expect_err("must not silently substitute the bundled browser");
+
+        assert!(error.contains("did not connect"), "{error}");
+        assert!(
+            error.contains("config unset browser_backend"),
+            "error must name the escape hatch: {error}"
+        );
+        assert!(
+            browser.is_none(),
+            "no browser context may be published when the extension is absent"
+        );
+        assert!(
+            bridge_manager.is_some(),
+            "the bridge server should stay up so a late extension connection still lands"
+        );
+
+        drop(bridge_manager);
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn absent_browser_backend_setting_does_not_select_extension() {
+        let _guard = env_lock();
+        let temp =
+            std::env::temp_dir().join(format!("acrawl_mcp_noext_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("create temp config home");
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp);
+        std::fs::write(temp.join("settings.json"), "{}").expect("write settings");
+
+        assert!(!extension_backend_selected());
+
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     fn assert_jsonrpc_error(

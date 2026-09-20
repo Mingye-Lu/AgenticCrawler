@@ -4,12 +4,32 @@ use crate::aria_walk_js::ARIA_WALK_JS;
 
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_PREFIX: &str = r#"
 const readline = require('node:readline');
+const vm = require('node:vm');
 
 function parseHeadless() {
   const raw = process.env.HEADLESS;
   if (raw === undefined) return true;
   const v = String(raw).trim().toLowerCase();
   return !(v === 'false' || v === '0' || v === 'no' || v === 'off');
+}
+
+function compilesAsScript(source) {
+  try {
+    new vm.Script(source);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function selectEvaluationForm(script) {
+  const candidates = [script, `(async () => (${script}))()`, `(async () => { ${script} })()`];
+  for (const candidate of candidates) {
+    if (compilesAsScript(candidate)) {
+      return candidate;
+    }
+  }
+  return script;
 }
 
 async function resolveFillSelector(pg, raw) {
@@ -1190,7 +1210,7 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
 
     if (command.action === 'evaluate') {
       try {
-        const result = await page.evaluate(command.script);
+        const result = await page.evaluate(selectEvaluationForm(command.script));
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { value: result } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'evaluate_failed', message: String(error) } }) + '\n');

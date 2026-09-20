@@ -5,7 +5,6 @@ use super::*;
 use crate::auth::{
     interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
 };
-use browser::generate_bridge_token;
 use commands::SlashCommand;
 use render::format::{
     format_compact_report, format_cost_report, format_model_report, format_model_switch_report,
@@ -184,12 +183,11 @@ impl LiveCli {
 
     pub fn extension_bridge_status(&self) -> Option<String> {
         let server = self.ws_bridge_server.as_ref()?;
-        let settings = runtime::load_settings();
-        let token = settings.extension_bridge_token.unwrap_or_default();
+        let token = server.token();
         let port = server.port();
-        let status = if server.is_client_connected() && !self.extension_bridge_initialized {
+        let status = if server.is_connected() && !self.extension_bridge_initialized {
             "browser connected; initializing"
-        } else if server.is_client_connected() {
+        } else if server.is_connected() {
             "connected"
         } else {
             "waiting for browser"
@@ -219,23 +217,15 @@ impl LiveCli {
         })
         .unwrap_or(None);
 
-        let settings = runtime::load_settings();
-        let token = settings
-            .extension_bridge_token
-            .unwrap_or_else(generate_bridge_token);
-
-        let _ = runtime::update_settings(|s| {
-            s.extension_bridge_token = Some(token.clone());
-        });
-
-        let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
-
         let server = block_on_runtime_future(async {
-            WsBridgeServer::start(port, token.clone())
+            ExtensionBridgeManager::start_from_settings()
                 .await
-                .map_err(|e| RuntimeError::new(e.to_string()))
+                .map_err(RuntimeError::new)
         })
         .map_err(|e| format!("Extension bridge server\n  Error            {e}"))?;
+
+        let token = server.token().to_string();
+        let port = server.port();
 
         self.pending_extension_state = saved_state;
         self.ws_bridge_server = Some(server);
