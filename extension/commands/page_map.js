@@ -516,7 +516,7 @@ async function handlePageMap(tabId, payload) {
   });
 
   if (res.exceptionDetails) {
-    throw new Error(res.exceptionDetails.text || 'page_map script threw exception');
+    throw new Error(cdpExceptionMessage(res.exceptionDetails, 'page_map script threw exception'));
   }
 
   return res.result?.value || {};

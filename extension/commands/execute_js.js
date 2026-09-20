@@ -13,7 +13,7 @@ async function handleExecuteJs(tabId, payload) {
   });
 
   if (res.exceptionDetails) {
-    throw new Error(res.exceptionDetails.text || 'JS execution threw exception');
+    throw new Error(cdpExceptionMessage(res.exceptionDetails, 'JS execution threw exception'));
   }
 
   return { value: res.result?.value };
