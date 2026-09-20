@@ -617,6 +617,25 @@ async function assertInAgentGroup(tabId) {
   throw new Error('Tab left the acrawl group; agent access revoked');
 }
 
+async function adoptTab(tabId) {
+  managedTabs[nextPageIndex++] = tabId;
+  adoptedTabs.add(tabId);
+  await saveState();
+}
+
+async function releaseTab(tabId) {
+  await detachDebugger(tabId).catch(() => {});
+  clearObservationState(tabId);
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const inGroup = tab && agentGroupId !== null && tab.groupId === agentGroupId;
+  if (inGroup && adoptedTabs.has(tabId)) {
+    await chrome.tabs.ungroup(tabId).catch(() => {}); // hand the user's tab back
+  } else if (inGroup) {
+    await chrome.tabs.remove(tabId).catch(() => {});
+  }
+  adoptedTabs.delete(tabId);
+}
+
 function getActiveTabId() {
   if (Number.isInteger(activePageIndex) && managedTabs[activePageIndex]) {
     return managedTabs[activePageIndex];
@@ -687,10 +706,8 @@ async function handleClosePage(payload) {
   if (tabId) {
     // A tab the user moved out of the group is theirs: revoke it, never close it.
     await assertInAgentGroup(tabId);
-    await detachDebugger(tabId);
-    clearObservationState(tabId);
-    await new Promise((resolve) => chrome.tabs.remove(tabId, resolve));
     delete managedTabs[pageIndex];
+    await releaseTab(tabId);
     await saveState();
   }
   return { closed: true };
@@ -714,14 +731,11 @@ async function handleSwitchTab(payload) {
 
 async function handleClose() {
   const tabIds = Object.values(managedTabs);
-  for (const tabId of tabIds) {
-    await detachDebugger(tabId).catch(() => {});
-    clearObservationState(tabId);
-  }
-  for (const tabId of tabIds) {
-    await new Promise((resolve) => chrome.tabs.remove(tabId, resolve)).catch(() => {});
-  }
   Object.keys(managedTabs).forEach((k) => delete managedTabs[k]);
+  for (const tabId of tabIds) {
+    await releaseTab(tabId);
+  }
+  agentGroupId = null;
   nextPageIndex = 0;
   activePageIndex = 0;
   await saveState();
@@ -763,8 +777,11 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
   await stateReady; // a cold service worker may be woken by this very event
   if (groupingTabs.has(tabId)) return;
   const inGroup = agentGroupId !== null && changeInfo.groupId === agentGroupId;
-  if (findPageIndex(tabId) !== null && !inGroup) {
+  const managed = findPageIndex(tabId) !== null;
+  if (managed && !inGroup) {
     revokeTab(tabId);
+  } else if (!managed && inGroup) {
+    adoptTab(tabId);
   }
 });
 
