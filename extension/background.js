@@ -39,6 +39,12 @@ const managedTabs = {};
 let nextPageIndex = 0;
 let activePageIndex = 0;
 
+// Tab group boundary: the agent controls exactly the tabs in this group.
+const GROUP_TITLE = 'acrawl';
+let agentGroupId = null;
+const adoptedTabs = new Set(); // tabIds the user/popups put in the group; never closed by acrawl
+const groupingTabs = new Set(); // tabs we are grouping right now; the group listener ignores them
+
 // Observation buffers: tabId -> { events: [], currentBytes: 0 }
 const observationBuffers = new Map();
 const observationRequestMetadata = new Map();
@@ -487,6 +493,7 @@ async function handleCommand(cmd) {
           sendResponse(cmd.id, false, null, 'No active tab. Use new_page to open a tab first.');
           return;
         }
+        await assertInAgentGroup(tabId);
         await ensureObservationEnabled(tabId);
         switch (cmd.action) {
           case 'navigate':
@@ -583,6 +590,52 @@ function sendResponse(id, ok, result, error) {
   }
 }
 
+function findPageIndex(tabId) {
+  const entry = Object.entries(managedTabs).find(([, id]) => id === tabId);
+  return entry ? Number(entry[0]) : null;
+}
+
+async function revokeTab(tabId) {
+  const pageIndex = findPageIndex(tabId);
+  if (pageIndex === null) return;
+  delete managedTabs[pageIndex];
+  adoptedTabs.delete(tabId);
+  clearObservationState(tabId);
+  await detachDebugger(tabId);
+  await saveState();
+}
+
+async function assertInAgentGroup(tabId) {
+  let groupId = null;
+  try {
+    ({ groupId } = await chrome.tabs.get(tabId));
+  } catch {
+    // tab is gone; treated as revoked below
+  }
+  if (agentGroupId !== null && groupId === agentGroupId) return;
+  await revokeTab(tabId);
+  throw new Error('Tab left the acrawl group; agent access revoked');
+}
+
+async function adoptTab(tabId) {
+  managedTabs[nextPageIndex++] = tabId;
+  adoptedTabs.add(tabId);
+  await saveState();
+}
+
+async function releaseTab(tabId) {
+  await detachDebugger(tabId).catch(() => {});
+  clearObservationState(tabId);
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const inGroup = tab && agentGroupId !== null && tab.groupId === agentGroupId;
+  if (inGroup && adoptedTabs.has(tabId)) {
+    await chrome.tabs.ungroup(tabId).catch(() => {}); // hand the user's tab back
+  } else if (inGroup) {
+    await chrome.tabs.remove(tabId).catch(() => {});
+  }
+  adoptedTabs.delete(tabId);
+}
+
 function getActiveTabId() {
   if (Number.isInteger(activePageIndex) && managedTabs[activePageIndex]) {
     return managedTabs[activePageIndex];
@@ -597,16 +650,51 @@ function getActiveTabId() {
 
 // ----------- Tab management -----------
 
+async function getAgentGroup() {
+  if (agentGroupId === null) return null;
+  try {
+    return await chrome.tabGroups.get(agentGroupId);
+  } catch {
+    agentGroupId = null;
+    return null;
+  }
+}
+
+async function addToAgentGroup(tabId) {
+  groupingTabs.add(tabId);
+  try {
+    const group = await getAgentGroup();
+    if (group) {
+      await chrome.tabs.group({ groupId: group.id, tabIds: [tabId] });
+    } else {
+      agentGroupId = await chrome.tabs.group({ tabIds: [tabId] });
+      await chrome.tabGroups.update(agentGroupId, { title: GROUP_TITLE, color: 'orange' });
+    }
+  } finally {
+    groupingTabs.delete(tabId);
+  }
+}
+
 async function handleNewPage(payload) {
   const url = payload.url || 'about:blank';
+  const group = await getAgentGroup();
   const tab = await new Promise((resolve, reject) => {
-    chrome.tabs.create({ url, active: false }, (t) => {
+    const props = { url, active: false };
+    if (group) props.windowId = group.windowId; // tabs.group cannot span windows
+    chrome.tabs.create(props, (t) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
       else resolve(t);
     });
   });
   const pageIndex = nextPageIndex++;
   managedTabs[pageIndex] = tab.id;
+  try {
+    await addToAgentGroup(tab.id);
+  } catch (e) {
+    delete managedTabs[pageIndex];
+    await chrome.tabs.remove(tab.id).catch(() => {});
+    throw e;
+  }
   activePageIndex = pageIndex;
   await saveState();
   return { pageIndex };
@@ -616,10 +704,10 @@ async function handleClosePage(payload) {
   const pageIndex = payload.page_index ?? activePageIndex;
   const tabId = managedTabs[pageIndex];
   if (tabId) {
-    await detachDebugger(tabId);
-    clearObservationState(tabId);
-    await new Promise((resolve) => chrome.tabs.remove(tabId, resolve));
+    // A tab the user moved out of the group is theirs: revoke it, never close it.
+    await assertInAgentGroup(tabId);
     delete managedTabs[pageIndex];
+    await releaseTab(tabId);
     await saveState();
   }
   return { closed: true };
@@ -629,6 +717,7 @@ async function handleSwitchTab(payload) {
   const index = payload.index ?? 0;
   const tabId = managedTabs[index];
   if (!tabId) throw new Error(`No tab at index ${index}`);
+  await assertInAgentGroup(tabId);
   await new Promise((resolve, reject) => {
     chrome.tabs.update(tabId, { active: true }, (t) => {
       if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -642,14 +731,11 @@ async function handleSwitchTab(payload) {
 
 async function handleClose() {
   const tabIds = Object.values(managedTabs);
-  for (const tabId of tabIds) {
-    await detachDebugger(tabId).catch(() => {});
-    clearObservationState(tabId);
-  }
-  for (const tabId of tabIds) {
-    await new Promise((resolve) => chrome.tabs.remove(tabId, resolve)).catch(() => {});
-  }
   Object.keys(managedTabs).forEach((k) => delete managedTabs[k]);
+  for (const tabId of tabIds) {
+    await releaseTab(tabId);
+  }
+  agentGroupId = null;
   nextPageIndex = 0;
   activePageIndex = 0;
   await saveState();
@@ -669,6 +755,7 @@ async function detachDebugger(tabId) {
 // ----------- Tab lifecycle events -----------
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  adoptedTabs.delete(tabId);
   const entry = Object.entries(managedTabs).find(([, id]) => id === tabId);
   if (entry) {
     const [pageIndex] = entry;
@@ -682,6 +769,19 @@ chrome.tabs.onRemoved.addListener((tabId) => {
         error: 'Tab was closed externally by user',
       }));
     }
+  }
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
+  if (changeInfo.groupId === undefined) return;
+  await stateReady; // a cold service worker may be woken by this very event
+  if (groupingTabs.has(tabId)) return;
+  const inGroup = agentGroupId !== null && changeInfo.groupId === agentGroupId;
+  const managed = findPageIndex(tabId) !== null;
+  if (managed && !inGroup) {
+    revokeTab(tabId);
+  } else if (!managed && inGroup) {
+    adoptTab(tabId);
   }
 });
 
@@ -709,6 +809,8 @@ async function saveState() {
       managedTabs: JSON.parse(JSON.stringify(managedTabs)),
       nextPageIndex,
       activePageIndex,
+      agentGroupId,
+      adoptedTabs: [...adoptedTabs],
     }, resolve);
   });
 }
@@ -716,10 +818,27 @@ async function saveState() {
 async function loadState() {
   return new Promise((resolve) => {
     chrome.storage.session.get(
-      { managedTabs: {}, nextPageIndex: 0, activePageIndex: 0 },
+      {
+        managedTabs: {},
+        nextPageIndex: 0,
+        activePageIndex: 0,
+        agentGroupId: null,
+        adoptedTabs: [],
+      },
       resolve
     );
   });
+}
+
+// Chrome restores tab groups on session restore but clears session storage:
+// re-claim the acrawl group and its tabs instead of orphaning them.
+async function reclaimRestoredGroup() {
+  const [group] = await chrome.tabGroups.query({ title: GROUP_TITLE });
+  if (!group) return;
+  agentGroupId = group.id;
+  for (const tab of await chrome.tabs.query({ groupId: group.id })) {
+    if (findPageIndex(tab.id) === null) await adoptTab(tab.id);
+  }
 }
 
 async function restoreState() {
@@ -727,7 +846,12 @@ async function restoreState() {
   Object.assign(managedTabs, state.managedTabs);
   nextPageIndex = state.nextPageIndex;
   activePageIndex = state.activePageIndex;
+  agentGroupId = state.agentGroupId;
+  state.adoptedTabs.forEach((id) => adoptedTabs.add(id));
+  if (agentGroupId === null) await reclaimRestoredGroup().catch(() => {});
 }
+
+const stateReady = restoreState();
 
 // ----------- Alarms watchdog -----------
 
@@ -744,7 +868,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // ----------- Startup -----------
 
 chrome.runtime.onStartup.addListener(() => {
-  restoreState().then(connect);
+  stateReady.then(connect);
 });
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -752,6 +876,6 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 (async () => {
-  await restoreState();
+  await stateReady;
   await connect();
 })();

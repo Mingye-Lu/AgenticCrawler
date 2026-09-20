@@ -14,6 +14,7 @@ The acrawl Bridge extension connects your browser to a locally running acrawl pr
 
 - **`debugger`**: Controls browser tabs via Chrome DevTools Protocol for automation (click, navigate, extract content).
 - **`tabs`**: Manages tab lifecycle for the automation agent.
+- **`tabGroups`**: Places the tabs the agent uses in a titled "acrawl" tab group so you can see them and control which tabs the agent may access.
 - **`host_permissions` (`<all_urls>`)**: Required to attach the debugger to any website the agent navigates to, and to fetch files on behalf of the agent using your authenticated session.
 - **`storage`**: Stores connection settings (port, auth token) locally.
 - **`alarms`**: Keepalive mechanism for the service worker.
