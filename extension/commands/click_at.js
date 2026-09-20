@@ -9,6 +9,7 @@ async function handleClickAt(tabId, payload) {
 
   await ensureAttached(tabId);
 
+  overlayRipple(tabId, x, y);
   await cdp(tabId, 'Input.dispatchMouseEvent', {
     type: 'mouseMoved',
     x,

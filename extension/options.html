@@ -117,6 +117,36 @@
     #test:hover {
       background-color: #f1f5f9;
     }
+    .toggles {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 0 0 10px;
+      cursor: pointer;
+    }
+    .toggle input {
+      width: 16px;
+      min-height: 0;
+      margin: 2px 0 0;
+      flex: none;
+    }
+    .toggle span {
+      color: #1f2937;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .toggle small {
+      display: block;
+      margin-top: 2px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 400;
+    }
     #status {
       display: block;
       margin-top: 14px;
@@ -170,6 +200,21 @@
     <div class="button-group">
       <button id="save">Save</button>
       <button id="test">Test Connection</button>
+    </div>
+
+    <div class="toggles">
+      <label class="toggle">
+        <input id="showIndicators" type="checkbox" checked>
+        <span>Show activity indicators
+          <small>Glowing border on the tab acrawl is driving, plus click ripples.</small>
+        </span>
+      </label>
+      <label class="toggle">
+        <input id="highlightChanges" type="checkbox" checked>
+        <span>Highlight page changes
+          <small>Boxes over elements that were added (green) or changed (amber) after an action.</small>
+        </span>
+      </label>
     </div>
 
     <div class="help-text">
