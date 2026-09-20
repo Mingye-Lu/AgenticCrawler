@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-09-19
+
+### Added
+
+- **Extension mode in the built-in MCP server**: `acrawl mcp` now honours `browser_backend`, so MCP clients can drive your own logged-in browser instead of the bundled headless one. `run_mcp_server` previously loaded settings but consumed only the `script` block, and both browser-init sites hard-coded `PlaywrightBridge`, so the setting was ignored and every MCP client silently got CloakBrowser. The 31 direct browser tools and the 7 script tools now route through `ensure_browser_context`, while `run_goal` receives a `SharedBridge` and calls `set_shared_bridge` + `set_extension_mode` on its own agent. `run_goal` allocates a dedicated extension tab and closes it afterwards, so goal navigation never clobbers the persistent MCP session's page. When extension mode is on and the extension never connects, the tool call returns an actionable error rather than falling back to CloakBrowser — substituting a different, usually unauthenticated session would be misleading.
+- **`ExtensionBridgeManager` (`crates/agent/src/extension_bridge.rs`)**: starting the bridge server, waiting for the extension to connect, and building a `SharedBridge` were reachable only through `LiveCli`, so non-UI front ends could not use the extension backend. The sequence now lives in `agent` — the one crate depending on both `browser` and `runtime` — and is shared by the TUI/CLI and the MCP server. The bridge token is generated once and persisted so the copy stored in the extension stays valid across restarts.
+- **`extension_bridge_connect_timeout_secs` setting** (default `30`): bounds how long a browser tool call waits for the extension to connect before failing. Registered across the full config surface — spec table, `set`, `unset`, `get`, and effective settings.
+- **`execute_js` accepts `return` and top-level `await`**: the tool schema documented both forms — including its own `await fetch('/api/data')` example — but the script was passed straight into `Runtime.evaluate` / `page.evaluate`, which compile it as a *Script*, where top-level `return` and `await` are both `SyntaxError`s. Neither documented form had ever run, on either backend. The evaluation form is now chosen by compiling the candidates first and running only the one that parses: the script as written, then wrapped as an async arrow expression, then as an async arrow body. Bare expressions and statement lists still evaluate as written, so completion-value semantics are unchanged (`const a = 1; const b = 2; a + b` still yields `3`). Selection uses `Runtime.compileScript` on the extension backend and `vm.Script` on CloakBrowser rather than retrying a failed evaluate, which keeps it side-effect free: a script that compiles but throws `SyntaxError` at runtime — `JSON.parse` on malformed input, say — would otherwise re-execute its preceding statements once per attempt.
+
+### Changed
+
+- **Bridge lifecycle in the TUI/CLI delegates to `ExtensionBridgeManager`**: the inline `WsBridgeServer` handling in `crates/ui` is replaced by the shared manager. Behaviour is unchanged — same status strings, same token persistence, same event-driven activation.
+- **`extension_bridge_token` is minted when the backend is enabled**: `acrawl config set browser_backend extension` now generates the token immediately, so `config get extension_bridge_token` returns a real value instead of `null` before the first tool call.
+
+### Fixed
+
+- **Extension bridge reported every script failure as "Uncaught"**: CDP always sets `exceptionDetails.text` to the literal string `"Uncaught"`, so any failing script in extension mode surfaced as `Browser bridge protocol error: Uncaught` with no indication of the cause. The usable message lives in `exception.description` for thrown `Error`s and compile failures, and in `exception.value` when a primitive is thrown. A new `cdpExceptionMessage()` in `extension/commands/cdp.js` prefers `description`, then a serialized thrown value, then `className`, before falling back to `text` and the caller's own default. `execute_js`, `page_map`, `read_content`, `list_resources`, and `extract_dom_snapshot` all route through it, so script failures now report the same detail the CloakBrowser backend already surfaced.
+- **`bridge.json` deleted when the port was already owned**: `bridge.json` is only a discovery record, so removing it cannot free a bound port — deleting it on conflict discarded the record of the process that legitimately owned the port, leaving no way to report the real owner. The bind is now retried after a short delay, and only the winning process rewrites the file. `read_bridge_file` and `BridgeFileInfo` let callers name the recorded owner when a bind fails.
+- **Concurrent MCP tool families shared a restarting command-id counter**: `ExtensionBridgeManager` now caches one `SharedBridge` so the direct tools, script execution, and `run_goal` share a single command-id sequence. A fresh bridge per consumer restarted ids at 1, letting overlapping commands overwrite one another's responder in `run_ws_session`.
+- **MCP session kept a stale browser backend**: the session now tracks which backend owns its browser context and rebuilds the context when the persisted `browser_backend` selection changes mid-process.
+- **`run_goal` waited on the bridge before validating arguments**: arguments are now validated first, so a malformed request fails fast with `-32602` instead of timing out on a connection wait.
+
+### Removed
+
+- **Codex review trigger workflow** (`.github/workflows/codex-review.yml`): its only job was posting an `@codex review` comment on newly opened PRs via `CODEX_TRIGGER_TOKEN`. That token no longer authenticates, so every run failed at the `listComments` call with `401 Bad credentials`, marking a failed check on each PR while doing nothing. Codex reviews were never driven by the workflow itself — it only posted the comment Codex reacts to — so commenting `@codex review` by hand still works. `CODEX_TRIGGER_TOKEN` is now unused and can be deleted from the repository secrets.
+
 ## [0.13.5] - 2026-09-12
 
 ### Added
@@ -940,6 +966,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.14.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.0
 [0.13.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.5
 [0.13.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.4
 [0.13.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.3
