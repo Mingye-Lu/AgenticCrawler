@@ -118,7 +118,7 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "switch_tab",
-            description: "Switch the browser focus to a different open tab by its zero-based index. Returns the tab count and a page_state object reflecting the switched-to tab's content (headings, landmarks, links). Use to access pages opened by link targets, popups, or forked sub-agents without re-navigating.",
+            description: "Switch the browser focus to a different open tab by its zero-based index. Returns the tab count (plus page_indices, the valid indices, when they are not contiguous) and a page_state object reflecting the switched-to tab's content (headings, landmarks, links). Use to access pages opened by link targets, popups, or forked sub-agents without re-navigating.",
             input_schema: json!({
                 "type": "object",
                 "properties": {

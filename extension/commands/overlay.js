@@ -16,9 +16,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// One retry: right after a navigation the content script may not be listening yet,
+// and a dropped ripple/border is otherwise silent.
 function overlaySend(tabId, msg) {
-  return chrome.tabs
-    .sendMessage(tabId, { type: 'acrawl_overlay', ...msg }, { frameId: 0 })
+  const send = () => chrome.tabs.sendMessage(tabId, { type: 'acrawl_overlay', ...msg }, { frameId: 0 });
+  return send()
+    .catch(() => new Promise((resolve) => setTimeout(resolve, 150)).then(send))
     .catch(() => {});
 }
 
@@ -28,6 +31,13 @@ function overlayActivity(tabId) {
   if (!overlaySettings.showIndicators) return;
   overlayActiveUntil.set(tabId, Date.now() + OVERLAY_ACTIVE_MS);
   overlaySend(tabId, { op: 'active', ttl: OVERLAY_ACTIVE_MS });
+}
+
+// Awaited before an interaction runs, so the page's DOM watcher already exists
+// when synchronous handlers (input/change, hover menus) mutate the page.
+function overlayWatch(tabId) {
+  if (!overlaySettings.showIndicators || !overlaySettings.highlightChanges) return Promise.resolve();
+  return overlaySend(tabId, { op: 'watch' });
 }
 
 function overlayRipple(tabId, x, y, kind = 'click') {
@@ -56,7 +66,11 @@ function overlayHello(sender) {
   const tabId = sender?.tab?.id;
   const managed = Object.values(managedTabs).includes(tabId);
   const remaining = (overlayActiveUntil.get(tabId) || 0) - Date.now();
-  return { activeMs: managed && overlaySettings.showIndicators && remaining > 0 ? remaining : 0 };
+  return {
+    activeMs: managed && overlaySettings.showIndicators && remaining > 0 ? remaining : 0,
+    managed: managed && overlaySettings.showIndicators,
+    highlight: overlaySettings.highlightChanges,
+  };
 }
 
 async function handleHighlightChanges(tabId, payload) {

@@ -53,11 +53,16 @@ pub async fn execute(
     )
     .await?;
 
-    Ok(ToolEffect::reply_json(&json!({
+    let mut reply = json!({
         "success": true,
         "tab_count": tab_count,
         "page_state": page_state
-    })))
+    });
+    // Extension mode has sparse indices (closed or revoked tabs leave gaps).
+    if let Some(indices) = result.get("page_indices") {
+        reply["page_indices"] = indices.clone();
+    }
+    Ok(ToolEffect::reply_json(&reply))
 }
 
 #[cfg(test)]
