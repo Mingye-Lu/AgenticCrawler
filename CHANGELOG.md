@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-09-21
+
+### Fixed
+
+- **Headed CloakBrowser content did not follow window resizing**: the bridge pinned a 1920x955 emulated viewport and a spoofed 1920x1080 screen, so resizing the window clipped or padded the page instead of reflowing it. Headed mode now runs with no viewport emulation and the real screen, so content tracks the window. Headless has no window and keeps the deterministic emulated viewport and screen.
+- **`set_device` now resizes the real window for desktop-class devices**: `desktop_hd` and non-mobile custom devices resize the browser window (CDP `Browser.setWindowBounds`), and leaving a mobile preset restores the previous desktop window. `desktop` imposes no size. Mobile presets, and any requested viewport narrower than 500px, still emulate an exact viewport because Chromium's minimum window width cannot hold a phone. DPR and touch overrides are applied to popups and new tabs, a failed window setup rolls the device switch back with an error, and re-applying a size-bearing preset after a manual resize is no longer skipped as a no-op.
+- **Extension `set_device` froze the tab at a fixed size**: it always installed a device-metrics override (1920x955 even for `desktop`) and never cleared it, so after the first call the tab ignored window resizing. `desktop` now clears the override and non-mobile devices resize the browser window.
+
 ## [0.14.1] - 2026-09-20
 
 ### Added
@@ -981,6 +989,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.14.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.2
 [0.14.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.1
 [0.14.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.0
 [0.13.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.5
