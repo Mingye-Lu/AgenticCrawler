@@ -12,6 +12,7 @@ async function handleFill(tabId, payload) {
   }
 
   await ensureAttached(tabId);
+  await overlayWatch(tabId);
 
   const res = await cdp(tabId, 'Runtime.evaluate', {
     expression: `(() => {

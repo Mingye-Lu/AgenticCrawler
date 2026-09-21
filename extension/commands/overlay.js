@@ -33,6 +33,13 @@ function overlayActivity(tabId) {
   overlaySend(tabId, { op: 'active', ttl: OVERLAY_ACTIVE_MS });
 }
 
+// Awaited before an interaction runs, so the page's DOM watcher already exists
+// when synchronous handlers (input/change, hover menus) mutate the page.
+function overlayWatch(tabId) {
+  if (!overlaySettings.showIndicators || !overlaySettings.highlightChanges) return Promise.resolve();
+  return overlaySend(tabId, { op: 'watch' });
+}
+
 function overlayRipple(tabId, x, y, kind = 'click') {
   if (!overlaySettings.showIndicators) return;
   overlaySend(tabId, { op: 'ripple', x, y, kind });
@@ -59,7 +66,11 @@ function overlayHello(sender) {
   const tabId = sender?.tab?.id;
   const managed = Object.values(managedTabs).includes(tabId);
   const remaining = (overlayActiveUntil.get(tabId) || 0) - Date.now();
-  return { activeMs: managed && overlaySettings.showIndicators && remaining > 0 ? remaining : 0 };
+  return {
+    activeMs: managed && overlaySettings.showIndicators && remaining > 0 ? remaining : 0,
+    managed: managed && overlaySettings.showIndicators,
+    highlight: overlaySettings.highlightChanges,
+  };
 }
 
 async function handleHighlightChanges(tabId, payload) {
