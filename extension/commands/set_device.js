@@ -3,16 +3,45 @@
 async function handleSetDevice(tabId, payload) {
   await ensureAttached(tabId);
 
-  // Always apply the requested emulation settings explicitly.
-  // The Rust handler sends fully-resolved options (viewport, UA, DPR, mobile, touch)
-  // for both presets and custom configs. We never "guess" defaults here.
-  const metrics = {
-    width: payload.viewport?.width ?? 1920,
-    height: payload.viewport?.height ?? 1080,
-    deviceScaleFactor: payload.deviceScaleFactor ?? 1.0,
-    mobile: payload.isMobile ?? false,
-  };
-  await cdp(tabId, 'Emulation.setDeviceMetricsOverride', metrics);
+  // Mobile presets emulate an exact viewport. Everything else follows the real
+  // window: any earlier override is cleared (so manual resizing works again)
+  // and, when a size is requested, the browser window itself is resized.
+  const mobile = payload.isMobile === true;
+  // Chromium can't shrink a window below ~500px of viewport width, so narrower
+  // sizes must be emulated even when the device isn't marked mobile.
+  const emulate = payload.viewport && (mobile || payload.viewport.width < 500);
+  const dpr = payload.deviceScaleFactor ?? 1.0;
+  if (emulate) {
+    await cdp(tabId, 'Emulation.setDeviceMetricsOverride', {
+      width: payload.viewport.width,
+      height: payload.viewport.height,
+      deviceScaleFactor: dpr,
+      mobile,
+    });
+  } else if (dpr !== 1.0 || mobile) {
+    // width/height 0 = keep the real window size, override only DPR/mobile.
+    await cdp(tabId, 'Emulation.setDeviceMetricsOverride', {
+      width: 0,
+      height: 0,
+      deviceScaleFactor: dpr,
+      mobile,
+    });
+  } else {
+    await cdp(tabId, 'Emulation.clearDeviceMetricsOverride', {});
+  }
+  if (!emulate && payload.viewport) {
+    const dims = await cdp(tabId, 'Runtime.evaluate', {
+      expression: '[outerWidth - innerWidth, outerHeight - innerHeight]',
+      returnByValue: true,
+    });
+    const [dx, dy] = dims.result?.value ?? [0, 0];
+    const tab = await chrome.tabs.get(tabId);
+    await chrome.windows.update(tab.windowId, {
+      state: 'normal',
+      width: payload.viewport.width + dx,
+      height: payload.viewport.height + dy,
+    });
+  }
   await cdp(tabId, 'Emulation.setTouchEmulationEnabled', {
     enabled: payload.hasTouch ?? false,
   });

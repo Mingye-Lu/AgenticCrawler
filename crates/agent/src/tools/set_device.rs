@@ -270,7 +270,15 @@ fn resolve_to_options(input: DeviceInput) -> Result<(String, Value), CrawlError>
                     "unknown device preset '{name}'. Valid presets: iphone_15, iphone_se, iphone_15_pro_max, pixel_7, galaxy_s24, ipad_pro, ipad, galaxy_tab_s9, desktop, desktop_hd"
                 ))
             })?;
-            Ok((name, preset.to_json()))
+            let mut options = preset.to_json();
+            if name == "desktop" {
+                // "desktop" means the default: follow the real window, so no
+                // size is imposed (headless falls back to its own default).
+                let map = options.as_object_mut().expect("preset json is an object");
+                map.remove("viewport");
+                map.remove("screen");
+            }
+            Ok((name, options))
         }
         DeviceInput::Custom {
             viewport,
@@ -314,11 +322,15 @@ pub async fn execute(
         device_name.clone()
     };
 
-    // Treat None (fresh browser default) as equivalent to "desktop" for no-op detection
-    let is_noop = match crawl_state.current_device.as_deref() {
-        Some(current) => current == device_name,
-        None => device_name == "desktop",
-    };
+    // Treat None (fresh browser default) as equivalent to "desktop" for no-op detection.
+    // A headed desktop device that imposes a window size is never a no-op: the user
+    // may have resized the window since it was applied.
+    let follows_window = options.get("viewport").is_none() || options["isMobile"] == true;
+    let is_noop = follows_window
+        && match crawl_state.current_device.as_deref() {
+            Some(current) => current == device_name,
+            None => device_name == "desktop",
+        };
 
     if is_noop {
         return Ok(ToolEffect::reply_json(&serde_json::json!({
@@ -475,6 +487,19 @@ mod tests {
         assert_eq!(name, "iphone_15");
         assert_eq!(options["viewport"]["width"], 393);
         assert_eq!(options["isMobile"], true);
+    }
+
+    #[test]
+    fn desktop_preset_imposes_no_size_but_desktop_hd_does() {
+        let (_, desktop) =
+            resolve_to_options(parse_input(&serde_json::json!({"device": "desktop"})).unwrap())
+                .unwrap();
+        assert!(desktop.get("viewport").is_none());
+        assert!(desktop.get("screen").is_none());
+        let (_, hd) =
+            resolve_to_options(parse_input(&serde_json::json!({"device": "desktop_hd"})).unwrap())
+                .unwrap();
+        assert_eq!(hd["viewport"]["width"], 1366);
     }
 
     #[test]
