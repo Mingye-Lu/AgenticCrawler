@@ -959,7 +959,7 @@ fn script_management_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "set_device",
-            description: "Switch browser device emulation between mobile and desktop modes. Recreates the browser context with new viewport, user agent, and touch settings. Cookies and localStorage are preserved. Use preset device names for convenience or provide custom parameters. Returns page_state showing the page as rendered in the new device mode. Cannot be used while sub-agents are running.",
+            description: "Switch browser device emulation between mobile and desktop modes. Recreates the browser context with new user agent and touch settings. Mobile presets emulate an exact viewport; desktop-class presets resize the real browser window (headed mode), so the page keeps following manual window resizes. 'desktop' imposes no size. Cookies and localStorage are preserved. Use preset device names for convenience or provide custom parameters. Returns page_state showing the page as rendered in the new device mode. Cannot be used while sub-agents are running.",
             input_schema: json!({
                 "type": "object",
                 "properties": {

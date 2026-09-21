@@ -13,6 +13,18 @@ function parseHeadless() {
   return !(v === 'false' || v === '0' || v === 'no' || v === 'off');
 }
 
+// Headed windows follow the user's resizing: pages run with viewport:null and
+// set_device moves the OS window via CDP instead of emulating dimensions.
+// Chromium can't shrink a window below this viewport width, so anything
+// narrower must be emulated instead of realised by resizing the window.
+const MIN_WINDOW_VIEWPORT_WIDTH = 500;
+
+async function windowHandle(ctx, pg) {
+  const cdp = await ctx.newCDPSession(pg);
+  const { windowId, bounds } = await cdp.send('Browser.getWindowForTarget');
+  return { cdp, windowId, bounds };
+}
+
 function compilesAsScript(source) {
   try {
     new vm.Script(source);
@@ -616,9 +628,15 @@ async function bootstrap() {
     }
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
-  const browser = await launch({ headless: parseHeadless(), humanize: true });
-  let context = await browser.newContext({ viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } });
-  await context.addInitScript(`
+  const headless = parseHeadless();
+  const browser = await launch({ headless, humanize: true });
+  // Headed: no emulation, the page tracks the real window (a fixed viewport
+  // also makes outerWidth < innerWidth). Headless has no window, so it keeps a
+  // deterministic emulated viewport and screen.
+  let context = await browser.newContext(headless
+    ? { viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } }
+    : { viewport: null });
+  if (headless) await context.addInitScript(`
     (() => {
       // Spoof screen dimensions by shadowing them on the REAL screen object.
       // Replacing window.screen with Object.create(Screen.prototype, ...) loses
@@ -631,6 +649,20 @@ async function bootstrap() {
     })();
   `);
   await context.addInitScript(CONSOLE_CAPTURE_SOURCE);
+  let deviceEmulated = false;
+  let desktopBounds = null;
+  // DPR/touch applied over CDP in window mode; new pages (popups, tabs) need it too.
+  let windowEmu = null;
+  const windowEmuFor = (cmd) => {
+    const dpr = cmd.deviceScaleFactor !== undefined && cmd.deviceScaleFactor !== 1 ? cmd.deviceScaleFactor : null;
+    return dpr || cmd.hasTouch ? { dpr, touch: cmd.hasTouch === true } : null;
+  };
+  const applyPageEmulation = async (ctx, pg, emu) => {
+    if (!emu) return;
+    const cdp = await ctx.newCDPSession(pg);
+    if (emu.dpr) await cdp.send('Emulation.setDeviceMetricsOverride', { width: 0, height: 0, deviceScaleFactor: emu.dpr, mobile: false });
+    if (emu.touch) await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  };
   let page = await context.newPage();
   const pages = [page];
   await attachObservationListeners(page, pages, 0);
@@ -1396,13 +1428,36 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         } catch (_) { /* localStorage may be unavailable */ }
         const currentUrl = page.url();
 
+        // Mobile devices, viewports narrower than a window can be, and headless
+        // (no window) emulate an exact viewport; other headed devices resize
+        // the real window instead.
+        const emulate = headless || command.isMobile === true
+          || (command.viewport && command.viewport.width < MIN_WINDOW_VIEWPORT_WIDTH);
+        // Headless "desktop" sends no screen; keep the bootstrap 1920x1080.
+        const screenDims = command.screen || (headless ? { width: 1920, height: 1080 } : null);
         const ctxOpts = {};
-        if (command.viewport) ctxOpts.viewport = command.viewport;
-        if (command.screen) ctxOpts.screen = command.screen;
+        if (emulate) {
+          ctxOpts.viewport = command.viewport || { width: 1920, height: 955 };
+          if (screenDims) ctxOpts.screen = screenDims;
+          if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
+          if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;
+          if (command.hasTouch !== undefined) ctxOpts.hasTouch = command.hasTouch;
+        } else {
+          ctxOpts.viewport = null;
+        }
         if (command.userAgent) ctxOpts.userAgent = command.userAgent;
-        if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
-        if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;
-        if (command.hasTouch !== undefined) ctxOpts.hasTouch = command.hasTouch;
+
+        // The replacement context opens a new OS window; carry the user's
+        // window bounds over so a device switch doesn't reset their layout.
+        let oldBounds = null;
+        if (!headless) {
+          try {
+            oldBounds = (await windowHandle(context, page)).bounds;
+            // An emulated device window is phone-sized; remember the real
+            // desktop window so leaving emulation restores it.
+            if (!deviceEmulated) desktopBounds = oldBounds;
+          } catch (_) {}
+        }
 
         let storageOrigin = null;
         if (currentUrl && currentUrl !== 'about:blank') {
@@ -1421,7 +1476,7 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         const newPage = await newContext.newPage();
         await newContext.addInitScript(CONSOLE_CAPTURE_SOURCE);
 
-        if (command.screen) {
+        if (emulate && screenDims) {
           // Pass width/height as a serialized argument rather than
           // interpolating them into the injected source text — same
           // string-interpolation-into-JS-source pattern that was
@@ -1440,7 +1495,28 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
             for (const k of Object.keys(dims)) {
               try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
             }
-          }, { width: command.screen.width, height: command.screen.height });
+          }, { width: screenDims.width, height: screenDims.height });
+        }
+
+        if (!emulate) {
+          // Window mode: drive size, DPR and touch through CDP (Playwright
+          // rejects deviceScaleFactor/hasTouch combined with viewport:null).
+          // Failures here throw so the outer catch rolls the swap back
+          // (closing newContext) instead of committing a half-configured device.
+          try {
+            const { cdp, windowId } = await windowHandle(newContext, newPage);
+            if (command.viewport) {
+              const [dx, dy] = await newPage.evaluate(() => [outerWidth - innerWidth, outerHeight - innerHeight]);
+              await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal', width: command.viewport.width + dx, height: command.viewport.height + dy } });
+            } else {
+              // Restoring the previous window is cosmetic (maximized/fullscreen
+              // bounds can be rejected), so it stays best-effort.
+              const restore = deviceEmulated ? desktopBounds : oldBounds;
+              if (restore) await cdp.send('Browser.setWindowBounds', { windowId, bounds: restore }).catch((e) => { process.stderr.write('[acrawl] window restore failed: ' + String(e) + '\n'); });
+            }
+          } catch (e) { await newContext.close().catch(() => {}); throw e; }
+          try { await applyPageEmulation(newContext, newPage, windowEmuFor(command)); }
+          catch (e) { await newContext.close().catch(() => {}); throw e; }
         }
 
         // Restore localStorage manually (storageState only seeds on first navigation)
@@ -1469,6 +1545,8 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         }
 
         const oldContext = context;
+        deviceEmulated = emulate;
+        windowEmu = emulate ? null : windowEmuFor(command);
         context = newContext;
         page = newPage;
         observationBuffers.clear();
@@ -1478,6 +1556,7 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         context.on('page', (p) => {
           if (!pages.includes(p)) {
             pages.push(p);
+            void applyPageEmulation(context, p, windowEmu).catch((e) => { process.stderr.write('[acrawl] popup device emulation failed: ' + String(e) + '\n'); });
             const popupIndex = pages.length - 1;
             void attachObservationListeners(p, pages, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
           }
@@ -1833,7 +1912,7 @@ mod tests {
         assert!(
             PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("addInitScript((screenDims) => {")
                 && PLAYWRIGHT_BRIDGE_NODE_SCRIPT
-                    .contains("{ width: command.screen.width, height: command.screen.height }"),
+                    .contains("{ width: screenDims.width, height: screenDims.height }"),
             "expected set_device to pass screen dims as a serialized addInitScript argument"
         );
     }
