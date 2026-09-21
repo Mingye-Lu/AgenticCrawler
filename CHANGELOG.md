@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-09-20
+
+### Added
+
+- **`acrawl` tab group in extension mode**: the tabs the agent controls now live in an orange "acrawl" Chrome tab group, and that group is the access boundary. Dragging a tab out revokes agent access to it (the tab is left untouched); dragging a tab in adopts it, and closing an adopted tab ungroups it instead of closing it. A restored group is re-claimed after a browser restart. Adds the `tabGroups` permission, documented in `extension/PRIVACY.md`.
+- **Activity overlay in extension mode**: an indigo glowing border marks the tab the agent is driving, with a blue ripple on clicks and hovers and a flash on filled fields. The overlay is hidden while a screenshot is taken, so the model never sees it. Two options-page toggles, "show indicators" and "highlight changes", control it.
+- **Change highlighting in the page**: after a click, hover or fill — the agent's or a human's, in acrawl-group tabs only — the content script watches the DOM for 1.5s and boxes what changed: green for inserted elements and revealed dialogs (`open` set, `hidden` removed), blue for modified ones (text or ARIA state changed). Boxes are append-only with their own lifetime, look through zero-size and page-sized wrappers such as portal roots and modal backdrops, and hide with `visibility` so scrolling never replays the animation. The agent's own aria diff still drives its state-change boxes.
+- **`page_indices` from `switch_tab`**: in extension mode tab indices are sparse once tabs close or leave the group, so `switch_tab` now returns the valid indices next to `tab_count`.
+
+### Fixed
+
+- **`switch_tab` always reported `tab_count: 0` in extension mode**: the bridge response omitted the count.
+- **Whole-page highlight box**: the diff root (`<body>`/`<html>`) is never boxed. It used to be reported as changed when its `active` state flipped.
+- **First click after a navigation lost its ripple**: overlay messages are retried once when the content script is not listening yet.
+
 ## [0.14.0] - 2026-09-19
 
 ### Added
@@ -966,6 +981,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.15.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.0
 [0.14.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.0
 [0.13.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.5
 [0.13.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.4
