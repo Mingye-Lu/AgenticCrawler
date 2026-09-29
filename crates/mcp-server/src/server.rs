@@ -834,7 +834,7 @@ impl ApiClient for CrawlApiClient {
                     .map_err(|e: api::ApiError| RuntimeError::new(e.to_string()))?;
 
                 let mut events: Vec<AssistantEvent> = Vec::new();
-                let mut pending_tool: Option<(String, String, String)> = None;
+                let mut pending_tools = api::ToolCallAccumulator::new();
                 let mut pending_reasoning: Option<String> = None;
                 let mut saw_stop = false;
 
@@ -845,32 +845,34 @@ impl ApiClient for CrawlApiClient {
                         .map_err(|e: api::ApiError| RuntimeError::new(e.to_string()))?;
                     match event {
                         Some(StreamEvent::MessageStart(start)) => {
-                            for block in start.message.content {
-                                push_output_block(block, &mut events, &mut pending_tool);
+                            for (index, block) in (0..).zip(start.message.content) {
+                                let mut started = None;
+                                push_output_block(block, &mut events, &mut started);
+                                if let Some(call) = started {
+                                    pending_tools.start(index, call);
+                                }
                             }
                         }
                         Some(StreamEvent::ContentBlockStart(start)) => {
                             if matches!(start.content_block, OutputContentBlock::Reasoning) {
                                 pending_reasoning = Some(String::new());
                             } else {
-                                push_output_block(
-                                    start.content_block,
-                                    &mut events,
-                                    &mut pending_tool,
-                                );
+                                let mut started = None;
+                                push_output_block(start.content_block, &mut events, &mut started);
+                                if let Some(call) = started {
+                                    pending_tools.start(start.index, call);
+                                }
                             }
                         }
                         Some(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
+                            index,
                             delta,
-                            ..
                         })) => match delta {
                             ContentBlockDelta::TextDelta { text } => {
                                 events.push(AssistantEvent::TextDelta(text));
                             }
                             ContentBlockDelta::InputJsonDelta { partial_json } => {
-                                if let Some((_, _, ref mut input)) = pending_tool {
-                                    input.push_str(&partial_json);
-                                }
+                                pending_tools.push_json(index, &partial_json);
                             }
                             ContentBlockDelta::ThinkingDelta { thinking } => {
                                 if let Some(ref mut reasoning) = pending_reasoning {
@@ -878,8 +880,8 @@ impl ApiClient for CrawlApiClient {
                                 }
                             }
                         },
-                        Some(StreamEvent::ContentBlockStop(_)) => {
-                            if let Some((id, name, input)) = pending_tool.take() {
+                        Some(StreamEvent::ContentBlockStop(stop)) => {
+                            if let Some((id, name, input)) = pending_tools.finish(stop.index) {
                                 let input = if input.is_empty() {
                                     "{}".to_string()
                                 } else {
