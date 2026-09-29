@@ -4,8 +4,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use dialoguer::{theme::ColorfulTheme, MultiSelect, Select};
+use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect, Select};
 use serde_json::{json, Value};
+
+use crate::skill;
 
 struct IdeOutcome {
     detail: String,
@@ -170,6 +172,24 @@ impl Ide {
     fn supports_global_scope(self) -> bool {
         !matches!(self, Self::Trae | Self::Crush | Self::Aider)
     }
+
+    /// Directory this client scans for agent skills, or `None` when the client has
+    /// no skills support (or none at that scope).
+    fn skills_dir(self, scope: Scope) -> Option<PathBuf> {
+        match (self, scope) {
+            (Self::ClaudeCode, Scope::Global) => Some(home_dir()?.join(".claude/skills")),
+            (Self::ClaudeCode, Scope::Project) => Some(PathBuf::from(".claude/skills")),
+            (Self::Cursor, Scope::Global) => Some(home_dir()?.join(".cursor/skills")),
+            (Self::Cursor, Scope::Project) => Some(PathBuf::from(".cursor/skills")),
+            (Self::OpenCode, Scope::Global) => Some(home_dir()?.join(".config/opencode/skills")),
+            (Self::OpenCode, Scope::Project) => Some(PathBuf::from(".opencode/skills")),
+            (Self::CodexCli, Scope::Global) => {
+                codex_skills_dir(env::var_os("CODEX_HOME"), home_dir().as_deref())
+            }
+            (Self::GeminiCli, Scope::Global) => Some(home_dir()?.join(".gemini/skills")),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +211,18 @@ fn home_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     {
         env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+/// Codex keeps personal skills under `$CODEX_HOME/skills`, defaulting to `~/.codex`
+/// when the variable is unset or empty.
+fn codex_skills_dir(
+    codex_home: Option<std::ffi::OsString>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    match codex_home.filter(|value| !value.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir).join("skills")),
+        None => Some(home?.join(".codex/skills")),
     }
 }
 
@@ -566,6 +598,18 @@ fn prompt_ide_selection(detected: &[DetectedIde]) -> io::Result<Vec<Ide>> {
         Some(indices) => Ok(indices.into_iter().map(|i| Ide::ALL[i]).collect()),
         None => Ok(Vec::new()),
     }
+}
+
+/// Offer the bundled skill when at least one selected client can load it.
+fn prompt_skill(selected: &[Ide], scope: Scope) -> io::Result<bool> {
+    if !selected.iter().any(|ide| ide.skills_dir(scope).is_some()) {
+        return Ok(false);
+    }
+    Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Also install the acrawl skill (teaches the agent how to use the tools)?")
+        .default(true)
+        .interact()
+        .map_err(io::Error::other)
 }
 
 fn prompt_scope() -> io::Result<Scope> {
@@ -1209,7 +1253,8 @@ pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
 
     let scope = prompt_scope()?;
 
-    let report = run_uninstall_for(&selected, scope, false);
+    // Only ever touches our own `acrawl-mcp` folder, so removing it is always safe.
+    let report = run_uninstall_for(&selected, scope, false, true);
     let success_count = report
         .results
         .iter()
@@ -1242,11 +1287,71 @@ pub enum ClientStatus {
     Error(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum SkillStatus {
+    Installed,
+    Removed,
+    NotFound,
+    /// The client has no skills directory at this scope.
+    Unsupported,
+    Error(String),
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct ClientResult {
     pub key: String,
     pub display_name: String,
     pub status: ClientStatus,
+    /// Present only when the run was asked to manage the skill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill: Option<SkillStatus>,
+}
+
+fn install_skill_for(ide: Ide, scope: Scope, json: bool) -> SkillStatus {
+    let Some(dir) = ide.skills_dir(scope) else {
+        if !json {
+            eprintln!("    - skill: {} has no skills support here", ide.name());
+        }
+        return SkillStatus::Unsupported;
+    };
+    match skill::install(&dir) {
+        Ok(path) => {
+            if !json {
+                eprintln!("    ✓ skill — {path}");
+            }
+            SkillStatus::Installed
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("    ✗ skill — {e}");
+            }
+            SkillStatus::Error(e.to_string())
+        }
+    }
+}
+
+fn uninstall_skill_for(ide: Ide, scope: Scope, json: bool) -> SkillStatus {
+    let Some(dir) = ide.skills_dir(scope) else {
+        return SkillStatus::Unsupported;
+    };
+    match skill::uninstall(&dir) {
+        Ok(removed) => {
+            if !json && removed {
+                eprintln!("    ✓ skill — removed from {}", dir.display());
+            }
+            if removed {
+                SkillStatus::Removed
+            } else {
+                SkillStatus::NotFound
+            }
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("    ✗ skill — {e}");
+            }
+            SkillStatus::Error(e.to_string())
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1339,7 +1444,13 @@ fn skipped_for_scope(ide: Ide, scope: Scope, json: bool) -> bool {
     false
 }
 
-fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) -> ClientResult {
+fn install_client_result(
+    ide: Ide,
+    scope: Scope,
+    acrawl_path: &str,
+    json: bool,
+    with_skill: bool,
+) -> ClientResult {
     let key = ide.key().to_string();
     let display_name = ide.name().to_string();
 
@@ -1348,6 +1459,7 @@ fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) 
             key,
             display_name,
             status: ClientStatus::SkippedScope,
+            skill: None,
         };
     }
 
@@ -1368,14 +1480,22 @@ fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) 
         }
     };
 
+    let skill = (with_skill
+        && matches!(
+            status,
+            ClientStatus::Configured | ClientStatus::ManualInstructions
+        ))
+    .then(|| install_skill_for(ide, scope, json));
+
     ClientResult {
         key,
         display_name,
         status,
+        skill,
     }
 }
 
-fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
+fn uninstall_client_result(ide: Ide, scope: Scope, json: bool, with_skill: bool) -> ClientResult {
     let key = ide.key().to_string();
     let display_name = ide.name().to_string();
 
@@ -1384,6 +1504,7 @@ fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
             key,
             display_name,
             status: ClientStatus::SkippedScope,
+            skill: None,
         };
     }
 
@@ -1404,34 +1525,47 @@ fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
         }
     };
 
+    let skill = with_skill.then(|| uninstall_skill_for(ide, scope, json));
+
     ClientResult {
         key,
         display_name,
         status,
+        skill,
     }
 }
 
 #[must_use]
-pub fn run_install_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+pub fn run_install_for(
+    clients: &[Ide],
+    scope: Scope,
+    json: bool,
+    with_skill: bool,
+) -> InstallReport {
     let acrawl_path = resolve_acrawl_path();
     if !json {
         eprintln!("\nInstalling acrawl MCP server (binary: {acrawl_path})...\n");
     }
     let results = clients
         .iter()
-        .map(|ide| install_client_result(*ide, scope, &acrawl_path, json))
+        .map(|ide| install_client_result(*ide, scope, &acrawl_path, json, with_skill))
         .collect();
     InstallReport { results }
 }
 
 #[must_use]
-pub fn run_uninstall_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+pub fn run_uninstall_for(
+    clients: &[Ide],
+    scope: Scope,
+    json: bool,
+    with_skill: bool,
+) -> InstallReport {
     if !json {
         eprintln!("\nRemoving acrawl MCP server configuration...\n");
     }
     let results = clients
         .iter()
-        .map(|ide| uninstall_client_result(*ide, scope, json))
+        .map(|ide| uninstall_client_result(*ide, scope, json, with_skill))
         .collect();
     InstallReport { results }
 }
@@ -1453,7 +1587,9 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
 
     let scope = prompt_scope()?;
 
-    let report = run_install_for(&selected, scope, false);
+    let with_skill = prompt_skill(&selected, scope)?;
+
+    let report = run_install_for(&selected, scope, false, with_skill);
     let success_count = report
         .results
         .iter()
@@ -1480,6 +1616,60 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn skipped_scope_results_carry_no_skill_status() {
+        let report = run_install_for(&[Ide::Trae], Scope::Global, true, true);
+        assert_eq!(report.results[0].skill, None);
+    }
+
+    #[test]
+    fn codex_skills_dir_honors_codex_home_and_falls_back_to_default() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            codex_skills_dir(Some("/custom/codex".into()), Some(home)),
+            Some(PathBuf::from("/custom/codex/skills"))
+        );
+        assert_eq!(
+            codex_skills_dir(None, Some(home)),
+            Some(home.join(".codex/skills"))
+        );
+        assert_eq!(
+            codex_skills_dir(Some("".into()), Some(home)),
+            Some(home.join(".codex/skills"))
+        );
+        assert_eq!(codex_skills_dir(None, None), None);
+        // An explicit CODEX_HOME works even without a resolvable home directory.
+        assert_eq!(
+            codex_skills_dir(Some("/custom/codex".into()), None),
+            Some(PathBuf::from("/custom/codex/skills"))
+        );
+    }
+
+    #[test]
+    fn skills_dir_covers_only_clients_with_skill_support() {
+        let supported: Vec<&str> = Ide::ALL
+            .iter()
+            .filter(|ide| ide.skills_dir(Scope::Global).is_some())
+            .map(|ide| ide.key())
+            .collect();
+        assert_eq!(
+            supported,
+            [
+                "claude-code",
+                "cursor",
+                "opencode",
+                "gemini-cli",
+                "codex-cli"
+            ]
+        );
+        assert_eq!(
+            Ide::ClaudeCode.skills_dir(Scope::Project),
+            Some(PathBuf::from(".claude/skills"))
+        );
+        assert_eq!(Ide::Zed.skills_dir(Scope::Project), None);
+        assert_eq!(Ide::GeminiCli.skills_dir(Scope::Project), None);
+    }
 
     #[test]
     fn client_keys_match_expected_kebab_set() {
@@ -1570,20 +1760,20 @@ mod tests {
 
     #[test]
     fn run_install_for_skips_incompatible_scope_without_writing() {
-        let report = run_install_for(&[Ide::Trae], Scope::Global, true);
+        let report = run_install_for(&[Ide::Trae], Scope::Global, true, true);
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].key, "trae");
         assert_eq!(report.results[0].display_name, "TRAE");
         assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
 
-        let report = run_install_for(&[Ide::Windsurf], Scope::Project, true);
+        let report = run_install_for(&[Ide::Windsurf], Scope::Project, true, true);
         assert_eq!(report.results[0].key, "windsurf");
         assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
     }
 
     #[test]
     fn run_uninstall_for_skips_incompatible_scope() {
-        let report = run_uninstall_for(&[Ide::Crush], Scope::Global, true);
+        let report = run_uninstall_for(&[Ide::Crush], Scope::Global, true, true);
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].key, "crush");
         assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
@@ -1597,11 +1787,13 @@ mod tests {
                     key: "cursor".to_string(),
                     display_name: "Cursor".to_string(),
                     status: ClientStatus::Configured,
+                    skill: Some(SkillStatus::Installed),
                 },
                 ClientResult {
                     key: "jetbrains".to_string(),
                     display_name: "JetBrains IDEs".to_string(),
                     status: ClientStatus::Error("boom".to_string()),
+                    skill: None,
                 },
             ],
         };
@@ -1609,6 +1801,8 @@ mod tests {
         assert_eq!(value["results"][0]["key"], "cursor");
         assert_eq!(value["results"][0]["status"], "Configured");
         assert_eq!(value["results"][1]["status"]["Error"], "boom");
+        assert_eq!(value["results"][0]["skill"], "Installed");
+        assert!(value["results"][1].get("skill").is_none());
     }
 
     #[test]
