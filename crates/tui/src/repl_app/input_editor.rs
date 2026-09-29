@@ -1061,7 +1061,6 @@ impl ReplTuiState {
         if let Some((_, _, entry_status)) =
             self.live_tool_calls
                 .iter_mut()
-                .rev()
                 .find(|(entry_name, _, entry_status)| {
                     entry_name == name && matches!(entry_status, ToolCallStatus::Running)
                 })

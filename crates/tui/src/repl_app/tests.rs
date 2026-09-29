@@ -1166,6 +1166,54 @@ fn tool_call_complete_updates_in_place_error() {
 }
 
 #[test]
+fn repeated_same_tool_calls_complete_in_start_order() {
+    let (tx, rx) = mpsc::channel::<ReplTuiEvent>();
+    let mut state = ReplTuiState::new();
+
+    // A batched turn: both starts arrive before either call finishes.
+    for selector in ["h1", "h2"] {
+        tx.send(ReplTuiEvent::ToolCallStart {
+            name: "read_content".to_string(),
+            input: format!(r#"{{"selector":"{selector}"}}"#),
+        })
+        .unwrap();
+    }
+    tx.send(ReplTuiEvent::ToolCallComplete {
+        name: "read_content".to_string(),
+        output: "first".to_string(),
+        is_error: false,
+    })
+    .unwrap();
+    state.drain_events(&rx);
+
+    assert!(
+        matches!(&state.live_tool_calls[0].2, ToolCallStatus::Success { output } if output == "first"),
+        "first result belongs to the first queued call"
+    );
+    assert!(
+        matches!(state.live_tool_calls[1].2, ToolCallStatus::Running),
+        "second call is still running"
+    );
+
+    tx.send(ReplTuiEvent::ToolCallComplete {
+        name: "read_content".to_string(),
+        output: "second failed".to_string(),
+        is_error: true,
+    })
+    .unwrap();
+    state.drain_events(&rx);
+
+    assert!(matches!(
+        state.live_tool_calls[0].2,
+        ToolCallStatus::Success { .. }
+    ));
+    assert!(matches!(
+        &state.live_tool_calls[1].2,
+        ToolCallStatus::Error(output) if output == "second failed"
+    ));
+}
+
+#[test]
 fn goal_title_shows_reasoning_effort_for_reasoning_model() {
     let header = super::HeaderSnapshot {
         model: "gpt-5.3-codex".to_string(),
