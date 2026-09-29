@@ -31,6 +31,7 @@ acrawl config get headless                        # read a setting
 acrawl config set headless false                  # write a setting
 acrawl mcp install --client opencode             # install MCP for one IDE
 acrawl mcp install --all --yes                   # install for all IDEs
+acrawl mcp install --client claude-code --skill  # also install the bundled acrawl-mcp agent skill
 # Exit codes: 0=ok  1=error  2=usage/config  3=not-configured
 ```
 
@@ -46,7 +47,7 @@ Eleven crates under `crates/`, compiled with `resolver = "2"`:
 - **agent** — agent orchestration and the 42-tool toolbox (31 browser + 4 agent-control + 7 script). `agent.rs` drives the agent loop; `tools/` contains individual tool handlers; `manager.rs` manages sub-agent fork/join lifecycle; `prompt.rs` builds the system prompt; `state.rs` holds `CrawlState`; `url_claim.rs` coordinates URL claims across agents.
 - **runtime** — `ConversationRuntime` (the core turn loop), `Session` persistence, system-prompt builder, compaction, usage/pricing, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **render** — markdown/terminal rendering (`markdown.rs`), tool call output formatting (`tool_format.rs`), output format selection (`format.rs`), and the `OutputSink` trait + implementations (`sink.rs`) that bridge runtime events to the UI.
-- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 31 direct browser tools + 7 script tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
+- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 31 direct browser tools + 7 script tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`; `skill.rs` embeds `skills/acrawl-mcp/` and installs it with `--skill`, so files added to that folder must be listed in `SKILL_FILES`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
 - **tui** (`acrawl-tui`) — Ratatui terminal UI. `repl_app/` (directory) owns the application state; `repl_render.rs` handles rendering; `modals/` contains auth, model-picker, and slash-command overlay widgets. Depends on `acrawl-ui`.
 - **ui** (`acrawl-ui`) — shared application layer used by both TUI and CLI. Owns `LiveCli`, provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`), session management (`session_mgr.rs`), output sink (`output_sink.rs`), and auth helpers.
 - **cli** — thin binary entry point (`main.rs`). `self_update.rs` handles `acrawl update`; `uninstall.rs` handles `acrawl uninstall`. All orchestration and session management live in `acrawl-ui`.
