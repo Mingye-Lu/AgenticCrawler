@@ -137,6 +137,18 @@ The acrawl Bridge extension lets acrawl control your real browser (with your ses
 
 Enable **Developer mode**, click **Load unpacked**, and select the unzipped folder. Then run `/extension` in the acrawl REPL to connect. See [extension/README.md](extension/README.md) for full setup details.
 
+### Agent Skill (optional)
+
+If you drive acrawl from a coding agent (via [`acrawl mcp`](#mcp-server-expose-acrawl-as-a-tool)), install the `acrawl-mcp` skill so the agent knows when to use direct tools, scripts, or `run_goal`, and how to debug with the network/console/cookie tools:
+
+```bash
+npx skills add Mingye-Lu/AgenticCrawler
+```
+
+This uses the community [`skills`](https://github.com/vercel-labs/skills) CLI, which detects your installed agents (Claude Code, Cursor, Codex, Gemini CLI, OpenCode, and many more) and copies the skill into each one's skills directory. Add `-g` for a global (user-level) install, or `-a claude-code` to target a single agent.
+
+Prefer to skip Node? `acrawl mcp install --client claude-code --skill` configures the MCP server and installs the same skill in one step (see [Quick install](#quick-install)).
+
 ### Configure
 
 ```bash
@@ -568,6 +580,8 @@ Interactive installer that auto-detects your IDEs, lets you toggle which to conf
 
 Supported clients: **Claude Code**, **Claude Desktop**, **Cursor**, **Windsurf**, **VS Code (Copilot)**, **OpenCode**, **Zed**, **TRAE**, **JetBrains IDEs**, **Gemini CLI**, **Qwen Code**, **Codex CLI**, **Hermes**, **OpenClaw**, **Goose**, **Crush**, **Aider**.
 
+The installer also offers to install the bundled `acrawl-mcp` [agent skill](#agent-skill-optional) for clients that load skills (Claude Code, Cursor, OpenCode, Codex CLI, Gemini CLI). Non-interactively, pass `--skill`: `acrawl mcp install --client claude-code --skill`. `acrawl mcp uninstall --client claude-code --skill` removes it again.
+
 #### Manual configuration
 
 If you prefer to configure manually, add this to your IDE's MCP config file:
@@ -751,6 +765,7 @@ acrawl config get model --effective
 # MCP install
 acrawl mcp install --client opencode --scope user
 acrawl mcp install --all --yes
+acrawl mcp install --client claude-code --skill   # also install the agent skill
 
 ## Configuration
 
