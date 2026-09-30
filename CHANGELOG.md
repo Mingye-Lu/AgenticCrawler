@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-09-30
+
+### Added
+
+- **`acrawl mcp install --skill`**: installs the bundled `acrawl-mcp` agent skill alongside the MCP config. Also documented: installing it via `npx skills`.
+- **Tool-call batching guidance**: the agent's system prompt now encourages emitting short, predictable sequences of tool calls in one turn (independent reads, fixed interaction sequences, consecutive forks) and says what not to batch. The `acrawl-mcp` skill gains the same guidance for MCP clients.
+
+### Fixed
+
+- **Streamed tool calls were lost or corrupted when a turn had several**: the OpenAI-compatible stream announces every tool call before closing any, but the UI and MCP server tracked a single pending call, so a later start overwrote an earlier one and argument deltas went to the wrong call. Calls are now assembled per content-block index.
+- **Repeated same-name tool calls completed in the wrong order in the TUI**: a result marked the last queued call finished instead of the first running one, swapping the results of repeated calls.
+- **Confidence recorded once per tool call instead of once per assistant turn**: a single `[confidence: LOW]` rating in a multi-call turn was counted repeatedly and triggered the consecutive-low-confidence alert early.
+
 ## [0.14.2] - 2026-09-21
 
 ### Fixed
@@ -989,6 +1002,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.14.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.3
 [0.14.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.2
 [0.14.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.1
 [0.14.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.0
