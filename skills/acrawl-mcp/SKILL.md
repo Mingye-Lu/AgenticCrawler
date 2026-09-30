@@ -20,10 +20,11 @@ Three ways to get work done. Choosing wrong is the most expensive mistake availa
 | Mode | Use when | Cost |
 |---|---|---|
 | **Manual tool calls** | Exploring an unfamiliar page; <10 actions; you need to *see* each result to decide the next step | 1 LLM round-trip per action |
+| **Batched tool calls** | A short, predictable sequence (2–5 calls) whose inputs don't depend on each other's output | 1 LLM round-trip for the whole sequence |
 | **`run_script`** | Same operation over 3+ pages/items, and the page structure is already known | **Zero** LLM round-trips during execution |
 | **`run_goal`** | Whole task is delegable in one sentence and you don't need intermediate control | 1 call; agent burns its own tokens internally |
 
-The practical pattern: **explore manually until the shape is known, then script the repetition.** Do one page by hand, confirm your selectors, then turn the loop into a script. A 50-page crawl becomes one tool call instead of 150.
+The practical pattern: **explore manually until the shape is known, batch the short predictable sequences, then script the repetition.** Do one page by hand, confirm your selectors, then turn the loop into a script. A 50-page crawl becomes one tool call instead of 150.
 
 Reach for `run_goal` when the target is genuinely unknown and adaptive ("find the pricing page and extract every tier"). It needs `~/.acrawl/credentials.json` configured; the other 38 tools do not. If credentials are missing, `run_goal` fails and the correct move is manual tools or a script, not repeated retries. See `references/setup.md`.
 
@@ -44,6 +45,30 @@ Every interaction tool (`click`, `click_at`, `fill_form`, `hover`, `press_key`, 
 - **No-op** — `changed: false`. Your action did nothing. Do **not** retry the identical call; the selector matched nothing meaningful, the element was disabled, or a guard blocked it. Re-map the region and pick a different target.
 
 A `changed: false` after a form submit deserves suspicion: acrawl reports a `CaptchaDetected` error for likely-silent reCAPTCHA v3 rejections, but a plain no-op can also mean client-side validation failed. Check `list_page_logs` for the reason rather than resubmitting.
+
+### Batch predictable steps into one turn
+
+**Emit several tool calls in a single turn whenever you can predict the next steps.** Every turn you save is one fewer LLM round-trip, and this is the cheapest speed-up available — it needs no script and no setup. The default of "one call, read the result, decide" is right for exploring an unfamiliar page and wasteful everywhere else.
+
+Batch these:
+
+- **Independent reads of the same page** — several `read_content` selectors, or `read_content` + `list_resources`.
+- **Read-only follow-ups to one state-changing action** — `scroll` → `read_content`, or `press_key` → `wait` → `read_content`.
+- **Observability sweeps** — `list_network_activity` + `list_page_logs` + `list_websocket_activity` after one action.
+
+Don't batch these:
+
+- **Anything that consumes an earlier call's output in the same turn.** `@eN` refs go stale after a navigation or substantial DOM change, and refs from `page_map` don't exist until it returns. `page_map` → `click @e7` cannot be one batch. Neither can a listing followed by an inspector on one of its refs.
+- **A submit behind a form update.** Never queue `click` on a submit button after `fill_form` or `select_option`: if the update fails or only partly applies, the submit sends empty or stale values. Run the update, read its `page_state`, then submit in the next turn.
+- **Actions after a step that may change the page unpredictably** (a click that might open a modal or show validation errors).
+
+Rules of thumb:
+
+- **Order for safe failure.** Reads first, state-changing calls (`click`, `fill_form`, `navigate`) last. Never queue an irreversible action behind a step that might fail.
+- **Failures may not stop the queue.** Whether later calls still run after an earlier one errors is up to your MCP client; acrawl executes each call it receives. After a batch, check every result and re-plan from the actual page state if any failed.
+- **Check your client's ordering.** acrawl shares one browser session across calls and does no ordering of its own. If your client dispatches a turn's calls concurrently instead of in order, restrict batches to independent reads.
+- **Keep batches to about 2–5 calls.** Each result lands in context, so avoid queueing several large `read_content` calls.
+- **3+ repeats of the same operation is a script, not a batch.** See section 1.
 
 ---
 
