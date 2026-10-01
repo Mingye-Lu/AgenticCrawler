@@ -23,6 +23,10 @@
   Single Rust binary. Full DevTools observability. 42 tools. 25 LLM providers. MCP server built-in.
 </p>
 
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="acrawl architecture: the TUI, one-shot prompt, and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 42 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge." width="100%">
+</p>
+
 ---
 
 ## Why acrawl?

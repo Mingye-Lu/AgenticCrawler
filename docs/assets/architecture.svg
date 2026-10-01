@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" role="img" aria-label="acrawl architecture: TUI, prompt and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 42 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge.">
+<style>:root{--bg:#eef2f3;--fg:#10222a;--muted:#546a73;--line:#8fa6af;--box:#ffffff;--lane:#e2eaec;--accent:#0a7d6e;--accent-soft:#d3efe9;--warm:#b4501f;
+--body:system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#0b161b;--fg:#e3edf0;--muted:#8fa3ab;--line:#4a6571;--box:#15262e;--lane:#112027;--accent:#4fd1bd;--accent-soft:#14363a;--warm:#f09a62}}
+svg{font-family:var(--body)}
+.lane{fill:var(--lane)}
+.box{fill:var(--box);stroke:var(--line);stroke-width:1.2}
+.hot{fill:var(--accent-soft);stroke:var(--accent);stroke-width:2}
+.t{font-size:14px;fill:var(--fg);font-weight:600}
+.s{font-size:11px;fill:var(--muted);font-family:var(--mono)}
+.l{font-size:11.5px;fill:var(--muted)}
+.w{fill:var(--warm)}
+.col{font-size:11px;letter-spacing:.14em;fill:var(--muted);font-family:var(--mono)}
+.ln{stroke:var(--line);stroke-width:1.6;fill:none}
+.ac{stroke:var(--accent);stroke-width:2.2;fill:none}
+.wm{stroke:var(--warm);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+.pulse.gray{fill:var(--muted)}
+.pulse.teal{fill:var(--accent)}
+.pulse.orange{fill:var(--warm)}
+@media (prefers-reduced-motion:reduce){.pulse{display:none}}</style>
+<rect width="1000" height="420" rx="10" fill="var(--bg)"/>
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--line)"/></marker>
+<marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--accent)"/></marker>
+<marker id="w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--warm)"/></marker>
+<path id="p1" d="M175 154H195V183H213"/>
+<path id="p2" d="M175 224H195V195H213"/>
+<path id="p3" d="M175 344H213"/>
+<path id="p4" d="M365 189H403"/>
+<path id="p5" d="M500 165V122"/>
+<path id="p6" d="M460 122V163"/>
+<path id="p7" d="M555 177H593"/>
+<path id="p8" d="M593 201H557"/>
+<path id="p9" d="M365 344H670V215"/>
+<path id="p10" d="M745 175H762V96H783"/>
+<path id="p11" d="M880 122V163"/>
+<path id="p12" d="M745 203H752V286H783"/>
+<path id="p13" d="M880 312V344"/>
+</defs>
+
+<!-- lanes -->
+<rect class="lane" x="10" y="14" width="180" height="392" rx="10"/>
+<rect class="lane" x="200" y="14" width="180" height="392" rx="10"/>
+<rect class="lane" x="390" y="14" width="180" height="392" rx="10"/>
+<rect class="lane" x="580" y="14" width="180" height="392" rx="10"/>
+<rect class="lane" x="770" y="14" width="220" height="392" rx="10"/>
+<text class="col" x="25" y="40">ENTRY</text><text class="col" x="215" y="40">SHELL</text><text class="col" x="405" y="40">TURN LOOP</text><text class="col" x="595" y="40">TOOLBOX</text><text class="col" x="785" y="40">BROWSER</text>
+
+<!-- entry -->
+<rect class="box" x="25" y="130" width="150" height="48" rx="8"/><text class="t" x="100" y="151" text-anchor="middle">TUI REPL</text><text class="s" x="100" y="167" text-anchor="middle">acrawl</text>
+<rect class="box" x="25" y="200" width="150" height="48" rx="8"/><text class="t" x="100" y="221" text-anchor="middle">One-shot</text><text class="s" x="100" y="237" text-anchor="middle">prompt / --resume</text>
+<rect class="box" x="25" y="320" width="150" height="48" rx="8"/><text class="t" x="100" y="341" text-anchor="middle">IDE agent</text><text class="s" x="100" y="357" text-anchor="middle">acrawl mcp</text>
+
+<!-- shell -->
+<rect class="box" x="215" y="165" width="150" height="48" rx="8"/><text class="t" x="290" y="186" text-anchor="middle">LiveCli</text><text class="s" x="290" y="202" text-anchor="middle">acrawl-ui</text>
+<rect class="box" x="215" y="320" width="150" height="48" rx="8"/><text class="t" x="290" y="341" text-anchor="middle">MCP server</text><text class="s" x="290" y="357" text-anchor="middle">JSON-RPC over stdio</text>
+<path class="ln" d="M175 154H195V183H213" marker-end="url(#a)"/>
+<path class="ln" d="M175 224H195V195H213" marker-end="url(#a)"/>
+<path class="ln" d="M175 344H213" marker-end="url(#a)"/>
+
+<!-- turn loop -->
+<rect class="box" x="405" y="72" width="150" height="48" rx="8"/><text class="t" x="480" y="93" text-anchor="middle">LLM provider</text><text class="s" x="480" y="109" text-anchor="middle">Anthropic · OpenAI · …</text>
+<rect class="hot" x="405" y="165" width="150" height="48" rx="8"/><text class="t" x="480" y="186" text-anchor="middle">ConversationRuntime</text><text class="s" x="480" y="202" text-anchor="middle">run_turn loop</text>
+<path class="ln" d="M365 189H403" marker-end="url(#a)"/>
+<path class="ac" d="M500 165V122" marker-end="url(#g)"/>
+<text class="l" x="510" y="148">request</text>
+<path class="ac" d="M460 122V163" marker-end="url(#g)"/>
+<text class="l" x="450" y="148" text-anchor="end">events</text>
+
+<!-- toolbox -->
+<rect class="hot" x="595" y="165" width="150" height="48" rx="8"/><text class="t" x="670" y="186" text-anchor="middle">CrawlerAgent</text><text class="s" x="670" y="202" text-anchor="middle">42 tools</text>
+<path class="ac" d="M555 177H593" marker-end="url(#g)"/>
+<path class="ac" d="M593 201H557" marker-end="url(#g)"/>
+<text class="l" x="574" y="164" text-anchor="middle">call</text>
+<text class="l" x="574" y="226" text-anchor="middle">result</text>
+<path class="ln" d="M365 344H670V215" marker-end="url(#a)"/>
+<text class="l" x="385" y="334">31 browser + 7 script tools, run_goal</text>
+
+<!-- browser -->
+<rect class="box" x="785" y="72" width="190" height="48" rx="8"/><text class="t" x="880" y="93" text-anchor="middle">FetchRouter</text><text class="s" x="880" y="109" text-anchor="middle">plain HTTP</text>
+<rect class="box" x="785" y="165" width="190" height="48" rx="8"/><text class="t" x="880" y="186" text-anchor="middle">CloakBrowser</text><text class="s" x="880" y="202" text-anchor="middle">stealth headless Chromium</text>
+<rect class="box" x="785" y="262" width="190" height="48" rx="8"/><text class="t" x="880" y="283" text-anchor="middle">Extension bridge</text><text class="s" x="880" y="299" text-anchor="middle">ws://127.0.0.1:19876</text>
+<rect class="box" x="785" y="346" width="190" height="48" rx="8"/><text class="t" x="880" y="367" text-anchor="middle">Your Chrome</text><text class="s" x="880" y="383" text-anchor="middle">logged-in tabs via CDP</text>
+<path class="ln" d="M745 175H762V96H783" marker-end="url(#a)"/>
+<text class="l" x="752" y="140" transform="rotate(-90 752 140)" text-anchor="middle">HTTP first</text>
+<path class="ln" d="M880 122V163" marker-end="url(#a)"/>
+<text class="l" x="890" y="147">needs JS: escalate</text>
+<path class="wm" d="M745 203H752V286H783" marker-end="url(#w)"/>
+<text class="l w" x="742" y="256" transform="rotate(-90 742 256)" text-anchor="middle">extension mode</text>
+<path class="wm" d="M880 312V344" marker-end="url(#w)"/>
+<text class="l w" x="890" y="332">CDP commands</text>
+<!-- travelling dots: grey = control flow, teal = turn loop, orange = extension mode -->
+<g class="pulse gray"><circle r="3.5" opacity="0"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath href="#p1"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.149;0.851;1" dur="1.6s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.149;0.851;1" dur="1.6s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.6s" begin="0.4s" repeatCount="indefinite"><mpath href="#p2"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.149;0.851;1" dur="1.6s" begin="0.4s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.149;0.851;1" dur="1.6s" begin="0.4s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.2s" begin="0.2s" repeatCount="indefinite"><mpath href="#p3"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.2s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.2s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.2s" begin="0.8s" repeatCount="indefinite"><mpath href="#p4"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.8s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.8s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="3.2s" repeatCount="indefinite"><mpath href="#p9"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.023;0.977;1" dur="3.2s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.023;0.977;1" dur="3.2s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="2s" begin="0.5s" repeatCount="indefinite"><mpath href="#p10"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.085;0.915;1" dur="2s" begin="0.5s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.085;0.915;1" dur="2s" begin="0.5s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.4s" begin="1s" repeatCount="indefinite"><mpath href="#p11"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.244;0.756;1" dur="1.4s" begin="1s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.244;0.756;1" dur="1.4s" begin="1s" repeatCount="indefinite"/></circle></g>
+<g class="pulse teal"><circle r="3.5" opacity="0"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath href="#p5"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.233;0.767;1" dur="1.6s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.233;0.767;1" dur="1.6s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.6s" begin="0.8s" repeatCount="indefinite"><mpath href="#p6"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.244;0.756;1" dur="1.6s" begin="0.8s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.244;0.756;1" dur="1.6s" begin="0.8s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.2s" begin="0.3s" repeatCount="indefinite"><mpath href="#p7"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.3s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.3s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.2s" begin="0.9s" repeatCount="indefinite"><mpath href="#p8"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.278;0.722;1" dur="1.2s" begin="0.9s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.278;0.722;1" dur="1.2s" begin="0.9s" repeatCount="indefinite"/></circle></g>
+<g class="pulse orange"><circle r="3.5" opacity="0"><animateMotion dur="2.4s" begin="0.3s" repeatCount="indefinite"><mpath href="#p12"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.083;0.917;1" dur="2.4s" begin="0.3s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.083;0.917;1" dur="2.4s" begin="0.3s" repeatCount="indefinite"/></circle>
+<circle r="3.5" opacity="0"><animateMotion dur="1.4s" begin="0.7s" repeatCount="indefinite"><mpath href="#p13"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.312;0.688;1" dur="1.4s" begin="0.7s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.312;0.688;1" dur="1.4s" begin="0.7s" repeatCount="indefinite"/></circle></g>
+</svg>
