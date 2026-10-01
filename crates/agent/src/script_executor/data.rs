@@ -77,7 +77,7 @@ impl ScriptExecutor {
         let max = self.limits.max_output_bytes;
         let result =
             self.output_bytes
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                     if current + item_bytes > max {
                         None
                     } else {
