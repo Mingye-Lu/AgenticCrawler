@@ -76,6 +76,8 @@ pub struct FileCoverage {
     pub used_bytes: usize,
 }
 
+// `async_trait` expands every method to `#[must_use]` on a boxed future, which `double_must_use` flags.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait BrowserBackend: Debug {
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError>;
