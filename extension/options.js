@@ -23,7 +23,123 @@ document.addEventListener('DOMContentLoaded', () => {
     portInput.value = items.port;
     tokenInput.value = items.token;
     updateStatusDisplay();
+    if (!items.token) {
+      pollPairing();
+      setInterval(pollPairing, 2000);
+      setInterval(tickPairing, 1000);
+    }
   });
+});
+
+// ----- Pairing: the code is shown on the acrawl side and typed here -----
+
+const pairBox = document.getElementById('pair');
+const pairHost = document.getElementById('pairHost');
+const pairMeta = document.getElementById('pairMeta');
+const pairCode = document.getElementById('pairCode');
+const pairButton = document.getElementById('pairButton');
+const pairNote = document.getElementById('pairNote');
+let pairDeadline = 0;
+
+function setPairNote(text, isError) {
+  pairNote.textContent = text;
+  pairNote.className = isError ? 'error' : '';
+}
+
+function showWaiting() {
+  pairDeadline = 0;
+  pairBox.className = 'waiting';
+  pairHost.textContent = '';
+  pairMeta.textContent = '';
+  pairCode.style.display = 'none';
+  pairButton.style.display = 'none';
+  setPairNote('Not paired. Run /extension in acrawl, or call an acrawl tool from your agent, and a pairing request appears here.', false);
+}
+
+function showOffer(offer) {
+  const host = offer.host;
+  pairBox.className = 'offer';
+  pairHost.textContent = `${host.client} wants to pair`;
+  pairMeta.textContent = `${host.mode === 'mcp' ? 'acrawl mcp' : 'acrawl REPL'} · pid ${host.pid} · ${host.cwd}`;
+  pairCode.style.display = '';
+  pairButton.style.display = '';
+  pairDeadline = Date.now() + offer.expires_in_secs * 1000;
+  tickPairing();
+}
+
+function tickPairing() {
+  if (!pairDeadline) {
+    return;
+  }
+  const left = Math.max(0, Math.round((pairDeadline - Date.now()) / 1000));
+  if (left === 0) {
+    showWaiting();
+    return;
+  }
+  const mm = Math.floor(left / 60);
+  const ss = String(left % 60).padStart(2, '0');
+  if (!pairNote.className) {
+    setPairNote(`Enter the code shown in your acrawl session. Expires in ${mm}:${ss}.`, false);
+  }
+}
+
+async function pollPairing() {
+  if (tokenInput.value) {
+    return;
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${parseInt(portInput.value, 10)}/pair/info`);
+    const { offer } = await res.json();
+    if (!offer) {
+      showWaiting();
+    } else if (!pairDeadline) {
+      showOffer(offer);
+    } else {
+      pairDeadline = Date.now() + offer.expires_in_secs * 1000;
+    }
+  } catch {
+    showWaiting();
+  }
+}
+
+pairButton.addEventListener('click', async () => {
+  pairButton.disabled = true;
+  try {
+    const res = await fetch(`http://127.0.0.1:${parseInt(portInput.value, 10)}/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ code: pairCode.value }),
+    });
+    if (res.ok) {
+      const { token } = await res.json();
+      tokenInput.value = token;
+      chrome.storage.local.set({ port: parseInt(portInput.value, 10), token }, () => {
+        pairBox.className = '';
+        pairDeadline = 0;
+        chrome.runtime.sendMessage({ type: 'reconnect' }, () => updateStatusDisplay());
+      });
+    } else if (res.status === 403) {
+      pairCode.value = '';
+      setPairNote('Wrong code. Too many wrong codes cancel the request.', true);
+    } else {
+      setPairNote('That request expired. Ask acrawl for a new code.', true);
+    }
+  } catch {
+    setPairNote('Could not reach acrawl.', true);
+  } finally {
+    pairButton.disabled = false;
+  }
+});
+
+pairCode.addEventListener('input', () => {
+  if (pairNote.className) {
+    setPairNote('', false);
+  }
+});
+pairCode.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    pairButton.click();
+  }
 });
 
 // Save settings

@@ -147,6 +147,61 @@
       font-size: 12px;
       font-weight: 400;
     }
+    #pair {
+      display: none;
+      margin-bottom: 16px;
+      padding: 14px;
+      border: 1px solid #93c5fd;
+      border-radius: 10px;
+      background: #eff6ff;
+    }
+    #pair.waiting {
+      display: block;
+      border-color: #e2e8f0;
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    #pair.offer {
+      display: block;
+    }
+    #pairHost {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #1e3a8a;
+      overflow-wrap: anywhere;
+    }
+    #pairMeta {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: #475569;
+      overflow-wrap: anywhere;
+    }
+    #pairRow {
+      display: flex;
+      gap: 10px;
+    }
+    #pairCode {
+      letter-spacing: 4px;
+      font-size: 18px;
+      text-align: center;
+    }
+    #pairButton {
+      flex: none;
+      width: 110px;
+      background-color: #2563eb;
+      color: white;
+    }
+    #pairNote {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: #475569;
+    }
+    #pairNote.error {
+      color: #c62828;
+    }
     #status {
       display: block;
       margin-top: 14px;
@@ -185,6 +240,16 @@
       </div>
     </div>
 
+    <div id="pair">
+      <p id="pairHost"></p>
+      <p id="pairMeta"></p>
+      <div id="pairRow">
+        <input id="pairCode" type="text" inputmode="numeric" maxlength="7" placeholder="000 000" autocomplete="off">
+        <button id="pairButton">Pair</button>
+      </div>
+      <p id="pairNote"></p>
+    </div>
+
     <div class="settings-grid">
       <div class="form-group">
         <label for="port">WebSocket Port</label>
@@ -192,7 +257,7 @@
       </div>
 
       <div class="form-group">
-        <label for="token">Authentication Token</label>
+        <label for="token">Token (set automatically when you pair)</label>
         <input id="token" type="password" placeholder="Paste token from acrawl /extension command">
       </div>
     </div>

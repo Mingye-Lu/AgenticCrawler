@@ -5,6 +5,7 @@
 
 mod auth;
 mod http;
+mod pairing;
 mod session;
 
 use std::collections::HashMap;
@@ -24,7 +25,9 @@ use tokio_tungstenite::tungstenite::http::{self as ws_http};
 
 pub use auth::generate_bridge_token;
 use auth::{validate_ws_upgrade, RateEntry};
-use http::{send_raw_http_error, serve_health};
+use http::{send_raw_http_error, serve_health, serve_pair};
+use pairing::PairingState;
+pub use pairing::{PairingHost, PairingOffer, PAIRING_TTL};
 use session::{run_ws_session, CommandRx};
 
 /// A command sent from the crawler to the Chrome extension via WebSocket.
@@ -73,6 +76,7 @@ pub struct WsBridgeServer {
     shutdown_tx: Option<oneshot::Sender<()>>,
     bridge_file_path: PathBuf,
     client_connected_rx: watch::Receiver<bool>,
+    state: Arc<ServerState>,
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -133,13 +137,19 @@ impl WsBridgeServer {
 
         let state = Arc::new(ServerState {
             token,
+            pairing: PairingState::default(),
             port: actual_port,
             has_active_client: AtomicBool::new(false),
             client_connected_tx,
             rate_limiter: tokio::sync::Mutex::new(HashMap::new()),
         });
 
-        let task = tokio::spawn(run_server(listener, state, command_rx, shutdown_rx));
+        let task = tokio::spawn(run_server(
+            listener,
+            Arc::clone(&state),
+            command_rx,
+            shutdown_rx,
+        ));
 
         Ok(Self {
             port: actual_port,
@@ -147,8 +157,16 @@ impl WsBridgeServer {
             shutdown_tx: Some(shutdown_tx),
             bridge_file_path,
             client_connected_rx,
+            state,
             _task: task,
         })
+    }
+
+    /// Open a pairing window and return the code to show the user. The code is
+    /// never served over HTTP; the extension popup must be given it by the user.
+    #[must_use]
+    pub fn open_pairing(&self, host: PairingHost) -> PairingOffer {
+        self.state.pairing.open(host, PAIRING_TTL)
     }
 
     #[must_use]
@@ -210,6 +228,7 @@ impl Drop for WsBridgeServer {
 
 struct ServerState {
     token: String,
+    pairing: PairingState,
     port: u16,
     has_active_client: AtomicBool,
     client_connected_tx: watch::Sender<bool>,
@@ -253,6 +272,11 @@ async fn handle_incoming(
 
     if preview.starts_with("GET /health") && !preview.contains("Upgrade:") {
         serve_health(stream, state.port).await;
+        return;
+    }
+
+    if preview.starts_with("GET /pair/info") || preview.starts_with("POST /pair ") {
+        serve_pair(stream, &state).await;
         return;
     }
 
@@ -593,5 +617,74 @@ mod tests {
         drop(first);
         std::env::remove_var("ACRAWL_CONFIG_HOME");
         let _ = std::fs::remove_dir_all(&temp);
+    }
+    async fn http(port: u16, req: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut c = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        c.write_all(req.as_bytes()).await.expect("write");
+        let mut out = String::new();
+        c.read_to_string(&mut out).await.expect("read");
+        out
+    }
+
+    fn pair_post(code: &str, origin: &str) -> String {
+        let body = format!(r#"{{"code":"{code}"}}"#);
+        format!(
+            "POST /pair HTTP/1.1\r\nHost: x\r\nOrigin: {origin}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn pairing_releases_token_only_for_the_right_code() {
+        let _guard = env_lock();
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let temp = std::env::temp_dir().join(format!("acrawl_ws_pair_test_{}", std::process::id()));
+        std::fs::create_dir_all(&temp).expect("create temp config home");
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp);
+        rt.block_on(pairing_flow());
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    async fn pairing_flow() {
+        let ext = format!("chrome-extension://{}", "a".repeat(32));
+        let server = WsBridgeServer::start(0, "the-token".to_string())
+            .await
+            .expect("start");
+        let port = server.port();
+        let info = "GET /pair/info HTTP/1.1\r\nHost: x\r\n\r\n";
+
+        assert!(http(port, info).await.contains(r#""offer":null"#));
+        assert!(http(port, &pair_post("123456", &ext)).await.contains("404"));
+
+        let offer = server.open_pairing(PairingHost::current("Claude Code 1.0", "mcp"));
+        let shown = http(port, info).await;
+        assert!(shown.contains("Claude Code 1.0"), "{shown}");
+        assert!(!shown.contains(&offer.code), "code must never be served");
+
+        let wrong = if offer.code == "000000" {
+            "000001"
+        } else {
+            "000000"
+        };
+        assert!(http(port, &pair_post(wrong, &ext)).await.contains("403"));
+        let evil = http(port, &pair_post(&offer.code, "https://evil.com")).await;
+        assert!(
+            evil.contains("403") && !evil.contains("the-token"),
+            "{evil}"
+        );
+
+        let ok = http(port, &pair_post(&offer.code, &ext)).await;
+        assert!(ok.contains(r#""token":"the-token""#), "{ok}");
+        assert!(http(port, &pair_post(&offer.code, &ext))
+            .await
+            .contains("404"));
+        drop(server);
     }
 }

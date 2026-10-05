@@ -179,6 +179,19 @@ fn send_error(id: Option<Value>, code: i32, message: String) {
     });
 }
 
+/// MCP client name from `initialize` (`clientInfo`), shown in the extension's
+/// pairing prompt so the user can tell which agent is asking.
+static CLIENT_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn remember_client(params: Option<&Value>) {
+    let info = params.and_then(|p| p.get("clientInfo"));
+    let field = |k: &str| info.and_then(|i| i.get(k)).and_then(Value::as_str);
+    if let Some(name) = field("name") {
+        let label = field("version").map_or_else(|| name.to_string(), |v| format!("{name} {v}"));
+        let _ = CLIENT_NAME.set(label);
+    }
+}
+
 fn initialize_response(id: Option<Value>) {
     let result = json!({
         "protocolVersion": PROTOCOL_VERSION,
@@ -304,9 +317,12 @@ fn ensure_extension_bridge(
     if !manager.is_connected() {
         let timeout = connect_timeout();
         if !rt.block_on(manager.wait_for_connection(timeout)) {
+            let client = CLIENT_NAME.get().map_or("MCP client", String::as_str);
+            let pairing = manager.open_pairing(client, "mcp");
             return Err(format!(
                 "extension mode is enabled but the acrawl Bridge extension did not connect \
-                 within {secs}s on port {port}. Load the extension and set its token to \
+                 within {secs}s on port {port}. If the extension is not paired yet, open its \
+                 popup and enter this code, then retry. {pairing}. Or set its token to \
                  `extension_bridge_token` from settings.json. To use the bundled headless \
                  browser instead, run `acrawl config unset browser_backend`.",
                 secs = timeout.as_secs(),
@@ -1236,7 +1252,10 @@ pub fn run_mcp_server() {
         }
 
         match request.method.as_str() {
-            "initialize" => initialize_response(request.id),
+            "initialize" => {
+                remember_client(request.params.as_ref());
+                initialize_response(request.id);
+            }
             "notifications/initialized" => {}
             "tools/list" => tools_list_response(request.id),
             "tools/call" => {

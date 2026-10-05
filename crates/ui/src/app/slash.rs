@@ -106,10 +106,12 @@ impl LiveCli {
                 } else {
                     match self.start_extension_server() {
                         Ok((token, port)) => {
+                            let pairing = self.extension_pairing_line();
                             println!(
                                 "Extension bridge\n  \
                                  Status           server started (port {port})\n  \
-                                 Token            {token}"
+                                 Token            {token}\n  \
+                                 {pairing}"
                             );
                         }
                         Err(e) => eprintln!("{e}"),
@@ -192,11 +194,24 @@ impl LiveCli {
         } else {
             "waiting for browser"
         };
+        let pairing = if server.is_connected() {
+            String::new()
+        } else {
+            format!("\n  {}", server.open_pairing("acrawl REPL", "repl"))
+        };
         Some(format!(
             "Extension mode\n  \
              Status           {status} (port {port})\n  \
-             Token            {token}"
+             Token            {token}{pairing}"
         ))
+    }
+
+    /// Fresh pairing code for the running bridge, ready to print.
+    pub fn extension_pairing_line(&self) -> String {
+        self.ws_bridge_server
+            .as_ref()
+            .map(|s| s.open_pairing("acrawl REPL", "repl"))
+            .unwrap_or_default()
     }
 
     pub fn start_extension_server(&mut self) -> Result<(String, u16), String> {
