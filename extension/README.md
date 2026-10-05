@@ -44,10 +44,13 @@ Download `acrawl-extension.zip` from the [latest release](https://github.com/Min
 ## Configuration
 
 1. Start acrawl in REPL mode: `acrawl`
-2. Type `/extension` — this starts the bridge server and displays a token
-3. Open extension options (click the acrawl Bridge icon → Options)
-4. Enter the port (default: `19876`) and paste the token
-5. Click Save — the badge should turn green
+2. Type `/extension` — this starts the bridge server and prints a 6-digit **pairing code** (valid for 3 minutes)
+3. Click the acrawl Bridge icon. The popup shows which acrawl session is asking to pair, with a countdown
+4. Type the code into the popup and click **Pair** — the badge turns green
+
+Over MCP, call any acrawl browser tool; if the extension isn't connected the tool error includes the pairing code, and the popup names your MCP client.
+
+The code is only ever shown on the acrawl side and typed into the extension, so another process that can reach the port cannot pair by itself. Five wrong codes cancel the request. Pairing is one-time: the extension keeps the token and reconnects on its own. To pair by hand instead, paste the token printed by `/extension` into the popup and click Save.
 
 Once connected, acrawl persists `browser_backend: "extension"` in `~/.acrawl/settings.json`. On subsequent launches, the bridge server auto-starts and waits for the extension to reconnect — no need to type `/extension` again.
 

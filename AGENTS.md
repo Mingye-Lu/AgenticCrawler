@@ -75,6 +75,7 @@ An alternative to CloakBrowser: a Chrome MV3 extension that lets acrawl drive th
 Key design decisions:
 - `BrowserBackend` trait (`browser_backend.rs`) is the abstraction — both `PlaywrightBridge` and `ExtensionBridge` implement it. Error type is `BridgeError` (not backend-specific).
 - Bridge server auto-starts only when `settings.browser_backend == "extension"`. In the TUI/CLI, mode activation (`extension_mode`) is event-driven: it flips only when the extension actually connects, not when the server starts.
+- Pairing hands the token to the extension: `open_pairing` mints a 6-digit code (3 min TTL) shown only on the acrawl side (REPL `/extension`, or the MCP connect-failure error, which names the MCP client from `initialize.clientInfo`). The extension popup posts it to `POST /pair`; `GET /pair/info` returns host info but never the code. Five wrong codes burn the offer. Keep the code flowing acrawl → user → extension: an approve-only click on the extension side would let any local process approve itself.
 - Token auth uses a 256-bit hex token with constant-time comparison. The token is generated once, persisted to `settings.extension_bridge_token`, and reused on later starts so the copy stored in the extension stays valid. The `/health` endpoint does NOT expose the token.
 - Origin validation requires valid 32-char Chrome/Edge extension ID format.
 - `/extension` starts the bridge server and shows the token. `/cloakbrowser` tears down extension mode and switches back.
