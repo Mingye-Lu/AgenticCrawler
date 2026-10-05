@@ -6,9 +6,11 @@ Connects [acrawl](https://github.com/Mingye-Lu/AgenticCrawler) to your Chromium 
 
 ### Chrome Web Store (recommended)
 
-Install from the [Chrome Web Store](https://chrome.google.com/webstore) (link pending).
+Install [acrawl Bridge from the Chrome Web Store](https://chromewebstore.google.com/detail/acrawl-bridge/nbkpmfofkdjcgkncmpicbdkjmddllcep) and click **Add to Chrome**. The same listing installs in Edge, Brave, Arc, Vivaldi, and Opera. Then continue with [Configuration](#configuration).
 
 ### Manual install from release
+
+Only needed if you can't use the store, or want an unreleased build.
 
 Download `acrawl-extension.zip` from the [latest release](https://github.com/Mingye-Lu/AgenticCrawler/releases/latest) and unzip it to a folder (e.g. `acrawl-extension/`).
 
