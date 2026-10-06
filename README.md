@@ -133,7 +133,7 @@ npm install
 The acrawl Bridge extension lets acrawl control your real browser (with your sessions, cookies, and existing extensions) instead of a headless CloakBrowser instance.
 
 1. Install **acrawl Bridge** from the [Chrome Web Store](https://chromewebstore.google.com/detail/acrawl-bridge/nbkpmfofkdjcgkncmpicbdkjmddllcep) and click **Add to Chrome**. The same listing works in Edge, Brave, Arc, Vivaldi, and Opera.
-2. Run `/extension` in the acrawl REPL to start the bridge and show the token, then paste it into the extension's options page.
+2. Run `/extension` in the acrawl REPL to start the bridge and show a pairing code, then type the code into the extension popup. This is a one-time step.
 
 To install without the store (for example, to run an unreleased build), see [extension/README.md](extension/README.md#manual-install-from-release). It has the full setup details.
 
