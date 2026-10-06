@@ -12,6 +12,10 @@ use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const SLIM_MAX_CHARS: usize = 2000;
+/// Pruned output shorter than this, from a page at least `OVER_PRUNE_MIN_SOURCE_CHARS` long,
+/// is treated as a pruning failure and replaced by the unpruned markdown.
+const OVER_PRUNE_MAX_CHARS: usize = 500;
+const OVER_PRUNE_MIN_SOURCE_CHARS: usize = 2_000;
 /// ARIA-tree serialization depth for navigate's structural section. Kept equal
 /// to the `page_map` tool default so both surfaces emit comparable trees.
 const NAVIGATE_TREE_DEPTH: usize = 5;
@@ -227,6 +231,64 @@ fn synthesize_tree_from_markdown(markdown: &str) -> AriaNode {
     }
 }
 
+/// Prune `source_html` and convert to markdown, falling back to `baseline_md` (the same
+/// region without pruning) when the heuristics have removed nearly everything. Returns the
+/// markdown and the fraction of `baseline_md` that was removed (0.0 when the fallback fired).
+fn fit_markdown(
+    source_html: &str,
+    text: &str,
+    baseline_md: &str,
+    profile: CleaningProfile,
+) -> (String, f64) {
+    let pruned = html_to_markdown(&prune_html_with_profile(source_html, profile));
+    let pruned_chars = pruned.chars().count();
+    let baseline_chars = baseline_md.chars().count();
+
+    if pruned.trim().is_empty() && !text.trim().is_empty() {
+        return (text.to_string(), 0.0);
+    }
+    if pruned_chars < OVER_PRUNE_MAX_CHARS && baseline_chars >= OVER_PRUNE_MIN_SOURCE_CHARS {
+        return (baseline_md.to_string(), 0.0);
+    }
+    let ratio = if baseline_chars == 0 {
+        0.0
+    } else {
+        (1.0 - char_count_f64(pruned_chars) / char_count_f64(baseline_chars)).clamp(0.0, 1.0)
+    };
+    (pruned, (ratio * 100.0).round() / 100.0)
+}
+
+fn char_count_f64(count: usize) -> f64 {
+    f64::from(u32::try_from(count).unwrap_or(u32::MAX))
+}
+
+/// Extracted page content plus how much of it the pruner removed (`fit_markdown` only).
+struct ResolvedContent {
+    content: String,
+    truncated: bool,
+    pruned_ratio: Option<f64>,
+}
+
+impl ResolvedContent {
+    fn plain((content, truncated): (String, bool)) -> Self {
+        Self {
+            content,
+            truncated,
+            pruned_ratio: None,
+        }
+    }
+
+    fn pruned(md: &str, ratio: f64, max_chars: usize) -> Self {
+        let (content, truncated) = cap_content(md, max_chars);
+        Self {
+            content,
+            truncated,
+            pruned_ratio: Some(ratio),
+        }
+    }
+}
+
+#[cfg(test)]
 fn resolve_content(
     html: &str,
     text: &str,
@@ -235,8 +297,20 @@ fn resolve_content(
     depth: &ContentDepth,
     profile: CleaningProfile,
 ) -> (String, bool) {
+    let resolved = resolve_content_with_stats(html, text, markdown, format, depth, profile);
+    (resolved.content, resolved.truncated)
+}
+
+fn resolve_content_with_stats(
+    html: &str,
+    text: &str,
+    markdown: &str,
+    format: &str,
+    depth: &ContentDepth,
+    profile: CleaningProfile,
+) -> ResolvedContent {
     if *depth == ContentDepth::None {
-        return (String::new(), false);
+        return ResolvedContent::plain((String::new(), false));
     }
 
     let max_chars = match depth {
@@ -249,17 +323,12 @@ fn resolve_content(
 
     match depth {
         ContentDepth::Full => match format {
-            "markdown" => cap_content(markdown, max_chars),
-            "text" => cap_content(text, max_chars),
-            "html" => cap_content(html, max_chars),
+            "markdown" => ResolvedContent::plain(cap_content(markdown, max_chars)),
+            "text" => ResolvedContent::plain(cap_content(text, max_chars)),
+            "html" => ResolvedContent::plain(cap_content(html, max_chars)),
             "fit_markdown" => {
-                let pruned = prune_html_with_profile(html, profile);
-                let md = html_to_markdown(&pruned);
-                if md.trim().is_empty() && !text.trim().is_empty() {
-                    cap_content(text, max_chars)
-                } else {
-                    cap_content(&md, max_chars)
-                }
+                let (md, ratio) = fit_markdown(html, text, markdown, profile);
+                ResolvedContent::pruned(&md, ratio, max_chars)
             }
             _ => unreachable!(),
         },
@@ -269,27 +338,23 @@ fn resolve_content(
                 "markdown" => {
                     let md = html_to_markdown(&main_html);
                     if md.trim().is_empty() && !text.trim().is_empty() {
-                        cap_content(text, max_chars)
+                        ResolvedContent::plain(cap_content(text, max_chars))
                     } else {
-                        cap_content(&md, max_chars)
+                        ResolvedContent::plain(cap_content(&md, max_chars))
                     }
                 }
-                "text" => cap_content(text, max_chars),
+                "text" => ResolvedContent::plain(cap_content(text, max_chars)),
                 "html" => {
                     if main_html.trim().is_empty() && !html.trim().is_empty() {
-                        cap_content(html, max_chars)
+                        ResolvedContent::plain(cap_content(html, max_chars))
                     } else {
-                        cap_content(&main_html, max_chars)
+                        ResolvedContent::plain(cap_content(&main_html, max_chars))
                     }
                 }
                 "fit_markdown" => {
-                    let pruned = prune_html_with_profile(&main_html, profile);
-                    let md = html_to_markdown(&pruned);
-                    if md.trim().is_empty() && !text.trim().is_empty() {
-                        cap_content(text, max_chars)
-                    } else {
-                        cap_content(&md, max_chars)
-                    }
+                    let baseline = html_to_markdown(&main_html);
+                    let (md, ratio) = fit_markdown(&main_html, text, &baseline, profile);
+                    ResolvedContent::pruned(&md, ratio, max_chars)
                 }
                 _ => unreachable!(),
             }
@@ -343,21 +408,33 @@ fn reply_without_page_map(
     format: &str,
     content_depth: &ContentDepth,
     truncated: bool,
+    pruned_ratio: Option<f64>,
     seq: u64,
     redirect_chain: &Value,
 ) -> ToolEffect {
     let content_length = content.chars().count();
-    ToolEffect::reply_json(&json!({
-        "seq": seq,
-        "url": page.url,
-        "title": title,
-        "content": content,
-        "format": format,
-        "content_depth": content_depth_label(content_depth),
-        "truncated": truncated,
-        "content_length": content_length,
-        "redirect_chain": redirect_chain,
-    }))
+    ToolEffect::reply_json(&with_pruned_ratio(
+        json!({
+            "seq": seq,
+            "url": page.url,
+            "title": title,
+            "content": content,
+            "format": format,
+            "content_depth": content_depth_label(content_depth),
+            "truncated": truncated,
+            "content_length": content_length,
+            "redirect_chain": redirect_chain,
+        }),
+        pruned_ratio,
+    ))
+}
+
+/// Adds `pruned_ratio` (fraction of the page's markdown the pruner removed) when known.
+fn with_pruned_ratio(mut reply: Value, pruned_ratio: Option<f64>) -> Value {
+    if let (Some(ratio), Some(obj)) = (pruned_ratio, reply.as_object_mut()) {
+        obj.insert("pruned_ratio".to_string(), json!(ratio));
+    }
+    reply
 }
 
 async fn fetch_aria_tree(browser: &mut BrowserContext) -> Option<AriaNode> {
@@ -419,7 +496,11 @@ pub async fn execute(
     let title = page.title.clone().unwrap_or_default();
     let profile = content_profile(page.html.len());
 
-    let (content, truncated) = resolve_content(
+    let ResolvedContent {
+        content,
+        truncated,
+        pruned_ratio,
+    } = resolve_content_with_stats(
         &page.html,
         &page.text,
         &page.markdown,
@@ -455,6 +536,7 @@ pub async fn execute(
             &params.format,
             &params.content_depth,
             truncated,
+            pruned_ratio,
             seq,
             &redirect_chain,
         ));
@@ -464,18 +546,21 @@ pub async fn execute(
 
     let content_length = content.chars().count();
 
-    Ok(ToolEffect::reply_json(&json!({
-        "seq": seq,
-        "url": page.url,
-        "title": title,
-        "content": content,
-        "format": params.format,
-        "content_depth": content_depth_label(&params.content_depth),
-        "truncated": truncated,
-        "content_length": content_length,
-        "redirect_chain": redirect_chain,
-        "page_map": page_map
-    })))
+    Ok(ToolEffect::reply_json(&with_pruned_ratio(
+        json!({
+            "seq": seq,
+            "url": page.url,
+            "title": title,
+            "content": content,
+            "format": params.format,
+            "content_depth": content_depth_label(&params.content_depth),
+            "truncated": truncated,
+            "content_length": content_length,
+            "redirect_chain": redirect_chain,
+            "page_map": page_map
+        }),
+        pruned_ratio,
+    )))
 }
 
 #[cfg(test)]
@@ -765,6 +850,93 @@ mod tests {
             content.contains("fallback text"),
             "should fall back to text when pruning removes all content, got: {content}"
         );
+    }
+
+    fn discussion_page(comments: usize) -> String {
+        use std::fmt::Write;
+        let mut rows = String::new();
+        for i in 0..comments {
+            write!(
+                rows,
+                r#"<tr class="athing comtr"><td class="default"><div class="comment"><span class="commtext">Comment number {i}: a reasonably long and substantive remark about the story under discussion.</span></div></td></tr>"#
+            )
+            .expect("writing to a String cannot fail");
+        }
+        format!(
+            r#"<html><body><table><tr><td><a href="https://www.ycombinator.com/apply/">Consider applying for YC</a></td></tr></table><table>{rows}</table></body></html>"#
+        )
+    }
+
+    #[test]
+    fn fit_markdown_keeps_comment_threads() {
+        let html = discussion_page(40);
+        let markdown = html_to_markdown(&html);
+        let (content, _) = resolve_content(
+            &html,
+            "",
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Full,
+            CleaningProfile::Default,
+        );
+        assert!(content.contains("Comment number 0"));
+        assert!(content.contains("Comment number 39"));
+    }
+
+    #[test]
+    fn fit_markdown_falls_back_to_unpruned_when_over_pruned() {
+        // Everything is under an "ads" class, so the heuristics drop the whole page, but the
+        // page is large enough that an almost-empty result must be a pruning failure.
+        let paragraph = "Substantive text that belongs to the real page content. ";
+        let body = paragraph.repeat(60);
+        let html = format!(r#"<html><body><div class="ads"><p>{body}</p></div></body></html>"#);
+        let markdown = html_to_markdown(&html);
+        assert!(markdown.chars().count() >= OVER_PRUNE_MIN_SOURCE_CHARS);
+        let resolved = resolve_content_with_stats(
+            &html,
+            &body,
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Full,
+            CleaningProfile::Default,
+        );
+        assert!(resolved.content.contains("Substantive text"));
+        assert_eq!(resolved.pruned_ratio, Some(0.0));
+    }
+
+    #[test]
+    fn fit_markdown_reports_pruned_ratio() {
+        let paragraph = "Quality article content that stays. ";
+        let article = paragraph.repeat(30);
+        let junk = "x".repeat(3000);
+        let html = format!(
+            r#"<html><body><article><p>{article}</p></article><div class="sidebar-ads"><p>{junk}</p></div></body></html>"#
+        );
+        let markdown = html_to_markdown(&html);
+        let resolved = resolve_content_with_stats(
+            &html,
+            "",
+            &markdown,
+            "fit_markdown",
+            &ContentDepth::Full,
+            CleaningProfile::Default,
+        );
+        let ratio = resolved.pruned_ratio.expect("fit_markdown reports a ratio");
+        assert!(ratio > 0.5 && ratio < 1.0, "unexpected ratio {ratio}");
+        assert!(!resolved.content.contains("xxxx"));
+    }
+
+    #[test]
+    fn plain_formats_report_no_pruned_ratio() {
+        let resolved = resolve_content_with_stats(
+            "<p>hi</p>",
+            "hi",
+            "hi",
+            "markdown",
+            &ContentDepth::Full,
+            CleaningProfile::Default,
+        );
+        assert_eq!(resolved.pruned_ratio, None);
     }
 
     #[test]
