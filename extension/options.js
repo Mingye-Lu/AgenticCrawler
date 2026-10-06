@@ -1,5 +1,6 @@
 'use strict';
 
+document.getElementById('version').textContent = 'v' + chrome.runtime.getManifest().version;
 const portInput = document.getElementById('port');
 const tokenInput = document.getElementById('token');
 const saveButton = document.getElementById('save');
