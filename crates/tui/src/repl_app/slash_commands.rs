@@ -455,13 +455,14 @@ pub(super) fn handle_slash_command_tui(
                     state.push_system_card("Extension", &status);
                 } else {
                     match g.start_extension_server() {
-                        Ok((token, port)) => {
+                        Ok((_, port)) => {
+                            let pairing = g.extension_pairing_line();
                             state.push_system_card(
                                 "Extension",
                                 &format!(
                                     "Extension bridge\n  \
                                      Status           server started (port {port})\n  \
-                                     Token            {token}"
+                                     {pairing}"
                                 ),
                             );
                             if let Some(watch) = g.extension_connection_watch() {

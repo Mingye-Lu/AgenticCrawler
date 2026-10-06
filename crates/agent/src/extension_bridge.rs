@@ -9,8 +9,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use browser::{
-    generate_bridge_token, read_bridge_file, BrowserBackend, ExtensionBridge, SharedBridge,
-    WsBridgeServer,
+    generate_bridge_token, read_bridge_file, BrowserBackend, ExtensionBridge, PairingHost,
+    SharedBridge, WsBridgeServer,
 };
 use tokio::sync::watch;
 
@@ -113,6 +113,15 @@ impl ExtensionBridgeManager {
     #[must_use]
     pub fn is_connected(&self) -> bool {
         self.server.is_client_connected()
+    }
+
+    /// Opens a pairing window and returns the line to show the user. `client`
+    /// names whoever is driving acrawl (e.g. the MCP client), `mode` is
+    /// `repl` or `mcp`.
+    #[must_use]
+    pub fn open_pairing(&self, client: &str, mode: &str) -> String {
+        let offer = self.server.open_pairing(PairingHost::current(client, mode));
+        format!("Pairing code    {}", offer.describe())
     }
 
     #[must_use]

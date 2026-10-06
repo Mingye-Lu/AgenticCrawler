@@ -133,7 +133,7 @@ npm install
 The acrawl Bridge extension lets acrawl control your real browser (with your sessions, cookies, and existing extensions) instead of a headless CloakBrowser instance.
 
 1. Install **acrawl Bridge** from the [Chrome Web Store](https://chromewebstore.google.com/detail/acrawl-bridge/nbkpmfofkdjcgkncmpicbdkjmddllcep) and click **Add to Chrome**. The same listing works in Edge, Brave, Arc, Vivaldi, and Opera.
-2. Run `/extension` in the acrawl REPL to start the bridge and show the token, then paste it into the extension's options page.
+2. Run `/extension` in the acrawl REPL to start the bridge and show a pairing code, then type the code into the extension popup. This is a one-time step.
 
 To install without the store (for example, to run an unreleased build), see [extension/README.md](extension/README.md#manual-install-from-release). It has the full setup details.
 
@@ -688,7 +688,6 @@ The MCP server honours `browser_backend`, so MCP clients can drive your own logg
 
 ```bash
 acrawl config set browser_backend extension   # route MCP browser tools through the extension
-acrawl config get extension_bridge_token      # paste this into the extension's options page
 ```
 
 The bridge server starts on the first browser tool call and waits up to `extension_bridge_connect_timeout_secs` (default 30) for the extension to connect. If it never connects, the tool call returns an actionable error rather than silently falling back to CloakBrowser — extension mode exists to reuse your authenticated session, so substituting a different browser would be misleading.
