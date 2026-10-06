@@ -289,6 +289,7 @@ async function connect(timeoutMs = 0) {
 
   if (!token) {
     disconnect({ suppressReconnect: true, unconfigured: true });
+    checkPairingOffer();
     return false;
   }
 
@@ -346,6 +347,10 @@ async function connect(timeoutMs = 0) {
     };
 
     socket.onclose = () => {
+      if (!settled) {
+        // Never connected: the saved token may be stale, so see if acrawl is offering to pair.
+        checkPairingOffer();
+      }
       const isCurrentSocket = ws === socket;
       const wasManualClose = socket.acrawlManualClose === true;
       if (isCurrentSocket) {
@@ -417,6 +422,35 @@ function stopKeepalive() {
     clearInterval(keepaliveInterval);
     keepaliveInterval = null;
   }
+}
+
+// ----------- Pairing prompt -----------
+
+// When acrawl opens a pairing window (REPL /extension, or an MCP connect failure),
+// flag it with a blue "PAIR" badge; the user opens the popup and types the code.
+// Runs from the connect path and the 30s watchdog. Programmatic popups are not
+// used: openPopup needs the browser focused, and the offer usually arrives while
+// the user is in a terminal.
+async function checkPairingOffer() {
+  if (wsConnected) {
+    return;
+  }
+  const { port, token } = await getSettings();
+  let offer = null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/pair/info`);
+    ({ offer } = await res.json());
+  } catch {
+    offer = null;
+  }
+  const { pairBadge } = await chrome.storage.session.get({ pairBadge: false });
+  if (offer) {
+    setBadge('PAIR', '#2563eb');
+  } else if (pairBadge) {
+    // The offer expired or was used: put back the badge connect() would show.
+    setBadge(token ? '' : '?', token ? '#cc0000' : '#888888');
+  }
+  await chrome.storage.session.set({ pairBadge: Boolean(offer) });
 }
 
 // ----------- Badge -----------
