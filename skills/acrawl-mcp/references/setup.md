@@ -248,7 +248,7 @@ Override the whole config directory with `ACRAWL_CONFIG_HOME`. Useful for isolat
 
 **Extension bridge (REPL only)** — acrawl drives *your real browser* over CDP through a local WebSocket, inheriting your cookies, sessions, and extensions. That makes it the answer for login-walled content and for sites whose bot detection defeats headless — but **only from the REPL**. Setting `browser_backend: "extension"` or running `/extension` does not change which backend an MCP tool call uses; an MCP session cannot inherit your real browser's session.
 
-Setup: download `acrawl-extension.zip` from the latest release, unzip, load unpacked at `chrome://extensions` (or `edge://`, `brave://`) with Developer mode on, then run `/extension` in the acrawl REPL to start the bridge and print the auth token.
+Setup: install **acrawl Bridge** from the [Chrome Web Store](https://chromewebstore.google.com/detail/acrawl-bridge/nbkpmfofkdjcgkncmpicbdkjmddllcep) (or load `acrawl-extension.zip` from the latest release unpacked at `chrome://extensions` with Developer mode on), then run `/extension` in the acrawl REPL to start the bridge and print the auth token.
 
 The bridge listens on `127.0.0.1:19876`, uses a 256-bit hex token compared in constant time, validates the extension-ID origin, and accepts one client at a time. Extension mode activates only when the extension actually connects, not when the server starts. `/cloakbrowser` switches back.
 
