@@ -23,11 +23,11 @@ document.addEventListener('DOMContentLoaded', () => {
     portInput.value = items.port;
     tokenInput.value = items.token;
     updateStatusDisplay();
-    if (!items.token) {
-      pollPairing();
-      setInterval(pollPairing, 2000);
-      setInterval(tickPairing, 1000);
-    }
+    // Poll even with a saved token: a stale one (reset config, another acrawl
+    // instance) leaves the extension disconnected and in need of a new pairing.
+    pollPairing();
+    setInterval(pollPairing, 2000);
+    setInterval(tickPairing, 1000);
   });
 });
 
@@ -48,6 +48,10 @@ function setPairNote(text, isError) {
 
 function showWaiting() {
   pairDeadline = 0;
+  if (tokenInput.value) {
+    pairBox.className = '';
+    return;
+  }
   pairBox.className = 'waiting';
   pairHost.textContent = '';
   pairMeta.textContent = '';
@@ -60,7 +64,7 @@ function showOffer(offer) {
   const host = offer.host;
   pairBox.className = 'offer';
   pairHost.textContent = `${host.client} wants to pair`;
-  pairMeta.textContent = `${host.mode === 'mcp' ? 'acrawl mcp' : 'acrawl REPL'} · pid ${host.pid} · ${host.cwd}`;
+  pairMeta.textContent = `${host.mode === 'mcp' ? 'acrawl mcp' : 'acrawl REPL'} Â· pid ${host.pid} Â· ${host.cwd}`;
   pairCode.style.display = '';
   pairButton.style.display = '';
   pairDeadline = Date.now() + offer.expires_in_secs * 1000;
@@ -83,8 +87,18 @@ function tickPairing() {
   }
 }
 
+function isConnected() {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'getConnectionStatus' }, (response) => {
+      resolve(Boolean(!chrome.runtime.lastError && response && response.connected));
+    });
+  });
+}
+
 async function pollPairing() {
-  if (tokenInput.value) {
+  if (await isConnected()) {
+    pairDeadline = 0;
+    pairBox.className = '';
     return;
   }
   try {
