@@ -130,16 +130,12 @@ npm install
 
 ### Browser Extension (optional)
 
-The acrawl Bridge extension lets acrawl control your real browser (with your sessions, cookies, and existing extensions) instead of a headless CloakBrowser instance. Download `acrawl-extension.zip` from the [latest release](https://github.com/Mingye-Lu/AgenticCrawler/releases/latest), unzip it, then load it into your browser:
+The acrawl Bridge extension lets acrawl control your real browser (with your sessions, cookies, and existing extensions) instead of a headless CloakBrowser instance.
 
-| Browser | Extensions page | Developer mode toggle |
-|---------|----------------|----------------------|
-| Chrome | `chrome://extensions` | Top-right |
-| Edge | `edge://extensions` | Bottom-left |
-| Brave | `brave://extensions` | Top-right |
-| Arc / Vivaldi / Opera | `<browser>://extensions` | Varies |
+1. Install **acrawl Bridge** from the [Chrome Web Store](https://chromewebstore.google.com/detail/acrawl-bridge/nbkpmfofkdjcgkncmpicbdkjmddllcep) and click **Add to Chrome**. The same listing works in Edge, Brave, Arc, Vivaldi, and Opera.
+2. Run `/extension` in the acrawl REPL to start the bridge and show the token, then paste it into the extension's options page.
 
-Enable **Developer mode**, click **Load unpacked**, and select the unzipped folder. Then run `/extension` in the acrawl REPL to connect. See [extension/README.md](extension/README.md) for full setup details.
+To install without the store (for example, to run an unreleased build), see [extension/README.md](extension/README.md#manual-install-from-release). It has the full setup details.
 
 ### Agent Skill (optional)
 
