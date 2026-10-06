@@ -32,10 +32,10 @@
     }
     .header {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
     h1 {
       color: #1f2937;
@@ -49,11 +49,23 @@
       font-size: 12px;
       line-height: 1.4;
     }
-    .settings-grid {
+    .connection {
       display: grid;
-      grid-template-columns: 150px minmax(0, 1fr);
-      gap: 14px;
+      grid-template-columns: 120px 1fr 1fr;
+      gap: 10px;
       align-items: end;
+    }
+    .version:empty {
+      display: none;
+    }
+    .version {
+      flex: none;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef2f7;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 500;
     }
     .form-group {
       margin: 0;
@@ -79,17 +91,6 @@
       outline: none;
       border-color: #2563eb;
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-    }
-    .button-group {
-      display: flex;
-      gap: 10px;
-      margin-top: 14px;
-    }
-    .help-text {
-      margin-top: 12px;
-      color: #64748b;
-      font-size: 12px;
-      line-height: 1.45;
     }
     button {
       flex: 1;
@@ -204,7 +205,7 @@
     }
     #status {
       display: block;
-      margin-top: 14px;
+      margin: 0 0 14px;
       padding: 12px;
       border-radius: 10px;
       font-size: 14px;
@@ -235,10 +236,13 @@
   <div class="panel">
     <div class="header">
       <div>
-        <h1>acrawl Bridge <span id="version" style="font-size:12px;font-weight:400;color:#64748b"></span></h1>
-        <div class="subtitle">Save connects the extension. Test Connection only checks the local bridge server.</div>
+        <h1>acrawl Bridge</h1>
+        <div class="subtitle">Save reconnects the extension. Test Connection only checks the local bridge server.</div>
       </div>
+      <span id="version" class="version"></span>
     </div>
+
+    <span id="status">Disconnected</span>
 
     <div id="pair">
       <p id="pairHost"></p>
@@ -250,14 +254,11 @@
       <p id="pairNote"></p>
     </div>
 
-    <div class="settings-grid">
+    <div class="connection">
       <div class="form-group">
         <label for="port">WebSocket Port</label>
         <input id="port" type="number" value="19876" min="1" max="65535">
       </div>
-    </div>
-
-    <div class="button-group">
       <button id="save">Save</button>
       <button id="test">Test Connection</button>
     </div>
@@ -277,13 +278,8 @@
       </label>
     </div>
 
-    <div class="help-text">
-      Tip: run <code>/extension</code> in acrawl first, then paste the shown token here once.
-    </div>
-
-    <span id="status">Disconnected</span>
   </div>
-  
+
   <script src="options.js"></script>
 </body>
 </html>
