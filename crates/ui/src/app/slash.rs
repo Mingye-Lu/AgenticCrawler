@@ -105,12 +105,11 @@ impl LiveCli {
                     println!("{status}");
                 } else {
                     match self.start_extension_server() {
-                        Ok((token, port)) => {
+                        Ok((_, port)) => {
                             let pairing = self.extension_pairing_line();
                             println!(
                                 "Extension bridge\n  \
                                  Status           server started (port {port})\n  \
-                                 Token            {token}\n  \
                                  {pairing}"
                             );
                         }
@@ -185,7 +184,6 @@ impl LiveCli {
 
     pub fn extension_bridge_status(&self) -> Option<String> {
         let server = self.ws_bridge_server.as_ref()?;
-        let token = server.token();
         let port = server.port();
         let status = if server.is_connected() && !self.extension_bridge_initialized {
             "browser connected; initializing"
@@ -201,8 +199,7 @@ impl LiveCli {
         };
         Some(format!(
             "Extension mode\n  \
-             Status           {status} (port {port})\n  \
-             Token            {token}{pairing}"
+             Status           {status} (port {port}){pairing}"
         ))
     }
 

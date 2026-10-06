@@ -692,7 +692,6 @@ The MCP server honours `browser_backend`, so MCP clients can drive your own logg
 
 ```bash
 acrawl config set browser_backend extension   # route MCP browser tools through the extension
-acrawl config get extension_bridge_token      # paste this into the extension's options page
 ```
 
 The bridge server starts on the first browser tool call and waits up to `extension_bridge_connect_timeout_secs` (default 30) for the extension to connect. If it never connects, the tool call returns an actionable error rather than silently falling back to CloakBrowser — extension mode exists to reuse your authenticated session, so substituting a different browser would be misleading.

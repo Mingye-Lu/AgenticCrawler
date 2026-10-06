@@ -322,8 +322,7 @@ fn ensure_extension_bridge(
             return Err(format!(
                 "extension mode is enabled but the acrawl Bridge extension did not connect \
                  within {secs}s on port {port}. If the extension is not paired yet, open its \
-                 popup and enter this code, then retry. {pairing}. Or set its token to \
-                 `extension_bridge_token` from settings.json. To use the bundled headless \
+                 popup and enter this code, then retry. {pairing}. To use the bundled headless \
                  browser instead, run `acrawl config unset browser_backend`.",
                 secs = timeout.as_secs(),
                 port = manager.port(),

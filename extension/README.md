@@ -50,7 +50,7 @@ Download `acrawl-extension.zip` from the [latest release](https://github.com/Min
 
 Over MCP, call any acrawl browser tool; if the extension isn't connected the tool error includes the pairing code, and the popup names your MCP client.
 
-The code is only ever shown on the acrawl side and typed into the extension, so another process that can reach the port cannot pair by itself. Five wrong codes cancel the request. Pairing is one-time: the extension keeps the token and reconnects on its own. To pair by hand instead, paste the token printed by `/extension` into the popup and click Save.
+The code is only ever shown on the acrawl side and typed into the extension, so another process that can reach the port cannot pair by itself. Five wrong codes cancel the request. Pairing is one-time: the extension keeps the token and reconnects on its own.
 
 Once connected, acrawl persists `browser_backend: "extension"` in `~/.acrawl/settings.json`. On subsequent launches, the bridge server auto-starts and waits for the extension to reconnect — no need to type `/extension` again.
 
@@ -72,7 +72,7 @@ All browser automation tools work through this bridge — the same tool surface 
 ## Troubleshooting
 
 - **Badge stays red**: Check that acrawl is running. If `browser_backend` is set to `"extension"` in settings, the server starts automatically on launch.
-- **Token mismatch**: The token is shown when you type `/extension`. A new token is generated each time the server starts. Re-paste it in the extension options.
+- **Connected before but not now (stale pairing)**: if acrawl's config was reset or you switched `ACRAWL_CONFIG_HOME`, the saved token no longer matches. Run `/extension` and enter the new pairing code in the popup.
 - **Port in use**: Change the port in `~/.acrawl/settings.json` (`extension_bridge_port` field).
 - **Extension disconnects frequently**: The extension uses exponential backoff reconnection (1s → 30s). Check if another process is competing for the port.
 

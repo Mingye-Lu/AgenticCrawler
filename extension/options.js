@@ -2,7 +2,8 @@
 
 document.getElementById('version').textContent = 'v' + chrome.runtime.getManifest().version;
 const portInput = document.getElementById('port');
-const tokenInput = document.getElementById('token');
+// Set by pairing; never typed by the user.
+let savedToken = '';
 const saveButton = document.getElementById('save');
 const testButton = document.getElementById('test');
 const statusSpan = document.getElementById('status');
@@ -21,7 +22,7 @@ chrome.storage.local.get(Object.fromEntries(toggleKeys.map((key) => [key, true])
 document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.local.get({ port: 19876, token: '' }, (items) => {
     portInput.value = items.port;
-    tokenInput.value = items.token;
+    savedToken = items.token;
     updateStatusDisplay();
     // Poll even with a saved token: a stale one (reset config, another acrawl
     // instance) leaves the extension disconnected and in need of a new pairing.
@@ -48,7 +49,7 @@ function setPairNote(text, isError) {
 
 function showWaiting() {
   pairDeadline = 0;
-  if (tokenInput.value) {
+  if (savedToken) {
     pairBox.className = '';
     return;
   }
@@ -126,7 +127,7 @@ pairButton.addEventListener('click', async () => {
     });
     if (res.ok) {
       const { token } = await res.json();
-      tokenInput.value = token;
+      savedToken = token;
       chrome.storage.local.set({ port: parseInt(portInput.value, 10), token }, () => {
         pairBox.className = '';
         pairDeadline = 0;
@@ -159,7 +160,6 @@ pairCode.addEventListener('keydown', (e) => {
 // Save settings
 saveButton.addEventListener('click', () => {
   const port = parseInt(portInput.value, 10);
-  const token = tokenInput.value.trim();
 
   if (isNaN(port) || port < 1 || port > 65535) {
     statusSpan.textContent = 'Invalid port number';
@@ -167,7 +167,7 @@ saveButton.addEventListener('click', () => {
     return;
   }
 
-  chrome.storage.local.set({ port, token }, () => {
+  chrome.storage.local.set({ port }, () => {
     statusSpan.textContent = 'Connecting...';
     statusSpan.className = 'testing';
     saveButton.disabled = true;
