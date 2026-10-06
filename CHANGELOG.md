@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-10-06
+
+### Added
+
+- **One-time extension pairing**: `/extension` now prints a 6-digit pairing code (valid for 3 minutes) instead of a token to copy. The extension popup shows which acrawl session is asking (MCP client name from `initialize.clientInfo`, pid, working directory) with a countdown; typing the code hands the extension the bridge token. The code is only ever shown on the acrawl side and typed into the extension, so a local process that can reach the port cannot pair on its own, and five wrong codes cancel the offer. Over MCP, the browser-tool error that reports a missing extension carries the code. New endpoints on the bridge port: `GET /pair/info` (never returns the code) and `POST /pair`.
+- **Extension version in the popup** and a blue **PAIR badge** on the extension icon while an acrawl session is offering to pair.
+- **Chrome Web Store install**: the install guide now points at the published acrawl Bridge listing.
+
+### Changed
+
+- **Extension 1.2.0 requires acrawl 0.15.0 or newer.** The popup no longer has a token field, so an older acrawl, which has no pairing endpoint, cannot connect to it. `/extension` and the MCP error no longer print or mention the token. `acrawl config get extension_bridge_token` still works for debugging.
+- **Flatter popup layout**: white background that fills the popup, status under the header, and the port field on one row with Save and Test Connection.
+
+### Fixed
+
+- **A stale saved token left the extension with no way to re-pair**: the popup now keeps looking for a pairing offer whenever the extension is disconnected.
+
 ## [0.14.3] - 2026-09-30
 
 ### Added
@@ -1002,6 +1019,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.15.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.0
 [0.14.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.3
 [0.14.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.2
 [0.14.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.1
