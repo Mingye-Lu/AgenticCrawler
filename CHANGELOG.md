@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Goal-aware pruning** (`optimization.semantic_prune`, default off): `navigate` accepts `focus`, a phrase or a list of phrases. With the flag on and `TYPESAFE_API_KEY` set, the heuristically pruned page is split into record-level blocks (a table row, list item, paragraph or comment stays whole), each block is scored against the focus by TypeSafe's Jev model, and blocks below 0.35 collapse into `[N blocks pruned]` markers. When more blocks pass than the content cap allows, the lowest-scoring ones are dropped instead of cutting the page off at the cap. `pruned_ratio` reports how much was removed, and `focus_note` says why a focus was not applied (flag off, no key, extension backend, API error). Page text is sent to `api.typesafe.ai`, so the feature is never used with the logged-in extension backend.
+- `navigate` replies carry `pruned_ratio` for `fit_markdown`.
+
+### Fixed
+
+- `fit_markdown` no longer deletes comment threads: class names containing "comment" were treated as boilerplate, which emptied Hacker News, forum and issue-thread pages.
+- `fit_markdown` falls back to the unpruned markdown when pruning leaves under 500 characters of a page with at least 2,000.
+
 ## [0.15.0] - 2026-10-06
 
 ### Added
