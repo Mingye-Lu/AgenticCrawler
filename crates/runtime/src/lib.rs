@@ -65,7 +65,8 @@ pub use settings::{
     settings_get_max_fork_depth, settings_get_max_steps, settings_get_max_total_agents,
     settings_get_output_dir, settings_get_page_fingerprinting,
     settings_get_per_agent_cost_tracking, settings_get_planning_interval,
-    settings_get_self_healing, settings_get_self_healing_max_retries, update_settings, Settings,
+    settings_get_self_healing, settings_get_self_healing_max_retries, settings_get_semantic_prune,
+    update_settings, Settings,
 };
 pub use update_check::{check_for_update, check_for_update_force, UpdateInfo};
 pub use usage::{

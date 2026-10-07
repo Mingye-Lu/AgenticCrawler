@@ -123,6 +123,11 @@ pub struct OptimizationSettings {
     #[serde(default)]
     pub content_aware_profiles: Option<bool>,
 
+    /// Drop page blocks that a relevance model judges unrelated to the `focus` passed to
+    /// `navigate`. Sends the page text to a third-party scoring API (default: false)
+    #[serde(default)]
+    pub semantic_prune: Option<bool>,
+
     /// Budget: max session cost in USD (default: None = unlimited)
     #[serde(default)]
     pub budget_max_session_cost_usd: Option<f64>,
@@ -157,6 +162,7 @@ impl Default for OptimizationSettings {
             confidence_tracking: None,
             compound_enrichment: None,
             content_aware_profiles: Some(true),
+            semantic_prune: None,
             budget_max_session_cost_usd: None,
             budget_enforcement: None,
             budget_warn_threshold_pct: None,
@@ -607,6 +613,15 @@ pub fn settings_get_content_aware_profiles(s: &Settings) -> bool {
     s.optimization
         .as_ref()
         .and_then(|o| o.content_aware_profiles)
+        .unwrap_or(false)
+}
+
+/// Get `semantic_prune` optimization setting, with default fallback.
+#[must_use]
+pub fn settings_get_semantic_prune(s: &Settings) -> bool {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.semantic_prune)
         .unwrap_or(false)
 }
 
@@ -1345,5 +1360,18 @@ mod tests {
         assert!(settings_get_content_aware_profiles(&settings));
 
         cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn semantic_prune_defaults_off_and_reads_flag() {
+        assert!(!settings_get_semantic_prune(&Settings::default()));
+        let settings = Settings {
+            optimization: Some(OptimizationSettings {
+                semantic_prune: Some(true),
+                ..OptimizationSettings::default()
+            }),
+            ..Settings::default()
+        };
+        assert!(settings_get_semantic_prune(&settings));
     }
 }
