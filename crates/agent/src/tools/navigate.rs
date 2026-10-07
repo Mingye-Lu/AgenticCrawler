@@ -4,6 +4,7 @@ use crate::aria::{assign_refs_and_prune, parse_raw_tree, to_yaml, AriaNode, Aria
 use crate::markdown::{extract_main_html, html_to_markdown, DEFAULT_MAX_MARKDOWN_CHARS};
 use crate::page_fingerprint::PageFingerprint;
 use crate::prune::{prune_html_with_profile, select_profile, CleaningProfile};
+use crate::relevance::{prune_to_focus, JevScorer, RelevanceScorer};
 use crate::state::CrawlState;
 use crate::tools::html_diff::HtmlDiffTracker;
 use crate::tools::page_map::normalize_url;
@@ -12,6 +13,8 @@ use crate::FetchRouter;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 const SLIM_MAX_CHARS: usize = 2000;
+const MAX_FOCUS_ITEMS: usize = 8;
+const MAX_FOCUS_CHARS: usize = 300;
 /// Pruned output shorter than this, from a page at least `OVER_PRUNE_MIN_SOURCE_CHARS` long,
 /// is treated as a pruning failure and replaced by the unpruned markdown.
 const OVER_PRUNE_MAX_CHARS: usize = 500;
@@ -42,6 +45,28 @@ struct NavigateInput {
     content_depth: ContentDepth,
     strip_images: bool,
     page_map_depth: PageMapDepth,
+    /// What the caller is looking for; empty means "no preference". See `relevance`.
+    focus: Vec<String>,
+}
+
+fn parse_focus(input: &Value) -> Result<Vec<String>, CrawlError> {
+    let items: Vec<&Value> = match input.get("focus") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(items)) => items.iter().collect(),
+        Some(single) => vec![single],
+    };
+    let mut focus = Vec::new();
+    for item in items {
+        let text = item
+            .as_str()
+            .ok_or_else(|| CrawlError::new("focus must be a string or a list of strings"))?
+            .trim();
+        if !text.is_empty() {
+            focus.push(text.chars().take(MAX_FOCUS_CHARS).collect());
+        }
+    }
+    focus.truncate(MAX_FOCUS_ITEMS);
+    Ok(focus)
 }
 
 fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
@@ -127,6 +152,7 @@ fn parse_input(input: &Value) -> Result<NavigateInput, CrawlError> {
         content_depth,
         strip_images,
         page_map_depth,
+        focus: parse_focus(input)?,
     })
 }
 
@@ -301,6 +327,88 @@ fn resolve_content(
     (resolved.content, resolved.truncated)
 }
 
+fn max_content_chars(depth: &ContentDepth) -> usize {
+    match depth {
+        ContentDepth::Slim => SLIM_MAX_CHARS,
+        _ => std::env::var("ACRAWL_MAX_MARKDOWN_CHARS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_MAX_MARKDOWN_CHARS),
+    }
+}
+
+/// Re-resolve `fit_markdown` content keeping only blocks relevant to `focus`.
+/// `Ok(None)` means the page was left as the heuristics pruned it.
+async fn focus_content(
+    scorer: &dyn RelevanceScorer,
+    focus: &[String],
+    html: &str,
+    depth: &ContentDepth,
+    profile: CleaningProfile,
+) -> Result<Option<ResolvedContent>, String> {
+    let source = match depth {
+        ContentDepth::Full => html.to_string(),
+        ContentDepth::Main | ContentDepth::Slim => extract_main_html(html),
+        ContentDepth::None => return Ok(None),
+    };
+    let cleaned = prune_html_with_profile(&source, profile);
+    let Some(page) = prune_to_focus(scorer, focus, &cleaned, max_content_chars(depth))
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    let baseline_chars = html_to_markdown(&source).chars().count();
+    let ratio = if baseline_chars == 0 {
+        0.0
+    } else {
+        (1.0 - char_count_f64(page.markdown.chars().count()) / char_count_f64(baseline_chars))
+            .clamp(0.0, 1.0)
+    };
+    Ok(Some(ResolvedContent::pruned(
+        &page.markdown,
+        (ratio * 100.0).round() / 100.0,
+        max_content_chars(depth),
+    )))
+}
+
+/// Apply `focus` when it is set and permitted. The `Err` is a short reason to tell the caller
+/// why the page came back unfocused; any failure leaves the heuristic content in place.
+async fn apply_focus(
+    params: &NavigateInput,
+    page: &browser::FetchedPage,
+    profile: CleaningProfile,
+) -> Result<Option<ResolvedContent>, String> {
+    if params.focus.is_empty() || params.format != "fit_markdown" {
+        return Ok(None);
+    }
+    let settings = runtime::load_settings();
+    if !runtime::settings_get_semantic_prune(&settings) {
+        return Err("focus ignored: optimization.semantic_prune is off".to_string());
+    }
+    if settings.browser_backend.as_deref() == Some("extension") {
+        return Err(
+            "focus ignored: not sent to a third-party scorer while using the logged-in browser extension"
+                .to_string(),
+        );
+    }
+    let Some(scorer) = JevScorer::from_env() else {
+        return Err(format!(
+            "focus ignored: {} is not set",
+            crate::relevance::API_KEY_ENV
+        ));
+    };
+    focus_content(
+        &scorer,
+        &params.focus,
+        &page.html,
+        &params.content_depth,
+        profile,
+    )
+    .await
+    .map_err(|e| format!("focus ignored: {e}"))
+}
+
 fn resolve_content_with_stats(
     html: &str,
     text: &str,
@@ -313,13 +421,7 @@ fn resolve_content_with_stats(
         return ResolvedContent::plain((String::new(), false));
     }
 
-    let max_chars = match depth {
-        ContentDepth::Slim => SLIM_MAX_CHARS,
-        _ => std::env::var("ACRAWL_MAX_MARKDOWN_CHARS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_MAX_MARKDOWN_CHARS),
-    };
+    let max_chars = max_content_chars(depth);
 
     match depth {
         ContentDepth::Full => match format {
@@ -409,11 +511,12 @@ fn reply_without_page_map(
     content_depth: &ContentDepth,
     truncated: bool,
     pruned_ratio: Option<f64>,
+    focus_note: Option<&str>,
     seq: u64,
     redirect_chain: &Value,
 ) -> ToolEffect {
     let content_length = content.chars().count();
-    ToolEffect::reply_json(&with_pruned_ratio(
+    ToolEffect::reply_json(&with_prune_info(
         json!({
             "seq": seq,
             "url": page.url,
@@ -426,13 +529,20 @@ fn reply_without_page_map(
             "redirect_chain": redirect_chain,
         }),
         pruned_ratio,
+        focus_note,
     ))
 }
 
-/// Adds `pruned_ratio` (fraction of the page's markdown the pruner removed) when known.
-fn with_pruned_ratio(mut reply: Value, pruned_ratio: Option<f64>) -> Value {
-    if let (Some(ratio), Some(obj)) = (pruned_ratio, reply.as_object_mut()) {
-        obj.insert("pruned_ratio".to_string(), json!(ratio));
+/// Adds `pruned_ratio` (fraction of the page's markdown the pruner removed) and, when a
+/// `focus` was given but could not be applied, `focus_note` saying why.
+fn with_prune_info(mut reply: Value, pruned_ratio: Option<f64>, focus_note: Option<&str>) -> Value {
+    if let Some(obj) = reply.as_object_mut() {
+        if let Some(ratio) = pruned_ratio {
+            obj.insert("pruned_ratio".to_string(), json!(ratio));
+        }
+        if let Some(note) = focus_note {
+            obj.insert("focus_note".to_string(), json!(note));
+        }
     }
     reply
 }
@@ -496,11 +606,7 @@ pub async fn execute(
     let title = page.title.clone().unwrap_or_default();
     let profile = content_profile(page.html.len());
 
-    let ResolvedContent {
-        content,
-        truncated,
-        pruned_ratio,
-    } = resolve_content_with_stats(
+    let resolved = resolve_content_with_stats(
         &page.html,
         &page.text,
         &page.markdown,
@@ -508,6 +614,16 @@ pub async fn execute(
         &params.content_depth,
         profile,
     );
+    let (resolved, focus_note) = match apply_focus(&params, &page, profile).await {
+        Ok(Some(focused)) => (focused, None),
+        Ok(None) => (resolved, None),
+        Err(reason) => (resolved, Some(reason)),
+    };
+    let ResolvedContent {
+        content,
+        truncated,
+        pruned_ratio,
+    } = resolved;
 
     let mut content =
         if params.strip_images && matches!(params.format.as_str(), "markdown" | "fit_markdown") {
@@ -537,6 +653,7 @@ pub async fn execute(
             &params.content_depth,
             truncated,
             pruned_ratio,
+            focus_note.as_deref(),
             seq,
             &redirect_chain,
         ));
@@ -546,7 +663,7 @@ pub async fn execute(
 
     let content_length = content.chars().count();
 
-    Ok(ToolEffect::reply_json(&with_pruned_ratio(
+    Ok(ToolEffect::reply_json(&with_prune_info(
         json!({
             "seq": seq,
             "url": page.url,
@@ -560,6 +677,7 @@ pub async fn execute(
             "page_map": page_map
         }),
         pruned_ratio,
+        focus_note.as_deref(),
     )))
 }
 
@@ -963,5 +1081,101 @@ mod tests {
     fn parse_page_map_depth_rejects_invalid() {
         let input = json!({"url": "https://example.com", "page_map_depth": "bogus"});
         assert!(parse_input(&input).is_err());
+    }
+
+    #[test]
+    fn parse_focus_accepts_string_or_list_and_trims() {
+        let one = parse_input(&json!({"url": "https://x.com", "focus": "  pricing "})).unwrap();
+        assert_eq!(one.focus, vec!["pricing"]);
+        let many = parse_input(&json!({"url": "https://x.com", "focus": ["a", " ", "b"]})).unwrap();
+        assert_eq!(many.focus, vec!["a", "b"]);
+        assert!(parse_input(&json!({"url": "https://x.com"}))
+            .unwrap()
+            .focus
+            .is_empty());
+    }
+
+    #[test]
+    fn parse_focus_rejects_non_strings_and_caps_the_list() {
+        let err = parse_input(&json!({"url": "https://x.com", "focus": [1]})).unwrap_err();
+        assert!(err.to_string().contains("focus"));
+        let many: Vec<String> = (0..20).map(|n| format!("topic {n}")).collect();
+        let parsed = parse_input(&json!({"url": "https://x.com", "focus": many})).unwrap();
+        assert_eq!(parsed.focus.len(), MAX_FOCUS_ITEMS);
+    }
+
+    struct KeepWord(&'static str);
+
+    impl RelevanceScorer for KeepWord {
+        fn score<'a>(
+            &'a self,
+            _focus: &'a [String],
+            blocks: &'a [String],
+        ) -> crate::relevance::ScoreFuture<'a> {
+            Box::pin(async move {
+                Ok(blocks
+                    .iter()
+                    .map(|b| if b.contains(self.0) { 1.0 } else { 0.0 })
+                    .collect())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn focus_content_keeps_matching_blocks_and_reports_ratio() {
+        use std::fmt::Write;
+        let mut html = String::from("<html><body><main>");
+        for n in 0..30 {
+            let kind = if n == 3 { "TARGET" } else { "other" };
+            let _ = write!(
+                html,
+                "<p>{kind} paragraph {n}. {}</p>",
+                "lorem ipsum ".repeat(12)
+            );
+        }
+        html.push_str("</main></body></html>");
+
+        let focused = focus_content(
+            &KeepWord("TARGET"),
+            &["target".to_string()],
+            &html,
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        )
+        .await
+        .unwrap()
+        .expect("page is large enough to prune");
+        assert!(focused.content.contains("TARGET paragraph 3"));
+        assert!(!focused.content.contains("other paragraph 4"));
+        assert!(focused.content.contains("[3 blocks pruned]"));
+        assert!(focused.pruned_ratio.unwrap() > 0.8);
+    }
+
+    #[tokio::test]
+    async fn focus_content_surfaces_scorer_failures() {
+        struct Down;
+        impl RelevanceScorer for Down {
+            fn score<'a>(
+                &'a self,
+                _: &'a [String],
+                _: &'a [String],
+            ) -> crate::relevance::ScoreFuture<'a> {
+                Box::pin(async { Err(crate::relevance::RelevanceError("down".to_string())) })
+            }
+        }
+        let html = format!(
+            "<main>{}</main>",
+            "<p>some text here. lorem ipsum dolor sit amet.</p>".repeat(60)
+        );
+        let err = focus_content(
+            &Down,
+            &["x".to_string()],
+            &html,
+            &ContentDepth::Main,
+            CleaningProfile::Default,
+        )
+        .await
+        .err();
+        assert_eq!(err.as_deref(), Some("down"));
     }
 }
