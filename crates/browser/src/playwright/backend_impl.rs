@@ -86,8 +86,13 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::close_page(self, page_index).await
     }
 
-    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError> {
-        PlaywrightBridge::scroll(self, direction, pixels).await
+    async fn scroll(
+        &mut self,
+        direction: &str,
+        pixels: i64,
+        selector: Option<&str>,
+    ) -> Result<(), BridgeError> {
+        PlaywrightBridge::scroll(self, direction, pixels, selector).await
     }
 
     async fn page_map(

@@ -380,7 +380,12 @@ mod set_device_integration {
         async fn close_page(&mut self, _page_index: usize) -> Result<(), BridgeError> {
             unreachable!()
         }
-        async fn scroll(&mut self, _direction: &str, _pixels: i64) -> Result<(), BridgeError> {
+        async fn scroll(
+            &mut self,
+            _direction: &str,
+            _pixels: i64,
+            _selector: Option<&str>,
+        ) -> Result<(), BridgeError> {
             unreachable!()
         }
         async fn page_map(
@@ -499,7 +504,12 @@ mod set_device_integration {
         async fn close_page(&mut self, _page_index: usize) -> Result<(), BridgeError> {
             unreachable!()
         }
-        async fn scroll(&mut self, _direction: &str, _pixels: i64) -> Result<(), BridgeError> {
+        async fn scroll(
+            &mut self,
+            _direction: &str,
+            _pixels: i64,
+            _selector: Option<&str>,
+        ) -> Result<(), BridgeError> {
             unreachable!()
         }
         async fn page_map(

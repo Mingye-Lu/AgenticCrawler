@@ -109,7 +109,12 @@ impl BrowserBackend for MockBridge {
         Ok(())
     }
 
-    async fn scroll(&mut self, direction: &str, pixels: i64) -> Result<(), BridgeError> {
+    async fn scroll(
+        &mut self,
+        direction: &str,
+        pixels: i64,
+        _selector: Option<&str>,
+    ) -> Result<(), BridgeError> {
         self.log("scroll", json!({"direction": direction, "pixels": pixels}));
         Ok(())
     }
