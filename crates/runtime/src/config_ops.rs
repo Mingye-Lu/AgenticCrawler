@@ -26,7 +26,7 @@ use crate::settings::{
 
 const REASONING_EFFORT_VALUES: &[&str] = &["high", "medium", "low"];
 const BROWSER_BACKEND_VALUES: &[&str] = &["extension"];
-const BUDGET_ENFORCEMENT_VALUES: &[&str] = &["warn", "block"];
+const BUDGET_ENFORCEMENT_VALUES: &[&str] = &["warn", "block", "route_down"];
 
 #[derive(Debug)]
 pub enum ConfigError {
@@ -471,6 +471,11 @@ fn apply_set(settings: &mut Settings, spec: &KeySpec, value: &str) -> Result<(),
             settings.fork_wait_timeout_secs = Some(parse_u32(spec.key, value)?);
         }
         ("extension_bridge_token", ValueKind::String) => {
+            // The extension keeps the token it was paired with, so a different
+            // token means it is no longer paired.
+            if settings.extension_bridge_token.as_deref() != Some(value) {
+                settings.extension_paired = None;
+            }
             settings.extension_bridge_token = Some(value.to_string());
         }
         ("extension_bridge_port", ValueKind::U16) => {
@@ -610,7 +615,11 @@ fn apply_unset(settings: &mut Settings, key: &str) {
         "max_total_agents" => settings.max_total_agents = None,
         "fork_child_max_steps" => settings.fork_child_max_steps = None,
         "fork_wait_timeout_secs" => settings.fork_wait_timeout_secs = None,
-        "extension_bridge_token" => settings.extension_bridge_token = None,
+        "extension_bridge_token" => {
+            // A new token is minted on next start; the extension holds the old one.
+            settings.extension_bridge_token = None;
+            settings.extension_paired = None;
+        }
         "extension_bridge_port" => settings.extension_bridge_port = None,
         "extension_bridge_connect_timeout_secs" => {
             settings.extension_bridge_connect_timeout_secs = None;
@@ -994,7 +1003,7 @@ fn effective_value(settings: &Settings, key: &str) -> Value {
         "extension_bridge_token" => json!(settings.extension_bridge_token.clone()),
         "extension_bridge_port" => json!(settings.extension_bridge_port.unwrap_or(19_876)),
         "extension_bridge_connect_timeout_secs" => {
-            json!(settings.extension_bridge_connect_timeout_secs.unwrap_or(30))
+            json!(settings.extension_bridge_connect_timeout_secs.unwrap_or(3))
         }
         "browser_backend" => json!(settings.browser_backend.clone()),
         "compaction_prune_protect_tokens" => {
@@ -1092,8 +1101,9 @@ fn effective_settings(settings: &Settings) -> Settings {
         fork_wait_timeout_secs: Some(settings_get_fork_wait_timeout_secs(settings)),
         extension_bridge_token: settings.extension_bridge_token.clone(),
         extension_bridge_port: Some(settings.extension_bridge_port.unwrap_or(19_876)),
+        extension_paired: settings.extension_paired,
         extension_bridge_connect_timeout_secs: Some(
-            settings.extension_bridge_connect_timeout_secs.unwrap_or(30),
+            settings.extension_bridge_connect_timeout_secs.unwrap_or(3),
         ),
         browser_backend: settings.browser_backend.clone(),
         compaction_prune_protect_tokens: Some(
@@ -1288,6 +1298,33 @@ mod tests {
     }
 
     #[test]
+    fn changing_the_bridge_token_clears_the_paired_state() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        config_set("extension_bridge_token", "token-a").expect("set token");
+        crate::update_settings(|s| s.extension_paired = Some(true)).expect("mark paired");
+
+        config_set("extension_bridge_token", "token-a").expect("set same token");
+        assert_eq!(
+            load_settings().extension_paired,
+            Some(true),
+            "re-setting the same token keeps the pairing"
+        );
+
+        config_set("extension_bridge_token", "token-b").expect("rotate token");
+        assert_eq!(load_settings().extension_paired, None);
+
+        crate::update_settings(|s| s.extension_paired = Some(true)).expect("mark paired");
+        config_unset("extension_bridge_token").expect("unset token");
+        assert_eq!(load_settings().extension_paired, None);
+
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
     fn dot_path_nesting_and_block_unset_work() {
         let _lock = test_env_lock();
         let temp_dir = setup_temp_dir();
@@ -1345,6 +1382,22 @@ mod tests {
             err,
             ConfigError::BadValue { key, value, .. } if key == "model" && value == "gpt-5"
         ));
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[test]
+    fn budget_enforcement_accepts_route_down() {
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        config_set("optimization.budget_enforcement", "route_down")
+            .expect("route_down should be a valid budget_enforcement value");
+        assert_eq!(
+            config_get("optimization.budget_enforcement", false).expect("get budget_enforcement"),
+            "\"route_down\""
+        );
 
         cleanup_temp_dir(&temp_dir);
     }

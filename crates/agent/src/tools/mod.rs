@@ -6,6 +6,7 @@ pub mod coverage;
 pub mod feedback;
 pub mod fill_form;
 pub mod fork;
+pub mod get_page_info;
 pub mod go_back;
 pub mod html_diff;
 pub mod intercept_network;

@@ -19,7 +19,7 @@ use std::time::Instant;
 use acrawl_core::config_home_dir;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch, Notify};
 
 use tokio_tungstenite::tungstenite::http::{self as ws_http};
 
@@ -141,6 +141,7 @@ impl WsBridgeServer {
             port: actual_port,
             has_active_client: AtomicBool::new(false),
             client_connected_tx,
+            authenticated: Arc::new(Notify::new()),
             rate_limiter: tokio::sync::Mutex::new(HashMap::new()),
         });
 
@@ -162,11 +163,20 @@ impl WsBridgeServer {
         })
     }
 
-    /// Open a pairing window and return the code to show the user. The code is
-    /// never served over HTTP; the extension popup must be given it by the user.
+    /// Open a pairing window and return the code to show the user, reusing the
+    /// live one so earlier displays stay valid. The code is never served over
+    /// HTTP; the extension popup must be given it by the user.
     #[must_use]
     pub fn open_pairing(&self, host: PairingHost) -> PairingOffer {
-        self.state.pairing.open(host, PAIRING_TTL)
+        self.state.pairing.open_or_reuse(host, PAIRING_TTL)
+    }
+
+    /// Signalled each time an extension authenticates. Unlike the connection
+    /// watch, a signal that fires before anyone waits is kept, so a connect
+    /// that is quickly followed by a disconnect is not lost.
+    #[must_use]
+    pub fn authenticated(&self) -> Arc<Notify> {
+        Arc::clone(&self.state.authenticated)
     }
 
     #[must_use]
@@ -232,6 +242,7 @@ struct ServerState {
     port: u16,
     has_active_client: AtomicBool,
     client_connected_tx: watch::Sender<bool>,
+    authenticated: Arc<Notify>,
     rate_limiter: tokio::sync::Mutex<HashMap<IpAddr, RateEntry>>,
 }
 
@@ -320,6 +331,7 @@ async fn handle_incoming(
     .await;
 
     if let Ok(ws) = ws_result {
+        state.authenticated.notify_one();
         let _ = state.client_connected_tx.send(true);
         run_ws_session(ws, command_rx).await;
         let _ = state.client_connected_tx.send(false);

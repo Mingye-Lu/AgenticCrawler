@@ -32,7 +32,10 @@ try {
 let ws = null;
 let wsConnected = false;
 let reconnectTimer = null;
-let reconnectDelay = 1000; // exponential backoff, cap at 30000ms
+// Exponential backoff, capped low: acrawl waits only a few seconds for an already-paired
+// extension to dial in, so a long retry interval would make its first tool call fail.
+const MAX_RECONNECT_DELAY_MS = 2000;
+let reconnectDelay = 1000;
 let keepaliveInterval = null;
 
 // Tab management: maps pageIndex -> Chrome tabId
@@ -394,7 +397,7 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(() => {
     connect();
   }, reconnectDelay);
-  reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
 }
 
 function clearReconnectTimer() {
@@ -514,6 +517,9 @@ async function handleCommand(cmd) {
         break;
       case 'close_page':
         result = await handleClosePage(cmd.payload || {});
+        break;
+      case 'list_tabs':
+        result = await handleListTabs();
         break;
       case 'switch_tab':
         {
@@ -764,17 +770,33 @@ async function handleClosePage(payload) {
   return { closed: true };
 }
 
+// Read-only: reports the agent's tabs and nothing else. A tab the user moved out of the
+// acrawl group is no longer the agent's, so it is left out (and, unlike the access checks,
+// not revoked here: listing must not change state).
+async function handleListTabs() {
+  const indices = Object.keys(managedTabs).map(Number).sort((a, b) => a - b);
+  const tabs = [];
+  for (const index of indices) {
+    const tab = await chrome.tabs.get(managedTabs[index]).catch(() => null);
+    if (!tab || agentGroupId === null || tab.groupId !== agentGroupId) continue;
+    tabs.push({ index, url: tab.url || tab.pendingUrl || '', title: tab.title || '' });
+  }
+  return { tabs };
+}
+
 async function handleSwitchTab(payload) {
   const index = payload.index ?? 0;
   const tabId = managedTabs[index];
   if (!tabId) throw new Error(`No tab at index ${index}`);
   await assertInAgentGroup(tabId);
-  await new Promise((resolve, reject) => {
-    chrome.tabs.update(tabId, { active: true }, (t) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else resolve(t);
-    });
-  });
+  // acrawl re-selects its page before every action, and CDP drives background
+  // tabs fine, so never steal focus from a user working in another tab. Only
+  // follow along when the user is already watching one of the agent's tabs.
+  const { windowId } = await chrome.tabs.get(tabId);
+  const [shown] = await chrome.tabs.query({ active: true, windowId });
+  if (shown && shown.id !== tabId && findPageIndex(shown.id) !== null) {
+    await chrome.tabs.update(tabId, { active: true });
+  }
   activePageIndex = index;
   await saveState();
   // Indices are sparse once tabs close or leave the group; report the valid ones.

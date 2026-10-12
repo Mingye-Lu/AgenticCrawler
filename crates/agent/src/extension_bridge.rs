@@ -12,11 +12,11 @@ use browser::{
     generate_bridge_token, read_bridge_file, BrowserBackend, ExtensionBridge, PairingHost,
     SharedBridge, WsBridgeServer,
 };
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 
 pub const EXTENSION_BACKEND: &str = "extension";
 pub const DEFAULT_BRIDGE_PORT: u16 = 19876;
-pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
+pub const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 3;
 
 #[must_use]
 pub fn extension_backend_selected() -> bool {
@@ -49,6 +49,33 @@ fn resolve_bridge_config() -> (u16, String) {
         .extension_bridge_port
         .unwrap_or(DEFAULT_BRIDGE_PORT);
     (port, token)
+}
+
+/// Whether an extension has ever authenticated against this bridge, i.e. holds
+/// the token. When false there is nothing to wait for: the extension cannot
+/// connect until the user enters a pairing code.
+#[must_use]
+pub fn extension_paired() -> bool {
+    runtime::load_settings().extension_paired == Some(true)
+}
+
+/// A WebSocket upgrade only succeeds with the token, so the first authenticated
+/// connection proves the extension is paired. Persist that so later processes
+/// can tell "never paired" from "paired but not reachable right now".
+fn persist_paired_on_authentication(authenticated: Arc<Notify>) {
+    mark_on_first_authentication(authenticated, || {
+        let _ = runtime::update_settings(|s| s.extension_paired = Some(true));
+    });
+}
+
+/// Runs `mark` once, after the first authentication. `Notify` keeps a signal
+/// sent before the task first polls, so a connection that opens and closes
+/// quickly is still recorded.
+fn mark_on_first_authentication(authenticated: Arc<Notify>, mark: impl FnOnce() + Send + 'static) {
+    tokio::spawn(async move {
+        authenticated.notified().await;
+        mark();
+    });
 }
 
 #[must_use]
@@ -86,11 +113,14 @@ pub struct ExtensionBridgeManager {
 impl ExtensionBridgeManager {
     pub async fn start(port: u16, token: String) -> Result<Self, String> {
         match WsBridgeServer::start(port, token.clone()).await {
-            Ok(server) => Ok(Self {
-                server,
-                token,
-                shared_bridge: OnceLock::new(),
-            }),
+            Ok(server) => {
+                persist_paired_on_authentication(server.authenticated());
+                Ok(Self {
+                    server,
+                    token,
+                    shared_bridge: OnceLock::new(),
+                })
+            }
             Err(error) => Err(describe_bind_conflict(port, &error.to_string())),
         }
     }
@@ -168,5 +198,27 @@ mod tests {
     #[test]
     fn default_bridge_port_matches_extension_default() {
         assert_eq!(DEFAULT_BRIDGE_PORT, 19876);
+    }
+
+    #[test]
+    fn default_connect_timeout_is_short_grace_for_paired_extension() {
+        assert_eq!(DEFAULT_CONNECT_TIMEOUT_SECS, 3);
+    }
+
+    #[tokio::test]
+    async fn authentication_before_the_task_polls_is_not_lost() {
+        let authenticated = Arc::new(Notify::new());
+        // The extension authenticated and dropped again before anyone was waiting.
+        authenticated.notify_one();
+
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        mark_on_first_authentication(authenticated, move || {
+            let _ = done_tx.send(());
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), done_rx)
+            .await
+            .expect("mark callback should fire for an earlier authentication")
+            .expect("callback sent");
     }
 }

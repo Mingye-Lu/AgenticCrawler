@@ -1,6 +1,6 @@
 # acrawl MCP — Tool Reference
 
-All 39 MCP tools with exact parameter names, types, enums, and defaults. Parameter names are copied from the live server schemas — use them verbatim.
+All 40 MCP tools with exact parameter names, types, enums, and defaults. Parameter names are copied from the live server schemas — use them verbatim.
 
 **Contents**
 
@@ -21,7 +21,7 @@ All 39 MCP tools with exact parameter names, types, enums, and defaults. Paramet
 - **Required** parameters are marked. Everything else is optional.
 - All schemas are `additionalProperties: false` — an unknown key is an error, not ignored. Typos fail loudly.
 - **Tool names are matched verbatim.** A dash form like `read-content` is rejected as an unknown tool (JSON-RPC `-32601`), not normalized. Dash/case normalization exists in the codebase but is applied only to `run_goal`'s `allowed_tools` list.
-- The 31 browser tools share **one persistent browser session**. State (cookies, current tab, URL, interception rules) carries across calls.
+- The 32 browser tools share **one persistent browser session**. State (cookies, current tab, URL, interception rules) carries across calls.
 - Tools returning `page_state`: `click`, `click_at`, `fill_form`, `select_option`, `hover`, `press_key`, `scroll`, `go_back`, `switch_tab`, `set_device`, `refresh`, `wait`.
 - The browser launches lazily on the first browser tool call — and on **any** `run_script` call, whether or not the script touches the browser.
 - **The agent-loop optimizations do not apply here.** Self-healing, action caching, loop detection, confidence tracking, and budget enforcement all live in `CrawlerAgent::execute`; MCP dispatches straight to the tool registry. They affect `run_goal` only.
@@ -48,6 +48,14 @@ Loads a URL over HTTP, auto-escalating to headless Chromium when JS rendering is
 ### `go_back` — no parameters
 
 Browser back button. Returns `page_state`.
+
+### `get_page_info`
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `all_tabs` | boolean | `false` | Also list every tab you can use as `tabs: [{index, url, title, active}]` plus `tab_count`. `active` marks the tab you are working on. Does not switch tabs; pass a listed `index` to `switch_tab`. In extension mode only tabs in the `acrawl` group appear. |
+
+Cheap read of the current page's `url`, `title` and `ready_state` — no DOM walk, no refetch. `live: true` means the values come from the open page; `live: false` means no browser page is open yet and `url`/`title` are from the last fetch (`ready_state` is `null`). Read-only: it never advances `seq` and the reply has no `seq`, so `since: "last"` on `list_page_logs` still means "what the last action caused".
 
 ### `refresh` — no parameters
 
@@ -465,10 +473,10 @@ Use it for genuinely adaptive, unknown-shape tasks. Prefer manual tools or a scr
 
 ## Not exposed over MCP
 
-These 4 agent-control tools exist in the 42-tool internal toolbox but are **excluded** from MCP; calling one returns JSON-RPC `-32601` (method not found):
+These 4 agent-control tools exist in the 43-tool internal toolbox but are **excluded** from MCP; calling one returns JSON-RPC `-32601` (method not found):
 
 `fork` · `wait_for_subagents` · `subagent_status` · `cancel_subagent`
 
 For concurrency from MCP, fire several `run_script` calls and join them with `wait_for_scripts` (up to `max_concurrent_scripts`, default 5), or ask `run_goal` to fork sub-agents internally. Do **not** rely on script `parallel` branches — they are broken for 2+ branches; see `references/scripting.md`.
 
-**Arithmetic:** 42 internal = 31 browser + 4 agent-control + 7 script. MCP surface = 42 − 4 excluded + 1 `run_goal` = **39**.
+**Arithmetic:** 43 internal = 32 browser + 4 agent-control + 7 script. MCP surface = 43 − 4 excluded + 1 `run_goal` = **40**.

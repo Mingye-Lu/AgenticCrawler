@@ -94,6 +94,25 @@ impl PairingState {
         offer
     }
 
+    /// The live offer (with `host` refreshed), or a new one when none is live. Several requests
+    /// can ask for a code before the user finishes entering one; minting a code per request
+    /// would invalidate every code already shown.
+    pub(super) fn open_or_reuse(&self, host: PairingHost, ttl: Duration) -> PairingOffer {
+        {
+            let mut guard = self.lock();
+            if let Some(offer) = guard.as_mut() {
+                if let Some(left) = offer.expires_at.checked_duration_since(Instant::now()) {
+                    offer.host = host;
+                    return PairingOffer {
+                        code: offer.code.clone(),
+                        expires_in: left,
+                    };
+                }
+            }
+        }
+        self.open(host, ttl)
+    }
+
     /// Host and seconds left for the live offer, never the code.
     pub(super) fn info(&self) -> Option<(PairingHost, u64)> {
         let mut guard = self.lock();
@@ -139,6 +158,34 @@ mod tests {
 
     fn host() -> PairingHost {
         PairingHost::current("test", "repl")
+    }
+
+    #[test]
+    fn live_offer_is_reused_until_redeemed_then_replaced() {
+        let s = PairingState::default();
+        let first = s.open_or_reuse(host(), PAIRING_TTL);
+        let second = s.open_or_reuse(host(), PAIRING_TTL);
+        assert_eq!(first.code, second.code, "a live code must stay valid");
+        assert_eq!(s.redeem(&first.code), Ok(()));
+
+        let third = s.open_or_reuse(host(), PAIRING_TTL);
+        assert_eq!(
+            third.expires_in, PAIRING_TTL,
+            "a redeemed offer is replaced"
+        );
+        assert_eq!(s.redeem(&third.code), Ok(()));
+    }
+
+    #[test]
+    fn expired_offer_is_not_reused() {
+        let s = PairingState::default();
+        s.open(host(), Duration::from_millis(0));
+        let fresh = s.open_or_reuse(host(), PAIRING_TTL);
+        assert_eq!(
+            fresh.expires_in, PAIRING_TTL,
+            "a new offer, not the stale one"
+        );
+        assert_eq!(s.redeem(&fresh.code), Ok(()));
     }
 
     #[test]

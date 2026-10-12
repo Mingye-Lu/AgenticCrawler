@@ -652,6 +652,7 @@ pub async fn execute(
     apply_html_diff(crawl_state, &page.url, &mut content);
 
     browser.set_navigated_url(&page.url, page.fetched_via_browser);
+    browser.set_current_title(page.title.as_deref());
     crawl_state.current_url = Some(page.url.clone());
     browser.ref_map_mut().clear();
 

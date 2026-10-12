@@ -109,6 +109,28 @@ fn validate_relative_path(field: &str, value: &str) -> Result<(), CrawlError> {
     Ok(())
 }
 
+/// Walk up from `path` to the nearest ancestor that currently exists on
+/// disk (inclusive of `path` itself).
+///
+/// `Path::canonicalize` fails outright for a path that doesn't exist yet,
+/// which is the common case for the *first* write into a not-yet-created
+/// subdirectory. Skipping the symlink-escape check whenever that happens
+/// would fail open instead of closed. Since every component between the
+/// nearest existing ancestor and the target has already been validated
+/// (via `validate_relative_path`/`validate_filename`) to contain no `..`
+/// or absolute/prefix components, checking that the nearest *existing*
+/// ancestor resolves inside the allowed root is sufficient to catch a
+/// symlink planted anywhere along the path.
+fn nearest_existing_ancestor(path: &Path) -> Option<&Path> {
+    let mut current = path;
+    loop {
+        if current.exists() {
+            return Some(current);
+        }
+        current = current.parent()?;
+    }
+}
+
 pub async fn execute(
     input: &Value,
     browser: &mut BrowserContext,
@@ -125,12 +147,14 @@ pub async fn execute(
     target.push(&parsed.filename);
 
     if let Some(parent) = target.parent() {
-        if let Ok(canonical_parent) = parent.canonicalize() {
-            if let Ok(canonical_base) = output_base.canonicalize() {
-                if !canonical_parent.starts_with(&canonical_base) {
-                    return Err(ToolExecutionError::new(
-                        "resolved path escapes output directory (possible symlink attack)",
-                    ));
+        if let Some(existing_ancestor) = nearest_existing_ancestor(parent) {
+            if let Ok(canonical_ancestor) = existing_ancestor.canonicalize() {
+                if let Ok(canonical_base) = output_base.canonicalize() {
+                    if !canonical_ancestor.starts_with(&canonical_base) {
+                        return Err(ToolExecutionError::new(
+                            "resolved path escapes output directory (possible symlink attack)",
+                        ));
+                    }
                 }
             }
         }
@@ -264,5 +288,65 @@ mod tests {
             ("X-Test".to_string(), "42".to_string()),
         ]);
         assert_eq!(headers, expected);
+    }
+
+    #[test]
+    fn nearest_existing_ancestor_walks_up_past_not_yet_created_dirs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let existing = tmp.path().join("existing_dir");
+        std::fs::create_dir(&existing).expect("create existing_dir");
+
+        // "not_yet/created" don't exist on disk yet — the common
+        // first-write-into-a-new-subdirectory case.
+        let target_parent = existing.join("not_yet").join("created");
+
+        let found =
+            nearest_existing_ancestor(&target_parent).expect("an existing ancestor must be found");
+        assert_eq!(found, existing);
+    }
+
+    #[test]
+    fn nearest_existing_ancestor_returns_path_itself_when_it_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let found = nearest_existing_ancestor(tmp.path()).expect("tempdir exists");
+        assert_eq!(found, tmp.path());
+    }
+
+    // Unprivileged symlink creation requires no special OS setup on Unix
+    // (unlike Windows, where it needs admin rights or Developer Mode), so
+    // this exercises the full escape scenario only on Unix runners (CI runs
+    // ubuntu-latest for `cargo test`).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn symlinked_subdir_escape_is_blocked_even_when_leaf_dir_is_new() {
+        let allowed_root = tempfile::tempdir().expect("allowed_root tempdir");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+
+        // allowed_root/evil -> outside (a symlink planted inside the
+        // allowed output directory that resolves outside of it).
+        let evil_link = allowed_root.path().join("evil");
+        std::os::unix::fs::symlink(outside.path(), &evil_link).expect("create symlink");
+
+        // "newsub" does not exist yet under the symlink target, so
+        // target.parent() ("evil/newsub") fails to canonicalize directly —
+        // the nearest *existing* ancestor is "evil" itself, which resolves
+        // through the symlink to `outside`.
+        let (mut browser, _recorder) = browser_with_save_file_header_recorder(vec![]);
+        let result = execute(
+            &json!({
+                "url": "https://example.com/file.txt",
+                "filename": "payload.txt",
+                "subdir": "evil/newsub",
+                "output_dir": allowed_root.path().to_str().unwrap(),
+            }),
+            &mut browser,
+        )
+        .await;
+
+        let err = result.expect_err("escape via symlinked subdir must be rejected");
+        assert!(
+            err.to_string().contains("escapes output directory"),
+            "unexpected error: {err}"
+        );
     }
 }

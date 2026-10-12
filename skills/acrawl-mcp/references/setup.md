@@ -295,7 +295,7 @@ Expect `status: "Completed"`, `extracted_data: ["ok"]`, `steps_executed: 0`, ela
 
 **`unknown tool` for a valid-looking name** — names are matched verbatim over MCP, so `read-content` is rejected. Use underscores.
 
-**`unknown tool` inside a script** — scripts may call only 17 of the 31 browser tools. All DevTools tools plus `refresh` and `set_device` are excluded; run those manually.
+**`unknown tool` inside a script** — scripts may call only 17 of the 32 browser tools. All DevTools tools plus `refresh` and `set_device` are excluded; run those manually.
 
 **`failed to close parallel pages: Invalid page index N`** — the `parallel` node is broken for 2+ branches. Use several concurrent `run_script` calls joined by one `wait_for_scripts`.
 
