@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-10-12
+
+### Fixed
+
+- **`save_file` path traversal and symlink escape**: the Playwright backend rejects `..` path components, and the symlink-escape check no longer fails open.
+- **Terminal escape injection in rendered markdown**: ANSI/control sequences (including entity-decoded ones and C1 string terminators) are stripped from untrusted page text before it reaches the TUI.
+- **`select_option` on custom dropdowns** verifies the selection instead of reporting success on a closed menu.
+- **`execute_js`** accepts scripts with a top-level `return`; declaration-style scripts still run in the page's global scope.
+- **`fill_form`** no longer drops values on JS-framework reactive inputs, and escapes submit JS as JSON strings.
+- **`click` `region` and `page_map` `scope`** share one selector for `dialog`, `main` and `sidebar`.
+- **Coverage sessions** are no longer stopped twice on reset.
+- **URL claims** are normalized before comparison, so trailing slashes and fragments no longer let two siblings claim the same page.
+- **Bedrock streams** surface exception frames as errors instead of dropping them silently.
+- **Copilot OAuth** responses are checked for HTTP status without aborting device-flow polling.
+- **`optimization.budget_enforcement`** accepts `route_down`.
+- **MCP servers** whose tool-name prefixes collide are detected instead of shadowing each other.
+- **Script `while` loops** without tool calls are bounded by the step limit.
+- **Mojibake** in user-facing strings and comments is repaired, and a few TUI helpers and a duplicate auth-modal method were cleaned up.
+
 ## [0.15.1] - 2026-10-12
 
 ### Fixed
@@ -1029,6 +1048,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.15.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.2
 [0.15.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.1
 [0.15.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.0
 [0.14.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.3
