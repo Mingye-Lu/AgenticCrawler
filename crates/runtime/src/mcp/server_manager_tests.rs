@@ -12,7 +12,7 @@ use crate::config::{
     McpWebSocketServerConfig,
 };
 
-use super::{mcp_tool_name, McpServerManager, McpServerManagerError};
+use super::{mcp_tool_name, mcp_tool_prefix, McpServerManager, McpServerManagerError};
 
 fn temp_dir() -> PathBuf {
     let nanos = SystemTime::now()
@@ -159,7 +159,8 @@ fn manager_discovers_tools_from_stdio_config() {
             "alpha".to_string(),
             manager_server_config(&script_path, "alpha", &log_path),
         )]);
-        let mut manager = McpServerManager::from_servers(&servers);
+        let mut manager =
+            McpServerManager::from_servers(&servers).expect("no server name collisions");
 
         let tools = manager.discover_tools().await.expect("discover tools");
 
@@ -196,7 +197,8 @@ fn test_server_manager_tool_routing() {
                 manager_server_config(&script_path, "beta", &beta_log),
             ),
         ]);
-        let mut manager = McpServerManager::from_servers(&servers);
+        let mut manager =
+            McpServerManager::from_servers(&servers).expect("no server name collisions");
 
         let tools = manager.discover_tools().await.expect("discover tools");
         assert_eq!(tools.len(), 2);
@@ -265,13 +267,73 @@ fn manager_records_unsupported_non_stdio_servers_without_panicking() {
         ),
     ]);
 
-    let manager = McpServerManager::from_servers(&servers);
+    let manager = McpServerManager::from_servers(&servers).expect("no server name collisions");
     let unsupported = manager.unsupported_servers();
 
     assert_eq!(unsupported.len(), 3);
     assert_eq!(unsupported[0].server_name, "http");
     assert_eq!(unsupported[1].server_name, "sdk");
     assert_eq!(unsupported[2].server_name, "ws");
+}
+
+fn trivial_stdio_config() -> McpServerConfig {
+    McpServerConfig::Stdio(McpStdioServerConfig {
+        command: "true".to_string(),
+        args: vec![],
+        env: BTreeMap::new(),
+    })
+}
+
+#[test]
+fn from_servers_rejects_server_names_that_collide_after_normalization() {
+    // "my.server" and "my server" both normalize to "my_server" (every
+    // non-alphanumeric/`_`/`-` character maps to `_`), so they would
+    // otherwise produce the same `mcp__my_server__` tool prefix and silently
+    // clobber each other's routes.
+    let servers = BTreeMap::from([
+        ("my.server".to_string(), trivial_stdio_config()),
+        ("my server".to_string(), trivial_stdio_config()),
+    ]);
+
+    let error = McpServerManager::from_servers(&servers)
+        .expect_err("colliding server names should be rejected");
+
+    match error {
+        McpServerManagerError::DuplicateToolPrefix {
+            prefix,
+            first_server,
+            second_server,
+        } => {
+            assert_eq!(prefix, mcp_tool_prefix("my server"));
+            // BTreeMap iterates in sorted key order: "my server" < "my.server"
+            // (' ' sorts before '.'), so it's reported first.
+            assert_eq!(first_server, "my server");
+            assert_eq!(second_server, "my.server");
+        }
+        other => panic!("expected DuplicateToolPrefix, got {other:?}"),
+    }
+}
+
+#[test]
+fn from_servers_allows_distinct_prefixes_and_ignores_non_stdio_collisions() {
+    // "alpha_beta" (stdio) and "alpha.beta" (sdk, unsupported) normalize to
+    // the same prefix, but the sdk server never participates in tool
+    // routing at all (see
+    // `manager_records_unsupported_non_stdio_servers_without_panicking`), so
+    // it must not trip the collision check.
+    let servers = BTreeMap::from([
+        ("alpha_beta".to_string(), trivial_stdio_config()),
+        ("gamma".to_string(), trivial_stdio_config()),
+        (
+            "alpha.beta".to_string(),
+            McpServerConfig::Sdk(McpSdkServerConfig {
+                name: "sdk-server".to_string(),
+            }),
+        ),
+    ]);
+
+    McpServerManager::from_servers(&servers)
+        .expect("distinct stdio prefixes plus an unrelated unsupported server should be fine");
 }
 
 #[test]
@@ -288,7 +350,8 @@ fn manager_shutdown_terminates_spawned_children_and_is_idempotent() {
             "alpha".to_string(),
             manager_server_config(&script_path, "alpha", &log_path),
         )]);
-        let mut manager = McpServerManager::from_servers(&servers);
+        let mut manager =
+            McpServerManager::from_servers(&servers).expect("no server name collisions");
 
         manager.discover_tools().await.expect("discover tools");
         manager.shutdown().await.expect("first shutdown");
@@ -312,7 +375,8 @@ fn manager_reuses_spawned_server_between_discovery_and_call() {
             "alpha".to_string(),
             manager_server_config(&script_path, "alpha", &log_path),
         )]);
-        let mut manager = McpServerManager::from_servers(&servers);
+        let mut manager =
+            McpServerManager::from_servers(&servers).expect("no server name collisions");
 
         manager.discover_tools().await.expect("discover tools");
         let response = manager
@@ -363,7 +427,8 @@ fn manager_reports_unknown_qualified_tool_name() {
             "alpha".to_string(),
             manager_server_config(&script_path, "alpha", &log_path),
         )]);
-        let mut manager = McpServerManager::from_servers(&servers);
+        let mut manager =
+            McpServerManager::from_servers(&servers).expect("no server name collisions");
 
         let error = manager
             .call_tool(
