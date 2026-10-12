@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-10-12
+
+### Fixed
+
+- **`fit_markdown` deleted comment threads**: class names containing "comment" were treated as boilerplate, which emptied Hacker News, forum and issue-thread pages.
+- **`fit_markdown` over-pruning**: falls back to the unpruned markdown when pruning leaves under 500 characters of a page with at least 2,000.
+- **The extension no longer steals focus** when the agent selects its tab.
+- **Script executor rebuilt its tool registry for every node**: it is now built once per run.
+- **Codex CLI and Hermes installers removed the existing entry before adding the new one**: a failed add no longer loses the user's configuration.
+
 ## [0.15.0] - 2026-10-06
 
 ### Added
@@ -1019,6 +1029,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.15.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.1
 [0.15.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.0
 [0.14.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.3
 [0.14.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.2
