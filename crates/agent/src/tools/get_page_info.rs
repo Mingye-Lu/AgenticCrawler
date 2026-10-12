@@ -51,6 +51,17 @@ fn eval_string(result: Result<Value, BridgeError>) -> Result<Option<String>, Str
         .map_err(|e| e.to_string())
 }
 
+/// The first error when *every* page read failed, i.e. there is no live document to report on
+/// (context destroyed mid-navigation, no script access on the tab). A single failed read is
+/// reported in its own `*_error` field instead, next to the values that did come back.
+fn all_reads_failed(reads: [&Result<Option<String>, String>; 3]) -> Option<String> {
+    reads
+        .iter()
+        .all(|read| read.is_err())
+        .then(|| reads.iter().find_map(|read| read.as_ref().err().cloned()))
+        .flatten()
+}
+
 /// Read-only: never advances `seq` (see `increment_seq`) or changes the active tab.
 pub async fn execute(
     input: &Value,
@@ -105,6 +116,12 @@ pub async fn execute(
     let title = eval_string(title_result);
     let ready_state = eval_string(ready_state_result);
 
+    if let Some(message) = all_reads_failed([&live_url, &title, &ready_state]) {
+        return Err(ToolExecutionError::new(format!(
+            "page metadata unavailable: {message}"
+        )));
+    }
+
     let url = match &live_url {
         Ok(Some(url)) => url.clone(),
         _ => browser
@@ -147,7 +164,7 @@ pub async fn execute(
 mod tests {
     use serde_json::json;
 
-    use super::{clip_title, execute, tabs_json, MAX_TAB_TITLE_CHARS};
+    use super::{all_reads_failed, clip_title, execute, tabs_json, MAX_TAB_TITLE_CHARS};
     use crate::state::CrawlState;
     use crate::tools::test_support::browser_with_observations;
     use crate::ToolEffect;
@@ -238,5 +255,18 @@ mod tests {
 
         assert_eq!(reply["tabs"], json!([]));
         assert_eq!(reply["tab_count"], 0);
+    }
+
+    #[test]
+    fn only_a_total_failure_of_the_page_reads_is_an_error() {
+        let ok = Ok(Some("x".to_string()));
+        let err: Result<Option<String>, String> = Err("context destroyed".to_string());
+
+        assert_eq!(
+            all_reads_failed([&err, &err.clone(), &err.clone()]).as_deref(),
+            Some("context destroyed")
+        );
+        assert_eq!(all_reads_failed([&ok, &err, &ok]), None);
+        assert_eq!(all_reads_failed([&ok, &ok, &ok]), None);
     }
 }
