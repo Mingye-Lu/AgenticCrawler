@@ -11,6 +11,7 @@ mod openai;
 pub mod provider;
 mod responses;
 mod sse;
+mod tool_accumulator;
 mod types;
 
 pub use bedrock::{BedrockClient, BedrockMessageStream};
@@ -45,6 +46,7 @@ pub use responses::{
     responses_tool_choice, OpenAiResponsesClient, ResponsesMessageStream, ResponsesStreamState,
 };
 pub use sse::{parse_frame, SseParser};
+pub use tool_accumulator::{PendingToolCall, ToolCallAccumulator};
 pub use types::{
     ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStartEvent, ContentBlockStopEvent,
     ImageSource, InputContentBlock, InputMessage, MessageDelta, MessageDeltaEvent, MessageRequest,

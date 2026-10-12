@@ -13,8 +13,15 @@ pub(crate) struct BrowserSession {
 impl BrowserSession {
     /// Initialize with a pre-existing bridge (extension or shared).
     fn from_bridge(shared_bridge: SharedBridge) -> Self {
+        Self::from_bridge_with_page(shared_bridge, 0)
+    }
+
+    /// Initialize with a pre-existing bridge pinned to a specific page index,
+    /// so a shared extension bridge can host multiple isolated tabs (e.g. the
+    /// persistent MCP session on page 0 and a `run_goal` agent on its own page).
+    fn from_bridge_with_page(shared_bridge: SharedBridge, page_index: usize) -> Self {
         Self {
-            browser: BrowserContext::new(shared_bridge.clone()),
+            browser: BrowserContext::new_shared(shared_bridge.clone(), page_index),
             shared_bridge,
         }
     }
@@ -59,6 +66,13 @@ impl CrawlerAgent {
         }
     }
 
+    /// Pin the extension-mode browser to a specific page index. Used by
+    /// `run_goal` to give each goal an isolated tab, so its navigation never
+    /// clobbers the persistent MCP session's page.
+    pub fn set_extension_page_index(&mut self, page_index: usize) {
+        self.extension_page_index = Some(page_index);
+    }
+
     pub async fn ensure_browser(&mut self) -> Result<(), ToolError> {
         if self.browser.is_some() {
             return Ok(());
@@ -71,7 +85,10 @@ impl CrawlerAgent {
                      Run /extension and wait for the browser to connect.",
                 )
             })?;
-            let session = BrowserSession::from_bridge(bridge);
+            let session = BrowserSession::from_bridge_with_page(
+                bridge,
+                self.extension_page_index.unwrap_or(0),
+            );
             self.browser = Some(session.browser);
             self.shared_bridge = Some(session.shared_bridge);
             return Ok(());

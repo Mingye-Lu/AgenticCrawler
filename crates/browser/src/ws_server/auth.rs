@@ -55,7 +55,7 @@ pub(super) fn validate_ws_upgrade(
     }
 }
 
-fn is_allowed_extension_origin(origin: &str) -> bool {
+pub(super) fn is_allowed_extension_origin(origin: &str) -> bool {
     let id = if let Some(rest) = origin.strip_prefix("chrome-extension://") {
         rest
     } else if let Some(rest) = origin.strip_prefix("edge-extension://") {
@@ -66,7 +66,7 @@ fn is_allowed_extension_origin(origin: &str) -> bool {
     id.len() == 32 && id.bytes().all(|b| b.is_ascii_lowercase())
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(super) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

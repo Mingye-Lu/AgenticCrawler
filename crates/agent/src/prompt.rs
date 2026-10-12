@@ -52,6 +52,7 @@ pub fn build_system_prompt(
         section_constraints(),
         section_error_recovery(),
         section_completion(),
+        section_batching(),
         section_parallel_exploration(),
         section_autonomous_scripts(),
         section_observation_tools(),
@@ -113,9 +114,11 @@ fn section_operating_procedure() -> String {
      3. At each step:\n\
      \x20\x20 a. Observe the current page state from the last tool result.\n\
      {blocker_instruction}\
-     \x20\x20 c. Decide the single best next action.\n\
-     \x20\x20 d. Execute one tool call.\n\
-     \x20\x20 e. Evaluate the result before continuing.\n\
+     \x20\x20 c. Decide the next action. When the next few steps are predictable, \
+     decide a short sequence instead of a single action.\n\
+     \x20\x20 d. Execute it. Emit every call in the sequence in the same turn \
+     (see \"Batching tool calls\").\n\
+     \x20\x20 e. Evaluate the results before continuing.\n\
      4. Prefer the simplest reliable action:\n\
       \x20\x20 - Direct navigate over clicking links when the URL is known.\n\
       \x20\x20 - click, fill_form, and scroll before execute_js.\n\
@@ -209,6 +212,36 @@ fn section_completion() -> String {
       - When providing extracted data, include the source URL and note any \
       gaps or limitations."
     )
+}
+
+fn section_batching() -> String {
+    "Batching tool calls:\n\
+       - You may emit several tool calls in a single turn. They run one after another, in the \
+       order you emit them, and you receive every result together on your next turn. Each turn \
+       you save is one fewer model round-trip, so batch whenever you can predict the next steps.\n\
+       - Batch when the sequence does not depend on what an earlier call returns:\n\
+       \x20\x20 - Independent reads of the current page (e.g. several `read_content` selectors, \
+       or `read_content` with `list_resources`).\n\
+       \x20\x20 - Read-only follow-ups to one state-changing action (e.g. `scroll` then \
+       `read_content`).\n\
+       \x20\x20 - Several `fork` calls in a row.\n\
+       - Do NOT batch a call whose input comes from an earlier call's output in the same turn. \
+       `@eN` refs are only valid for the page render that produced them, so never `page_map` and \
+       then click a ref from that map in one batch, and never act on a ref after a call that \
+       navigates or substantially changes the page.\n\
+       - A failed call does not stop the calls queued after it. Order the batch so that a failure \
+       part-way through is harmless: put reads first and state-changing calls (`click`, \
+       `fill_form`, `navigate`) last, and never queue an irreversible action (a submit, a \
+       purchase) behind a step that might fail. In particular, do not batch a submit click \
+       after `fill_form` or any other form update: run the update, check its result, then \
+       submit in the next turn.\n\
+       - Keep batches short, about 2-5 calls. Every result lands in your context, so avoid \
+       queueing several large `read_content` calls at once.\n\
+       - When results come back, check each one before continuing. If one failed, re-plan from \
+       the actual page state instead of resuming the sequence you had planned.\n\
+       - Batching is for short predictable sequences. For the same operation across 3+ pages or \
+       items, use a script instead."
+        .to_string()
 }
 
 fn section_parallel_exploration() -> String {
@@ -413,6 +446,7 @@ mod tests {
         assert!(joined.contains("Constraints:"));
         assert!(joined.contains("Error recovery by situation:"));
         assert!(joined.contains("Completion:"));
+        assert!(joined.contains("Batching tool calls:"));
         assert!(joined.contains("Parallel exploration:"));
         assert!(joined.contains("Autonomous scripts:"));
         assert!(joined.contains("Observation tools:"));
@@ -444,7 +478,30 @@ mod tests {
             joined.contains("wait_for_subagents"),
             "should mention wait_for_subagents"
         );
-        assert_eq!(prompt.len(), 9, "should have 9 sections");
+        assert_eq!(prompt.len(), 10, "should have 10 sections");
+    }
+
+    #[test]
+    fn test_system_prompt_encourages_batching_with_safeguards() {
+        let specs = crate::mvp_tool_specs();
+        let joined = build_system_prompt(&specs, None).join("\n");
+        assert!(joined.contains("Batching tool calls:"));
+        assert!(
+            joined.contains("does not stop the calls queued after it"),
+            "should warn that a failed call does not halt the queue"
+        );
+        assert!(
+            joined.contains("check its result, then submit in the next turn"),
+            "should tell the agent not to batch a submit behind a form update"
+        );
+        assert!(
+            !joined.contains("`fill_form` then `click` submit"),
+            "must not recommend batching a submit behind fill_form"
+        );
+        assert!(
+            !joined.contains("Execute one tool call."),
+            "operating procedure must not forbid multi-call turns"
+        );
     }
 
     #[test]
@@ -475,7 +532,7 @@ mod tests {
             "should mention list_scripts"
         );
         assert!(joined.contains("read_script"), "should mention read_script");
-        assert_eq!(prompt.len(), 9, "should have 9 sections");
+        assert_eq!(prompt.len(), 10, "should have 10 sections");
     }
 
     #[test]
@@ -492,6 +549,7 @@ mod tests {
                 section_constraints(),
                 section_error_recovery(),
                 section_completion(),
+                section_batching(),
                 section_parallel_exploration(),
                 section_autonomous_scripts(),
                 section_observation_tools(),
@@ -510,7 +568,7 @@ mod tests {
             }),
         );
 
-        assert_eq!(prompt.len(), 10);
-        assert!(prompt[9].contains("You are stuck"));
+        assert_eq!(prompt.len(), 11);
+        assert!(prompt[10].contains("You are stuck"));
     }
 }

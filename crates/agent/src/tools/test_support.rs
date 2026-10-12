@@ -8,14 +8,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use browser::{
-    BridgeError, BrowserBackend, BrowserContext, BrowserState, ObservationEvent, PageInfo,
-    ScreenshotOptions, SharedBridge, StorageEntry, StorageType,
+    BridgeError, BrowserBackend, BrowserContext, BrowserState, CoverageData, ObservationEvent,
+    PageInfo, ScreenshotOptions, SharedBridge, StorageEntry, StorageType,
 };
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 pub type SaveFileHeadersRecord = Arc<Mutex<Option<BTreeMap<String, String>>>>;
 pub type EvaluateScriptsRecord = Arc<Mutex<Vec<String>>>;
+pub type CoverageCallLog = Arc<Mutex<Vec<&'static str>>>;
 
 #[derive(Debug, Default)]
 pub struct ObservationMockBackend {
@@ -23,6 +24,11 @@ pub struct ObservationMockBackend {
     pub last_save_file_headers: Option<BTreeMap<String, String>>,
     pub save_file_headers_sink: Option<SaveFileHeadersRecord>,
     pub evaluate_scripts_sink: Option<EvaluateScriptsRecord>,
+    /// Records "start"/"stop" in call order when `start_coverage`/
+    /// `stop_coverage` are invoked, so tests can assert on the exact
+    /// sequence (e.g. that a stop is never immediately followed by another
+    /// stop with no intervening start).
+    pub coverage_log: Option<CoverageCallLog>,
 }
 
 #[async_trait]
@@ -146,6 +152,34 @@ impl BrowserBackend for ObservationMockBackend {
     ) -> Result<(Vec<StorageEntry>, Vec<StorageEntry>), BridgeError> {
         Ok((Vec::new(), Vec::new()))
     }
+    async fn start_coverage(&mut self, _js: bool, _css: bool) -> Result<(), BridgeError> {
+        if let Some(sink) = &self.coverage_log {
+            sink.lock().await.push("start");
+        }
+        Ok(())
+    }
+    async fn stop_coverage(&mut self) -> Result<CoverageData, BridgeError> {
+        if let Some(sink) = &self.coverage_log {
+            sink.lock().await.push("stop");
+        }
+        Ok(CoverageData {
+            js_coverage: Vec::new(),
+            css_coverage: Vec::new(),
+        })
+    }
+}
+
+#[must_use]
+pub fn browser_with_coverage_log() -> (BrowserContext, CoverageCallLog) {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let bridge: SharedBridge = Arc::new(Mutex::new(Box::new(ObservationMockBackend {
+        observations: Vec::new(),
+        last_save_file_headers: None,
+        save_file_headers_sink: None,
+        evaluate_scripts_sink: None,
+        coverage_log: Some(sink.clone()),
+    }) as Box<dyn BrowserBackend + Send>));
+    (BrowserContext::new(bridge), sink)
 }
 
 #[must_use]
@@ -155,6 +189,7 @@ pub fn browser_with_observations(observations: Vec<ObservationEvent>) -> Browser
         last_save_file_headers: None,
         save_file_headers_sink: None,
         evaluate_scripts_sink: None,
+        coverage_log: None,
     }) as Box<dyn BrowserBackend + Send>));
     BrowserContext::new(bridge)
 }
@@ -169,6 +204,7 @@ pub fn browser_with_save_file_header_recorder(
         last_save_file_headers: None,
         save_file_headers_sink: Some(sink.clone()),
         evaluate_scripts_sink: None,
+        coverage_log: None,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
 }
@@ -187,6 +223,7 @@ pub fn browser_with_evaluate_recorder() -> (BrowserContext, EvaluateScriptsRecor
         last_save_file_headers: None,
         save_file_headers_sink: None,
         evaluate_scripts_sink: Some(sink.clone()),
+        coverage_log: None,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
 }

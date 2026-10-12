@@ -16,7 +16,7 @@ async function handleListResources(tabId) {
   });
 
   if (res.exceptionDetails) {
-    throw new Error(res.exceptionDetails.text || 'list_resources script threw exception');
+    throw new Error(cdpExceptionMessage(res.exceptionDetails, 'list_resources script threw exception'));
   }
 
   return res.result?.value || { links: [], images: [], forms: [] };

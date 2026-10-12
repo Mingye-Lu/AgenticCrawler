@@ -50,13 +50,19 @@ pub struct ScriptExecutor {
     state: ScriptState,
     shared_state: Arc<RwLock<ScriptState>>,
     limits: ScriptLimits,
-    output_bytes: usize,
+    output_bytes: Arc<AtomicUsize>,
     variables: HashMap<String, Value>,
     extracted_data: Vec<Value>,
     pub yielded_data: Arc<RwLock<Vec<Value>>>,
     start_time: Instant,
     step_counter: Arc<AtomicUsize>,
     cancel_token: CancellationToken,
+    /// Built once per script run and reused for every node execution
+    /// (including every iteration of `ForLoop`/`ForEach`/`WhileLoop`
+    /// bodies) instead of rebuilding the ~40-entry handler table on every
+    /// single `ToolCall`/`execute_js` node. `Arc` lets `Parallel` branch
+    /// executors (see `parallel.rs`) share the same registry cheaply.
+    registry: Arc<ToolRegistry>,
 }
 
 impl ScriptExecutor {
@@ -84,13 +90,14 @@ impl ScriptExecutor {
             },
             shared_state,
             limits,
-            output_bytes: 0,
+            output_bytes: Arc::new(AtomicUsize::new(0)),
             variables: HashMap::new(),
             extracted_data: Vec::new(),
             yielded_data: Arc::new(RwLock::new(Vec::new())),
             start_time: Instant::now(),
             step_counter: Arc::new(AtomicUsize::new(0)),
             cancel_token,
+            registry: Arc::new(ToolRegistry::new_with_core_tools()),
         }
     }
 
@@ -222,7 +229,7 @@ impl ScriptExecutor {
             )));
         }
 
-        let registry = ToolRegistry::new_with_core_tools();
+        let registry = Arc::clone(&self.registry);
         let resolved_input = self.try_substitute_variables(input)?;
 
         let tool_effect = if let Some(handler) = registry.get(tool) {
@@ -321,8 +328,9 @@ impl ScriptExecutor {
     }
 
     async fn run_execute_js(&mut self, script: &str) -> Result<Value, ScriptExecutionError> {
+        let registry = Arc::clone(&self.registry);
         self.execute_async_tool(
-            &ToolRegistry::new_with_core_tools(),
+            &registry,
             "execute_js",
             &json!({
                 "script": script,

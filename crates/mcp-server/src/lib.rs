@@ -1,5 +1,6 @@
 pub mod installer;
 pub mod server;
+mod skill;
 
 pub use installer::{
     all_client_keys, client_from_key, list_clients, run_install, run_install_for, run_uninstall,

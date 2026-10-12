@@ -191,6 +191,18 @@ impl BrowserBackend for ExtensionBridge {
         ExtensionBridge::set_seq(self, seq).await
     }
 
+    async fn highlight_changes(
+        &mut self,
+        added: &[String],
+        changed: &[String],
+    ) -> Result<(), BridgeError> {
+        self.expect_unit(
+            "highlight_changes",
+            json!({ "added": added, "changed": changed }),
+        )
+        .await
+    }
+
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError> {
         let response = self.send_command("navigate", json!({ "url": url })).await?;
         let result = Self::require_result(response, "navigate")?;
@@ -964,5 +976,35 @@ mod tests {
         task.await
             .expect("task should complete")
             .expect("set_seq should succeed");
+    }
+
+    #[tokio::test]
+    async fn highlight_changes_serializes_expected_bridge_command() {
+        let (mut bridge, mut command_rx) = bridge();
+
+        let task = tokio::spawn(async move {
+            BrowserBackend::highlight_changes(&mut bridge, &["e2".to_string()], &["e5".to_string()])
+                .await
+        });
+
+        let (command, resp_tx) = command_rx.recv().await.expect("command should be sent");
+        assert_eq!(command.action, "highlight_changes");
+        assert_eq!(
+            command.payload,
+            json!({ "added": ["e2"], "changed": ["e5"] })
+        );
+
+        resp_tx
+            .send(BridgeResponse {
+                id: command.id,
+                ok: true,
+                result: Some(json!({})),
+                error: None,
+            })
+            .expect("response should be delivered");
+
+        task.await
+            .expect("task should complete")
+            .expect("highlight_changes should succeed");
     }
 }

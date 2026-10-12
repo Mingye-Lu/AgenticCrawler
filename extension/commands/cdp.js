@@ -12,6 +12,32 @@ function cdp(tabId, method, params = {}) {
   });
 }
 
+function describeThrownValue(value) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch (_) {
+    return String(value);
+  }
+}
+
+function cdpExceptionMessage(exceptionDetails, fallbackMessage) {
+  const details = exceptionDetails || {};
+  const thrown = details.exception || {};
+  const candidates = [
+    thrown.description,
+    thrown.value === undefined ? undefined : describeThrownValue(thrown.value),
+    thrown.className,
+    details.text,
+  ];
+  const message = candidates.find(
+    (candidate) => typeof candidate === 'string' && candidate.trim() !== ''
+  );
+  return message ? message.trim() : fallbackMessage;
+}
+
 async function ensureAttached(tabId) {
   await new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, '1.3', () => {

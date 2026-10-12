@@ -76,6 +76,8 @@ pub struct FileCoverage {
     pub used_bytes: usize,
 }
 
+// `async_trait` expands every method to `#[must_use]` on a boxed future, which `double_must_use` flags.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait BrowserBackend: Debug {
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError>;
@@ -157,6 +159,18 @@ pub trait BrowserBackend: Debug {
     /// Pushes the current global seq so buffered observations are tagged for
     /// temporal filtering. Required for every backend (no default; see above).
     async fn set_seq(&mut self, seq: u64) -> Result<(), BridgeError>;
+
+    /// Visually marks elements (by DOM ref id) that were added or changed by the
+    /// last action. Purely cosmetic, so the default is a no-op; only the
+    /// extension backend, which drives the user's visible browser, draws it.
+    async fn highlight_changes(
+        &mut self,
+        added: &[String],
+        changed: &[String],
+    ) -> Result<(), BridgeError> {
+        let _ = (added, changed);
+        Ok(())
+    }
 
     async fn reload(&mut self) -> Result<PageInfo, BridgeError> {
         Err(BridgeError::Unsupported(

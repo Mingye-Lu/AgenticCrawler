@@ -151,13 +151,29 @@ fn run(action: CliAction) -> Result<(), Box<dyn std::error::Error>> {
             all,
             scope,
             json,
-        } => process::exit(run_mcp_configured(clients, all, scope, json, true)),
+            skill,
+        } => process::exit(run_mcp_configured(
+            clients,
+            all,
+            scope,
+            json,
+            skill,
+            McpOp::Install,
+        )),
         CliAction::McpUninstallConfigured {
             clients,
             all,
             scope,
             json,
-        } => process::exit(run_mcp_configured(clients, all, scope, json, false)),
+            skill,
+        } => process::exit(run_mcp_configured(
+            clients,
+            all,
+            scope,
+            json,
+            skill,
+            McpOp::Uninstall,
+        )),
         CliAction::McpListClients { json } => {
             mcp_server::list_clients(json);
             process::exit(0);
@@ -243,12 +259,14 @@ enum CliAction {
         all: bool,
         scope: Option<String>,
         json: bool,
+        skill: bool,
     },
     McpUninstallConfigured {
         clients: Vec<String>,
         all: bool,
         scope: Option<String>,
         json: bool,
+        skill: bool,
     },
     McpListClients {
         json: bool,
@@ -734,6 +752,7 @@ fn parse_mcp_configured_args(args: &[String], install: bool) -> Result<CliAction
     let mut all = false;
     let mut scope = None;
     let mut json = false;
+    let mut skill = false;
     let mut list_clients = false;
     let mut saw_config_flag = false;
     let mut index = 0;
@@ -775,6 +794,11 @@ fn parse_mcp_configured_args(args: &[String], install: bool) -> Result<CliAction
                 saw_config_flag = true;
                 index += 1;
             }
+            "--skill" => {
+                skill = true;
+                saw_config_flag = true;
+                index += 1;
+            }
             "--list-clients" => {
                 list_clients = true;
                 saw_config_flag = true;
@@ -811,6 +835,7 @@ fn parse_mcp_configured_args(args: &[String], install: bool) -> Result<CliAction
             all,
             scope,
             json,
+            skill,
         }
     } else {
         CliAction::McpUninstallConfigured {
@@ -818,6 +843,7 @@ fn parse_mcp_configured_args(args: &[String], install: bool) -> Result<CliAction
             all,
             scope,
             json,
+            skill,
         }
     })
 }
@@ -869,13 +895,20 @@ fn client_key(ide: mcp_server::Ide) -> &'static str {
         .unwrap_or_default()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum McpOp {
+    Install,
+    Uninstall,
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn run_mcp_configured(
     clients: Vec<String>,
     all: bool,
     scope: Option<String>,
     json: bool,
-    install: bool,
+    skill: bool,
+    op: McpOp,
 ) -> i32 {
     let explicit_client = !clients.is_empty();
     if !all && clients.is_empty() {
@@ -906,10 +939,10 @@ fn run_mcp_configured(
         None => mcp_server::Scope::Global,
     };
 
-    let report = if install {
-        mcp_server::run_install_for(&selected, scope, json)
+    let report = if op == McpOp::Install {
+        mcp_server::run_install_for(&selected, scope, json, skill)
     } else {
-        mcp_server::run_uninstall_for(&selected, scope, json)
+        mcp_server::run_uninstall_for(&selected, scope, json, skill)
     };
 
     if json {
@@ -925,24 +958,36 @@ fn run_mcp_configured(
         }
     }
 
-    let success_count = report
-        .results
+    mcp_exit_code(&report.results, explicit_client)
+}
+
+/// Exit code for a non-interactive install/uninstall run: 0 on success, 3 when an
+/// explicitly requested client had nothing succeed, 1 otherwise. A failed skill
+/// write/removal is a failure even when the MCP config itself succeeded, since the
+/// user explicitly asked for `--skill`.
+fn mcp_exit_code(results: &[mcp_server::installer::ClientResult], explicit_client: bool) -> i32 {
+    use mcp_server::installer::{ClientStatus, SkillStatus};
+
+    let success_count = results
         .iter()
         .filter(|result| {
             matches!(
                 result.status,
-                mcp_server::installer::ClientStatus::Configured
-                    | mcp_server::installer::ClientStatus::ManualInstructions
-                    | mcp_server::installer::ClientStatus::Removed
-                    | mcp_server::installer::ClientStatus::NotFound
+                ClientStatus::Configured
+                    | ClientStatus::ManualInstructions
+                    | ClientStatus::Removed
+                    | ClientStatus::NotFound
             )
         })
         .count();
+    let skill_failed = results
+        .iter()
+        .any(|result| matches!(result.skill, Some(SkillStatus::Error(_))));
 
     if explicit_client && success_count == 0 {
         3
     } else {
-        i32::from(success_count == 0)
+        i32::from(success_count == 0 || skill_failed)
     }
 }
 
@@ -1291,14 +1336,17 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  acrawl mcp install [--client a,b,...] [--all] [--scope user|project] [--json]"
+        "  acrawl mcp install [--client a,b,...] [--all] [--scope user|project] [--skill] [--json]"
     )?;
     writeln!(
         out,
-        "  acrawl mcp uninstall [--client a,b,...] [--all] [--scope user|project] [--json]"
+        "  acrawl mcp uninstall [--client a,b,...] [--all] [--scope user|project] [--skill] [--json]"
     )?;
     writeln!(out, "  acrawl mcp install --list-clients")?;
-    writeln!(out, "      Non-interactive MCP IDE configuration")?;
+    writeln!(
+        out,
+        "      Non-interactive MCP IDE configuration (--skill also installs/removes the acrawl agent skill)"
+    )?;
     writeln!(out, "  acrawl update")?;
     writeln!(out, "  acrawl mcp")?;
     writeln!(out, "      Start the built-in MCP server over stdio")?;
@@ -2069,6 +2117,7 @@ mod tests {
                     all: false,
                     scope: None,
                     json: false,
+                    skill: false,
                 }
             );
         });
@@ -2089,6 +2138,67 @@ mod tests {
                     all: true,
                     scope: None,
                     json: false,
+                    skill: false,
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn mcp_exit_code_fails_when_requested_skill_operation_failed() {
+        use mcp_server::installer::{ClientResult, ClientStatus, SkillStatus};
+
+        let result = |status, skill| ClientResult {
+            key: "claude-code".to_string(),
+            display_name: "Claude Code".to_string(),
+            status,
+            skill,
+        };
+
+        let ok = [result(
+            ClientStatus::Configured,
+            Some(SkillStatus::Installed),
+        )];
+        assert_eq!(mcp_exit_code(&ok, true), 0);
+
+        let skill_failed = [result(
+            ClientStatus::Configured,
+            Some(SkillStatus::Error("permission denied".to_string())),
+        )];
+        assert_eq!(mcp_exit_code(&skill_failed, true), 1);
+
+        let mcp_failed = [result(ClientStatus::Error("boom".to_string()), None)];
+        assert_eq!(mcp_exit_code(&mcp_failed, true), 3);
+        assert_eq!(mcp_exit_code(&mcp_failed, false), 1);
+    }
+
+    #[test]
+    fn parses_mcp_install_with_skill_flag() {
+        with_clean_config_env(|| {
+            let args = ["mcp", "install", "--client", "claude-code", "--skill"]
+                .map(str::to_string)
+                .to_vec();
+            assert_eq!(
+                parse_args(&args).expect("mcp install --skill"),
+                CliAction::McpInstallConfigured {
+                    clients: vec!["claude-code".to_string()],
+                    all: false,
+                    scope: None,
+                    json: false,
+                    skill: true,
+                }
+            );
+            let args = ["mcp", "uninstall", "--all", "--skill"]
+                .map(str::to_string)
+                .to_vec();
+            assert_eq!(
+                parse_args(&args).expect("mcp uninstall --skill"),
+                CliAction::McpUninstallConfigured {
+                    clients: Vec::new(),
+                    all: true,
+                    scope: None,
+                    json: false,
+                    skill: true,
                 }
             );
         });

@@ -31,6 +31,7 @@ acrawl config get headless                        # read a setting
 acrawl config set headless false                  # write a setting
 acrawl mcp install --client opencode             # install MCP for one IDE
 acrawl mcp install --all --yes                   # install for all IDEs
+acrawl mcp install --client claude-code --skill  # also install the bundled acrawl-mcp agent skill
 # Exit codes: 0=ok  1=error  2=usage/config  3=not-configured
 ```
 
@@ -46,7 +47,7 @@ Eleven crates under `crates/`, compiled with `resolver = "2"`:
 - **agent** — agent orchestration and the 42-tool toolbox (31 browser + 4 agent-control + 7 script). `agent.rs` drives the agent loop; `tools/` contains individual tool handlers; `manager.rs` manages sub-agent fork/join lifecycle; `prompt.rs` builds the system prompt; `state.rs` holds `CrawlState`; `url_claim.rs` coordinates URL claims across agents.
 - **runtime** — `ConversationRuntime` (the core turn loop), `Session` persistence, system-prompt builder, compaction, usage/pricing, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **render** — markdown/terminal rendering (`markdown.rs`), tool call output formatting (`tool_format.rs`), output format selection (`format.rs`), and the `OutputSink` trait + implementations (`sink.rs`) that bridge runtime events to the UI.
-- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 31 direct browser tools + 7 script tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
+- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 31 direct browser tools + 7 script tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`; `skill.rs` embeds `skills/acrawl-mcp/` and installs it with `--skill`, so files added to that folder must be listed in `SKILL_FILES`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
 - **tui** (`acrawl-tui`) — Ratatui terminal UI. `repl_app/` (directory) owns the application state; `repl_render.rs` handles rendering; `modals/` contains auth, model-picker, and slash-command overlay widgets. Depends on `acrawl-ui`.
 - **ui** (`acrawl-ui`) — shared application layer used by both TUI and CLI. Owns `LiveCli`, provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`), session management (`session_mgr.rs`), output sink (`output_sink.rs`), and auth helpers.
 - **cli** — thin binary entry point (`main.rs`). `self_update.rs` handles `acrawl update`; `uninstall.rs` handles `acrawl uninstall`. All orchestration and session management live in `acrawl-ui`.
@@ -68,15 +69,29 @@ An alternative to CloakBrowser: a Chrome MV3 extension that lets acrawl drive th
 
 1. **`WsBridgeServer`** (`crates/browser/src/ws_server/`) — A tokio TCP server listening on `127.0.0.1:<port>` (default 19876). Handles `/health` (reachability check, no auth info) and `/bridge` (WebSocket upgrade with token auth + origin validation). Single-client gate: only one extension connection at a time.
 2. **`ExtensionBridge`** (`crates/browser/src/extension.rs`) — Implements the `BrowserBackend` trait. Sends `{id, action, payload}` JSON commands over the WebSocket and awaits `{id, ok, result/error}` responses. Fails fast if no client is connected (checks `watch::Receiver<bool>`).
-3. **Chrome Extension** (`extension/`) — MV3 service worker (`background.js`) that connects to the bridge server, dispatches CDP commands to Chrome tabs, and returns results. Command handlers live in `extension/commands/*.js`.
+3. **`ExtensionBridgeManager`** (`crates/agent/src/extension_bridge.rs`) — Settings-aware owner of the activation sequence: resolve port/token, start `WsBridgeServer`, `wait_for_connection`, then hand out a `SharedBridge`. Lives in `agent` because that is the only crate depending on both `browser` and `runtime`, so both the TUI/CLI (`crates/ui`) and the MCP server can share it.
+4. **Chrome Extension** (`extension/`) — MV3 service worker (`background.js`) that connects to the bridge server, dispatches CDP commands to Chrome tabs, and returns results. Command handlers live in `extension/commands/*.js`.
 
 Key design decisions:
 - `BrowserBackend` trait (`browser_backend.rs`) is the abstraction — both `PlaywrightBridge` and `ExtensionBridge` implement it. Error type is `BridgeError` (not backend-specific).
-- Bridge server auto-starts only when `settings.browser_backend == "extension"`. Mode activation (`extension_mode`) is event-driven: it flips only when the extension actually connects, not when the server starts.
-- Token auth uses a 256-bit hex token with constant-time comparison. Token is generated per-server-start and displayed via `/extension` command. The `/health` endpoint does NOT expose the token.
+- Bridge server auto-starts only when `settings.browser_backend == "extension"`. In the TUI/CLI, mode activation (`extension_mode`) is event-driven: it flips only when the extension actually connects, not when the server starts.
+- Pairing hands the token to the extension: `open_pairing` mints a 6-digit code (3 min TTL) shown only on the acrawl side (REPL `/extension`, or the MCP connect-failure error, which names the MCP client from `initialize.clientInfo`). The extension popup posts it to `POST /pair`; `GET /pair/info` returns host info but never the code. Five wrong codes burn the offer. Keep the code flowing acrawl → user → extension: an approve-only click on the extension side would let any local process approve itself.
+- Token auth uses a 256-bit hex token with constant-time comparison. The token is generated once, persisted to `settings.extension_bridge_token`, and reused on later starts so the copy stored in the extension stays valid. The `/health` endpoint does NOT expose the token.
 - Origin validation requires valid 32-char Chrome/Edge extension ID format.
 - `/extension` starts the bridge server and shows the token. `/cloakbrowser` tears down extension mode and switches back.
 - `extension/` at the repo root is the Chrome extension source. It has its own `manifest.json`, build scripts, and `PRIVACY.md`.
+
+### Extension mode in the MCP server
+
+`run_mcp_server` honours `settings.browser_backend` for all three tool families. Backend selection funnels through two helpers in `crates/mcp-server/src/server.rs`:
+
+- `ensure_extension_bridge` — lazily starts `ExtensionBridgeManager`, waits up to `settings.extension_bridge_connect_timeout_secs` (default 30) for the extension to connect, and returns a `SharedBridge`.
+- `ensure_browser_context` — picks the backend and publishes a `BrowserContext`. The 31 direct browser tools and the 7 script tools go through this; `run_goal` instead receives the `SharedBridge` and calls `set_shared_bridge` + `set_extension_mode(true)` on its own `CrawlerAgent`.
+
+Two invariants worth preserving:
+
+- **Never silently fall back to CloakBrowser when extension mode is on.** Extension mode exists to reuse the user's logged-in browser; substituting the bundled headless browser would crawl with a different, usually unauthenticated session. Every failure path reports an actionable error instead.
+- **Never delete `~/.acrawl/bridge.json` on a bind conflict.** It is only a discovery record, so removing it cannot free a bound port, and deleting it would discard the record of the process that legitimately owns the port. `WsBridgeServer::start` rewrites the file only after a successful bind. Because `WsBridgeServer` and `ExtensionBridge` are coupled in-process (the bridge holds the server's `mpsc::Sender`), a second acrawl process cannot attach to an existing bridge — it reports the conflicting owner via `read_bridge_file()` instead.
 
 ## Provider routing
 
@@ -98,7 +113,7 @@ Default model comes from the `default_model` field in the active provider's `Sto
 
 ### Shared infrastructure (must understand before touching any optimization)
 
-**`DynamicPromptContext`** (`crates/agent/src/prompt.rs`) — four optional string fields (`stagnation_alert`, `planning_guidance`, `budget_warning`, `loop_nudge`). `build_system_prompt(specs, Some(&ctx))` appends the context as section 9 of the system prompt.
+**`DynamicPromptContext`** (`crates/agent/src/prompt.rs`) — four optional string fields (`stagnation_alert`, `planning_guidance`, `budget_warning`, `loop_nudge`). `build_system_prompt(specs, Some(&ctx))` appends the context as the final section of the system prompt.
 
 **Arc slot pattern** — `CrawlerAgent` and `ConversationRuntime` share two Arc slots created in `run_with_system_prompt()`:
 - `prompt_override: Arc<Mutex<Option<Vec<String>>>>` — agent writes a new full system prompt here after any tool execution; runtime applies it before the next API call in `prepare_iteration()`.
@@ -157,6 +172,10 @@ All optimization logic runs inside `CrawlerAgent::execute()` in `crates/agent/sr
   ```
   Do all development inside that worktree directory. The only commits permitted directly on `main` are version bumps (see [Releasing a new version](#releasing-a-new-version)).
 - **Atomic commits.** Each commit must be a single, self-contained logical change — individually revertible without pulling in unrelated work. Stage precisely and avoid bulk commits that bundle multiple concerns.
+- **Commit messages.** Format: `type(scope): imperative summary` (≤72 chars), `type` one of `feat|fix|perf|refactor|test|style|docs|ci|chore`. The message describes *what changed and why*, as it would read to someone who has never seen the review thread or your working session — never the process that produced the commit.
+  - **Never reference a PR number, review round, or reviewer in the subject line.** `fix: address review comments on PR #109 — …` and `fix: apply cap to selector waits too (PR #101 review)` are both wrong — they document the review process, not the change. Write what the commit actually does: `fix: avoid browser launch, skip seq increment, propagate eval errors`. (`Closes #N` / `Fixes #N` issue-closing footers are fine — they're not review-process narration.)
+  - **If you're revising a commit in response to review feedback on your own not-yet-merged branch, rewrite the original commit** (`git commit --amend`, or reword/fixup via rebase) instead of stacking a new commit that narrates "addressed review comments." The final history should read as if it were written correctly the first time.
+  - **Never let tool, API, or auth failures leak into the message.** If whatever step you're using to compose the message fails or times out, stop and write the message yourself from the diff — do not append or fall back to raw diagnostic text (e.g. `Claude Code was unavailable (OAuth 401).`) as if it were content. A failed message-generation step is a reason to retry or write it manually, never a reason to commit the error.
 - **PR workflow.** When a branch is complete: write the PR title and body to a temporary file (e.g. `pr.md`), submit via `gh pr create --title "…" --body "$(cat pr.md)"`, then delete the file. Keep the title under 70 characters; include a concise summary and a markdown test-plan checklist in the body.
 - **Worktree cleanup.** Once the PR is open, remove the worktree and delete the local branch — the remote branch stays alive until the PR is merged:
   ```bash

@@ -614,7 +614,7 @@ async fn vision_capable_model_produces_tool_result_image() {
                 && !is_error
         ),
         "expected ToolResultImage block, got: {:?}",
-        &tool_result_msg.blocks[0]
+        tool_result_msg.blocks[0]
     );
 }
 
@@ -690,6 +690,6 @@ async fn non_vision_model_produces_plain_tool_result_with_caption() {
                 && !is_error
         ),
         "expected plain ToolResult block with caption, got: {:?}",
-        &tool_result_msg.blocks[0]
+        tool_result_msg.blocks[0]
     );
 }

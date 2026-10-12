@@ -37,6 +37,8 @@ async function handleClick(tabId, payload) {
     throw new Error(`Element is not visible: ${selector}`);
   }
 
+  await overlayWatch(tabId);
+  overlayRipple(tabId, coords.x, coords.y);
   await cdp(tabId, 'Input.dispatchMouseEvent', {
     type: 'mouseMoved',
     x: coords.x,

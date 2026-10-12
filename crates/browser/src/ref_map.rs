@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// How a ref is resolved to a DOM element within its owning frame.
 ///
@@ -48,6 +48,38 @@ pub struct RefEntry {
     /// CSS selector fallback (for interactive nodes, kept for self-healing).
     /// `None` for stamped non-interactive/container nodes.
     pub fallback_selector: Option<String>,
+    /// The parent's `ref_id` (e.g. "e1"), if any. Used to walk the ancestor
+    /// chain for container auto-descend (`RefMap::descendant_refs`).
+    pub parent: Option<String>,
+    /// The snapshot generation this entry was last (re)assigned in. Used by
+    /// `RefMap::descendant_refs` to ignore stale refs from prior `page_map`
+    /// walks on same-URL DOM updates.
+    pub generation: u64,
+    /// Whether this container's children were truncated by the ARIA walker
+    /// (depth/child-count limits omitted some children). Truncated
+    /// containers are never auto-descended into, since the single retained
+    /// actionable child may not be the only actionable descendant.
+    pub truncated: bool,
+}
+
+impl RefEntry {
+    /// Check whether this entry is a descendant of `ancestor_ref_id`.
+    /// Walks the parent chain transitively through the given `RefMap`,
+    /// tracking visited ids to break cycles from stale/duplicate parent data.
+    fn has_ancestor(&self, ancestor_ref_id: &str, ref_map: &RefMap) -> bool {
+        let mut visited: HashSet<&str> = HashSet::new();
+        let mut current = self.parent.as_deref();
+        while let Some(parent_id) = current {
+            if parent_id == ancestor_ref_id {
+                return true;
+            }
+            if !visited.insert(parent_id) {
+                break;
+            }
+            current = ref_map.map.get(parent_id).and_then(|p| p.parent.as_deref());
+        }
+        false
+    }
 }
 
 /// Maps element references (e.g. "e1", "e5") to their entries.
@@ -65,6 +97,10 @@ pub struct RefMap {
     /// its identity key, so same-selector dedup still holds.
     key_to_ref: HashMap<String, String>,
     next_ref: usize,
+    /// Snapshot generation counter. Incremented by `begin_snapshot()` at the
+    /// start of each `page_map` walk so `descendant_refs` can ignore entries
+    /// left over from earlier snapshots on the same URL.
+    current_generation: u64,
 }
 
 impl RefMap {
@@ -75,7 +111,16 @@ impl RefMap {
             map: HashMap::new(),
             key_to_ref: HashMap::new(),
             next_ref: 1,
+            current_generation: 0,
         }
+    }
+
+    /// Begin a new snapshot generation. Call this when `page_map` starts a new
+    /// ARIA walk so refs assigned/rebound during the walk are tagged with the
+    /// new generation, letting `descendant_refs` ignore stale entries left
+    /// over from a prior walk on the same URL.
+    pub fn begin_snapshot(&mut self) {
+        self.current_generation += 1;
     }
 
     /// Assign a ref by identity key (stable across snapshots on the same URL).
@@ -98,9 +143,16 @@ impl RefMap {
         name: &str,
         _frame_id: Option<&str>,
         resolution: Resolution,
+        parent_ref_id: Option<&str>,
     ) -> String {
-        if let Some(existing) = self.key_to_ref.get(stable_key) {
-            return existing.clone();
+        if let Some(existing) = self.key_to_ref.get(stable_key).cloned() {
+            // Re-walking an unchanged node never mints a new ref, but it does
+            // touch the entry in the current snapshot generation so
+            // `descendant_refs` doesn't treat it as stale.
+            if let Some(entry) = self.map.get_mut(&existing) {
+                entry.generation = self.current_generation;
+            }
+            return existing;
         }
         let ref_id = format!("e{}", self.next_ref);
         self.next_ref += 1;
@@ -122,6 +174,9 @@ impl RefMap {
                 resolution,
                 selector,
                 fallback_selector,
+                parent: parent_ref_id.map(str::to_string),
+                generation: self.current_generation,
+                truncated: false,
             },
         );
         self.key_to_ref
@@ -137,6 +192,12 @@ impl RefMap {
     /// verbatim, so re-minting by identity would collapse duplicate-named
     /// siblings onto one id and desync the model's ref from the DOM. The mint
     /// counter is advanced past `ref_id` so later minted ids cannot collide.
+    ///
+    /// If an entry already exists for `ref_id` and has a parent set, that
+    /// parent is preserved rather than overwritten with `parent_ref_id`. This
+    /// keeps a scoped `page_map` re-walk (which has no ancestors above the
+    /// scope root) from detaching an already-mapped subtree from its real
+    /// ancestors and breaking container auto-descend.
     pub fn bind_existing(
         &mut self,
         stable_key: &str,
@@ -144,7 +205,13 @@ impl RefMap {
         role: &str,
         name: &str,
         _frame_id: Option<&str>,
+        parent_ref_id: Option<&str>,
     ) -> String {
+        let parent = match self.map.get(ref_id) {
+            Some(existing) if existing.parent.is_some() => existing.parent.clone(),
+            _ => parent_ref_id.map(str::to_string),
+        };
+
         self.map.insert(
             ref_id.to_string(),
             RefEntry {
@@ -155,6 +222,9 @@ impl RefMap {
                 resolution: Resolution::Attr(ref_id.to_string()),
                 selector: String::new(),
                 fallback_selector: None,
+                parent,
+                generation: self.current_generation,
+                truncated: false,
             },
         );
         self.key_to_ref
@@ -174,13 +244,20 @@ impl RefMap {
     /// Backward-compatible shim over [`RefMap::assign_by_identity`]: the
     /// selector doubles as the identity key and as a `Selector` resolution.
     /// Kept so existing call sites compile until T10 migrates them.
-    pub fn assign_or_reuse(&mut self, selector: &str, role: &str, name: &str) -> String {
+    pub fn assign_or_reuse(
+        &mut self,
+        selector: &str,
+        role: &str,
+        name: &str,
+        parent_ref_id: Option<&str>,
+    ) -> String {
         self.assign_by_identity(
             selector,
             role,
             name,
             None,
             Resolution::Selector(selector.to_string()),
+            parent_ref_id,
         )
     }
 
@@ -225,6 +302,29 @@ impl RefMap {
         })
     }
 
+    /// Return all descendant `ref_id`s (direct children + grandchildren, etc.)
+    /// of the given ref. Walk the parent chain transitively.
+    ///
+    /// Only entries from the current snapshot generation are returned: on a
+    /// same-URL DOM update, `RefMap` keeps entries from prior `page_map`
+    /// walks, and a container's old child may have been removed or replaced.
+    /// Filtering by generation keeps auto-descend from picking a stale ref.
+    #[must_use]
+    pub fn descendant_refs(&self, ancestor_ref_id: &str) -> Vec<String> {
+        self.map
+            .iter()
+            .filter_map(|(ref_id, entry)| {
+                if entry.generation == self.current_generation
+                    && entry.has_ancestor(ancestor_ref_id, self)
+                {
+                    Some(ref_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Clear all refs and reset the counter to 1.
     ///
     /// Called on URL change. Preserves the existing trigger semantics: every
@@ -234,6 +334,52 @@ impl RefMap {
         self.map.clear();
         self.key_to_ref.clear();
         self.next_ref = 1;
+        self.current_generation = 0;
+    }
+
+    /// Mark a ref's container as having omitted children during the ARIA
+    /// walk (depth/child-count limits truncated the subtree). Truncated
+    /// containers are skipped by auto-descend since the retained actionable
+    /// child may not be the container's only actionable descendant.
+    pub fn set_truncated(&mut self, ref_id: &str, truncated: bool) {
+        if let Some(entry) = self.map.get_mut(ref_id) {
+            entry.truncated = truncated;
+        }
+    }
+
+    /// Remove stale `Attr`-resolved entries whose `ref_ids` are absent from
+    /// the current ARIA tree snapshot.
+    ///
+    /// After `assign_refs` processes the tree, any `Attr`-resolved entry that
+    /// was NOT seen in the current walk represents either:
+    /// - A re-stamped element (same identity, new stamp) — the old `ref_id`
+    ///   points to a `data-acrawl-ref` attribute that no longer exists.
+    /// - An element that disappeared from the DOM entirely.
+    ///
+    /// Both are stale and should be removed so `@eN`-style scopes fail fast
+    /// instead of resolving to a ghost query.
+    ///
+    /// `Selector`-resolved entries (legacy `assign_or_reuse` path) are left
+    /// untouched — they are deduplicated by selector text, not DOM stamps.
+    ///
+    /// `key_to_ref` entries pointing to removed refs are also cleaned up so
+    /// a future occurrence gets a fresh ref.
+    pub fn retain_active(&mut self, active_ref_ids: &HashSet<&str>) {
+        let stale: Vec<String> = self
+            .map
+            .keys()
+            .filter(|id| !active_ref_ids.contains(id.as_str()))
+            .filter(|id| {
+                self.map
+                    .get(id.as_str())
+                    .is_some_and(|e| matches!(e.resolution, Resolution::Attr(_)))
+            })
+            .cloned()
+            .collect();
+        for id in &stale {
+            self.map.remove(id.as_str());
+        }
+        self.key_to_ref.retain(|_, ref_id| !stale.contains(ref_id));
     }
 }
 
@@ -305,8 +451,8 @@ mod tests {
     #[test]
     fn assign_or_reuse_same_selector_twice() {
         let mut map = RefMap::new();
-        let ref1 = map.assign_or_reuse("button.submit", "button", "Submit");
-        let ref2 = map.assign_or_reuse("button.submit", "button", "Submit");
+        let ref1 = map.assign_or_reuse("button.submit", "button", "Submit", None);
+        let ref2 = map.assign_or_reuse("button.submit", "button", "Submit", None);
         assert_eq!(ref1, ref2);
         assert_eq!(ref1, "e1");
     }
@@ -314,8 +460,8 @@ mod tests {
     #[test]
     fn assign_or_reuse_different_selectors_increments() {
         let mut map = RefMap::new();
-        let ref1 = map.assign_or_reuse("button.submit", "button", "Submit");
-        let ref2 = map.assign_or_reuse("input.email", "textbox", "Email");
+        let ref1 = map.assign_or_reuse("button.submit", "button", "Submit", None);
+        let ref2 = map.assign_or_reuse("input.email", "textbox", "Email", None);
         assert_eq!(ref1, "e1");
         assert_eq!(ref2, "e2");
     }
@@ -323,10 +469,10 @@ mod tests {
     #[test]
     fn clear_resets_counter() {
         let mut map = RefMap::new();
-        let ref1 = map.assign_or_reuse("button.submit", "button", "Submit");
+        let ref1 = map.assign_or_reuse("button.submit", "button", "Submit", None);
         assert_eq!(ref1, "e1");
         map.clear();
-        let ref2 = map.assign_or_reuse("button.submit", "button", "Submit");
+        let ref2 = map.assign_or_reuse("button.submit", "button", "Submit", None);
         assert_eq!(ref2, "e1");
     }
 
@@ -341,6 +487,7 @@ mod tests {
             "Submit",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
         assert_eq!(first, "e1");
         let again = map.assign_by_identity(
@@ -349,6 +496,7 @@ mod tests {
             "Submit",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
         assert_eq!(again, "e1");
         let other = map.assign_by_identity(
@@ -357,6 +505,7 @@ mod tests {
             "Home",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
         assert_eq!(other, "e2");
     }
@@ -370,6 +519,7 @@ mod tests {
             "Submit",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
         assert_eq!(first, "e1");
         map.clear();
@@ -379,6 +529,7 @@ mod tests {
             "Submit",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
         assert_eq!(after, "e1");
     }
@@ -392,6 +543,7 @@ mod tests {
             "Submit",
             Some("f2"),
             Resolution::Attr(String::new()),
+            None,
         );
         let (frame_id, query) = map.resolve(&ref_id).expect("ref should resolve");
         assert_eq!(frame_id, None);
@@ -411,6 +563,7 @@ mod tests {
             "Submit",
             None,
             Resolution::Selector("button.submit".to_string()),
+            None,
         );
         let (frame_id, query) = map.resolve(&ref_id).expect("ref should resolve");
         assert_eq!(frame_id, None);
@@ -440,7 +593,7 @@ mod tests {
     #[test]
     fn legacy_assign_or_reuse_populates_selector_and_resolution() {
         let mut map = RefMap::new();
-        let ref_id = map.assign_or_reuse("button.submit", "button", "Submit");
+        let ref_id = map.assign_or_reuse("button.submit", "button", "Submit", None);
         let entry = map.get(&ref_id).unwrap();
         assert_eq!(entry.selector, "button.submit");
         assert_eq!(entry.role, "button");
@@ -465,6 +618,7 @@ mod tests {
             "Home",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
         let frame_ref = map.assign_by_identity(
             "k_frame",
@@ -472,6 +626,7 @@ mod tests {
             "Docs",
             Some("frame-7"),
             Resolution::Attr(String::new()),
+            None,
         );
         assert_eq!(map.resolve(&main_ref).unwrap().0, None);
         assert_eq!(map.resolve(&frame_ref).unwrap().0, None);
@@ -481,7 +636,7 @@ mod tests {
     #[test]
     fn bind_existing_registers_attr_resolution_and_advances_counter() {
         let mut map = RefMap::new();
-        let id = map.bind_existing("button|Submit|", "e5", "button", "Submit", Some("f1"));
+        let id = map.bind_existing("button|Submit|", "e5", "button", "Submit", Some("f1"), None);
         assert_eq!(id, "e5");
 
         let (frame_id, query) = map.resolve("e5").expect("bound ref should resolve");
@@ -494,6 +649,7 @@ mod tests {
             "Home",
             None,
             Resolution::Attr(String::new()),
+            None,
         );
         assert_eq!(minted, "e6");
     }
@@ -501,13 +657,148 @@ mod tests {
     #[test]
     fn bind_existing_keeps_distinct_ids_for_same_identity_key() {
         let mut map = RefMap::new();
-        let first = map.bind_existing("button|Action|main:", "e2", "button", "Action", None);
-        let second = map.bind_existing("button|Action|main:", "e3", "button", "Action", None);
+        let first = map.bind_existing("button|Action|main:", "e2", "button", "Action", None, None);
+        let second = map.bind_existing("button|Action|main:", "e3", "button", "Action", None, None);
 
         assert_eq!(first, "e2");
         assert_eq!(second, "e3");
         assert_ne!(first, second);
+        assert_eq!(map.resolve("e3").unwrap().1, "[data-acrawl-ref='e3']");
+    }
+
+    #[test]
+    fn bind_existing_preserves_both_refs_on_rebind_retain_active_cleans_stale() {
+        let mut map = RefMap::new();
+        let first = map.bind_existing(
+            "dialog|Confirm|main:",
+            "e14",
+            "dialog",
+            "Confirm",
+            None,
+            None,
+        );
+        assert_eq!(first, "e14");
+        assert!(map.get("e14").is_some());
+
+        // After re-binding, both refs are present — bind_existing alone does
+        // NOT eagerly remove the old entry (duplicate-named siblings in the
+        // same ARIA walk must stay resolvable).
+        let second = map.bind_existing(
+            "dialog|Confirm|main:",
+            "e21",
+            "dialog",
+            "Confirm",
+            None,
+            None,
+        );
+        assert_eq!(second, "e21");
+        assert!(map.get("e14").is_some());
+        assert!(map.get("e21").is_some());
+
+        // Simulate a post-tree-walk cleanup: only e21 is in the current
+        // snapshot (the element was re-stamped). The stale e14 is removed.
+        let active: HashSet<&str> = ["e21"].into_iter().collect();
+        map.retain_active(&active);
+        assert!(map.get("e14").is_none());
+        assert!(map.get("e21").is_some());
+        assert_eq!(map.resolve("e21").unwrap().1, "[data-acrawl-ref='e21']");
+    }
+
+    #[test]
+    fn retain_active_preserves_duplicate_sibling_refs() {
+        let mut map = RefMap::new();
+        map.bind_existing("button|Action|main:", "e2", "button", "Action", None, None);
+        map.bind_existing("button|Action|main:", "e3", "button", "Action", None, None);
+
+        // Both siblings are active in the same tree walk.
+        let active: HashSet<&str> = ["e2", "e3"].into_iter().collect();
+        map.retain_active(&active);
+
+        assert!(map.get("e2").is_some());
+        assert!(map.get("e3").is_some());
         assert_eq!(map.resolve("e2").unwrap().1, "[data-acrawl-ref='e2']");
         assert_eq!(map.resolve("e3").unwrap().1, "[data-acrawl-ref='e3']");
+        // key_to_ref should point to the last-bound ref for the key.
+        assert_eq!(map.ref_id_for_query("[data-acrawl-ref='e2']"), Some("e2"));
+        assert_eq!(map.ref_id_for_query("[data-acrawl-ref='e3']"), Some("e3"));
+    }
+
+    #[test]
+    fn retain_active_ignores_selector_resolved_entries() {
+        let mut map = RefMap::new();
+        map.assign_or_reuse("button.submit", "button", "Submit", None);
+        // Only Attr entries are pruned; Selector entries persist.
+        let active: HashSet<&str> = HashSet::new(); // empty — nothing is "active"
+        map.retain_active(&active);
+        assert!(
+            map.get("e1").is_some(),
+            "Selector-resolved entries must survive retain_active"
+        );
+    }
+
+    #[test]
+    fn retain_active_cleans_key_to_ref_for_stale_entries() {
+        let mut map = RefMap::new();
+        map.bind_existing("link|Home|main:", "e5", "link", "Home", None, None);
+        assert!(map.key_to_ref.contains_key("link|Home|main:"));
+
+        // e5 is stale — not in the active set.
+        let active: HashSet<&str> = HashSet::new();
+        map.retain_active(&active);
+
+        assert!(map.get("e5").is_none());
+        assert!(!map.key_to_ref.contains_key("link|Home|main:"));
+    }
+
+    #[test]
+    fn descendant_refs_finds_children_and_grandchildren() {
+        let mut map = RefMap::new();
+        // e1 = parent container
+        let e1 = map.assign_by_identity(
+            "container|root|",
+            "generic",
+            "root",
+            None,
+            Resolution::Attr(String::new()),
+            None,
+        );
+        assert_eq!(e1, "e1");
+
+        // e2 = child of e1
+        let e2 = map.assign_by_identity(
+            "heading|Title|generic:root|",
+            "heading",
+            "Title",
+            None,
+            Resolution::Attr(String::new()),
+            Some("e1"),
+        );
+        assert_eq!(e2, "e2");
+
+        // e3 = grandchild of e1 (child of e2)
+        let e3 = map.assign_by_identity(
+            "button|Click|heading:Title|generic:root|",
+            "button",
+            "Click",
+            None,
+            Resolution::Attr(String::new()),
+            Some("e2"),
+        );
+        assert_eq!(e3, "e3");
+
+        // Should find both e2 and e3 as descendants of e1
+        let mut descendants = map.descendant_refs("e1");
+        descendants.sort();
+        assert_eq!(descendants, vec!["e2", "e3"]);
+
+        // e3 is a descendant of e2 (direct child only)
+        let descendants = map.descendant_refs("e2");
+        assert_eq!(descendants, vec!["e3"]);
+
+        // e1 has no descendants beyond e2/e3 (other refs have no parent)
+        // Create e4 with no parent — should NOT be found as e1 descendant
+        map.assign_or_reuse("button.independent", "button", "Independent", None);
+        let descendants = map.descendant_refs("e1");
+        assert_eq!(descendants.len(), 2);
     }
 }

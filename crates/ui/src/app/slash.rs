@@ -5,7 +5,6 @@ use super::*;
 use crate::auth::{
     interactive_login_prompt, prompt_provider_choice, provider_choice_label, resolve_provider_arg,
 };
-use browser::generate_bridge_token;
 use commands::SlashCommand;
 use render::format::{
     format_compact_report, format_cost_report, format_model_report, format_model_switch_report,
@@ -106,11 +105,12 @@ impl LiveCli {
                     println!("{status}");
                 } else {
                     match self.start_extension_server() {
-                        Ok((token, port)) => {
+                        Ok((_, port)) => {
+                            let pairing = self.extension_pairing_line();
                             println!(
                                 "Extension bridge\n  \
                                  Status           server started (port {port})\n  \
-                                 Token            {token}"
+                                 {pairing}"
                             );
                         }
                         Err(e) => eprintln!("{e}"),
@@ -184,21 +184,31 @@ impl LiveCli {
 
     pub fn extension_bridge_status(&self) -> Option<String> {
         let server = self.ws_bridge_server.as_ref()?;
-        let settings = runtime::load_settings();
-        let token = settings.extension_bridge_token.unwrap_or_default();
         let port = server.port();
-        let status = if server.is_client_connected() && !self.extension_bridge_initialized {
+        let status = if server.is_connected() && !self.extension_bridge_initialized {
             "browser connected; initializing"
-        } else if server.is_client_connected() {
+        } else if server.is_connected() {
             "connected"
         } else {
             "waiting for browser"
         };
+        let pairing = if server.is_connected() {
+            String::new()
+        } else {
+            format!("\n  {}", server.open_pairing("acrawl REPL", "repl"))
+        };
         Some(format!(
             "Extension mode\n  \
-             Status           {status} (port {port})\n  \
-             Token            {token}"
+             Status           {status} (port {port}){pairing}"
         ))
+    }
+
+    /// Fresh pairing code for the running bridge, ready to print.
+    pub fn extension_pairing_line(&self) -> String {
+        self.ws_bridge_server
+            .as_ref()
+            .map(|s| s.open_pairing("acrawl REPL", "repl"))
+            .unwrap_or_default()
     }
 
     pub fn start_extension_server(&mut self) -> Result<(String, u16), String> {
@@ -219,23 +229,15 @@ impl LiveCli {
         })
         .unwrap_or(None);
 
-        let settings = runtime::load_settings();
-        let token = settings
-            .extension_bridge_token
-            .unwrap_or_else(generate_bridge_token);
-
-        let _ = runtime::update_settings(|s| {
-            s.extension_bridge_token = Some(token.clone());
-        });
-
-        let port: u16 = settings.extension_bridge_port.unwrap_or(19876);
-
         let server = block_on_runtime_future(async {
-            WsBridgeServer::start(port, token.clone())
+            ExtensionBridgeManager::start_from_settings()
                 .await
-                .map_err(|e| RuntimeError::new(e.to_string()))
+                .map_err(RuntimeError::new)
         })
         .map_err(|e| format!("Extension bridge server\n  Error            {e}"))?;
+
+        let token = server.token().to_string();
+        let port = server.port();
 
         self.pending_extension_state = saved_state;
         self.ws_bridge_server = Some(server);

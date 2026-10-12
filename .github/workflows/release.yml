@@ -103,6 +103,7 @@ jobs:
           zip -r ../acrawl-extension.zip \
             manifest.json \
             background.js \
+            content_overlay.js \
             options.html \
             options.js \
             icons \

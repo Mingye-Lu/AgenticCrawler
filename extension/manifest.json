@@ -1,11 +1,18 @@
 {
   "manifest_version": 3,
   "name": "acrawl Bridge",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Connects acrawl to your browser for AI-driven web automation",
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content_overlay.js"],
+      "run_at": "document_start"
+    }
+  ],
   "options_page": "options.html",
   "action": {
     "default_popup": "options.html",
@@ -16,7 +23,7 @@
     },
     "default_title": "acrawl Bridge"
   },
-  "permissions": ["debugger", "tabs", "activeTab", "storage", "alarms", "declarativeNetRequest"],
+  "permissions": ["debugger", "tabs", "tabGroups", "activeTab", "storage", "alarms", "declarativeNetRequest"],
   "host_permissions": ["http://127.0.0.1/*", "https://*/*", "http://*/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

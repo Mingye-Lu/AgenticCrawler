@@ -94,6 +94,23 @@ impl AgentManager {
         );
     }
 
+    /// Number of agents currently tracked as [`AgentStatus::Active`].
+    ///
+    /// Used (instead of `self.agents.len()`) to enforce `max_total`, so the
+    /// limit caps concurrently-active agents rather than the number of
+    /// agents ever spawned over the tree's lifetime. Without this, a
+    /// long-running root agent that forks-and-joins children sequentially
+    /// would permanently lose the ability to fork once it had spawned
+    /// `max_total` children in total, even though most of them had already
+    /// finished and been marked done.
+    #[must_use]
+    fn active_agent_count(&self) -> usize {
+        self.agents
+            .values()
+            .filter(|a| a.status == AgentStatus::Active)
+            .count()
+    }
+
     /// Check whether all three fork limits allow a new child under `parent_id`.
     #[must_use]
     pub fn can_fork(&self, parent_id: &str) -> bool {
@@ -115,7 +132,7 @@ impl AgentManager {
         if parent.depth + 1 > self.max_depth {
             return false;
         }
-        if self.agents.len() >= self.max_total {
+        if self.active_agent_count() >= self.max_total {
             return false;
         }
 
@@ -164,9 +181,10 @@ impl AgentManager {
             });
         }
 
-        if self.agents.len() >= self.max_total {
+        let active_total = self.active_agent_count();
+        if active_total >= self.max_total {
             return Err(ForkLimitError::MaxTotal {
-                total: self.agents.len(),
+                total: active_total,
                 limit: self.max_total,
             });
         }
@@ -330,6 +348,23 @@ mod tests {
                 parent_id: "ghost".into(),
             }
         );
+    }
+
+    #[test]
+    fn test_agent_manager_total_limit_counts_only_active_not_lifetime_spawns() {
+        let mut mgr = AgentManager::new(10, 10, 2);
+        mgr.register_root("root");
+        mgr.register_child("c1", "root", None).unwrap();
+
+        // root + c1 = 2 active agents, at the max_total limit.
+        assert!(mgr.register_child("c2", "root", None).is_err());
+
+        mgr.mark_done("c1");
+
+        // c1 is done and no longer active, so a new child can be forked even
+        // though 2 agents have already been registered over the manager's
+        // lifetime (a lifetime-spawn count would keep this blocked forever).
+        assert!(mgr.register_child("c3", "root", None).is_ok());
     }
 
     #[test]

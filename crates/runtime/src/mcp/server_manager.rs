@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
+use std::io;
 
 use serde_json::Value as JsonValue;
-use tokio::time::{timeout, Duration};
+use tokio::time::{error::Elapsed, timeout, Duration};
 
 use crate::config::{McpServerConfig, McpTransport, RuntimeConfig};
 
 use super::client::McpClientBootstrap;
-use super::naming::mcp_tool_name;
+use super::naming::{mcp_tool_name, mcp_tool_prefix};
 use super::process::{default_initialize_params, spawn_mcp_stdio_process, McpStdioProcess};
 use super::types::{
     JsonRpcId, JsonRpcResponse, ManagedMcpTool, McpListToolsParams, McpServerManagerError,
@@ -14,6 +15,28 @@ use super::types::{
 };
 
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Check that no two server names normalize to the same `mcp__<prefix>__`
+/// tool prefix (see `naming::normalize_name_for_mcp`). Iteration is over a
+/// `BTreeMap`'s keys, so results are deterministic: the alphabetically
+/// earlier of two colliding names is reported as `first_server`.
+fn check_for_tool_prefix_collisions<'a>(
+    server_names: impl Iterator<Item = &'a String>,
+) -> Result<(), McpServerManagerError> {
+    let mut seen_prefixes: BTreeMap<String, &'a str> = BTreeMap::new();
+    for server_name in server_names {
+        let prefix = mcp_tool_prefix(server_name);
+        if let Some(first_server) = seen_prefixes.get(&prefix) {
+            return Err(McpServerManagerError::DuplicateToolPrefix {
+                prefix,
+                first_server: (*first_server).to_string(),
+                second_server: server_name.clone(),
+            });
+        }
+        seen_prefixes.insert(prefix, server_name.as_str());
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ToolRoute {
@@ -47,13 +70,13 @@ pub struct McpServerManager {
 }
 
 impl McpServerManager {
-    #[must_use]
-    pub fn from_runtime_config(config: &RuntimeConfig) -> Self {
+    pub fn from_runtime_config(config: &RuntimeConfig) -> Result<Self, McpServerManagerError> {
         Self::from_servers(config.mcp().servers())
     }
 
-    #[must_use]
-    pub fn from_servers(servers: &BTreeMap<String, McpServerConfig>) -> Self {
+    pub fn from_servers(
+        servers: &BTreeMap<String, McpServerConfig>,
+    ) -> Result<Self, McpServerManagerError> {
         let mut managed_servers = BTreeMap::new();
         let mut unsupported_servers = Vec::new();
 
@@ -73,12 +96,21 @@ impl McpServerManager {
             }
         }
 
-        Self {
+        // `normalize_name_for_mcp` maps every non-alphanumeric/`_`/`-`
+        // character to `_`, so distinct server names (e.g. "my.server" and
+        // "my server") can collapse to the same `mcp__<prefix>__` tool
+        // prefix. Without this check, discover_tools would silently let the
+        // later-processed server's tools overwrite the earlier one's routes
+        // in `tool_index` for any matching tool name. Fail fast here instead
+        // so the user gets a clear message telling them to rename a server.
+        check_for_tool_prefix_collisions(managed_servers.keys())?;
+
+        Ok(Self {
             servers: managed_servers,
             unsupported_servers,
             tool_index: BTreeMap::new(),
             next_request_id: 1,
-        }
+        })
     }
 
     #[must_use]
@@ -97,7 +129,7 @@ impl McpServerManager {
             let mut cursor = None;
             loop {
                 let request_id = self.take_request_id();
-                let response = {
+                let outcome = {
                     let server = self.server_mut(&server_name)?;
                     let process = server.process.as_mut().ok_or_else(|| {
                         McpServerManagerError::InvalidResponse {
@@ -119,12 +151,8 @@ impl McpServerManager {
                         ),
                     )
                     .await
-                    .map_err(|_| McpServerManagerError::Timeout {
-                        server_name: server_name.clone(),
-                        method: "tools/list",
-                        timeout: MCP_REQUEST_TIMEOUT,
-                    })??
                 };
+                let response = self.finish_timeout(&server_name, "tools/list", outcome)?;
 
                 if let Some(error) = response.error {
                     return Err(McpServerManagerError::JsonRpc {
@@ -185,7 +213,7 @@ impl McpServerManager {
 
         self.ensure_server_ready(&route.server_name).await?;
         let request_id = self.take_request_id();
-        let response =
+        let outcome =
             {
                 let server = self.server_mut(&route.server_name)?;
                 let process = server.process.as_mut().ok_or_else(|| {
@@ -207,12 +235,8 @@ impl McpServerManager {
                     ),
                 )
                 .await
-                .map_err(|_| McpServerManagerError::Timeout {
-                    server_name: route.server_name.clone(),
-                    method: "tools/call",
-                    timeout: MCP_REQUEST_TIMEOUT,
-                })??
             };
+        let response = self.finish_timeout(&route.server_name, "tools/call", outcome)?;
         Ok(response)
     }
 
@@ -256,6 +280,44 @@ impl McpServerManager {
         JsonRpcId::Number(id)
     }
 
+    /// Drop a server's process/connection state after an unrecoverable
+    /// failure (currently: a request timeout). The request bytes for a
+    /// timed-out call were already written to the child's stdin, so the
+    /// child may still write a response for it later. Rather than risk a
+    /// later, unrelated call reading that stale frame off the same stream,
+    /// kill the process (`McpStdioProcess`'s `Drop` impl kills the child)
+    /// and mark the server as needing a fresh spawn + handshake on its next
+    /// use.
+    fn invalidate_server(&mut self, server_name: &str) {
+        if let Some(server) = self.servers.get_mut(server_name) {
+            server.process = None;
+            server.initialized = false;
+        }
+    }
+
+    /// Resolve the result of a `timeout(...).await` call. On success,
+    /// unwraps the inner `io::Result`. On timeout, invalidates the server's
+    /// connection (see [`Self::invalidate_server`]) and returns
+    /// [`McpServerManagerError::Timeout`].
+    fn finish_timeout<T>(
+        &mut self,
+        server_name: &str,
+        method: &'static str,
+        outcome: Result<io::Result<T>, Elapsed>,
+    ) -> Result<T, McpServerManagerError> {
+        match outcome {
+            Ok(inner) => Ok(inner?),
+            Err(_elapsed) => {
+                self.invalidate_server(server_name);
+                Err(McpServerManagerError::Timeout {
+                    server_name: server_name.to_string(),
+                    method,
+                    timeout: MCP_REQUEST_TIMEOUT,
+                })
+            }
+        }
+    }
+
     async fn ensure_server_ready(
         &mut self,
         server_name: &str,
@@ -284,7 +346,7 @@ impl McpServerManager {
 
         if needs_initialize {
             let request_id = self.take_request_id();
-            let response = {
+            let outcome = {
                 let server = self.server_mut(server_name)?;
                 let process = server.process.as_mut().ok_or_else(|| {
                     McpServerManagerError::InvalidResponse {
@@ -301,12 +363,8 @@ impl McpServerManager {
                     process.initialize(request_id, default_initialize_params()),
                 )
                 .await
-                .map_err(|_| McpServerManagerError::Timeout {
-                    server_name: server_name.to_string(),
-                    method: "initialize",
-                    timeout: MCP_REQUEST_TIMEOUT,
-                })??
             };
+            let response = self.finish_timeout(server_name, "initialize", outcome)?;
 
             if let Some(error) = response.error {
                 return Err(McpServerManagerError::JsonRpc {
@@ -325,24 +383,21 @@ impl McpServerManager {
             }
 
             {
-                let server = self.server_mut(server_name)?;
-                let process = server.process.as_mut().ok_or_else(|| {
-                    McpServerManagerError::InvalidResponse {
-                        server_name: server_name.to_string(),
-                        method: "notifications/initialized",
-                        details: "MCP server process is gone after initialize but before \
+                let outcome = {
+                    let server = self.server_mut(server_name)?;
+                    let process = server.process.as_mut().ok_or_else(|| {
+                        McpServerManagerError::InvalidResponse {
+                            server_name: server_name.to_string(),
+                            method: "notifications/initialized",
+                            details: "MCP server process is gone after initialize but before \
                                   the initialized notification — the server probably exited mid-handshake; \
                                   check the server's stderr output above and retry"
-                            .to_string(),
-                    }
-                })?;
-                timeout(MCP_REQUEST_TIMEOUT, process.notify_initialized())
-                    .await
-                    .map_err(|_| McpServerManagerError::Timeout {
-                        server_name: server_name.to_string(),
-                        method: "notifications/initialized",
-                        timeout: MCP_REQUEST_TIMEOUT,
-                    })??;
+                                .to_string(),
+                        }
+                    })?;
+                    timeout(MCP_REQUEST_TIMEOUT, process.notify_initialized()).await
+                };
+                self.finish_timeout(server_name, "notifications/initialized", outcome)?;
             }
 
             let server = self.server_mut(server_name)?;

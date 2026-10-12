@@ -4,8 +4,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use dialoguer::{theme::ColorfulTheme, MultiSelect, Select};
+use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect, Select};
 use serde_json::{json, Value};
+
+use crate::skill;
 
 struct IdeOutcome {
     detail: String,
@@ -170,6 +172,24 @@ impl Ide {
     fn supports_global_scope(self) -> bool {
         !matches!(self, Self::Trae | Self::Crush | Self::Aider)
     }
+
+    /// Directory this client scans for agent skills, or `None` when the client has
+    /// no skills support (or none at that scope).
+    fn skills_dir(self, scope: Scope) -> Option<PathBuf> {
+        match (self, scope) {
+            (Self::ClaudeCode, Scope::Global) => Some(home_dir()?.join(".claude/skills")),
+            (Self::ClaudeCode, Scope::Project) => Some(PathBuf::from(".claude/skills")),
+            (Self::Cursor, Scope::Global) => Some(home_dir()?.join(".cursor/skills")),
+            (Self::Cursor, Scope::Project) => Some(PathBuf::from(".cursor/skills")),
+            (Self::OpenCode, Scope::Global) => Some(home_dir()?.join(".config/opencode/skills")),
+            (Self::OpenCode, Scope::Project) => Some(PathBuf::from(".opencode/skills")),
+            (Self::CodexCli, Scope::Global) => {
+                codex_skills_dir(env::var_os("CODEX_HOME"), home_dir().as_deref())
+            }
+            (Self::GeminiCli, Scope::Global) => Some(home_dir()?.join(".gemini/skills")),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +211,18 @@ fn home_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     {
         env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+/// Codex keeps personal skills under `$CODEX_HOME/skills`, defaulting to `~/.codex`
+/// when the variable is unset or empty.
+fn codex_skills_dir(
+    codex_home: Option<std::ffi::OsString>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    match codex_home.filter(|value| !value.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir).join("skills")),
+        None => Some(home?.join(".codex/skills")),
     }
 }
 
@@ -568,6 +600,18 @@ fn prompt_ide_selection(detected: &[DetectedIde]) -> io::Result<Vec<Ide>> {
     }
 }
 
+/// Offer the bundled skill when at least one selected client can load it.
+fn prompt_skill(selected: &[Ide], scope: Scope) -> io::Result<bool> {
+    if !selected.iter().any(|ide| ide.skills_dir(scope).is_some()) {
+        return Ok(false);
+    }
+    Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Also install the acrawl skill (teaches the agent how to use the tools)?")
+        .default(true)
+        .interact()
+        .map_err(io::Error::other)
+}
+
 fn prompt_scope() -> io::Result<Scope> {
     let items = &[
         "Global (user-level, works across all projects)",
@@ -587,20 +631,61 @@ fn prompt_scope() -> io::Result<Scope> {
     }
 }
 
+/// Read an existing JSON config file into a mutable object map.
+///
+/// Refuses to silently discard content that fails to parse (e.g. Zed/OpenCode
+/// configs that use `//` comments, which `serde_json` rejects) or that isn't
+/// a JSON object at the top level — callers must not fall back to `{}` and
+/// overwrite the file in either case, or a user's existing config is wiped.
+fn read_existing_json_object(path: &Path) -> io::Result<serde_json::Map<String, Value>> {
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    let content = fs::read_to_string(path)?;
+    let parsed: Value = serde_json::from_str(&content).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "refusing to modify {}: existing file failed to parse as strict JSON ({error}). \
+                 If this file uses JSONC comments (e.g. Zed/OpenCode configs support `//`), \
+                 remove them or add the `acrawl` MCP server entry manually — acrawl will not \
+                 touch a config file it cannot safely parse.",
+                path.display()
+            ),
+        )
+    })?;
+    match parsed {
+        Value::Object(map) => Ok(map),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "refusing to modify {}: expected a JSON object at the top level, found {other}",
+                path.display()
+            ),
+        )),
+    }
+}
+
+/// Copy an existing config file to `<path>.bak` before it's overwritten, so a
+/// merge that produces an unwanted result still leaves a way to recover the
+/// original content.
+fn backup_existing_file(path: &Path) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut backup_os = path.as_os_str().to_os_string();
+    backup_os.push(".bak");
+    fs::copy(path, PathBuf::from(backup_os))?;
+    Ok(())
+}
+
 fn merge_json_config(
     path: &Path,
     root_key: &str,
     server_name: &str,
     entry: Value,
 ) -> io::Result<()> {
-    let existing: Value = if path.exists() {
-        let content = fs::read_to_string(path)?;
-        serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
-    } else {
-        json!({})
-    };
-
-    let mut doc = existing.as_object().cloned().unwrap_or_default();
+    let mut doc = read_existing_json_object(path)?;
     let servers = doc
         .entry(root_key)
         .or_insert_with(|| json!({}))
@@ -616,6 +701,7 @@ fn merge_json_config(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    backup_existing_file(path)?;
     let formatted = serde_json::to_string_pretty(&Value::Object(doc)).map_err(io::Error::other)?;
     fs::write(path, formatted.as_bytes())?;
     Ok(())
@@ -753,13 +839,7 @@ fn install_zed(acrawl_path: &str) -> io::Result<String> {
 
 fn install_openclaw(acrawl_path: &str) -> io::Result<String> {
     let config_path = openclaw_config_path();
-    let existing: Value = if config_path.exists() {
-        let content = fs::read_to_string(&config_path)?;
-        serde_json::from_str(&content).unwrap_or_else(|_| json!({}))
-    } else {
-        json!({})
-    };
-    let mut doc = existing.as_object().cloned().unwrap_or_default();
+    let mut doc = read_existing_json_object(&config_path)?;
     let mcp = doc
         .entry("mcp")
         .or_insert_with(|| json!({}))
@@ -785,9 +865,63 @@ fn install_openclaw(acrawl_path: &str) -> io::Result<String> {
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }
+    backup_existing_file(&config_path)?;
     let formatted = serde_json::to_string_pretty(&Value::Object(doc)).map_err(io::Error::other)?;
     fs::write(&config_path, formatted.as_bytes())?;
     Ok(format!("wrote {}", config_path.display()))
+}
+
+/// Run a CLI's `mcp add` command, upserting the `acrawl` entry.
+///
+/// Tries `add` directly first: most of these CLIs only fail `add` when an
+/// entry with the same name already exists, so this succeeds immediately
+/// for a fresh install and is a no-op-safe upsert for a reinstall that
+/// doesn't conflict. Only if that first `add` fails do we remove the
+/// existing entry and retry once — removing unconditionally up front (the
+/// previous behavior) would destroy a working entry even when `add` was
+/// going to fail for an unrelated reason (bad path, CLI bug, ...), leaving
+/// the user with neither the old nor the new entry and no way to recover.
+/// If the retry after removal also fails, the entry really has been
+/// removed without a replacement, so the error says so explicitly and
+/// tells the user how to reinstall manually.
+fn run_cli_mcp_add(
+    cli: &Path,
+    add_args: &[&str],
+    remove_args: &[&str],
+    label: &str,
+) -> io::Result<String> {
+    let first = Command::new(cli)
+        .args(add_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if first.status.success() {
+        return Ok(format!("configured via `{label} add`"));
+    }
+
+    let _ = Command::new(cli)
+        .args(remove_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let retry = Command::new(cli)
+        .args(add_args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
+    if retry.status.success() {
+        Ok(format!(
+            "configured via `{label} add` (replaced existing entry)"
+        ))
+    } else {
+        Err(cli_error(
+            &format!(
+                "`{label} add` failed after removing the previous `acrawl` entry — \
+                 re-run `{label} add` manually to reinstall"
+            ),
+            &retry,
+        ))
+    }
 }
 
 fn install_codex_cli(acrawl_path: &str) -> io::Result<String> {
@@ -798,21 +932,12 @@ fn install_codex_cli(acrawl_path: &str) -> io::Result<String> {
         )
     })?;
 
-    let _ = Command::new(&codex)
-        .args(["mcp", "remove", "acrawl"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let output = Command::new(&codex)
-        .args(["mcp", "add", "acrawl", "--", acrawl_path, "mcp"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()?;
-    if output.status.success() {
-        Ok("configured via `codex mcp add`".to_string())
-    } else {
-        Err(cli_error("`codex mcp add` failed", &output))
-    }
+    run_cli_mcp_add(
+        &codex,
+        &["mcp", "add", "acrawl", "--", acrawl_path, "mcp"],
+        &["mcp", "remove", "acrawl"],
+        "codex mcp",
+    )
 }
 
 fn install_hermes(acrawl_path: &str) -> io::Result<String> {
@@ -823,13 +948,9 @@ fn install_hermes(acrawl_path: &str) -> io::Result<String> {
         )
     })?;
 
-    let _ = Command::new(&hermes)
-        .args(["mcp", "remove", "acrawl"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let output = Command::new(&hermes)
-        .args([
+    run_cli_mcp_add(
+        &hermes,
+        &[
             "mcp",
             "add",
             "acrawl",
@@ -837,15 +958,10 @@ fn install_hermes(acrawl_path: &str) -> io::Result<String> {
             acrawl_path,
             "--args",
             "mcp",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()?;
-    if output.status.success() {
-        Ok("configured via `hermes mcp add`".to_string())
-    } else {
-        Err(cli_error("`hermes mcp add` failed", &output))
-    }
+        ],
+        &["mcp", "remove", "acrawl"],
+        "hermes mcp",
+    )
 }
 
 fn install_goose(acrawl_path: &str) -> IdeOutcome {
@@ -1172,7 +1288,8 @@ pub fn run_uninstall() -> Result<(), Box<dyn std::error::Error>> {
 
     let scope = prompt_scope()?;
 
-    let report = run_uninstall_for(&selected, scope, false);
+    // Only ever touches our own `acrawl-mcp` folder, so removing it is always safe.
+    let report = run_uninstall_for(&selected, scope, false, true);
     let success_count = report
         .results
         .iter()
@@ -1205,11 +1322,71 @@ pub enum ClientStatus {
     Error(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum SkillStatus {
+    Installed,
+    Removed,
+    NotFound,
+    /// The client has no skills directory at this scope.
+    Unsupported,
+    Error(String),
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct ClientResult {
     pub key: String,
     pub display_name: String,
     pub status: ClientStatus,
+    /// Present only when the run was asked to manage the skill.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill: Option<SkillStatus>,
+}
+
+fn install_skill_for(ide: Ide, scope: Scope, json: bool) -> SkillStatus {
+    let Some(dir) = ide.skills_dir(scope) else {
+        if !json {
+            eprintln!("    - skill: {} has no skills support here", ide.name());
+        }
+        return SkillStatus::Unsupported;
+    };
+    match skill::install(&dir) {
+        Ok(path) => {
+            if !json {
+                eprintln!("    ✓ skill — {path}");
+            }
+            SkillStatus::Installed
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("    ✗ skill — {e}");
+            }
+            SkillStatus::Error(e.to_string())
+        }
+    }
+}
+
+fn uninstall_skill_for(ide: Ide, scope: Scope, json: bool) -> SkillStatus {
+    let Some(dir) = ide.skills_dir(scope) else {
+        return SkillStatus::Unsupported;
+    };
+    match skill::uninstall(&dir) {
+        Ok(removed) => {
+            if !json && removed {
+                eprintln!("    ✓ skill — removed from {}", dir.display());
+            }
+            if removed {
+                SkillStatus::Removed
+            } else {
+                SkillStatus::NotFound
+            }
+        }
+        Err(e) => {
+            if !json {
+                eprintln!("    ✗ skill — {e}");
+            }
+            SkillStatus::Error(e.to_string())
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1302,7 +1479,13 @@ fn skipped_for_scope(ide: Ide, scope: Scope, json: bool) -> bool {
     false
 }
 
-fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) -> ClientResult {
+fn install_client_result(
+    ide: Ide,
+    scope: Scope,
+    acrawl_path: &str,
+    json: bool,
+    with_skill: bool,
+) -> ClientResult {
     let key = ide.key().to_string();
     let display_name = ide.name().to_string();
 
@@ -1311,6 +1494,7 @@ fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) 
             key,
             display_name,
             status: ClientStatus::SkippedScope,
+            skill: None,
         };
     }
 
@@ -1331,14 +1515,22 @@ fn install_client_result(ide: Ide, scope: Scope, acrawl_path: &str, json: bool) 
         }
     };
 
+    let skill = (with_skill
+        && matches!(
+            status,
+            ClientStatus::Configured | ClientStatus::ManualInstructions
+        ))
+    .then(|| install_skill_for(ide, scope, json));
+
     ClientResult {
         key,
         display_name,
         status,
+        skill,
     }
 }
 
-fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
+fn uninstall_client_result(ide: Ide, scope: Scope, json: bool, with_skill: bool) -> ClientResult {
     let key = ide.key().to_string();
     let display_name = ide.name().to_string();
 
@@ -1347,6 +1539,7 @@ fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
             key,
             display_name,
             status: ClientStatus::SkippedScope,
+            skill: None,
         };
     }
 
@@ -1367,34 +1560,47 @@ fn uninstall_client_result(ide: Ide, scope: Scope, json: bool) -> ClientResult {
         }
     };
 
+    let skill = with_skill.then(|| uninstall_skill_for(ide, scope, json));
+
     ClientResult {
         key,
         display_name,
         status,
+        skill,
     }
 }
 
 #[must_use]
-pub fn run_install_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+pub fn run_install_for(
+    clients: &[Ide],
+    scope: Scope,
+    json: bool,
+    with_skill: bool,
+) -> InstallReport {
     let acrawl_path = resolve_acrawl_path();
     if !json {
         eprintln!("\nInstalling acrawl MCP server (binary: {acrawl_path})...\n");
     }
     let results = clients
         .iter()
-        .map(|ide| install_client_result(*ide, scope, &acrawl_path, json))
+        .map(|ide| install_client_result(*ide, scope, &acrawl_path, json, with_skill))
         .collect();
     InstallReport { results }
 }
 
 #[must_use]
-pub fn run_uninstall_for(clients: &[Ide], scope: Scope, json: bool) -> InstallReport {
+pub fn run_uninstall_for(
+    clients: &[Ide],
+    scope: Scope,
+    json: bool,
+    with_skill: bool,
+) -> InstallReport {
     if !json {
         eprintln!("\nRemoving acrawl MCP server configuration...\n");
     }
     let results = clients
         .iter()
-        .map(|ide| uninstall_client_result(*ide, scope, json))
+        .map(|ide| uninstall_client_result(*ide, scope, json, with_skill))
         .collect();
     InstallReport { results }
 }
@@ -1416,7 +1622,9 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
 
     let scope = prompt_scope()?;
 
-    let report = run_install_for(&selected, scope, false);
+    let with_skill = prompt_skill(&selected, scope)?;
+
+    let report = run_install_for(&selected, scope, false, with_skill);
     let success_count = report
         .results
         .iter()
@@ -1443,6 +1651,60 @@ pub fn run_install() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn skipped_scope_results_carry_no_skill_status() {
+        let report = run_install_for(&[Ide::Trae], Scope::Global, true, true);
+        assert_eq!(report.results[0].skill, None);
+    }
+
+    #[test]
+    fn codex_skills_dir_honors_codex_home_and_falls_back_to_default() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            codex_skills_dir(Some("/custom/codex".into()), Some(home)),
+            Some(PathBuf::from("/custom/codex/skills"))
+        );
+        assert_eq!(
+            codex_skills_dir(None, Some(home)),
+            Some(home.join(".codex/skills"))
+        );
+        assert_eq!(
+            codex_skills_dir(Some("".into()), Some(home)),
+            Some(home.join(".codex/skills"))
+        );
+        assert_eq!(codex_skills_dir(None, None), None);
+        // An explicit CODEX_HOME works even without a resolvable home directory.
+        assert_eq!(
+            codex_skills_dir(Some("/custom/codex".into()), None),
+            Some(PathBuf::from("/custom/codex/skills"))
+        );
+    }
+
+    #[test]
+    fn skills_dir_covers_only_clients_with_skill_support() {
+        let supported: Vec<&str> = Ide::ALL
+            .iter()
+            .filter(|ide| ide.skills_dir(Scope::Global).is_some())
+            .map(|ide| ide.key())
+            .collect();
+        assert_eq!(
+            supported,
+            [
+                "claude-code",
+                "cursor",
+                "opencode",
+                "gemini-cli",
+                "codex-cli"
+            ]
+        );
+        assert_eq!(
+            Ide::ClaudeCode.skills_dir(Scope::Project),
+            Some(PathBuf::from(".claude/skills"))
+        );
+        assert_eq!(Ide::Zed.skills_dir(Scope::Project), None);
+        assert_eq!(Ide::GeminiCli.skills_dir(Scope::Project), None);
+    }
 
     #[test]
     fn client_keys_match_expected_kebab_set() {
@@ -1533,20 +1795,20 @@ mod tests {
 
     #[test]
     fn run_install_for_skips_incompatible_scope_without_writing() {
-        let report = run_install_for(&[Ide::Trae], Scope::Global, true);
+        let report = run_install_for(&[Ide::Trae], Scope::Global, true, true);
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].key, "trae");
         assert_eq!(report.results[0].display_name, "TRAE");
         assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
 
-        let report = run_install_for(&[Ide::Windsurf], Scope::Project, true);
+        let report = run_install_for(&[Ide::Windsurf], Scope::Project, true, true);
         assert_eq!(report.results[0].key, "windsurf");
         assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
     }
 
     #[test]
     fn run_uninstall_for_skips_incompatible_scope() {
-        let report = run_uninstall_for(&[Ide::Crush], Scope::Global, true);
+        let report = run_uninstall_for(&[Ide::Crush], Scope::Global, true, true);
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].key, "crush");
         assert_eq!(report.results[0].status, ClientStatus::SkippedScope);
@@ -1560,11 +1822,13 @@ mod tests {
                     key: "cursor".to_string(),
                     display_name: "Cursor".to_string(),
                     status: ClientStatus::Configured,
+                    skill: Some(SkillStatus::Installed),
                 },
                 ClientResult {
                     key: "jetbrains".to_string(),
                     display_name: "JetBrains IDEs".to_string(),
                     status: ClientStatus::Error("boom".to_string()),
+                    skill: None,
                 },
             ],
         };
@@ -1572,6 +1836,8 @@ mod tests {
         assert_eq!(value["results"][0]["key"], "cursor");
         assert_eq!(value["results"][0]["status"], "Configured");
         assert_eq!(value["results"][1]["status"]["Error"], "boom");
+        assert_eq!(value["results"][0]["skill"], "Installed");
+        assert!(value["results"][1].get("skill").is_none());
     }
 
     #[test]
@@ -1622,6 +1888,58 @@ mod tests {
         let content: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"]["other"]["command"], "other-server");
         assert_eq!(content["mcpServers"]["acrawl"]["command"], "acrawl");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_json_config_refuses_to_wipe_unparseable_existing_file() {
+        let dir =
+            env::temp_dir().join(format!("acrawl-mcp-install-badjson-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("bad.json");
+
+        // JSONC-style comment: valid for Zed/OpenCode, invalid strict JSON.
+        let original = "{\n  // a comment\n  \"mcpServers\": {}\n}";
+        fs::write(&path, original).unwrap();
+
+        let entry = json!({"command": "acrawl", "args": ["mcp"]});
+        let result = merge_json_config(&path, "mcpServers", "acrawl", entry);
+
+        assert!(result.is_err(), "expected merge to fail, not silently wipe");
+        let content_after = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            content_after, original,
+            "existing file must be untouched when it fails to parse"
+        );
+        let mut backup_os = path.as_os_str().to_os_string();
+        backup_os.push(".bak");
+        assert!(
+            !PathBuf::from(backup_os).exists(),
+            "no backup should be written when nothing was overwritten"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_json_config_backs_up_existing_file_before_overwrite() {
+        let dir = env::temp_dir().join(format!("acrawl-mcp-install-backup-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("backup_test.json");
+
+        let original = r#"{"mcpServers":{"other":{"command":"other-server"}}}"#;
+        fs::write(&path, original).unwrap();
+
+        let entry = json!({"command": "acrawl", "args": ["mcp"]});
+        merge_json_config(&path, "mcpServers", "acrawl", entry).unwrap();
+
+        let mut backup_os = path.as_os_str().to_os_string();
+        backup_os.push(".bak");
+        let backup_path = PathBuf::from(backup_os);
+        assert!(backup_path.exists(), "expected a .bak file to be written");
+        let backup_content = fs::read_to_string(&backup_path).unwrap();
+        assert_eq!(backup_content, original);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1849,5 +2167,157 @@ mod tests {
             format_error_line("Hermes", "`hermes mcp add` failed: permission denied"),
             "  ✗ Hermes — `hermes mcp add` failed: permission denied"
         );
+    }
+
+    /// Build a fake `<cli> mcp add|remove` executable driven entirely by
+    /// marker files in `state_dir`, so `run_cli_mcp_add`'s retry logic can be
+    /// exercised without a real `codex`/`hermes` binary on PATH:
+    /// - `remove` always "succeeds", touches `remove_invoked`, and (unless
+    ///   `fail_forever` exists) touches `allow_add`.
+    /// - `add` fails unless `allow_add` exists, and always fails if
+    ///   `fail_forever` exists.
+    #[cfg(windows)]
+    fn write_fake_mcp_cli_script(dir: &Path) -> PathBuf {
+        // `goto` is used instead of a parenthesized if-block: cmd.exe does
+        // not reliably short-circuit on `exit /b` inside `( ... )` when the
+        // block contains more than one conditional exit, so a chain of
+        // `if COND exit /b N` lines inside parens can silently fall through
+        // to the wrong branch.
+        let script_path = dir.join("fake-mcp-cli.cmd");
+        let script = "@echo off\r\n\
+set STATE=%~3\r\n\
+if \"%2\"==\"remove\" goto :do_remove\r\n\
+if \"%2\"==\"add\" goto :do_add\r\n\
+exit /b 1\r\n\
+\r\n\
+:do_remove\r\n\
+type nul > \"%STATE%\\remove_invoked\"\r\n\
+if exist \"%STATE%\\fail_forever\" goto :remove_done\r\n\
+type nul > \"%STATE%\\allow_add\"\r\n\
+:remove_done\r\n\
+exit /b 0\r\n\
+\r\n\
+:do_add\r\n\
+if exist \"%STATE%\\fail_forever\" exit /b 1\r\n\
+if exist \"%STATE%\\allow_add\" exit /b 0\r\n\
+exit /b 1\r\n";
+        fs::write(&script_path, script).expect("write fake cli script");
+        script_path
+    }
+
+    #[cfg(unix)]
+    fn write_fake_mcp_cli_script(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        let script_path = dir.join("fake-mcp-cli.sh");
+        let script = "#!/bin/sh\n\
+STATE=\"$3\"\n\
+if [ \"$2\" = \"remove\" ]; then\n\
+  touch \"$STATE/remove_invoked\"\n\
+  if [ ! -f \"$STATE/fail_forever\" ]; then\n\
+    touch \"$STATE/allow_add\"\n\
+  fi\n\
+  exit 0\n\
+fi\n\
+if [ \"$2\" = \"add\" ]; then\n\
+  if [ -f \"$STATE/fail_forever\" ]; then\n\
+    exit 1\n\
+  fi\n\
+  if [ -f \"$STATE/allow_add\" ]; then\n\
+    exit 0\n\
+  fi\n\
+  exit 1\n\
+fi\n\
+exit 1\n";
+        fs::write(&script_path, script).expect("write fake cli script");
+        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).expect("chmod");
+        script_path
+    }
+
+    fn setup_fake_cli(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root =
+            env::temp_dir().join(format!("acrawl-mcp-install-{name}-{}", std::process::id()));
+        let state_dir = root.join("state");
+        let _ = fs::create_dir_all(&state_dir);
+        let script = write_fake_mcp_cli_script(&root);
+        (root, script, state_dir)
+    }
+
+    #[test]
+    fn run_cli_mcp_add_does_not_remove_when_first_add_succeeds() {
+        let (root, script, state_dir) = setup_fake_cli("add-success");
+        fs::write(state_dir.join("allow_add"), b"").expect("seed allow_add marker");
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+
+        let result = run_cli_mcp_add(
+            &script,
+            &["mcp", "add", &state_dir_str],
+            &["mcp", "remove", &state_dir_str],
+            "fake cli",
+        );
+
+        assert_eq!(
+            result.expect("add should succeed"),
+            "configured via `fake cli add`"
+        );
+        assert!(
+            !state_dir.join("remove_invoked").exists(),
+            "remove must not run when the first add already succeeded"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_cli_mcp_add_removes_and_retries_when_first_add_fails() {
+        let (root, script, state_dir) = setup_fake_cli("add-retry");
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+
+        let result = run_cli_mcp_add(
+            &script,
+            &["mcp", "add", &state_dir_str],
+            &["mcp", "remove", &state_dir_str],
+            "fake cli",
+        );
+
+        assert_eq!(
+            result.expect("add should succeed after remove+retry"),
+            "configured via `fake cli add` (replaced existing entry)"
+        );
+        assert!(
+            state_dir.join("remove_invoked").exists(),
+            "remove should run once the first add fails"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_cli_mcp_add_reports_manual_reinstall_when_retry_also_fails() {
+        let (root, script, state_dir) = setup_fake_cli("add-fail-forever");
+        fs::write(state_dir.join("fail_forever"), b"").expect("seed fail_forever marker");
+        let state_dir_str = state_dir.to_string_lossy().into_owned();
+
+        let error = run_cli_mcp_add(
+            &script,
+            &["mcp", "add", &state_dir_str],
+            &["mcp", "remove", &state_dir_str],
+            "fake cli",
+        )
+        .expect_err("add should fail even after remove+retry");
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed after removing the previous `acrawl` entry"),
+            "unexpected error message: {error}"
+        );
+        assert!(
+            state_dir.join("remove_invoked").exists(),
+            "remove should still have run before giving up"
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

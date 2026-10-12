@@ -7,6 +7,7 @@ rm -f "$ZIP_NAME"
 zip -r "$ZIP_NAME" \
   manifest.json \
   background.js \
+  content_overlay.js \
   options.html \
   options.js \
   icons \

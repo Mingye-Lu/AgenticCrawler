@@ -85,7 +85,7 @@ impl ApiClient for LlmRuntimeClient {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 let mut events = Vec::new();
-                let mut pending_tool: Option<(String, String, String)> = None;
+                let mut pending_tools = api::ToolCallAccumulator::new();
                 let mut pending_reasoning: Option<String> = None;
                 let mut saw_stop = false;
 
@@ -118,20 +118,28 @@ impl ApiClient for LlmRuntimeClient {
 
                     match event {
                         api::StreamEvent::MessageStart(start) => {
-                            for block in start.message.content {
-                                push_output_block(block, &mut events, &mut pending_tool, true);
+                            for (index, block) in (0..).zip(start.message.content) {
+                                let mut started = None;
+                                push_output_block(block, &mut events, &mut started, true);
+                                if let Some(call) = started {
+                                    pending_tools.start(index, call);
+                                }
                             }
                         }
                         api::StreamEvent::ContentBlockStart(start) => {
                             if matches!(start.content_block, api::OutputContentBlock::Reasoning) {
                                 pending_reasoning = Some(String::new());
                             } else {
+                                let mut started = None;
                                 push_output_block(
                                     start.content_block,
                                     &mut events,
-                                    &mut pending_tool,
+                                    &mut started,
                                     true,
                                 );
+                                if let Some(call) = started {
+                                    pending_tools.start(start.index, call);
+                                }
                             }
                         }
                         api::StreamEvent::ContentBlockDelta(delta) => match delta.delta {
@@ -141,9 +149,7 @@ impl ApiClient for LlmRuntimeClient {
                                 }
                             }
                             ContentBlockDelta::InputJsonDelta { partial_json } => {
-                                if let Some((_, _, input)) = &mut pending_tool {
-                                    input.push_str(&partial_json);
-                                }
+                                pending_tools.push_json(delta.index, &partial_json);
                             }
                             ContentBlockDelta::ThinkingDelta { thinking } => {
                                 if let Some(buf) = &mut pending_reasoning {
@@ -151,8 +157,8 @@ impl ApiClient for LlmRuntimeClient {
                                 }
                             }
                         },
-                        api::StreamEvent::ContentBlockStop(_) => {
-                            if let Some((id, name, input)) = pending_tool.take() {
+                        api::StreamEvent::ContentBlockStop(stop) => {
+                            if let Some((id, name, input)) = pending_tools.finish(stop.index) {
                                 let input = if input.is_empty() {
                                     "{}".to_string()
                                 } else {

@@ -6,6 +6,7 @@ try {
     $paths = @(
         'manifest.json',
         'background.js',
+        'content_overlay.js',
         'options.html',
         'options.js',
         'icons',

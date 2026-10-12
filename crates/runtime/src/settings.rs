@@ -221,6 +221,11 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension_bridge_port: Option<u16>,
 
+    /// Seconds to wait for the extension to connect before failing a browser
+    /// tool call in extension mode (default: 30)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_bridge_connect_timeout_secs: Option<u64>,
+
     /// Active browser backend: "extension" or "cloakbrowser" (default: cloakbrowser)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub browser_backend: Option<String>,
@@ -274,6 +279,7 @@ impl Default for Settings {
             fork_wait_timeout_secs: Some(60),
             extension_bridge_token: None,
             extension_bridge_port: None,
+            extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
@@ -717,6 +723,7 @@ mod tests {
             fork_wait_timeout_secs: Some(120),
             extension_bridge_token: None,
             extension_bridge_port: None,
+            extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
@@ -924,6 +931,7 @@ mod tests {
             fork_wait_timeout_secs: Some(90),
             extension_bridge_token: None,
             extension_bridge_port: None,
+            extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
@@ -988,6 +996,7 @@ mod tests {
             fork_wait_timeout_secs: Some(75),
             extension_bridge_token: None,
             extension_bridge_port: None,
+            extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,
@@ -1052,6 +1061,7 @@ mod tests {
             fork_wait_timeout_secs: None,
             extension_bridge_token: None,
             extension_bridge_port: None,
+            extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
             compaction_prune_max_output_chars: None,

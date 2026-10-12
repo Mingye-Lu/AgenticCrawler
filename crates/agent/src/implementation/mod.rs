@@ -121,6 +121,11 @@ pub struct CrawlerAgent {
     child_event_tx: Option<std::sync::mpsc::Sender<crate::child_events::ChildEvent>>,
     child_control_registry: Option<crate::child_events::ChildControlRegistry>,
     extension_mode: bool,
+    /// When running in extension mode, the dedicated page index this agent
+    /// should operate on. `None` (default) targets page 0. `run_goal` sets this
+    /// to a freshly-allocated page so its navigation never clobbers the
+    /// persistent MCP session's page.
+    extension_page_index: Option<usize>,
     is_child: bool,
     pub(super) child_snapshots: crate::child_events::ChildSnapshotRegistry,
     prompt_override_slot: Arc<Mutex<Option<Vec<String>>>>,
@@ -163,6 +168,7 @@ impl CrawlerAgent {
             child_event_tx: None,
             child_control_registry: None,
             extension_mode: false,
+            extension_page_index: None,
             is_child: false,
             child_snapshots: crate::child_events::ChildSnapshotRegistry::default(),
             prompt_override_slot,
@@ -825,13 +831,13 @@ impl CrawlerAgent {
     }
 
     fn apply_confidence_tracking(&mut self) {
-        let text_opt = {
-            let guard = self
-                .last_assistant_text_slot
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            guard.clone()
-        };
+        // Consume the slot so a turn that batches several tool calls records its
+        // confidence once, not once per call. The runtime refills it every turn.
+        let text_opt = self
+            .last_assistant_text_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
 
         if let Some(text) = text_opt {
             if let Some(conf) = crate::confidence::ConfidenceTracker::parse_from_text(&text) {
@@ -1426,6 +1432,40 @@ mod tests {
             CrawlerAgent::new(browser, ToolRegistry::new_with_core_tools()),
             state,
         )
+    }
+
+    fn set_assistant_text(agent: &CrawlerAgent, text: &str) {
+        *agent
+            .last_assistant_text_slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(text.to_string());
+    }
+
+    #[test]
+    fn confidence_is_recorded_once_per_assistant_turn_when_calls_are_batched() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+        set_assistant_text(&agent, "checking two things [confidence: LOW]");
+
+        // One assistant turn with three batched tool calls.
+        agent.apply_confidence_tracking();
+        agent.apply_confidence_tracking();
+        agent.apply_confidence_tracking();
+
+        let tracker = agent.confidence_tracker.as_ref().expect("tracker created");
+        assert_eq!(tracker.consecutive_low, 1, "one LOW turn is one LOW record");
+    }
+
+    #[test]
+    fn consecutive_low_turns_still_accumulate_across_turns() {
+        let mut agent = CrawlerAgent::new_for_testing(mock_registry());
+
+        set_assistant_text(&agent, "[confidence: LOW]");
+        agent.apply_confidence_tracking();
+        set_assistant_text(&agent, "[confidence: LOW]");
+        agent.apply_confidence_tracking();
+
+        let tracker = agent.confidence_tracker.as_ref().expect("tracker created");
+        assert_eq!(tracker.consecutive_low, 2);
     }
 
     #[tokio::test]
@@ -2248,7 +2288,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let result = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2294,7 +2334,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2324,7 +2364,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2354,7 +2394,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)
@@ -2382,7 +2422,7 @@ mod tests {
             .as_mut()
             .expect("browser should exist")
             .ref_map_mut()
-            .assign_or_reuse("#old-submit", "button", "Submit");
+            .assign_or_reuse("#old-submit", "button", "Submit", None);
 
         let err = agent
             .execute("click", r#"{"selector":"@e1"}"#)

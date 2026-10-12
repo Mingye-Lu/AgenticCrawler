@@ -5,6 +5,154 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2026-10-12
+
+### Fixed
+
+- **`save_file` path traversal and symlink escape**: the Playwright backend rejects `..` path components, and the symlink-escape check no longer fails open.
+- **Terminal escape injection in rendered markdown**: ANSI/control sequences (including entity-decoded ones and C1 string terminators) are stripped from untrusted page text before it reaches the TUI.
+- **`select_option` on custom dropdowns** verifies the selection instead of reporting success on a closed menu.
+- **`execute_js`** accepts scripts with a top-level `return`; declaration-style scripts still run in the page's global scope.
+- **`fill_form`** no longer drops values on JS-framework reactive inputs, and escapes submit JS as JSON strings.
+- **`click` `region` and `page_map` `scope`** share one selector for `dialog`, `main` and `sidebar`.
+- **Coverage sessions** are no longer stopped twice on reset.
+- **URL claims** are normalized before comparison, so trailing slashes and fragments no longer let two siblings claim the same page.
+- **Bedrock streams** surface exception frames as errors instead of dropping them silently.
+- **Copilot OAuth** responses are checked for HTTP status without aborting device-flow polling.
+- **`optimization.budget_enforcement`** accepts `route_down`.
+- **MCP servers** whose tool-name prefixes collide are detected instead of shadowing each other.
+- **Script `while` loops** without tool calls are bounded by the step limit.
+- **Mojibake** in user-facing strings and comments is repaired, and a few TUI helpers and a duplicate auth-modal method were cleaned up.
+
+## [0.15.1] - 2026-10-12
+
+### Fixed
+
+- **`fit_markdown` deleted comment threads**: class names containing "comment" were treated as boilerplate, which emptied Hacker News, forum and issue-thread pages.
+- **`fit_markdown` over-pruning**: falls back to the unpruned markdown when pruning leaves under 500 characters of a page with at least 2,000.
+- **The extension no longer steals focus** when the agent selects its tab.
+- **Script executor rebuilt its tool registry for every node**: it is now built once per run.
+- **Codex CLI and Hermes installers removed the existing entry before adding the new one**: a failed add no longer loses the user's configuration.
+
+## [0.15.0] - 2026-10-06
+
+### Added
+
+- **One-time extension pairing**: `/extension` now prints a 6-digit pairing code (valid for 3 minutes) instead of a token to copy. The extension popup shows which acrawl session is asking (MCP client name from `initialize.clientInfo`, pid, working directory) with a countdown; typing the code hands the extension the bridge token. The code is only ever shown on the acrawl side and typed into the extension, so a local process that can reach the port cannot pair on its own, and five wrong codes cancel the offer. Over MCP, the browser-tool error that reports a missing extension carries the code. New endpoints on the bridge port: `GET /pair/info` (never returns the code) and `POST /pair`.
+- **Extension version in the popup** and a blue **PAIR badge** on the extension icon while an acrawl session is offering to pair.
+- **Chrome Web Store install**: the install guide now points at the published acrawl Bridge listing.
+
+### Changed
+
+- **Extension 1.2.0 requires acrawl 0.15.0 or newer.** The popup no longer has a token field, so an older acrawl, which has no pairing endpoint, cannot connect to it. `/extension` and the MCP error no longer print or mention the token. `acrawl config get extension_bridge_token` still works for debugging.
+- **Flatter popup layout**: white background that fills the popup, status under the header, and the port field on one row with Save and Test Connection.
+
+### Fixed
+
+- **A stale saved token left the extension with no way to re-pair**: the popup now keeps looking for a pairing offer whenever the extension is disconnected.
+
+## [0.14.3] - 2026-09-30
+
+### Added
+
+- **`acrawl mcp install --skill`**: installs the bundled `acrawl-mcp` agent skill alongside the MCP config. Also documented: installing it via `npx skills`.
+- **Tool-call batching guidance**: the agent's system prompt now encourages emitting short, predictable sequences of tool calls in one turn (independent reads, fixed interaction sequences, consecutive forks) and says what not to batch. The `acrawl-mcp` skill gains the same guidance for MCP clients.
+
+### Fixed
+
+- **Streamed tool calls were lost or corrupted when a turn had several**: the OpenAI-compatible stream announces every tool call before closing any, but the UI and MCP server tracked a single pending call, so a later start overwrote an earlier one and argument deltas went to the wrong call. Calls are now assembled per content-block index.
+- **Repeated same-name tool calls completed in the wrong order in the TUI**: a result marked the last queued call finished instead of the first running one, swapping the results of repeated calls.
+- **Confidence recorded once per tool call instead of once per assistant turn**: a single `[confidence: LOW]` rating in a multi-call turn was counted repeatedly and triggered the consecutive-low-confidence alert early.
+
+## [0.14.2] - 2026-09-21
+
+### Fixed
+
+- **Headed CloakBrowser content did not follow window resizing**: the bridge pinned a 1920x955 emulated viewport and a spoofed 1920x1080 screen, so resizing the window clipped or padded the page instead of reflowing it. Headed mode now runs with no viewport emulation and the real screen, so content tracks the window. Headless has no window and keeps the deterministic emulated viewport and screen.
+- **`set_device` now resizes the real window for desktop-class devices**: `desktop_hd` and non-mobile custom devices resize the browser window (CDP `Browser.setWindowBounds`), and leaving a mobile preset restores the previous desktop window. `desktop` imposes no size. Mobile presets, and any requested viewport narrower than 500px, still emulate an exact viewport because Chromium's minimum window width cannot hold a phone. DPR and touch overrides are applied to popups and new tabs, a failed window setup rolls the device switch back with an error, and re-applying a size-bearing preset after a manual resize is no longer skipped as a no-op.
+- **Extension `set_device` froze the tab at a fixed size**: it always installed a device-metrics override (1920x955 even for `desktop`) and never cleared it, so after the first call the tab ignored window resizing. `desktop` now clears the override and non-mobile devices resize the browser window.
+
+## [0.14.1] - 2026-09-20
+
+### Added
+
+- **`acrawl` tab group in extension mode**: the tabs the agent controls now live in an orange "acrawl" Chrome tab group, and that group is the access boundary. Dragging a tab out revokes agent access to it (the tab is left untouched); dragging a tab in adopts it, and closing an adopted tab ungroups it instead of closing it. A restored group is re-claimed after a browser restart. Adds the `tabGroups` permission, documented in `extension/PRIVACY.md`.
+- **Activity overlay in extension mode**: an indigo glowing border marks the tab the agent is driving, with a blue ripple on clicks and hovers and a flash on filled fields. The overlay is hidden while a screenshot is taken, so the model never sees it. Two options-page toggles, "show indicators" and "highlight changes", control it.
+- **Change highlighting in the page**: after a click, hover or fill — the agent's or a human's, in acrawl-group tabs only — the content script watches the DOM for 1.5s and boxes what changed: green for inserted elements and revealed dialogs (`open` set, `hidden` removed), blue for modified ones (text or ARIA state changed). Boxes are append-only with their own lifetime, look through zero-size and page-sized wrappers such as portal roots and modal backdrops, and hide with `visibility` so scrolling never replays the animation. The agent's own aria diff still drives its state-change boxes.
+- **`page_indices` from `switch_tab`**: in extension mode tab indices are sparse once tabs close or leave the group, so `switch_tab` now returns the valid indices next to `tab_count`.
+
+### Fixed
+
+- **`switch_tab` always reported `tab_count: 0` in extension mode**: the bridge response omitted the count.
+- **Whole-page highlight box**: the diff root (`<body>`/`<html>`) is never boxed. It used to be reported as changed when its `active` state flipped.
+- **First click after a navigation lost its ripple**: overlay messages are retried once when the content script is not listening yet.
+
+## [0.14.0] - 2026-09-19
+
+### Added
+
+- **Extension mode in the built-in MCP server**: `acrawl mcp` now honours `browser_backend`, so MCP clients can drive your own logged-in browser instead of the bundled headless one. `run_mcp_server` previously loaded settings but consumed only the `script` block, and both browser-init sites hard-coded `PlaywrightBridge`, so the setting was ignored and every MCP client silently got CloakBrowser. The 31 direct browser tools and the 7 script tools now route through `ensure_browser_context`, while `run_goal` receives a `SharedBridge` and calls `set_shared_bridge` + `set_extension_mode` on its own agent. `run_goal` allocates a dedicated extension tab and closes it afterwards, so goal navigation never clobbers the persistent MCP session's page. When extension mode is on and the extension never connects, the tool call returns an actionable error rather than falling back to CloakBrowser — substituting a different, usually unauthenticated session would be misleading.
+- **`ExtensionBridgeManager` (`crates/agent/src/extension_bridge.rs`)**: starting the bridge server, waiting for the extension to connect, and building a `SharedBridge` were reachable only through `LiveCli`, so non-UI front ends could not use the extension backend. The sequence now lives in `agent` — the one crate depending on both `browser` and `runtime` — and is shared by the TUI/CLI and the MCP server. The bridge token is generated once and persisted so the copy stored in the extension stays valid across restarts.
+- **`extension_bridge_connect_timeout_secs` setting** (default `30`): bounds how long a browser tool call waits for the extension to connect before failing. Registered across the full config surface — spec table, `set`, `unset`, `get`, and effective settings.
+- **`execute_js` accepts `return` and top-level `await`**: the tool schema documented both forms — including its own `await fetch('/api/data')` example — but the script was passed straight into `Runtime.evaluate` / `page.evaluate`, which compile it as a *Script*, where top-level `return` and `await` are both `SyntaxError`s. Neither documented form had ever run, on either backend. The evaluation form is now chosen by compiling the candidates first and running only the one that parses: the script as written, then wrapped as an async arrow expression, then as an async arrow body. Bare expressions and statement lists still evaluate as written, so completion-value semantics are unchanged (`const a = 1; const b = 2; a + b` still yields `3`). Selection uses `Runtime.compileScript` on the extension backend and `vm.Script` on CloakBrowser rather than retrying a failed evaluate, which keeps it side-effect free: a script that compiles but throws `SyntaxError` at runtime — `JSON.parse` on malformed input, say — would otherwise re-execute its preceding statements once per attempt.
+
+### Changed
+
+- **Bridge lifecycle in the TUI/CLI delegates to `ExtensionBridgeManager`**: the inline `WsBridgeServer` handling in `crates/ui` is replaced by the shared manager. Behaviour is unchanged — same status strings, same token persistence, same event-driven activation.
+- **`extension_bridge_token` is minted when the backend is enabled**: `acrawl config set browser_backend extension` now generates the token immediately, so `config get extension_bridge_token` returns a real value instead of `null` before the first tool call.
+
+### Fixed
+
+- **Extension bridge reported every script failure as "Uncaught"**: CDP always sets `exceptionDetails.text` to the literal string `"Uncaught"`, so any failing script in extension mode surfaced as `Browser bridge protocol error: Uncaught` with no indication of the cause. The usable message lives in `exception.description` for thrown `Error`s and compile failures, and in `exception.value` when a primitive is thrown. A new `cdpExceptionMessage()` in `extension/commands/cdp.js` prefers `description`, then a serialized thrown value, then `className`, before falling back to `text` and the caller's own default. `execute_js`, `page_map`, `read_content`, `list_resources`, and `extract_dom_snapshot` all route through it, so script failures now report the same detail the CloakBrowser backend already surfaced.
+- **`bridge.json` deleted when the port was already owned**: `bridge.json` is only a discovery record, so removing it cannot free a bound port — deleting it on conflict discarded the record of the process that legitimately owned the port, leaving no way to report the real owner. The bind is now retried after a short delay, and only the winning process rewrites the file. `read_bridge_file` and `BridgeFileInfo` let callers name the recorded owner when a bind fails.
+- **Concurrent MCP tool families shared a restarting command-id counter**: `ExtensionBridgeManager` now caches one `SharedBridge` so the direct tools, script execution, and `run_goal` share a single command-id sequence. A fresh bridge per consumer restarted ids at 1, letting overlapping commands overwrite one another's responder in `run_ws_session`.
+- **MCP session kept a stale browser backend**: the session now tracks which backend owns its browser context and rebuilds the context when the persisted `browser_backend` selection changes mid-process.
+- **`run_goal` waited on the bridge before validating arguments**: arguments are now validated first, so a malformed request fails fast with `-32602` instead of timing out on a connection wait.
+
+### Removed
+
+- **Codex review trigger workflow** (`.github/workflows/codex-review.yml`): its only job was posting an `@codex review` comment on newly opened PRs via `CODEX_TRIGGER_TOKEN`. That token no longer authenticates, so every run failed at the `listComments` call with `401 Bad credentials`, marking a failed check on each PR while doing nothing. Codex reviews were never driven by the workflow itself — it only posted the comment Codex reacts to — so commenting `@codex review` by hand still works. `CODEX_TRIGGER_TOKEN` is now unused and can be deleted from the repository secrets.
+
+## [0.13.5] - 2026-09-12
+
+### Added
+
+- **acrawl MCP skill package** (`skills/acrawl-mcp/`): a progressive-disclosure guide that teaches AI agents to drive the built-in MCP server. `SKILL.md` carries execution-mode selection (manual tool calls / `run_script` / `run_goal`), the observe-act-verify loop around `page_state`, token-economy guidance for the `content_depth` / `page_map_depth` / `format` dials, the `@eN` / `@rN` / `@logN` / `@wsN` reference families, and `seq`-based temporal filtering. Four reference files document all 39 MCP tools with exact parameter names and defaults, the script DSL with executed examples, 13 end-to-end workflows, and installation plus configuration.
+- **MCP-specific behaviour notes**: the MCP dispatcher goes straight to the tool registry rather than through the agent loop, so several documented conveniences behave differently there. `run_script` requires `schema_version` as integer `1` rather than the `version: "1.0"` its tool description advertises, and rejects an empty `steps` array; `limits` is an all-or-nothing object rather than a patch, since five of its seven fields have no serde defaults; `$var` substitution replaces whole strings only and preserves type, while `js_eval` receives no DSL variables at all; `@rN` / `@logN` / `@wsN` refs are positional within the most recent listing rather than stable identifiers; numeric `since` filtering is inclusive over `[since, until)`; scripts may call only 17 of the 31 browser tools, excluding every DevTools tool plus `refresh` and `set_device`; `run_script(name:)` and `save_as` are not wired up; `script_status` returns capitalized statuses with no `extracted_data` field; `cancel_script` is cooperative rather than immediate and preserves collected data; `save_script` checks JSON shape but not semantics; and self-healing, action caching, loop detection and budget enforcement reach `run_goal` only.
+- **Concurrency guidance for scripts**: browser scripts must run sequentially over MCP. Concurrent `run_script` calls share the session's single browser tab, so they can silently return data from one another's pages, and `parallel` nodes fail page teardown with two or more branches. `run_goal` remains the supported parallelism path, since its sub-agents each get their own tab.
+
+This release is documentation only. No source changed, so the binaries are functionally identical to v0.13.4.
+
+## [0.13.4] - 2026-07-31
+
+### Fixed
+
+- **OpenAI streaming — orphaned reasoning/text blocks**: `emit_tool_call_events` closed an open text block before starting a tool call but never checked for a still-open reasoning block, so a reasoning block was silently orphaned when a tool call followed it; `emit_finish` then closed "the last block" by index, double-closing the tool block and leaving the reasoning block dangling. Block lifetimes are now tracked with explicit `text_block_index`/`reasoning_block_index` fields, each closed exactly once from every call site (`emit_text_deltas`, `emit_tool_call_events`, `emit_finish`).
+- **Gemini streaming — parallel tool calls collapsed onto one block**: `GeminiStreamState` keyed its active block only by kind, so a second `functionCall` part in the same candidate (native parallel tool calling) reused the first call's block index — discarding the second call's name/id and concatenating its args into an unparseable JSON string. Since Gemini delivers each `functionCall`'s args as one complete unit, every `functionCall` part now opens, emits its delta, and closes its own block immediately, while text blocks keep their continue-across-chunks behavior.
+- **Mistral — collision-prone tool-call ids**: `MistralTransform` stripped non-alphanumerics from the upstream id and kept the first 9 characters, but since upstream ids share a fixed prefix (`toolu_01…`, `call_…`) only ~2 of those characters were genuinely random, risking collisions in tool-heavy conversations. All 9 output characters are now derived from a base36-encoded hash of the entire original id, so every input byte contributes while the transform stays a deterministic function of its input (preserving `tool_use`/`tool_result` correlation).
+- **Amazon Bedrock — session token stored as a URL**: session tokens for temporary/STS credentials were persisted under the `base_url` key, so a live token could land on disk labeled as a URL. A dedicated `session_token` credential field is added, falling back to `base_url` only when reading pre-existing configs.
+- **MCP client — response desync after a timeout**: `McpStdioProcess::request` returned whatever frame arrived next without matching it to the request id, so a call that timed out (its in-flight read dropped, its request already written) left a stale response in the pipe for the next unrelated call to consume — permanently desyncing the stream by one frame. `request()` now loops on `read_frame`, discarding responses whose id doesn't match, and `McpServerManager` kills and respawns the server for a fresh handshake on timeout instead of reusing the unreliable connection.
+- **MCP installer — unparseable IDE config silently wiped**: `merge_json_config` (and `install_openclaw`'s hand-rolled duplicate) treated a JSON parse failure — e.g. Zed/OpenCode configs using `//` JSONC comments — as an empty object and overwrote the file, destroying the user's existing content. A parse failure or non-object top level now aborts with a clear error, and any file about to be overwritten is first backed up to `<path>.bak`.
+- **MCP server — `screenshot` returned an unsupported-effect error**: the `screenshot` tool returns `ToolEffect::Vision` (image data) by default, but `execute_browser_tool` only handled `ToolEffect::Reply`, producing the cryptic `tool screenshot returned unsupported effect`. Vision effects now build proper MCP image+text content blocks, and unknown effect types name the variant in the error message. Closes #85.
+- **Bridge — three handlers could kill the whole subprocess**: `start_coverage`, `get_cookies`, and `get_storage` lacked the `try/catch` wrapper used by the ~35 neighboring `bridge_script.rs` handlers, so an exception (page mid-navigation, coverage already started, or context unavailable during a device swap) propagated to the top-level bootstrap catch and exited the persistent bridge, killing every open tab instead of failing one command. Each handler body is now wrapped to emit an `ok: false` response like its neighbors.
+- **`set_device` — JS source interpolation hardened**: the `addInitScript` call spliced `screen.width`/`height` directly into a JS template-literal source string — the same interpolation-into-JS-source pattern behind a previously-fixed ARIA-snapshot injection bug (not currently reachable from product code, which only supplies `u32` preset constants). Dimensions are now passed as a serialized `addInitScript` argument instead of being spliced into the source text.
+- **Parallel scripts — completed branch data discarded on sibling error**: `execute_parallel` dropped all branch results (`extracted_data`, `errors_caught`, `output_bytes`) whenever any branch errored, including branches that had already completed successfully before the abort. Completed branches are now merged before the error is returned, with a warning so the partial loss is no longer silent.
+- **Parallel scripts — per-branch output-budget bypass**: each parallel branch received a plain `usize` copy of `output_bytes`, so `max_output_bytes` was enforced per-branch rather than across the whole `Parallel` block — two branches could each stay under the limit while their combined output blew past it. `output_bytes` is now an `Arc<AtomicUsize>` with a compare-and-swap reservation, mirroring `step_counter`.
+- **Parallel scripts — leaked output-byte reservations on failure**: a failed branch's output-byte reservations are now rolled back so they no longer count against the shared budget for surviving branches.
+- **Sub-agents — `max_total_agents` counted finished children**: `register_child`/`can_fork` checked `self.agents.len()`, which counts every agent ever registered (Done entries are never removed), so a long-running root that forks-and-joins children sequentially permanently lost the ability to fork after spawning `max_total` children in total. Only `AgentStatus::Active` agents now count against the limit.
+
+## [0.13.3] - 2026-07-11
+
+### Fixed
+
+- **`RefMap` — stale ref cleanup on identity rebind**: when a DOM re-render re-stamps an existing element with a new `data-acrawl-ref` value, the ref map now prunes the old, now-dangling `ref_id` after each ARIA walk instead of leaving it resolvable. Previously a stale `@eN` could silently resolve to a removed attribute, making `page_map(scope=@eN)` and similar ref-scoped lookups fail with "Ref not found" after the DOM changed underneath them. The cleanup runs as a two-pass step (`RefMap::retain_active`) after ref assignment, so duplicate-sibling refs from the same walk are preserved while genuinely stale entries are removed. Closes #82.
+
+## [0.13.2] - 2026-07-11
+
+### Fixed
+
+- **`click` — auto-descend into container refs**: clicking a `@eN` ref that points at a non-actionable container (a generic wrapper, nav, etc.) now automatically descends into its descendants — if exactly one actionable child is found, the click resolves to that child; if multiple are found, an error lists them so the caller can target one directly; if none are found, the original container error is returned as before. `fill_form`'s form-selector resolution opts out of auto-descend to keep matching the exact form element. Ref lookups are scoped to the current ARIA snapshot generation (stale refs from a prior page are ignored), parent-walks guard against cycles, and truncated containers (with omitted children) are excluded from auto-descend. Closes #79.
+
 ## [0.13.1] - 2026-07-05
 
 ### Added
@@ -900,6 +1048,17 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.15.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.2
+[0.15.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.1
+[0.15.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.0
+[0.14.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.3
+[0.14.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.2
+[0.14.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.1
+[0.14.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.0
+[0.13.5]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.5
+[0.13.4]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.4
+[0.13.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.3
+[0.13.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.2
 [0.13.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.1
 [0.13.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.13.0
 [0.12.7]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.12.7

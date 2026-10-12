@@ -136,20 +136,8 @@ struct GeminiStreamState {
     model: String,
     started: bool,
     next_block_index: u32,
-    active_block: Option<ActiveBlock>,
+    active_text_block: Option<u32>,
     usage: Usage,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ActiveBlockKind {
-    Text,
-    Tool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ActiveBlock {
-    index: u32,
-    kind: ActiveBlockKind,
 }
 
 impl GeminiStreamState {
@@ -158,7 +146,7 @@ impl GeminiStreamState {
             model,
             started: false,
             next_block_index: 0,
-            active_block: None,
+            active_text_block: None,
             usage: Usage {
                 input_tokens: 0,
                 cache_creation_input_tokens: 0,
@@ -204,13 +192,7 @@ impl GeminiStreamState {
             if let Some(content) = &candidate.content {
                 for part in &content.parts {
                     if let Some(text) = &part.text {
-                        let index = self.ensure_active_block(
-                            ActiveBlockKind::Text,
-                            &mut events,
-                            OutputContentBlock::Text {
-                                text: String::new(),
-                            },
-                        );
+                        let index = self.ensure_active_text_block(&mut events);
                         events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
                             index,
                             delta: ContentBlockDelta::TextDelta { text: text.clone() },
@@ -218,11 +200,14 @@ impl GeminiStreamState {
                     }
 
                     if let Some(function_call) = &part.function_call {
-                        let index = self.ensure_active_block(
-                            ActiveBlockKind::Tool,
-                            &mut events,
-                            convert_function_call_to_block(function_call, self.next_block_index),
-                        );
+                        // Gemini never streams a function call's args incrementally —
+                        // each `functionCall` part arrives as a single, complete unit —
+                        // so every part gets its own freshly opened+closed block. This
+                        // guarantees two parallel `functionCall` parts in the same
+                        // candidate never share a block index or have their `args`
+                        // JSON concatenated together.
+                        self.stop_active_text_block(&mut events);
+                        let index = self.open_tool_block(&mut events, function_call);
                         events.push(StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
                             index,
                             delta: ContentBlockDelta::InputJsonDelta {
@@ -230,12 +215,15 @@ impl GeminiStreamState {
                                     .expect("function call args must serialize"),
                             },
                         }));
+                        events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
+                            index,
+                        }));
                     }
                 }
             }
 
             if let Some(finish_reason) = candidate.finish_reason.as_deref() {
-                self.stop_active_block(&mut events);
+                self.stop_active_text_block(&mut events);
                 events.push(StreamEvent::MessageDelta(MessageDeltaEvent {
                     delta: MessageDelta {
                         stop_reason: Some(map_finish_reason(finish_reason).to_string()),
@@ -250,35 +238,47 @@ impl GeminiStreamState {
         events
     }
 
-    fn ensure_active_block(
-        &mut self,
-        kind: ActiveBlockKind,
-        events: &mut Vec<StreamEvent>,
-        block: OutputContentBlock,
-    ) -> u32 {
-        if let Some(active) = self.active_block {
-            if active.kind == kind {
-                return active.index;
-            }
-            self.stop_active_block(events);
+    fn ensure_active_text_block(&mut self, events: &mut Vec<StreamEvent>) -> u32 {
+        if let Some(index) = self.active_text_block {
+            return index;
         }
 
         let index = self.next_block_index;
         self.next_block_index += 1;
-        self.active_block = Some(ActiveBlock { index, kind });
+        self.active_text_block = Some(index);
         events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
             index,
-            content_block: block,
+            content_block: OutputContentBlock::Text {
+                text: String::new(),
+            },
         }));
         index
     }
 
-    fn stop_active_block(&mut self, events: &mut Vec<StreamEvent>) {
-        if let Some(active) = self.active_block.take() {
+    fn stop_active_text_block(&mut self, events: &mut Vec<StreamEvent>) {
+        if let Some(index) = self.active_text_block.take() {
             events.push(StreamEvent::ContentBlockStop(ContentBlockStopEvent {
-                index: active.index,
+                index,
             }));
         }
+    }
+
+    /// Opens a brand-new block for a single Gemini `functionCall` part. Unlike
+    /// text blocks, tool blocks are never reused across parts/chunks — each
+    /// function call gets its own index so parallel tool calls in the same
+    /// candidate cannot be merged together.
+    fn open_tool_block(
+        &mut self,
+        events: &mut Vec<StreamEvent>,
+        function_call: &GeminiFunctionCall,
+    ) -> u32 {
+        let index = self.next_block_index;
+        self.next_block_index += 1;
+        events.push(StreamEvent::ContentBlockStart(ContentBlockStartEvent {
+            index,
+            content_block: convert_function_call_to_block(function_call, index),
+        }));
+        index
     }
 }
 
@@ -744,6 +744,80 @@ mod tests {
                 delta: ContentBlockDelta::InputJsonDelta { ref partial_json },
                 ..
             }) if partial_json == r#"{"url":"https://example.com"}"#
+        ));
+    }
+
+    #[test]
+    fn test_gemini_parallel_tool_calls_get_distinct_blocks() {
+        // Two `functionCall` parts in the same candidate (native Gemini parallel
+        // tool calling) must each get their own block index, id, and args —
+        // never merged into a single block.
+        let response: GenerateContentResponse = serde_json::from_value(serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {
+                            "functionCall": {
+                                "name": "navigate",
+                                "args": {"url": "https://example.com"}
+                            }
+                        },
+                        {
+                            "functionCall": {
+                                "name": "screenshot",
+                                "args": {"full_page": true}
+                            }
+                        }
+                    ]
+                }
+            }]
+        }))
+        .expect("response json");
+
+        let mut state = GeminiStreamState::new("gemini-2.0-flash".to_string());
+        let events = state.process_response(&response);
+
+        // MessageStart, then for each call: Start + Delta + Stop.
+        assert_eq!(events.len(), 7);
+
+        assert!(matches!(events[0], StreamEvent::MessageStart(_)));
+
+        assert!(matches!(
+            events[1],
+            StreamEvent::ContentBlockStart(ContentBlockStartEvent {
+                index: 0,
+                content_block: OutputContentBlock::ToolUse { ref name, ref id, .. },
+            }) if name == "navigate" && id == "gemini_tool_0"
+        ));
+        assert!(matches!(
+            events[2],
+            StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
+                index: 0,
+                delta: ContentBlockDelta::InputJsonDelta { ref partial_json },
+            }) if partial_json == r#"{"url":"https://example.com"}"#
+        ));
+        assert!(matches!(
+            events[3],
+            StreamEvent::ContentBlockStop(ContentBlockStopEvent { index: 0 })
+        ));
+
+        assert!(matches!(
+            events[4],
+            StreamEvent::ContentBlockStart(ContentBlockStartEvent {
+                index: 1,
+                content_block: OutputContentBlock::ToolUse { ref name, ref id, .. },
+            }) if name == "screenshot" && id == "gemini_tool_1"
+        ));
+        assert!(matches!(
+            events[5],
+            StreamEvent::ContentBlockDelta(ContentBlockDeltaEvent {
+                index: 1,
+                delta: ContentBlockDelta::InputJsonDelta { ref partial_json },
+            }) if partial_json == r#"{"full_page":true}"#
+        ));
+        assert!(matches!(
+            events[6],
+            StreamEvent::ContentBlockStop(ContentBlockStopEvent { index: 1 })
         ));
     }
 }

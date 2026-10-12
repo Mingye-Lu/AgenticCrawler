@@ -23,6 +23,10 @@
   Single Rust binary. Full DevTools observability. 42 tools. 25 LLM providers. MCP server built-in.
 </p>
 
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="acrawl architecture: the TUI, one-shot prompt, and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 42 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge." width="100%">
+</p>
+
 ---
 
 ## Why acrawl?
@@ -126,16 +130,24 @@ npm install
 
 ### Browser Extension (optional)
 
-The acrawl Bridge extension lets acrawl control your real browser (with your sessions, cookies, and existing extensions) instead of a headless CloakBrowser instance. Download `acrawl-extension.zip` from the [latest release](https://github.com/Mingye-Lu/AgenticCrawler/releases/latest), unzip it, then load it into your browser:
+The acrawl Bridge extension lets acrawl control your real browser (with your sessions, cookies, and existing extensions) instead of a headless CloakBrowser instance.
 
-| Browser | Extensions page | Developer mode toggle |
-|---------|----------------|----------------------|
-| Chrome | `chrome://extensions` | Top-right |
-| Edge | `edge://extensions` | Bottom-left |
-| Brave | `brave://extensions` | Top-right |
-| Arc / Vivaldi / Opera | `<browser>://extensions` | Varies |
+1. Install **acrawl Bridge** from the [Chrome Web Store](https://chromewebstore.google.com/detail/acrawl-bridge/nbkpmfofkdjcgkncmpicbdkjmddllcep) and click **Add to Chrome**. The same listing works in Edge, Brave, Arc, Vivaldi, and Opera.
+2. Run `/extension` in the acrawl REPL to start the bridge and show a pairing code, then type the code into the extension popup. This is a one-time step.
 
-Enable **Developer mode**, click **Load unpacked**, and select the unzipped folder. Then run `/extension` in the acrawl REPL to connect. See [extension/README.md](extension/README.md) for full setup details.
+To install without the store (for example, to run an unreleased build), see [extension/README.md](extension/README.md#manual-install-from-release). It has the full setup details.
+
+### Agent Skill (optional)
+
+If you drive acrawl from a coding agent (via [`acrawl mcp`](#mcp-server-expose-acrawl-as-a-tool)), install the `acrawl-mcp` skill so the agent knows when to use direct tools, scripts, or `run_goal`, and how to debug with the network/console/cookie tools:
+
+```bash
+npx skills add Mingye-Lu/AgenticCrawler
+```
+
+This uses the community [`skills`](https://github.com/vercel-labs/skills) CLI, which detects your installed agents (Claude Code, Cursor, Codex, Gemini CLI, OpenCode, and many more) and copies the skill into each one's skills directory. Add `-g` for a global (user-level) install, or `-a claude-code` to target a single agent.
+
+Prefer to skip Node? `acrawl mcp install --client claude-code --skill` configures the MCP server and installs the same skill in one step (see [Quick install](#quick-install)).
 
 ### Configure
 
@@ -568,6 +580,8 @@ Interactive installer that auto-detects your IDEs, lets you toggle which to conf
 
 Supported clients: **Claude Code**, **Claude Desktop**, **Cursor**, **Windsurf**, **VS Code (Copilot)**, **OpenCode**, **Zed**, **TRAE**, **JetBrains IDEs**, **Gemini CLI**, **Qwen Code**, **Codex CLI**, **Hermes**, **OpenClaw**, **Goose**, **Crush**, **Aider**.
 
+The installer also offers to install the bundled `acrawl-mcp` [agent skill](#agent-skill-optional) for clients that load skills (Claude Code, Cursor, OpenCode, Codex CLI, Gemini CLI). Non-interactively, pass `--skill`: `acrawl mcp install --client claude-code --skill`. `acrawl mcp uninstall --client claude-code --skill` removes it again.
+
 #### Manual configuration
 
 If you prefer to configure manually, add this to your IDE's MCP config file:
@@ -668,6 +682,18 @@ The browser tools share a persistent session across calls. `run_goal` creates it
 
 **Requirements:** The 38 browser and script tools work without any configuration. `run_goal` requires `~/.acrawl/credentials.json` (via `acrawl auth`) for its internal LLM.
 
+#### Using your real browser from MCP
+
+The MCP server honours `browser_backend`, so MCP clients can drive your own logged-in browser instead of the bundled headless one:
+
+```bash
+acrawl config set browser_backend extension   # route MCP browser tools through the extension
+```
+
+The bridge server starts on the first browser tool call and waits up to `extension_bridge_connect_timeout_secs` (default 30) for the extension to connect. If it never connects, the tool call returns an actionable error rather than silently falling back to CloakBrowser — extension mode exists to reuse your authenticated session, so substituting a different browser would be misleading.
+
+The Chrome extension serves one process at a time. If an `acrawl` REPL already owns the bridge, the MCP server reports the conflicting owner instead of competing for the port. Run `acrawl config unset browser_backend` to go back to CloakBrowser.
+
 ## Usage
 
 ```
@@ -738,6 +764,7 @@ acrawl config get model --effective
 # MCP install
 acrawl mcp install --client opencode --scope user
 acrawl mcp install --all --yes
+acrawl mcp install --client claude-code --skill   # also install the agent skill
 
 ## Configuration
 
@@ -776,6 +803,7 @@ Created with defaults on first run.
 | `fork_wait_timeout_secs` | `60` | Timeout for `wait_for_subagents` |
 | `browser_backend` | `null` | Active browser backend: `"extension"` or `null` (CloakBrowser) |
 | `extension_bridge_port` | `19876` | Port for Chrome extension bridge WebSocket server |
+| `extension_bridge_connect_timeout_secs` | `30` | How long to wait for the extension to connect before failing a browser tool call in extension mode |
 
 All fields are optional; omitting a field uses the default. The `optimization` block accepts a nested object with the following fields (all default to `false`/`0`/`null`, safe to omit entirely):
 

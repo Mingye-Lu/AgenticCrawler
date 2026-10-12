@@ -4,12 +4,44 @@ use crate::aria_walk_js::ARIA_WALK_JS;
 
 const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_PREFIX: &str = r#"
 const readline = require('node:readline');
+const vm = require('node:vm');
 
 function parseHeadless() {
   const raw = process.env.HEADLESS;
   if (raw === undefined) return true;
   const v = String(raw).trim().toLowerCase();
   return !(v === 'false' || v === '0' || v === 'no' || v === 'off');
+}
+
+// Headed windows follow the user's resizing: pages run with viewport:null and
+// set_device moves the OS window via CDP instead of emulating dimensions.
+// Chromium can't shrink a window below this viewport width, so anything
+// narrower must be emulated instead of realised by resizing the window.
+const MIN_WINDOW_VIEWPORT_WIDTH = 500;
+
+async function windowHandle(ctx, pg) {
+  const cdp = await ctx.newCDPSession(pg);
+  const { windowId, bounds } = await cdp.send('Browser.getWindowForTarget');
+  return { cdp, windowId, bounds };
+}
+
+function compilesAsScript(source) {
+  try {
+    new vm.Script(source);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function selectEvaluationForm(script) {
+  const candidates = [script, `(async () => (${script}))()`, `(async () => { ${script} })()`];
+  for (const candidate of candidates) {
+    if (compilesAsScript(candidate)) {
+      return candidate;
+    }
+  }
+  return script;
 }
 
 async function resolveFillSelector(pg, raw) {
@@ -596,9 +628,15 @@ async function bootstrap() {
     }
   }
   console.log = (...args) => process.stderr.write(args.map(String).join(' ') + '\n');
-  const browser = await launch({ headless: parseHeadless(), humanize: true });
-  let context = await browser.newContext({ viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } });
-  await context.addInitScript(`
+  const headless = parseHeadless();
+  const browser = await launch({ headless, humanize: true });
+  // Headed: no emulation, the page tracks the real window (a fixed viewport
+  // also makes outerWidth < innerWidth). Headless has no window, so it keeps a
+  // deterministic emulated viewport and screen.
+  let context = await browser.newContext(headless
+    ? { viewport: { width: 1920, height: 955 }, screen: { width: 1920, height: 1080 } }
+    : { viewport: null });
+  if (headless) await context.addInitScript(`
     (() => {
       // Spoof screen dimensions by shadowing them on the REAL screen object.
       // Replacing window.screen with Object.create(Screen.prototype, ...) loses
@@ -611,6 +649,20 @@ async function bootstrap() {
     })();
   `);
   await context.addInitScript(CONSOLE_CAPTURE_SOURCE);
+  let deviceEmulated = false;
+  let desktopBounds = null;
+  // DPR/touch applied over CDP in window mode; new pages (popups, tabs) need it too.
+  let windowEmu = null;
+  const windowEmuFor = (cmd) => {
+    const dpr = cmd.deviceScaleFactor !== undefined && cmd.deviceScaleFactor !== 1 ? cmd.deviceScaleFactor : null;
+    return dpr || cmd.hasTouch ? { dpr, touch: cmd.hasTouch === true } : null;
+  };
+  const applyPageEmulation = async (ctx, pg, emu) => {
+    if (!emu) return;
+    const cdp = await ctx.newCDPSession(pg);
+    if (emu.dpr) await cdp.send('Emulation.setDeviceMetricsOverride', { width: 0, height: 0, deviceScaleFactor: emu.dpr, mobile: false });
+    if (emu.touch) await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+  };
   let page = await context.newPage();
   const pages = [page];
   await attachObservationListeners(page, pages, 0);
@@ -855,8 +907,55 @@ async function bootstrap() {
       try {
         sel = await resolveFillSelector(page, sel);
         sel = await resolveEditorSurface(page, sel);
+
         await page.fill(sel, command.value, { timeout: 5000 });
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
+
+        // Only real input/textarea elements expose a meaningful `.value`.
+        // contenteditable divs, labels, and other custom fill targets return
+        // `undefined` here even though page.fill() already succeeded — treat
+        // those as done instead of forcing them through the keyboard_type/
+        // native_setter fallbacks below, which only work on input/textarea.
+        const isValueBacked = await page.$eval(sel, (el) => {
+          const tag = el.tagName;
+          return (tag === 'INPUT' || tag === 'TEXTAREA') && el.value !== undefined;
+        }).catch(() => false);
+
+        // Some input types normalize the stored value (type=color lowercases
+        // hex, type=number trims whitespace), so compare case-insensitively
+        // and trimmed instead of requiring an exact string match.
+        const valuesMatch = (a, b) =>
+          typeof a === 'string' && typeof b === 'string'
+            ? a.toLowerCase().trim() === b.toLowerCase().trim()
+            : a === b;
+
+        let actualValue = isValueBacked ? await page.$eval(sel, (el) => el.value).catch(() => null) : null;
+        let method = 'fill';
+
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
+          await page.click(sel, { timeout: 5000 }).catch(() => {});
+          await page.fill(sel, '').catch(() => {});
+          await page.keyboard.type(command.value, { delay: 0 });
+          actualValue = await page.$eval(sel, (el) => el.value).catch(() => null);
+          method = 'keyboard_type';
+        }
+
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
+          await page.$eval(sel, (el, value) => {
+            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const nativeValueSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            nativeValueSetter.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }, command.value);
+          actualValue = await page.$eval(sel, (el) => el.value).catch(() => null);
+          method = 'native_setter';
+        }
+
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
+          throw new Error(`fill_not_retained: value was not retained after ${method} attempt`);
+        }
+
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel, method } }) + '\n');
       } catch (mainError) {
         try {
           const richEditorResult = await tryRichEditorFill(page, sel, command.value);
@@ -1190,7 +1289,7 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
 
     if (command.action === 'evaluate') {
       try {
-        const result = await page.evaluate(command.script);
+        const result = await page.evaluate(selectEvaluationForm(command.script));
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { value: result } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'evaluate_failed', message: String(error) } }) + '\n');
@@ -1376,13 +1475,36 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         } catch (_) { /* localStorage may be unavailable */ }
         const currentUrl = page.url();
 
+        // Mobile devices, viewports narrower than a window can be, and headless
+        // (no window) emulate an exact viewport; other headed devices resize
+        // the real window instead.
+        const emulate = headless || command.isMobile === true
+          || (command.viewport && command.viewport.width < MIN_WINDOW_VIEWPORT_WIDTH);
+        // Headless "desktop" sends no screen; keep the bootstrap 1920x1080.
+        const screenDims = command.screen || (headless ? { width: 1920, height: 1080 } : null);
         const ctxOpts = {};
-        if (command.viewport) ctxOpts.viewport = command.viewport;
-        if (command.screen) ctxOpts.screen = command.screen;
+        if (emulate) {
+          ctxOpts.viewport = command.viewport || { width: 1920, height: 955 };
+          if (screenDims) ctxOpts.screen = screenDims;
+          if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
+          if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;
+          if (command.hasTouch !== undefined) ctxOpts.hasTouch = command.hasTouch;
+        } else {
+          ctxOpts.viewport = null;
+        }
         if (command.userAgent) ctxOpts.userAgent = command.userAgent;
-        if (command.deviceScaleFactor !== undefined) ctxOpts.deviceScaleFactor = command.deviceScaleFactor;
-        if (command.isMobile !== undefined) ctxOpts.isMobile = command.isMobile;
-        if (command.hasTouch !== undefined) ctxOpts.hasTouch = command.hasTouch;
+
+        // The replacement context opens a new OS window; carry the user's
+        // window bounds over so a device switch doesn't reset their layout.
+        let oldBounds = null;
+        if (!headless) {
+          try {
+            oldBounds = (await windowHandle(context, page)).bounds;
+            // An emulated device window is phone-sized; remember the real
+            // desktop window so leaving emulation restores it.
+            if (!deviceEmulated) desktopBounds = oldBounds;
+          } catch (_) {}
+        }
 
         let storageOrigin = null;
         if (currentUrl && currentUrl !== 'about:blank') {
@@ -1401,17 +1523,47 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         const newPage = await newContext.newPage();
         await newContext.addInitScript(CONSOLE_CAPTURE_SOURCE);
 
-        if (command.screen) {
-          await newContext.addInitScript(`
-            (() => {
-              // Shadow dims on the real screen object (preserves screen.orientation
-              // and other native accessors; see bootstrap note).
-              const dims = { width: ${command.screen.width}, height: ${command.screen.height}, availWidth: ${command.screen.width}, availHeight: ${command.screen.height}, colorDepth: 24, pixelDepth: 24 };
-              for (const k of Object.keys(dims)) {
-                try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
-              }
-            })();
-          `);
+        if (emulate && screenDims) {
+          // Pass width/height as a serialized argument rather than
+          // interpolating them into the injected source text — same
+          // string-interpolation-into-JS-source pattern that was
+          // previously fixed for the ARIA-snapshot injection issue.
+          await newContext.addInitScript((screenDims) => {
+            // Shadow dims on the real screen object (preserves screen.orientation
+            // and other native accessors; see bootstrap note).
+            const dims = {
+              width: screenDims.width,
+              height: screenDims.height,
+              availWidth: screenDims.width,
+              availHeight: screenDims.height,
+              colorDepth: 24,
+              pixelDepth: 24,
+            };
+            for (const k of Object.keys(dims)) {
+              try { Object.defineProperty(window.screen, k, { value: dims[k], enumerable: true, configurable: true }); } catch (_) {}
+            }
+          }, { width: screenDims.width, height: screenDims.height });
+        }
+
+        if (!emulate) {
+          // Window mode: drive size, DPR and touch through CDP (Playwright
+          // rejects deviceScaleFactor/hasTouch combined with viewport:null).
+          // Failures here throw so the outer catch rolls the swap back
+          // (closing newContext) instead of committing a half-configured device.
+          try {
+            const { cdp, windowId } = await windowHandle(newContext, newPage);
+            if (command.viewport) {
+              const [dx, dy] = await newPage.evaluate(() => [outerWidth - innerWidth, outerHeight - innerHeight]);
+              await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal', width: command.viewport.width + dx, height: command.viewport.height + dy } });
+            } else {
+              // Restoring the previous window is cosmetic (maximized/fullscreen
+              // bounds can be rejected), so it stays best-effort.
+              const restore = deviceEmulated ? desktopBounds : oldBounds;
+              if (restore) await cdp.send('Browser.setWindowBounds', { windowId, bounds: restore }).catch((e) => { process.stderr.write('[acrawl] window restore failed: ' + String(e) + '\n'); });
+            }
+          } catch (e) { await newContext.close().catch(() => {}); throw e; }
+          try { await applyPageEmulation(newContext, newPage, windowEmuFor(command)); }
+          catch (e) { await newContext.close().catch(() => {}); throw e; }
         }
 
         // Restore localStorage manually (storageState only seeds on first navigation)
@@ -1440,6 +1592,8 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         }
 
         const oldContext = context;
+        deviceEmulated = emulate;
+        windowEmu = emulate ? null : windowEmuFor(command);
         context = newContext;
         page = newPage;
         observationBuffers.clear();
@@ -1449,6 +1603,7 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         context.on('page', (p) => {
           if (!pages.includes(p)) {
             pages.push(p);
+            void applyPageEmulation(context, p, windowEmu).catch((e) => { process.stderr.write('[acrawl] popup device emulation failed: ' + String(e) + '\n'); });
             const popupIndex = pages.length - 1;
             void attachObservationListeners(p, pages, popupIndex).catch((e) => { process.stderr.write('[acrawl] popup observation attach failed: ' + String(e) + '\n'); });
           }
@@ -1514,15 +1669,23 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
     }
 
     if (command.action === 'start_coverage') {
-      const doJs = command.js !== false;
-      const doCss = command.css !== false;
-      if (doJs) await pages[activePageIndex()].coverage.startJSCoverage({ resetOnNavigation: false });
-      if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage({ resetOnNavigation: false });
-      process.stdout.write(JSON.stringify({
-        event: 'bridge_response',
-        ok: true,
-        result: {}
-      }) + '\n');
+      try {
+        const doJs = command.js !== false;
+        const doCss = command.css !== false;
+        if (doJs) await pages[activePageIndex()].coverage.startJSCoverage({ resetOnNavigation: false });
+        if (doCss) await pages[activePageIndex()].coverage.startCSSCoverage({ resetOnNavigation: false });
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: {}
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'start_coverage_failed', message: String(error) }
+        }) + '\n');
+      }
       continue;
     }
 
@@ -1607,63 +1770,79 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
     }
 
     if (command.action === 'get_cookies') {
-      const context = browser.contexts()[0];
-      const rawCookies = await context.cookies();
-      const cookies = rawCookies.map((c) => ({
-        name: c.name,
-        value: c.value,
-        domain: c.domain,
-        path: c.path,
-        expires: (typeof c.expires === 'number' && c.expires >= 0) ? c.expires : null,
-        secure: !!c.secure,
-        http_only: !!c.httpOnly,
-        same_site: c.sameSite || null,
-        size_bytes: (c.name ? c.name.length : 0) + (c.value ? c.value.length : 0),
-      }));
-      process.stdout.write(JSON.stringify({
-        event: 'bridge_response',
-        ok: true,
-        result: { cookies }
-      }) + '\n');
+      try {
+        const context = browser.contexts()[0];
+        const rawCookies = await context.cookies();
+        const cookies = rawCookies.map((c) => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain,
+          path: c.path,
+          expires: (typeof c.expires === 'number' && c.expires >= 0) ? c.expires : null,
+          secure: !!c.secure,
+          http_only: !!c.httpOnly,
+          same_site: c.sameSite || null,
+          size_bytes: (c.name ? c.name.length : 0) + (c.value ? c.value.length : 0),
+        }));
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { cookies }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'get_cookies_failed', message: String(error) }
+        }) + '\n');
+      }
       continue;
     }
 
     if (command.action === 'get_storage') {
-      const storageType = command.storage_type || 'all';
-      const page = pages[activePageIndex()];
-      
-      let localStorage = [];
-      let sessionStorage = [];
-      
-      if (storageType === 'local' || storageType === 'all') {
-        localStorage = await page.evaluate(() => {
-          const items = [];
-          for (let i = 0; i < window.localStorage.length; i++) {
-            const key = window.localStorage.key(i);
-            const value = window.localStorage.getItem(key);
-            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
-          }
-          return items;
-        });
+      try {
+        const storageType = command.storage_type || 'all';
+        const page = pages[activePageIndex()];
+
+        let localStorage = [];
+        let sessionStorage = [];
+
+        if (storageType === 'local' || storageType === 'all') {
+          localStorage = await page.evaluate(() => {
+            const items = [];
+            for (let i = 0; i < window.localStorage.length; i++) {
+              const key = window.localStorage.key(i);
+              const value = window.localStorage.getItem(key);
+              items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+            }
+            return items;
+          });
+        }
+
+        if (storageType === 'session' || storageType === 'all') {
+          sessionStorage = await page.evaluate(() => {
+            const items = [];
+            for (let i = 0; i < window.sessionStorage.length; i++) {
+              const key = window.sessionStorage.key(i);
+              const value = window.sessionStorage.getItem(key);
+              items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
+            }
+            return items;
+          });
+        }
+
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: true,
+          result: { local_storage: localStorage, session_storage: sessionStorage }
+        }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({
+          event: 'bridge_response',
+          ok: false,
+          error: { kind: 'get_storage_failed', message: String(error) }
+        }) + '\n');
       }
-      
-      if (storageType === 'session' || storageType === 'all') {
-        sessionStorage = await page.evaluate(() => {
-          const items = [];
-          for (let i = 0; i < window.sessionStorage.length; i++) {
-            const key = window.sessionStorage.key(i);
-            const value = window.sessionStorage.getItem(key);
-            items.push({ key, value, size_bytes: key.length + (value ? value.length : 0) });
-          }
-          return items;
-        });
-      }
-      
-      process.stdout.write(JSON.stringify({
-        event: 'bridge_response',
-        ok: true,
-        result: { local_storage: localStorage, session_storage: sessionStorage }
-      }) + '\n');
       continue;
     }
 
@@ -1757,6 +1936,67 @@ mod tests {
             PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("richEditor"),
             "Missing richEditor field in success payload"
         );
+    }
+
+    #[test]
+    fn bridge_set_device_passes_screen_dims_as_evaluate_arg() {
+        // set_device previously interpolated command.screen.width/height
+        // directly into an addInitScript template-literal source string.
+        // Not currently reachable with untrusted values (the only Rust
+        // caller only ever supplies preset u32 constants), but it's the
+        // same string-interpolation-into-JS-source pattern that caused a
+        // previously-fixed ARIA-snapshot injection bug elsewhere in this
+        // codebase. Assert the values are now passed as a serialized
+        // addInitScript argument instead of spliced into the source text.
+        assert!(
+            !PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("width: ${command.screen.width}"),
+            "screen width must not be interpolated into JS source text"
+        );
+        assert!(
+            !PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("height: ${command.screen.height}"),
+            "screen height must not be interpolated into JS source text"
+        );
+        assert!(
+            PLAYWRIGHT_BRIDGE_NODE_SCRIPT.contains("addInitScript((screenDims) => {")
+                && PLAYWRIGHT_BRIDGE_NODE_SCRIPT
+                    .contains("{ width: screenDims.width, height: screenDims.height }"),
+            "expected set_device to pass screen dims as a serialized addInitScript argument"
+        );
+    }
+
+    #[test]
+    fn bridge_wraps_coverage_and_storage_handlers_in_try_catch() {
+        // start_coverage, get_cookies, and get_storage previously had no
+        // try/catch, so an exception inside them (e.g. mid-navigation, or
+        // browser.contexts()[0] unavailable during a device-context swap)
+        // would propagate out of the `for await` dispatch loop and crash
+        // the whole persistent bridge subprocess instead of failing just
+        // that one command.
+        for (action, error_kind) in [
+            ("start_coverage", "start_coverage_failed"),
+            ("get_cookies", "get_cookies_failed"),
+            ("get_storage", "get_storage_failed"),
+        ] {
+            let marker = format!("command.action === '{action}'");
+            let start = PLAYWRIGHT_BRIDGE_NODE_SCRIPT
+                .find(&marker)
+                .unwrap_or_else(|| panic!("missing handler for {action}"));
+            // The handler body (until the next top-level `if (command.action`)
+            // must contain both a try block and the expected error kind.
+            let rest = &PLAYWRIGHT_BRIDGE_NODE_SCRIPT[start..];
+            let end = rest[marker.len()..]
+                .find("if (command.action ===")
+                .map_or(rest.len(), |i| i + marker.len());
+            let body = &rest[..end];
+            assert!(
+                body.contains("try {") && body.contains("} catch (error) {"),
+                "{action} handler is missing a try/catch wrapper"
+            );
+            assert!(
+                body.contains(error_kind),
+                "{action} handler is missing expected error kind {error_kind}"
+            );
+        }
     }
 
     #[test]

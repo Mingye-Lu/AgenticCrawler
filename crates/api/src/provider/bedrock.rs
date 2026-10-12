@@ -38,9 +38,14 @@ pub fn build_client(
     match (access_key_id, secret_access_key) {
         (Some(key_id), Some(secret)) => {
             let session_token = config
-                .base_url
+                .session_token
                 .clone()
                 .filter(|v| !v.is_empty())
+                // Back-compat: earlier versions had no dedicated field and
+                // stuffed the session token into `base_url` instead. Fall
+                // back to it so existing on-disk configs that already have a
+                // token stored there don't lose it.
+                .or_else(|| config.base_url.clone().filter(|v| !v.is_empty()))
                 .or_else(|| {
                     std::env::var("AWS_SESSION_TOKEN")
                         .ok()
@@ -115,5 +120,76 @@ mod tests {
         let client = build_client(&config, "model");
         assert!(client.is_ok());
         assert!(matches!(client.unwrap(), ProviderClient::Bedrock(_)));
+    }
+
+    fn bedrock_debug_string(client: ProviderClient) -> String {
+        let ProviderClient::Bedrock(bedrock_client) = client else {
+            panic!("expected ProviderClient::Bedrock");
+        };
+        format!("{bedrock_client:?}")
+    }
+
+    /// The session token must be read from the dedicated `session_token`
+    /// field, not from `base_url`.
+    #[test]
+    fn builds_sigv4_client_with_dedicated_session_token_field() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("access-key".into()),
+            aws_secret_access_key: Some("secret-key".into()),
+            region: Some("eu-west-1".into()),
+            session_token: Some("session-token-value".into()),
+            ..Default::default()
+        };
+
+        let client = build_client(&config, "model").expect("client should build");
+        let debug = bedrock_debug_string(client);
+        assert!(
+            debug.contains("session-token-value"),
+            "session token from the dedicated field should be applied: {debug}"
+        );
+    }
+
+    /// Back-compat: configs written before `session_token` existed may still
+    /// have the token stuffed into `base_url`. `build_client` must still pick
+    /// it up so existing users don't silently lose their configured token.
+    #[test]
+    fn falls_back_to_base_url_for_session_token_when_field_absent() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("access-key".into()),
+            aws_secret_access_key: Some("secret-key".into()),
+            region: Some("eu-west-1".into()),
+            base_url: Some("legacy-session-token-in-base-url".into()),
+            session_token: None,
+            ..Default::default()
+        };
+
+        let client = build_client(&config, "model").expect("client should build");
+        let debug = bedrock_debug_string(client);
+        assert!(
+            debug.contains("legacy-session-token-in-base-url"),
+            "session token should fall back to base_url for legacy configs: {debug}"
+        );
+    }
+
+    /// When both are present, the dedicated field wins over the legacy
+    /// `base_url` fallback.
+    #[test]
+    fn session_token_field_takes_priority_over_base_url_fallback() {
+        let config = StoredProviderConfig {
+            auth_method: "api_key".into(),
+            api_key: Some("access-key".into()),
+            aws_secret_access_key: Some("secret-key".into()),
+            region: Some("eu-west-1".into()),
+            base_url: Some("stale-legacy-value".into()),
+            session_token: Some("current-session-token".into()),
+            ..Default::default()
+        };
+
+        let client = build_client(&config, "model").expect("client should build");
+        let debug = bedrock_debug_string(client);
+        assert!(debug.contains("current-session-token"));
+        assert!(!debug.contains("stale-legacy-value"));
     }
 }

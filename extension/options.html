@@ -11,31 +11,27 @@
     html {
       width: 520px;
       min-width: 520px;
-      background: #eef2f7;
+      background: #ffffff;
     }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       width: 520px;
       min-width: 520px;
       margin: 0;
-      padding: 16px;
-      background: #eef2f7;
+      padding: 0;
+      background: #ffffff;
       box-sizing: border-box;
       color: #1f2937;
     }
     .panel {
-      background: #ffffff;
-      border: 1px solid #d8e0ea;
-      border-radius: 14px;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
       padding: 18px;
     }
     .header {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
     h1 {
       color: #1f2937;
@@ -49,11 +45,23 @@
       font-size: 12px;
       line-height: 1.4;
     }
-    .settings-grid {
+    .connection {
       display: grid;
-      grid-template-columns: 150px minmax(0, 1fr);
-      gap: 14px;
+      grid-template-columns: 120px 1fr 1fr;
+      gap: 10px;
       align-items: end;
+    }
+    .version:empty {
+      display: none;
+    }
+    .version {
+      flex: none;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef2f7;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 500;
     }
     .form-group {
       margin: 0;
@@ -79,17 +87,6 @@
       outline: none;
       border-color: #2563eb;
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
-    }
-    .button-group {
-      display: flex;
-      gap: 10px;
-      margin-top: 14px;
-    }
-    .help-text {
-      margin-top: 12px;
-      color: #64748b;
-      font-size: 12px;
-      line-height: 1.45;
     }
     button {
       flex: 1;
@@ -117,9 +114,94 @@
     #test:hover {
       background-color: #f1f5f9;
     }
+    .toggles {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid #e2e8f0;
+    }
+    .toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 0 0 10px;
+      cursor: pointer;
+    }
+    .toggle input {
+      width: 16px;
+      min-height: 0;
+      margin: 2px 0 0;
+      flex: none;
+    }
+    .toggle span {
+      color: #1f2937;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .toggle small {
+      display: block;
+      margin-top: 2px;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 400;
+    }
+    #pair {
+      display: none;
+      margin-bottom: 16px;
+      padding: 14px;
+      border: 1px solid #93c5fd;
+      border-radius: 10px;
+      background: #eff6ff;
+    }
+    #pair.waiting {
+      display: block;
+      border-color: #e2e8f0;
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    #pair.offer {
+      display: block;
+    }
+    #pairHost {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #1e3a8a;
+      overflow-wrap: anywhere;
+    }
+    #pairMeta {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: #475569;
+      overflow-wrap: anywhere;
+    }
+    #pairRow {
+      display: flex;
+      gap: 10px;
+    }
+    #pairCode {
+      letter-spacing: 4px;
+      font-size: 18px;
+      text-align: center;
+    }
+    #pairButton {
+      flex: none;
+      width: 110px;
+      background-color: #2563eb;
+      color: white;
+    }
+    #pairNote {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: #475569;
+    }
+    #pairNote.error {
+      color: #c62828;
+    }
     #status {
       display: block;
-      margin-top: 14px;
+      margin: 0 0 14px;
       padding: 12px;
       border-radius: 10px;
       font-size: 14px;
@@ -151,34 +233,49 @@
     <div class="header">
       <div>
         <h1>acrawl Bridge</h1>
-        <div class="subtitle">Save connects the extension. Test Connection only checks the local bridge server.</div>
+        <div class="subtitle">Save reconnects the extension. Test Connection only checks the local bridge server.</div>
       </div>
+      <span id="version" class="version"></span>
     </div>
 
-    <div class="settings-grid">
+    <span id="status">Disconnected</span>
+
+    <div id="pair">
+      <p id="pairHost"></p>
+      <p id="pairMeta"></p>
+      <div id="pairRow">
+        <input id="pairCode" type="text" inputmode="numeric" maxlength="7" placeholder="000 000" autocomplete="off">
+        <button id="pairButton">Pair</button>
+      </div>
+      <p id="pairNote"></p>
+    </div>
+
+    <div class="connection">
       <div class="form-group">
         <label for="port">WebSocket Port</label>
         <input id="port" type="number" value="19876" min="1" max="65535">
       </div>
-
-      <div class="form-group">
-        <label for="token">Authentication Token</label>
-        <input id="token" type="password" placeholder="Paste token from acrawl /extension command">
-      </div>
-    </div>
-
-    <div class="button-group">
       <button id="save">Save</button>
       <button id="test">Test Connection</button>
     </div>
 
-    <div class="help-text">
-      Tip: run <code>/extension</code> in acrawl first, then paste the shown token here once.
+    <div class="toggles">
+      <label class="toggle">
+        <input id="showIndicators" type="checkbox" checked>
+        <span>Show activity indicators
+          <small>Glowing border on the tab acrawl is driving, plus click ripples.</small>
+        </span>
+      </label>
+      <label class="toggle">
+        <input id="highlightChanges" type="checkbox" checked>
+        <span>Highlight page changes
+          <small>Boxes over elements that were added (green) or changed (amber) after an action.</small>
+        </span>
+      </label>
     </div>
 
-    <span id="status">Disconnected</span>
   </div>
-  
+
   <script src="options.js"></script>
 </body>
 </html>

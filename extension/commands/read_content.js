@@ -54,7 +54,7 @@ async function handleReadContent(tabId, payload) {
   });
 
   if (res.exceptionDetails) {
-    throw new Error(res.exceptionDetails.text || 'read_content script threw exception');
+    throw new Error(cdpExceptionMessage(res.exceptionDetails, 'read_content script threw exception'));
   }
 
   return res.result?.value || {};
