@@ -352,9 +352,54 @@ pub fn save_settings(settings: &Settings) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let json = serde_json::to_string_pretty(settings)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    fs::write(path, json)?;
+    write_owner_only(&path, json.as_bytes())
+}
 
-    Ok(())
+/// Write `contents` so the file is readable only by its owner. `settings.json` holds secrets (the
+/// extension bridge token and the semantic-prune API key), so it must not inherit a
+/// world-readable mode from the umask.
+fn write_owner_only(path: &std::path::Path, contents: &[u8]) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        // `mode` only applies on creation, so a file written by an older release is tightened too.
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(contents)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let existed = path.exists();
+        fs::write(path, contents)?;
+        // Restrict a freshly created file to the current user. Existing files keep the ACL they
+        // already have, which avoids spawning `icacls` on every settings save.
+        #[cfg(windows)]
+        if !existed {
+            if let (Some(path_str), Ok(username)) = (path.to_str(), std::env::var("USERNAME")) {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("icacls")
+                    .args([
+                        path_str,
+                        "/inheritance:r",
+                        "/grant:r",
+                        &format!("{username}:(R,W)"),
+                    ])
+                    .creation_flags(0x0800_0000)
+                    .output();
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = existed;
+        Ok(())
+    }
 }
 
 /// Update a single setting by loading current settings, applying the mutation, and saving.
@@ -771,6 +816,29 @@ mod tests {
         let loaded = load_settings();
 
         assert_eq!(loaded, original);
+
+        cleanup_temp_dir(&temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_settings_file_is_owner_only_even_when_it_already_existed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _lock = test_env_lock();
+        let temp_dir = setup_temp_dir();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
+
+        let path = settings_file_path();
+        fs::create_dir_all(&temp_dir).expect("create config home");
+        fs::write(&path, "{}").expect("seed settings");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("loosen mode");
+
+        update_settings(|s| s.extension_bridge_token = Some("secret".to_string()))
+            .expect("save settings");
+
+        let mode = fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "settings.json holds secrets");
 
         cleanup_temp_dir(&temp_dir);
     }
