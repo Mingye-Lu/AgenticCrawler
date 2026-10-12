@@ -372,52 +372,54 @@ async fn focus_content(
     )))
 }
 
-/// Why `focus` produced no pruned content.
-enum FocusError {
-    /// A short reason to tell the caller why the page came back unfocused; the heuristic
+/// What to do with `focus` for one call, decided before the page is fetched so a setup error
+/// cannot leave the browser on a new page while `CrawlState` still describes the old one.
+enum FocusPlan {
+    /// No focus was requested, or it does not apply to this format.
+    Off,
+    /// A short reason to tell the caller why the page will come back unfocused; the heuristic
     /// content stays in place.
     Ignored(String),
-    /// `optimization.semantic_prune` is on but no scorer key is configured anywhere. Fails the
-    /// call: a missing credential is a setup error the caller has to see.
-    MissingApiKey,
+    Score(JevScorer),
 }
 
-/// Apply `focus` when it is set and permitted.
-async fn apply_focus(
+/// Decide whether `focus` can be applied. A missing credential while
+/// `optimization.semantic_prune` is on is a setup error the caller has to see, so it fails the
+/// call.
+async fn plan_focus(
     params: &NavigateInput,
-    page: &browser::FetchedPage,
-    profile: CleaningProfile,
-) -> Result<Option<ResolvedContent>, FocusError> {
+    browser: &BrowserContext,
+) -> Result<FocusPlan, ToolExecutionError> {
     if params.focus.is_empty() || params.format != "fit_markdown" {
-        return Ok(None);
+        return Ok(FocusPlan::Off);
     }
     let settings = runtime::load_settings();
     if !runtime::settings_get_semantic_prune(&settings) {
-        return Err(FocusError::Ignored(
+        return Ok(FocusPlan::Ignored(
             "focus ignored: optimization.semantic_prune is off".to_string(),
         ));
     }
-    if settings.browser_backend.as_deref() == Some("extension") {
-        return Err(FocusError::Ignored(
+    // The live backend decides, not the persisted preference: activating extension mode
+    // switches the agent first and persists afterwards, and that write can fail. The persisted
+    // preference still counts, so the guard errs toward not disclosing.
+    if browser.drives_user_browser().await
+        || settings.browser_backend.as_deref() == Some("extension")
+    {
+        return Ok(FocusPlan::Ignored(
             "focus ignored: not sent to a third-party scorer while using the logged-in browser extension"
                 .to_string(),
         ));
     }
     let configured = runtime::settings_get_semantic_prune_api_key(&settings);
-    let Some(scorer) =
-        JevScorer::resolve_api_key(configured.as_deref()).and_then(|key| JevScorer::new(&key))
-    else {
-        return Err(FocusError::MissingApiKey);
-    };
-    focus_content(
-        &scorer,
-        &params.focus,
-        &page.html,
-        &params.content_depth,
-        profile,
-    )
-    .await
-    .map_err(|e| FocusError::Ignored(format!("focus ignored: {e}")))
+    JevScorer::resolve_api_key(configured.as_deref())
+        .and_then(|key| JevScorer::new(&key))
+        .map(FocusPlan::Score)
+        .ok_or_else(|| {
+            ToolExecutionError::new(format!(
+                "optimization.semantic_prune is on but no TypeSafe API key is configured: run `acrawl config set optimization.semantic_prune_api_key <key>` or set {}",
+                crate::relevance::API_KEY_ENV
+            ))
+        })
 }
 
 fn resolve_content_with_stats(
@@ -607,6 +609,7 @@ pub async fn execute(
     crawl_state: &mut CrawlState,
 ) -> Result<ToolEffect, ToolExecutionError> {
     let params = parse_input(input)?;
+    let focus_plan = plan_focus(&params, browser).await?;
 
     let router = FetchRouter::new().map_err(|e| ToolExecutionError::new(e.to_string()))?;
     let page = router
@@ -625,15 +628,23 @@ pub async fn execute(
         &params.content_depth,
         profile,
     );
-    let (resolved, focus_note) = match apply_focus(&params, &page, profile).await {
-        Ok(Some(focused)) => (focused, None),
-        Ok(None) => (resolved, None),
-        Err(FocusError::Ignored(reason)) => (resolved, Some(reason)),
-        Err(FocusError::MissingApiKey) => {
-            return Err(ToolExecutionError::new(format!(
-                "optimization.semantic_prune is on but no TypeSafe API key is configured: run `acrawl config set optimization.semantic_prune_api_key <key>` or set {}",
-                crate::relevance::API_KEY_ENV
-            )));
+    let (resolved, focus_note) = match focus_plan {
+        FocusPlan::Off => (resolved, None),
+        FocusPlan::Ignored(reason) => (resolved, Some(reason)),
+        FocusPlan::Score(scorer) => {
+            match focus_content(
+                &scorer,
+                &params.focus,
+                &page.html,
+                &params.content_depth,
+                profile,
+            )
+            .await
+            {
+                Ok(Some(focused)) => (focused, None),
+                Ok(None) => (resolved, None),
+                Err(e) => (resolved, Some(format!("focus ignored: {e}"))),
+            }
         }
     };
     let ResolvedContent {
@@ -1194,5 +1205,80 @@ mod tests {
         .await
         .err();
         assert_eq!(err.as_deref(), Some("down"));
+    }
+    fn focus_params() -> NavigateInput {
+        parse_input(&json!({
+            "url": "https://example.com",
+            "format": "fit_markdown",
+            "focus": ["pricing"],
+        }))
+        .unwrap()
+    }
+
+    fn write_prune_settings(tag: &str, settings_json: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("acrawl_nav_focus_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), settings_json).unwrap();
+        std::env::set_var("ACRAWL_CONFIG_HOME", &dir);
+        dir
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn missing_scorer_key_is_reported_during_planning_before_any_fetch() {
+        let _lock = crate::test_async_env_lock().lock().await;
+        std::env::remove_var(crate::relevance::API_KEY_ENV);
+        let dir = write_prune_settings("nokey", r#"{"optimization":{"semantic_prune":true}}"#);
+
+        let browser = crate::tools::test_support::browser_with_observations(Vec::new());
+        let error = plan_focus(&focus_params(), &browser).await.err();
+
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+        let message = error.expect("a missing key must fail the call").to_string();
+        assert!(message.contains("no TypeSafe API key"), "{message}");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn live_extension_backend_blocks_scoring_regardless_of_persisted_backend() {
+        let _lock = crate::test_async_env_lock().lock().await;
+        // Settings still say CloakBrowser (the persisted write can fail or lag), yet the live
+        // backend drives the user's logged-in browser.
+        let dir = write_prune_settings(
+            "liveext",
+            r#"{"optimization":{"semantic_prune":true,"semantic_prune_api_key":"tsk-test"}}"#,
+        );
+
+        let browser = crate::tools::test_support::browser_driving_user_browser();
+        let plan = plan_focus(&focus_params(), &browser).await;
+
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+        match plan {
+            Ok(FocusPlan::Ignored(reason)) => {
+                assert!(reason.contains("logged-in browser"), "{reason}");
+            }
+            _ => panic!("scoring must be refused while the live backend is the user's browser"),
+        }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn disposable_backend_with_a_key_plans_to_score() {
+        let _lock = crate::test_async_env_lock().lock().await;
+        let dir = write_prune_settings(
+            "cloak",
+            r#"{"optimization":{"semantic_prune":true,"semantic_prune_api_key":"tsk-test"}}"#,
+        );
+
+        let browser = crate::tools::test_support::browser_with_observations(Vec::new());
+        let plan = plan_focus(&focus_params(), &browser).await;
+
+        std::env::remove_var("ACRAWL_CONFIG_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(matches!(plan, Ok(FocusPlan::Score(_))));
     }
 }
