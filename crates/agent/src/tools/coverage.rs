@@ -46,7 +46,13 @@ pub async fn execute(
         .map_err(|e| ToolExecutionError::new(e.to_string()))?;
 
     if reset {
+        // Discard whatever had accumulated so far and start a fresh
+        // session. The final stop_coverage() below then reports against
+        // this fresh session instead of running a second, unpaired
+        // stop_coverage() call against an already-stopped one (which would
+        // error and silently fall back to empty data via unwrap_or_else).
         let _ = bridge.stop_coverage().await;
+        let _ = bridge.start_coverage(do_js, do_css).await;
     }
 
     let coverage_data = bridge
@@ -190,5 +196,32 @@ mod tests {
         assert_eq!(deduped[0].url, "https://x/b.js");
         assert_eq!(deduped[0].used_bytes, 9);
         assert_eq!(deduped[1].url, "https://x/a.js");
+    }
+
+    #[tokio::test]
+    async fn reset_true_never_issues_two_consecutive_stops_without_a_start() {
+        let (mut browser, log) = crate::tools::test_support::browser_with_coverage_log();
+
+        execute(&serde_json::json!({"reset": true}), &mut browser)
+            .await
+            .expect("measure_coverage should succeed");
+
+        let calls = log.lock().await.clone();
+        // Must alternate: the pre-reset stop is immediately paired with a
+        // fresh start before the real capture-stop runs, so a stop is never
+        // followed directly by another stop.
+        assert_eq!(calls, vec!["stop", "start", "stop", "start"]);
+    }
+
+    #[tokio::test]
+    async fn reset_false_stops_once_and_restarts() {
+        let (mut browser, log) = crate::tools::test_support::browser_with_coverage_log();
+
+        execute(&serde_json::json!({}), &mut browser)
+            .await
+            .expect("measure_coverage should succeed");
+
+        let calls = log.lock().await.clone();
+        assert_eq!(calls, vec!["stop", "start"]);
     }
 }
