@@ -169,15 +169,9 @@ mod tests {
     use super::{run_auth_configure, AuthFlags};
     use api::load_credentials;
     use std::fs;
-    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
+    use crate::test_support::test_env_lock;
 
     fn with_clean_config_env<T>(f: impl FnOnce() -> T) -> T {
         let _guard = test_env_lock();
