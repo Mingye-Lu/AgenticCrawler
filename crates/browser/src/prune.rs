@@ -5,8 +5,10 @@ use std::sync::LazyLock;
 static BODY_SELECTOR: LazyLock<Option<Selector>> = LazyLock::new(|| Selector::parse("body").ok());
 static ANCHOR_SELECTOR: LazyLock<Option<Selector>> = LazyLock::new(|| Selector::parse("a").ok());
 
-const NEGATIVE_PATTERNS: [&str; 10] = [
-    "nav", "footer", "header", "sidebar", "ads", "comment", "promo", "advert", "social", "share",
+// "comment" is deliberately absent: on discussion pages (HN, forums, issue threads) the
+// comment rows are the content, and a class-name match would delete every one of them.
+const NEGATIVE_PATTERNS: [&str; 9] = [
+    "nav", "footer", "header", "sidebar", "ads", "promo", "advert", "social", "share",
 ];
 const VOID_ELEMENTS: [&str; 14] = [
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
@@ -372,6 +374,18 @@ mod tests {
 
         assert!(result.contains(r#"<div class="main-content"><p>content</p></div>"#));
         assert!(!result.contains("sidebar-nav"));
+    }
+
+    #[test]
+    fn comment_classes_are_content_not_boilerplate() {
+        let html = r#"<html><body><table>
+            <tr class="athing comtr"><td class="comment"><span class="commtext">A long and substantive discussion comment about the topic at hand.</span></td></tr>
+            </table></body></html>"#;
+        let result = prune_html(html);
+        assert!(
+            result.contains("substantive discussion comment"),
+            "comment rows must survive pruning, got: {result}"
+        );
     }
 
     #[test]
