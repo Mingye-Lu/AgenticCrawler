@@ -40,6 +40,7 @@ Loads a URL over HTTP, auto-escalating to headless Chromium when JS rendering is
 | `format` | enum | `fit_markdown` | `markdown` · `text` · `html` · `fit_markdown` |
 | `content_depth` | enum | `main` | `full` · `main` · `slim` (first 2000 chars) · `none` |
 | `page_map_depth` | enum | `slim` | `full` (includes CSS selectors) · `slim` · `none` |
+| `focus` | string \| string[] | — | What you are looking for. With `optimization.semantic_prune` on and `TYPESAFE_API_KEY` set, unrelated blocks become `[N blocks pruned]`; `read_content` reads them. `focus_note` in the reply says why it was not applied. |
 | `strip_images` | boolean | `true` | Set `false` only when you need image URLs/alt text. |
 
 `content_depth` and `page_map_depth` are independent — set both to `none` for a cheap "just load it" call. Use `format: "markdown"` when target content lives in a sidebar/nav that `fit_markdown` prunes. If `fit_markdown` prunes everything, it falls back to plain text automatically.

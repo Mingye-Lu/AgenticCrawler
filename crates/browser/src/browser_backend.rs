@@ -80,6 +80,13 @@ pub struct FileCoverage {
 #[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait BrowserBackend: Debug {
+    /// Whether this backend drives the user's own logged-in browser (the Chrome extension)
+    /// rather than a disposable one. Callers use it to keep that session's content away from
+    /// third-party services.
+    fn drives_user_browser(&self) -> bool {
+        false
+    }
+
     async fn navigate(&mut self, url: &str) -> Result<PageInfo, BridgeError>;
     async fn new_page(&mut self, url: Option<&str>) -> Result<usize, BridgeError>;
     async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError>;

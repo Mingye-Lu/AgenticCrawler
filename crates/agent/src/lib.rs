@@ -11,6 +11,7 @@ pub mod output;
 pub mod page_fingerprint;
 pub mod prompt;
 pub mod registry;
+pub mod relevance;
 pub mod script_executor;
 pub mod script_manager;
 pub mod self_healing;
@@ -77,12 +78,13 @@ fn navigation_tools() -> Vec<ToolSpec> {
                     "format": { "type": "string", "enum": ["markdown", "text", "html", "fit_markdown"], "description": "Output format for page content. 'fit_markdown' (default) prunes boilerplate (navs, footers, ads) before conversion for ~40% token savings; 'markdown' preserves full content with structure; 'text' strips all formatting; 'html' returns raw source. Use 'markdown' if fit_markdown seems to be missing important content." },
                     "content_depth": { "type": "string", "enum": ["full", "main", "slim", "none"], "default": "main", "description": "Controls how much page content to return. 'main' (default) extracts article/main content only; 'full' returns everything; 'slim' returns first 2000 chars of main content; 'none' skips content entirely (returns page_map only)." },
                     "strip_images": { "type": "boolean", "default": true, "description": "If true (default), removes image references from output to save context tokens. Set false only when you need image URLs or alt text." },
-                    "page_map_depth": { "type": "string", "enum": ["full", "slim", "none"], "default": "slim", "description": "Controls page_map verbosity. 'slim' (default) omits CSS selectors from elements (use @eN refs instead); 'full' includes raw CSS selectors for all elements; 'none' omits the page_map entirely." }
+                    "page_map_depth": { "type": "string", "enum": ["full", "slim", "none"], "default": "slim", "description": "Controls page_map verbosity. 'slim' (default) omits CSS selectors from elements (use @eN refs instead); 'full' includes raw CSS selectors for all elements; 'none' omits the page_map entirely." },
+                    "focus": { "anyOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }], "description": "What you are looking for on this page: a short phrase, or a list of them. When semantic pruning is enabled, blocks unrelated to the focus are replaced by '[N blocks pruned]' markers." }
                 },
                 "required": ["url"],
                 "additionalProperties": false
             }),
-            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context — set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking. The default format is fit_markdown which prunes boilerplate (ads, navs, sidebars) before conversion, saving tokens. Fall back to 'markdown' or 'text' only if content seems missing. page_map_depth controls structural data verbosity: 'slim' (default) strips CSS selectors from all elements to save tokens — use @eN refs for interaction instead. Set 'full' only when you need raw selectors, 'none' to omit page_map entirely."),
+            instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context — set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking. The default format is fit_markdown which prunes boilerplate (ads, navs, sidebars) before conversion, saving tokens. Fall back to 'markdown' or 'text' only if content seems missing. page_map_depth controls structural data verbosity: 'slim' (default) strips CSS selectors from all elements to save tokens — use @eN refs for interaction instead. Set 'full' only when you need raw selectors, 'none' to omit page_map entirely. Pass focus (a phrase or list of phrases) on large pages when you know what you need: unrelated blocks are replaced by '[N blocks pruned]' markers, and pruned_ratio reports how much was removed. Use read_content to read anything that was pruned."),
         },
         ToolSpec {
             name: "get_page_info",

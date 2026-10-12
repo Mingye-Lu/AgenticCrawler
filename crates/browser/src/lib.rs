@@ -8,6 +8,7 @@ pub mod observation;
 pub mod playwright;
 pub mod prune;
 pub mod ref_map;
+pub mod segment;
 pub mod testing;
 pub mod ws_server;
 

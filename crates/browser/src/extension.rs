@@ -183,6 +183,10 @@ impl fmt::Debug for ExtensionBridge {
 
 #[async_trait]
 impl BrowserBackend for ExtensionBridge {
+    fn drives_user_browser(&self) -> bool {
+        true
+    }
+
     async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
         ExtensionBridge::poll_observations(self).await
     }

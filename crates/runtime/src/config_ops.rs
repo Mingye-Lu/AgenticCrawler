@@ -20,8 +20,8 @@ use crate::settings::{
     settings_get_max_fork_depth, settings_get_max_steps, settings_get_max_total_agents,
     settings_get_output_dir, settings_get_page_fingerprinting,
     settings_get_per_agent_cost_tracking, settings_get_planning_interval,
-    settings_get_self_healing, settings_get_self_healing_max_retries, OptimizationSettings,
-    ScriptSettings, Settings,
+    settings_get_self_healing, settings_get_self_healing_max_retries, settings_get_semantic_prune,
+    settings_get_semantic_prune_api_key, OptimizationSettings, ScriptSettings, Settings,
 };
 
 const REASONING_EFFORT_VALUES: &[&str] = &["high", "medium", "low"];
@@ -243,6 +243,14 @@ const KEY_SPECS: &[KeySpec] = &[
     KeySpec {
         key: "optimization.content_aware_profiles",
         kind: ValueKind::Bool,
+    },
+    KeySpec {
+        key: "optimization.semantic_prune",
+        kind: ValueKind::Bool,
+    },
+    KeySpec {
+        key: "optimization.semantic_prune_api_key",
+        kind: ValueKind::String,
     },
     KeySpec {
         key: "script.max_steps",
@@ -555,6 +563,12 @@ fn apply_set(settings: &mut Settings, spec: &KeySpec, value: &str) -> Result<(),
         ("optimization.content_aware_profiles", ValueKind::Bool) => {
             optimization_mut(settings).content_aware_profiles = Some(parse_bool(spec.key, value)?);
         }
+        ("optimization.semantic_prune", ValueKind::Bool) => {
+            optimization_mut(settings).semantic_prune = Some(parse_bool(spec.key, value)?);
+        }
+        ("optimization.semantic_prune_api_key", ValueKind::String) => {
+            optimization_mut(settings).semantic_prune_api_key = Some(value.to_string());
+        }
         ("script.max_steps", ValueKind::Usize) => {
             script_mut(settings).max_steps = Some(parse_usize(spec.key, value)?);
         }
@@ -587,6 +601,7 @@ fn apply_set(settings: &mut Settings, spec: &KeySpec, value: &str) -> Result<(),
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn apply_unset(settings: &mut Settings, key: &str) {
     match key {
         "headless" => settings.headless = None,
@@ -669,6 +684,12 @@ fn apply_unset(settings: &mut Settings, key: &str) {
         }
         "optimization.content_aware_profiles" => {
             set_optimization_field(settings, |o| o.content_aware_profiles = None);
+        }
+        "optimization.semantic_prune" => {
+            set_optimization_field(settings, |o| o.semantic_prune = None);
+        }
+        "optimization.semantic_prune_api_key" => {
+            set_optimization_field(settings, |o| o.semantic_prune_api_key = None);
         }
         "script.max_steps" => set_script_field(settings, |s| s.max_steps = None),
         "script.max_timeout_secs" => set_script_field(settings, |s| s.max_timeout_secs = None),
@@ -759,6 +780,8 @@ fn optimization_is_empty(optimization: &OptimizationSettings) -> bool {
         && optimization.confidence_tracking.is_none()
         && optimization.compound_enrichment.is_none()
         && optimization.content_aware_profiles.is_none()
+        && optimization.semantic_prune.is_none()
+        && optimization.semantic_prune_api_key.is_none()
         && optimization.budget_max_session_cost_usd.is_none()
         && optimization.budget_enforcement.is_none()
         && optimization.budget_warn_threshold_pct.is_none()
@@ -910,6 +933,18 @@ fn stored_value(settings: &Settings, key: &str) -> Value {
                 .as_ref()
                 .and_then(|o| o.content_aware_profiles))
         }
+        "optimization.semantic_prune" => {
+            json!(settings
+                .optimization
+                .as_ref()
+                .and_then(|o| o.semantic_prune))
+        }
+        "optimization.semantic_prune_api_key" => {
+            json!(settings
+                .optimization
+                .as_ref()
+                .and_then(|o| o.semantic_prune_api_key.clone()))
+        }
         "script.max_steps" => json!(settings.script.as_ref().and_then(|s| s.max_steps)),
         "script.max_timeout_secs" => {
             json!(settings.script.as_ref().and_then(|s| s.max_timeout_secs))
@@ -1021,6 +1056,10 @@ fn effective_value(settings: &Settings, key: &str) -> Value {
         "optimization.content_aware_profiles" => {
             json!(settings_get_content_aware_profiles(settings))
         }
+        "optimization.semantic_prune" => json!(settings_get_semantic_prune(settings)),
+        "optimization.semantic_prune_api_key" => {
+            json!(settings_get_semantic_prune_api_key(settings))
+        }
         "script.max_steps" => json!(effective_script_settings(settings).max_steps),
         "script.max_timeout_secs" => json!(effective_script_settings(settings).max_timeout_secs),
         "script.max_output_bytes" => json!(effective_script_settings(settings).max_output_bytes),
@@ -1102,6 +1141,8 @@ fn effective_settings(settings: &Settings) -> Settings {
             confidence_tracking: Some(settings_get_confidence_tracking(settings)),
             compound_enrichment: Some(settings_get_compound_enrichment(settings)),
             content_aware_profiles: Some(settings_get_content_aware_profiles(settings)),
+            semantic_prune: Some(settings_get_semantic_prune(settings)),
+            semantic_prune_api_key: settings_get_semantic_prune_api_key(settings),
             budget_max_session_cost_usd: settings_get_budget_max_session_cost_usd(settings),
             budget_enforcement: settings_get_budget_enforcement(settings),
             budget_warn_threshold_pct: Some(settings_get_budget_warn_threshold_pct(settings)),

@@ -24,6 +24,8 @@ pub struct ObservationMockBackend {
     pub last_save_file_headers: Option<BTreeMap<String, String>>,
     pub save_file_headers_sink: Option<SaveFileHeadersRecord>,
     pub evaluate_scripts_sink: Option<EvaluateScriptsRecord>,
+    /// Reported through `BrowserBackend::drives_user_browser`.
+    pub drives_user_browser: bool,
     /// Records "start"/"stop" in call order when `start_coverage`/
     /// `stop_coverage` are invoked, so tests can assert on the exact
     /// sequence (e.g. that a stop is never immediately followed by another
@@ -33,6 +35,9 @@ pub struct ObservationMockBackend {
 
 #[async_trait]
 impl BrowserBackend for ObservationMockBackend {
+    fn drives_user_browser(&self) -> bool {
+        self.drives_user_browser
+    }
     async fn poll_observations(&mut self) -> Result<Vec<ObservationEvent>, BridgeError> {
         Ok(std::mem::take(&mut self.observations))
     }
@@ -184,6 +189,7 @@ pub fn browser_with_coverage_log() -> (BrowserContext, CoverageCallLog) {
         save_file_headers_sink: None,
         evaluate_scripts_sink: None,
         coverage_log: Some(sink.clone()),
+        drives_user_browser: false,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
 }
@@ -195,6 +201,7 @@ pub fn browser_with_observations(observations: Vec<ObservationEvent>) -> Browser
         last_save_file_headers: None,
         save_file_headers_sink: None,
         evaluate_scripts_sink: None,
+        drives_user_browser: false,
         coverage_log: None,
     }) as Box<dyn BrowserBackend + Send>));
     BrowserContext::new(bridge)
@@ -210,6 +217,7 @@ pub fn browser_with_save_file_header_recorder(
         last_save_file_headers: None,
         save_file_headers_sink: Some(sink.clone()),
         evaluate_scripts_sink: None,
+        drives_user_browser: false,
         coverage_log: None,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
@@ -229,6 +237,7 @@ pub fn browser_with_evaluate_recorder() -> (BrowserContext, EvaluateScriptsRecor
         last_save_file_headers: None,
         save_file_headers_sink: None,
         evaluate_scripts_sink: Some(sink.clone()),
+        drives_user_browser: false,
         coverage_log: None,
     }) as Box<dyn BrowserBackend + Send>));
     (BrowserContext::new(bridge), sink)
@@ -236,4 +245,14 @@ pub fn browser_with_evaluate_recorder() -> (BrowserContext, EvaluateScriptsRecor
 
 pub async fn take_recorded_evaluate_scripts(sink: &EvaluateScriptsRecord) -> Vec<String> {
     sink.lock().await.clone()
+}
+
+/// A context whose live backend reports that it drives the user's logged-in browser.
+#[must_use]
+pub fn browser_driving_user_browser() -> BrowserContext {
+    let bridge: SharedBridge = Arc::new(Mutex::new(Box::new(ObservationMockBackend {
+        drives_user_browser: true,
+        ..ObservationMockBackend::default()
+    }) as Box<dyn BrowserBackend + Send>));
+    BrowserContext::new(bridge)
 }

@@ -812,6 +812,8 @@ All fields are optional; omitting a field uses the default. The `optimization` b
 |-------|---------|-------------|
 | `html_diff_mode` | `false` | On repeated visits to the same URL, returns only changed content sections with `[unchanged: N sections]` markers. 50 to 70% token reduction on multi-turn sessions. No behavior change on first visit. |
 | `content_aware_profiles` | `false` | Auto-selects a cleaning profile based on the task keyword: ReadingMode for extraction tasks, Minimal for interaction tasks, Aggressive for content > 50KB. |
+| `semantic_prune` | `false` | Lets `navigate` take a `focus` (phrase or list) and drops page blocks a relevance model (TypeSafe Jev) rates below 0.35, leaving `[N blocks pruned]` markers; `read_content` reads anything pruned. Needs a TypeSafe key: `semantic_prune_api_key` here, else the `TYPESAFE_API_KEY` env var; `navigate` with `focus` errors if neither is set. Sends page text to `api.typesafe.ai`; skipped in extension mode. |
+| `semantic_prune_api_key` | unset | TypeSafe API key for `semantic_prune`. Takes priority over `TYPESAFE_API_KEY`. |
 | `loop_detection` | `false` | Detects repeated identical actions and injects escalating nudges (soft, medium, strong). Also detects page stagnation. |
 | `loop_detection_window` | `20` | Rolling window size for action hash comparison. |
 | `loop_nudge_threshold` | `5` | Number of repeated actions before first nudge fires. |

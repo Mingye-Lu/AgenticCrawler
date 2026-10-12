@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Goal-aware pruning** (`optimization.semantic_prune`, default off): `navigate` accepts `focus`, a phrase or a list of phrases. With the flag on and a TypeSafe key configured (`optimization.semantic_prune_api_key`, falling back to the `TYPESAFE_API_KEY` env var; `navigate` with a `focus` fails if neither is set), the heuristically pruned page is split into record-level blocks (a table row, list item, paragraph or comment stays whole), each block is scored against the focus by TypeSafe's Jev model, and blocks below 0.35 collapse into `[N blocks pruned]` markers. When more blocks pass than the content cap allows, the lowest-scoring ones are dropped instead of cutting the page off at the cap. `pruned_ratio` reports how much was removed, and `focus_note` says why a focus was not applied (flag off, extension backend, API error). Page text is sent to `api.typesafe.ai`, so the feature is never used with the logged-in extension backend.
+- `navigate` replies carry `pruned_ratio` for `fit_markdown`.
+- **`get_page_info` tool**: a cheap read of the current page's `url`, `title` and `ready_state` without a DOM walk or refetch. `live: false` marks values taken from the last fetch because no browser page is open yet. It is read-only: it never advances `seq` and its reply carries none, so `since: "last"` on the log and network tools keeps meaning "what the last action caused".
+- **`get_page_info` `all_tabs`**: also lists every tab you can use as `{index, url, title, active}` without switching; `active` marks the tab the agent is working on. In extension mode only tabs in the `acrawl` group appear.
+
+### Fixed
+
+- **The MCP server no longer waits 30 s for an unpaired extension**: it returns the pairing code at once, and an extension that has paired before gets a short (3 s) connect wait.
+
 ## [0.15.2] - 2026-10-12
 
 ### Fixed

@@ -52,6 +52,12 @@ impl BrowserContext {
         &self.bridge
     }
 
+    /// Whether the live backend is the user's own logged-in browser. Reads the backend that is
+    /// actually serving pages, not the persisted preference.
+    pub async fn drives_user_browser(&self) -> bool {
+        self.bridge.lock().await.drives_user_browser()
+    }
+
     pub async fn acquire_bridge(
         &mut self,
     ) -> Result<MutexGuard<'_, Box<dyn BrowserBackend + Send>>, BridgeError> {
