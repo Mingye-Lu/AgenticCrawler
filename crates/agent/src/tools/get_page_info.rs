@@ -62,6 +62,18 @@ fn all_reads_failed(reads: [&Result<Option<String>, String>; 3]) -> Option<Strin
         .flatten()
 }
 
+/// Add `tabs`/`tab_count` (or `tabs_error`) to `reply`.
+fn apply_tabs(reply: &mut Value, listed: Result<Value, String>, active_index: usize) {
+    match listed {
+        Ok(raw) => {
+            let tabs = tabs_json(&raw, active_index);
+            reply["tab_count"] = json!(tabs.len());
+            reply["tabs"] = Value::Array(tabs);
+        }
+        Err(message) => reply["tabs_error"] = Value::String(message),
+    }
+}
+
 /// Read-only: never advances `seq` (see `increment_seq`) or changes the active tab.
 pub async fn execute(
     input: &Value,
@@ -75,10 +87,15 @@ pub async fn execute(
         .unwrap_or(false);
 
     if !browser.is_browser_loaded() {
-        let url = browser
-            .current_url()
-            .map(ToString::to_string)
-            .ok_or_else(|| ToolExecutionError::new("no page loaded; call navigate first"))?;
+        let url = browser.current_url().map(ToString::to_string);
+        // The tab list does not depend on this context having navigated: a fresh context can
+        // attach to tabs the browser already holds (the extension restores them), and listing
+        // them is how the agent finds one to switch to.
+        if url.is_none() && !all_tabs {
+            return Err(ToolExecutionError::new(
+                "no page loaded; call navigate first",
+            ));
+        }
 
         // Nothing is open in the browser yet, so there is no live document to ask. Report what
         // the last fetch saw and say so: `ready_state` is unknown, not empty.
@@ -90,8 +107,14 @@ pub async fn execute(
             "live": false
         });
         if all_tabs {
-            reply["tabs"] = json!([]);
-            reply["tab_count"] = json!(0);
+            let listed = browser
+                .bridge()
+                .lock()
+                .await
+                .list_tabs()
+                .await
+                .map_err(|e| e.to_string());
+            apply_tabs(&mut reply, listed, browser.page_index());
         }
         return Ok(ToolEffect::reply_json(&reply));
     }
@@ -147,14 +170,12 @@ pub async fn execute(
         }
     }
 
-    match tabs_result {
-        Some(Ok(raw)) => {
-            let tabs = tabs_json(&raw, browser.page_index());
-            reply["tab_count"] = json!(tabs.len());
-            reply["tabs"] = Value::Array(tabs);
-        }
-        Some(Err(e)) => reply["tabs_error"] = Value::String(e.to_string()),
-        None => {}
+    if let Some(listed) = tabs_result {
+        apply_tabs(
+            &mut reply,
+            listed.map_err(|e| e.to_string()),
+            browser.page_index(),
+        );
     }
 
     Ok(ToolEffect::reply_json(&reply))
@@ -240,7 +261,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn all_tabs_without_a_browser_page_lists_nothing() {
+    async fn all_tabs_without_a_browser_page_still_lists_the_tabs() {
         let mut browser = browser_with_observations(vec![]);
         browser.set_navigated_url("https://example.com/", false);
         let mut state = CrawlState::default();
@@ -253,8 +274,31 @@ mod tests {
         };
         let reply: serde_json::Value = serde_json::from_str(&body).expect("json");
 
-        assert_eq!(reply["tabs"], json!([]));
-        assert_eq!(reply["tab_count"], 0);
+        assert_eq!(reply["tab_count"], 2);
+        assert_eq!(reply["tabs"][0]["url"], "https://restored.test/");
+        assert_eq!(
+            reply["tabs"][0]["active"], true,
+            "page_index 0 is the agent's"
+        );
+        assert_eq!(reply["tabs"][1]["active"], false);
+    }
+
+    #[tokio::test]
+    async fn all_tabs_works_before_this_context_has_navigated() {
+        let mut browser = browser_with_observations(vec![]);
+        let mut state = CrawlState::default();
+
+        let effect = execute(&json!({"all_tabs": true}), &mut browser, &mut state)
+            .await
+            .expect("tabs are listed even with no current page");
+        let ToolEffect::Reply(body) = effect else {
+            panic!("expected Reply");
+        };
+        let reply: serde_json::Value = serde_json::from_str(&body).expect("json");
+
+        assert!(reply["url"].is_null(), "{reply}");
+        assert_eq!(reply["live"], false);
+        assert_eq!(reply["tab_count"], 2);
     }
 
     #[test]

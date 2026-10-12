@@ -9,7 +9,7 @@
 ```bash
 cargo build --release                                        # produce ./target/release/acrawl
 cargo test --workspace                                       # run full test suite (~1,100 tests)
-cargo test -p <crate> <test_name>                            # run a single test (e.g. -p agent mvp_tool_specs_contains_expected_42_tools)
+cargo test -p <crate> <test_name>                            # run a single test (e.g. -p agent mvp_tool_specs_contains_expected_43_tools)
 cargo clippy --workspace --all-targets -- -D warnings        # lints must be clean (workspace lints set pedantic = warn)
 cargo fmt --check                                            # format check
 

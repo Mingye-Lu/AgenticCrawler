@@ -94,6 +94,12 @@ impl BrowserBackend for ObservationMockBackend {
     async fn switch_tab(&mut self, _: i64) -> Result<Value, BridgeError> {
         Ok(json!({}))
     }
+    async fn list_tabs(&mut self) -> Result<Value, BridgeError> {
+        Ok(json!({"tabs": [
+            {"index": 0, "url": "https://restored.test/", "title": "Restored"},
+            {"index": 2, "url": "https://other.test/", "title": "Other"},
+        ]}))
+    }
     async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         Ok(BrowserState {
             cookies: Value::Array(vec![]),

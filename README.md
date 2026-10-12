@@ -560,8 +560,8 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 The server provides **40 tools** in three modes:
 
-**Direct browser tools (31)** — fine-grained control for clients that orchestrate themselves:
-`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `set_device`, `refresh`, `list_network_activity`, `inspect_request`, `list_page_logs`, `inspect_log`, `list_websocket_activity`, `inspect_websocket`, `get_page_performance`, `inspect_cookies`, `inspect_storage`, `measure_coverage`, `audit_accessibility`, `intercept_network`
+**Direct browser tools (32)** — fine-grained control for clients that orchestrate themselves:
+`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `get_page_info`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `set_device`, `refresh`, `list_network_activity`, `inspect_request`, `list_page_logs`, `inspect_log`, `list_websocket_activity`, `inspect_websocket`, `get_page_performance`, `inspect_cookies`, `inspect_storage`, `measure_coverage`, `audit_accessibility`, `intercept_network`
 
 **Script tools (7)** — deterministic multi-step automation without per-step LLM calls:
 `run_script`, `save_script`, `list_scripts`, `read_script`, `wait_for_scripts`, `script_status`, `cancel_script`
