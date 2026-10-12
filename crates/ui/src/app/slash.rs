@@ -203,7 +203,7 @@ impl LiveCli {
         ))
     }
 
-    /// Fresh pairing code for the running bridge, ready to print.
+    /// Current pairing code for the running bridge (a live one is reused), ready to print.
     pub fn extension_pairing_line(&self) -> String {
         self.ws_bridge_server
             .as_ref()

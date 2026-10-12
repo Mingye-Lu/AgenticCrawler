@@ -85,7 +85,7 @@ Key design decisions:
 
 `run_mcp_server` honours `settings.browser_backend` for all three tool families. Backend selection funnels through two helpers in `crates/mcp-server/src/server.rs`:
 
-- `ensure_extension_bridge` — lazily starts `ExtensionBridgeManager`, waits up to `settings.extension_bridge_connect_timeout_secs` (default 30) for the extension to connect, and returns a `SharedBridge`.
+- `ensure_extension_bridge` — lazily starts `ExtensionBridgeManager`, waits up to `settings.extension_bridge_connect_timeout_secs` (default 3) for an already-paired extension to connect, and returns a `SharedBridge`. If no extension has ever paired (`settings.extension_paired` unset) it skips the wait and returns the pairing code at once. The flag is set on the first authenticated WebSocket connection (via `WsBridgeServer::authenticated`, a `Notify`, so a quick connect/disconnect is not lost) and cleared when `extension_bridge_token` is set to a different value or unset. The wait is only 3s because the extension caps its reconnect backoff at 2s (`MAX_RECONNECT_DELAY_MS` in `extension/background.js`); keep the two aligned. `open_pairing` reuses a live offer, so concurrent unpaired calls all show the same valid code.
 - `ensure_browser_context` — picks the backend and publishes a `BrowserContext`. The 32 direct browser tools and the 7 script tools go through this; `run_goal` instead receives the `SharedBridge` and calls `set_shared_bridge` + `set_extension_mode(true)` on its own `CrawlerAgent`.
 
 Two invariants worth preserving:

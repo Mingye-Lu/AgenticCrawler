@@ -32,7 +32,10 @@ try {
 let ws = null;
 let wsConnected = false;
 let reconnectTimer = null;
-let reconnectDelay = 1000; // exponential backoff, cap at 30000ms
+// Exponential backoff, capped low: acrawl waits only a few seconds for an already-paired
+// extension to dial in, so a long retry interval would make its first tool call fail.
+const MAX_RECONNECT_DELAY_MS = 2000;
+let reconnectDelay = 1000;
 let keepaliveInterval = null;
 
 // Tab management: maps pageIndex -> Chrome tabId
@@ -394,7 +397,7 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(() => {
     connect();
   }, reconnectDelay);
-  reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
 }
 
 function clearReconnectTimer() {
