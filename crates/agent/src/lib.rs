@@ -46,7 +46,8 @@ pub use child_events::{
     ChildSnapshot, ChildSnapshotRegistry,
 };
 pub use extension_bridge::{
-    connect_timeout, extension_backend_selected, ExtensionBridgeManager, EXTENSION_BACKEND,
+    connect_timeout, extension_backend_selected, extension_paired, ExtensionBridgeManager,
+    EXTENSION_BACKEND,
 };
 pub use manager::{AgentInfo, AgentManager, AgentStatus, ForkLimitError, SharedAgentManager};
 pub use output::{write_output, OutputError, OutputFormat};
