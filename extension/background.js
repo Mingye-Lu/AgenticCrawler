@@ -769,12 +769,14 @@ async function handleSwitchTab(payload) {
   const tabId = managedTabs[index];
   if (!tabId) throw new Error(`No tab at index ${index}`);
   await assertInAgentGroup(tabId);
-  await new Promise((resolve, reject) => {
-    chrome.tabs.update(tabId, { active: true }, (t) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else resolve(t);
-    });
-  });
+  // acrawl re-selects its page before every action, and CDP drives background
+  // tabs fine, so never steal focus from a user working in another tab. Only
+  // follow along when the user is already watching one of the agent's tabs.
+  const { windowId } = await chrome.tabs.get(tabId);
+  const [shown] = await chrome.tabs.query({ active: true, windowId });
+  if (shown && shown.id !== tabId && findPageIndex(shown.id) !== null) {
+    await chrome.tabs.update(tabId, { active: true });
+  }
   activePageIndex = index;
   await saveState();
   // Indices are sparse once tabs close or leave the group; report the valid ones.
