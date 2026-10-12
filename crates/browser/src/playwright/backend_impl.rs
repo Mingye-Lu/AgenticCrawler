@@ -125,6 +125,15 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::wait_for_selector(self, selector, timeout_ms, state).await
     }
 
+    async fn wait_for_text(
+        &mut self,
+        selector: Option<&str>,
+        text_pattern: &str,
+        timeout_ms: u64,
+    ) -> Result<bool, BridgeError> {
+        PlaywrightBridge::wait_for_text(self, selector, text_pattern, timeout_ms).await
+    }
+
     async fn select_option(&mut self, selector: &str, value: &str) -> Result<(), BridgeError> {
         PlaywrightBridge::select_option(self, selector, value).await
     }
