@@ -46,6 +46,18 @@ pub struct ToolRegistry {
     handlers: HashMap<String, ToolHandler>,
 }
 
+// Test-only build counter: incremented once per `new_with_core_tools()`
+// call, so tests can assert a registry was constructed exactly once per
+// script run rather than rebuilt on every node execution. Thread-local
+// (rather than a shared global) so it stays accurate under `cargo test`'s
+// default parallel test execution -- `#[tokio::test]` runs each test's
+// async work on the harness thread that invoked it.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static NEW_WITH_CORE_TOOLS_CALLS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 impl ToolRegistry {
     #[must_use]
     pub fn new() -> Self {
@@ -54,6 +66,9 @@ impl ToolRegistry {
 
     #[must_use]
     pub fn new_with_core_tools() -> Self {
+        #[cfg(test)]
+        NEW_WITH_CORE_TOOLS_CALLS.with(|count| count.set(count.get() + 1));
+
         let mut registry = Self::new();
         for name in ASYNC_TOOLS {
             let tool_name = name.to_string();
