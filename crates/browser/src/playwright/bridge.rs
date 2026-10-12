@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::{Component, Path};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -403,6 +404,11 @@ impl PlaywrightBridge {
         self.send_raw_command(&cmd).await
     }
 
+    pub async fn list_tabs(&mut self) -> Result<serde_json::Value, BridgeError> {
+        let cmd = serde_json::json!({ "action": "list_tabs" });
+        self.send_raw_command(&cmd).await
+    }
+
     pub async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         let cmd = serde_json::json!({ "action": "export_cookies" });
         let result = self.send_raw_command(&cmd).await?;
@@ -606,6 +612,15 @@ impl PlaywrightBridge {
         path: &str,
         headers: Option<&BTreeMap<String, String>>,
     ) -> Result<String, BridgeError> {
+        if Path::new(path)
+            .components()
+            .any(|c| c == Component::ParentDir)
+        {
+            return Err(BridgeError::Protocol(
+                "save_file path contains path traversal".into(),
+            ));
+        }
+
         let headers_json = headers
             .map(|map| serde_json::to_value(map).unwrap_or(serde_json::json!({})))
             .unwrap_or(serde_json::json!({}));

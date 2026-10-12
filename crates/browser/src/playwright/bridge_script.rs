@@ -907,8 +907,55 @@ async function bootstrap() {
       try {
         sel = await resolveFillSelector(page, sel);
         sel = await resolveEditorSurface(page, sel);
+
         await page.fill(sel, command.value, { timeout: 5000 });
-        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel } }) + '\n');
+
+        // Only real input/textarea elements expose a meaningful `.value`.
+        // contenteditable divs, labels, and other custom fill targets return
+        // `undefined` here even though page.fill() already succeeded — treat
+        // those as done instead of forcing them through the keyboard_type/
+        // native_setter fallbacks below, which only work on input/textarea.
+        const isValueBacked = await page.$eval(sel, (el) => {
+          const tag = el.tagName;
+          return (tag === 'INPUT' || tag === 'TEXTAREA') && el.value !== undefined;
+        }).catch(() => false);
+
+        // Some input types normalize the stored value (type=color lowercases
+        // hex, type=number trims whitespace), so compare case-insensitively
+        // and trimmed instead of requiring an exact string match.
+        const valuesMatch = (a, b) =>
+          typeof a === 'string' && typeof b === 'string'
+            ? a.toLowerCase().trim() === b.toLowerCase().trim()
+            : a === b;
+
+        let actualValue = isValueBacked ? await page.$eval(sel, (el) => el.value).catch(() => null) : null;
+        let method = 'fill';
+
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
+          await page.click(sel, { timeout: 5000 }).catch(() => {});
+          await page.fill(sel, '').catch(() => {});
+          await page.keyboard.type(command.value, { delay: 0 });
+          actualValue = await page.$eval(sel, (el) => el.value).catch(() => null);
+          method = 'keyboard_type';
+        }
+
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
+          await page.$eval(sel, (el, value) => {
+            const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            const nativeValueSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            nativeValueSetter.call(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }, command.value);
+          actualValue = await page.$eval(sel, (el) => el.value).catch(() => null);
+          method = 'native_setter';
+        }
+
+        if (isValueBacked && !valuesMatch(actualValue, command.value)) {
+          throw new Error(`fill_not_retained: value was not retained after ${method} attempt`);
+        }
+
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { filled: true, resolvedSelector: sel, method } }) + '\n');
       } catch (mainError) {
         try {
           const richEditorResult = await tryRichEditorFill(page, sel, command.value);
@@ -1332,6 +1379,23 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { path: command.path, size_bytes: body.length } }) + '\n');
       } catch (error) {
         process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'save_file_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
+    if (command.action === 'list_tabs') {
+      try {
+        const tabs = [];
+        for (let i = 0; i < pages.length; i++) {
+          const p = pages[i];
+          if (!p || p.isClosed()) continue;
+          let title = '';
+          try { title = await p.title(); } catch (_) { /* page may be mid-navigation */ }
+          tabs.push({ index: i, url: p.url(), title });
+        }
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { tabs } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'list_tabs_failed', message: String(error) } }) + '\n');
       }
       continue;
     }

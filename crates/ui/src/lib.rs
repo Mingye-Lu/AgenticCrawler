@@ -32,3 +32,18 @@ pub mod session_mgr;
 pub use auth::configure::{run_auth_configure, AuthFlags};
 pub use auth::status::{run_auth_list, run_auth_status};
 pub use config_runner::{run_config, ConfigAction};
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+
+    /// The one lock for tests that mutate process-wide environment (`ACRAWL_CONFIG_HOME`).
+    /// Every such test in this crate must take it: separate per-module locks do not exclude
+    /// each other, so two modules rewriting the same variable race under `cargo test`.
+    pub fn test_env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}

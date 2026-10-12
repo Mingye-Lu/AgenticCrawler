@@ -8,6 +8,7 @@ use crate::BrowserContext;
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
 
 use super::feedback::InteractionKind;
+use super::select_option::js_string;
 
 #[derive(Debug)]
 struct FillFormInput {
@@ -83,17 +84,17 @@ pub async fn execute(
     if params.submit {
         let pre_url = eval_str(browser, "window.location.href").await;
 
+        let form_selector_json = js_string(&resolved_form_selector)?;
         let js = format!(
             r#"(() => {{
-                const form = document.querySelector('{}');
+                const form = document.querySelector({form_selector_json});
                 if (!form) return 'form_not_found';
                 const btn = form.querySelector('button[type="submit"], input[type="submit"], button:not([type])');
                 if (btn) {{ btn.click(); return 'clicked'; }}
                 const evt = new Event('submit', {{ bubbles: true, cancelable: true }});
                 if (form.dispatchEvent(evt)) form.submit();
                 return 'dispatched';
-            }})()"#,
-            resolved_form_selector.replace('\'', "\\'")
+            }})()"#
         );
         let submit_result = browser
             .acquire_bridge()
@@ -374,6 +375,24 @@ mod tests {
         let result = parse_input(&input).unwrap();
         assert!(result.submit);
         assert_eq!(result.form_selector, "#search-form");
+    }
+
+    #[test]
+    fn submit_js_selector_uses_json_escaping_not_naive_quote_replace() {
+        // A selector containing a backslash immediately before what would
+        // become an escaped quote used to break out of the JS string
+        // literal when only single quotes were escaped via
+        // `.replace('\'', "\\'")`. js_string (serde_json) must escape it
+        // safely instead.
+        let selector = r"div[data-x='a\']";
+        let encoded = js_string(selector).expect("js_string should encode any string");
+
+        // Must be a valid JSON/JS string literal that decodes back to
+        // exactly the original selector.
+        let decoded: String =
+            serde_json::from_str(&encoded).expect("encoded value must be a valid JSON string");
+        assert_eq!(decoded, selector);
+        assert!(encoded.starts_with('"') && encoded.ends_with('"'));
     }
 
     #[test]

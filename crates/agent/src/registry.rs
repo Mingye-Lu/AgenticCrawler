@@ -7,7 +7,7 @@ use crate::{ToolEffect, ToolExecutionError};
 
 pub type ToolHandler = Box<dyn Fn(&Value) -> Result<ToolEffect, ToolExecutionError> + Send + Sync>;
 
-const ASYNC_TOOLS: [&str; 31] = [
+const ASYNC_TOOLS: [&str; 32] = [
     "navigate",
     "click",
     "click_at",
@@ -20,6 +20,7 @@ const ASYNC_TOOLS: [&str; 31] = [
     "inspect_websocket",
     "screenshot",
     "go_back",
+    "get_page_info",
     "refresh",
     "scroll",
     "wait",
@@ -46,6 +47,18 @@ pub struct ToolRegistry {
     handlers: HashMap<String, ToolHandler>,
 }
 
+// Test-only build counter: incremented once per `new_with_core_tools()`
+// call, so tests can assert a registry was constructed exactly once per
+// script run rather than rebuilt on every node execution. Thread-local
+// (rather than a shared global) so it stays accurate under `cargo test`'s
+// default parallel test execution -- `#[tokio::test]` runs each test's
+// async work on the harness thread that invoked it.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static NEW_WITH_CORE_TOOLS_CALLS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 impl ToolRegistry {
     #[must_use]
     pub fn new() -> Self {
@@ -54,6 +67,9 @@ impl ToolRegistry {
 
     #[must_use]
     pub fn new_with_core_tools() -> Self {
+        #[cfg(test)]
+        NEW_WITH_CORE_TOOLS_CALLS.with(|count| count.set(count.get() + 1));
+
         let mut registry = Self::new();
         for name in ASYNC_TOOLS {
             let tool_name = name.to_string();
@@ -169,6 +185,9 @@ impl ToolRegistry {
             }
             "screenshot" => crate::tools::screenshot::execute(input, browser).await,
             "go_back" => crate::tools::go_back::execute(input, browser, crawl_state).await,
+            "get_page_info" => {
+                crate::tools::get_page_info::execute(input, browser, crawl_state).await
+            }
             "refresh" => crate::tools::refresh::execute(input, browser, crawl_state).await,
             "scroll" => crate::tools::scroll::execute(input, browser, crawl_state).await,
             "wait" => crate::tools::wait::execute(input, browser, crawl_state).await,
@@ -214,7 +233,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_core_tools_registers_all_forty_two() {
+    fn new_with_core_tools_registers_all_forty_three() {
         let registry = ToolRegistry::new_with_core_tools();
         let effect_tools = [
             "fork",
@@ -231,7 +250,7 @@ mod tests {
             "wait_for_scripts",
             "cancel_script",
         ];
-        assert_eq!(registry.len(), 42);
+        assert_eq!(registry.len(), 43);
         for &name in ASYNC_TOOLS
             .iter()
             .chain(effect_tools.iter())
@@ -244,7 +263,7 @@ mod tests {
     #[test]
     fn new_for_child_same_as_parent() {
         let registry = ToolRegistry::new_for_child();
-        assert_eq!(registry.len(), 42);
+        assert_eq!(registry.len(), 43);
         assert!(registry.contains("fork"));
         assert!(registry.contains("navigate"));
         assert!(registry.contains("list_scripts"));

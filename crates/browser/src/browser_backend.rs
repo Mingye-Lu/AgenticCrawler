@@ -117,6 +117,13 @@ pub trait BrowserBackend: Debug {
     async fn hover(&mut self, selector: &str) -> Result<(), BridgeError>;
     async fn press_key(&mut self, key: &str, selector: Option<&str>) -> Result<(), BridgeError>;
     async fn switch_tab(&mut self, index: i64) -> Result<serde_json::Value, BridgeError>;
+    /// The tabs the agent may use, as `{"tabs": [{"index", "url", "title"}]}`. Backends scope
+    /// this to what the agent is allowed to see and never change which tab is active.
+    async fn list_tabs(&mut self) -> Result<serde_json::Value, BridgeError> {
+        Err(BridgeError::Protocol(
+            "list_tabs is not supported by this backend".to_string(),
+        ))
+    }
     async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError>;
     async fn import_cookies(&mut self, state: &BrowserState) -> Result<(), BridgeError>;
     async fn import_cookies_only(&mut self, state: &BrowserState) -> Result<(), BridgeError>;

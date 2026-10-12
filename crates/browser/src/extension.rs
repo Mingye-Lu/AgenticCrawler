@@ -344,6 +344,11 @@ impl BrowserBackend for ExtensionBridge {
         Self::require_result(response, "switch_tab")
     }
 
+    async fn list_tabs(&mut self) -> Result<Value, BridgeError> {
+        let response = self.send_command("list_tabs", json!({})).await?;
+        Self::require_result(response, "list_tabs")
+    }
+
     async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         let response = self.send_command("export_cookies", json!({})).await?;
         let result = Self::require_result(response, "export_cookies")?;

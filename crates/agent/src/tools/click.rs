@@ -66,15 +66,7 @@ async fn resolve_by_text(
         Some(r) => match super::ref_resolve::resolve_scope_ref(r, browser) {
             Ok(Some(query)) => Some(query),
             Err(message) => return Err(ToolExecutionError::new(message)),
-            Ok(None) => match r {
-                "dialog" => Some(
-                    "dialog,[role=\"dialog\"],[role=\"alertdialog\"],[aria-modal=\"true\"]"
-                        .to_string(),
-                ),
-                "main" => Some("main,[role=\"main\"]".to_string()),
-                "sidebar" => Some("[role=\"complementary\"],aside".to_string()),
-                other => Some(other.to_string()),
-            },
+            Ok(None) => Some(super::ref_resolve::region_scope_selector(r)),
         },
         None => None,
     };

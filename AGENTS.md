@@ -2,14 +2,14 @@
 
 ## Project
 
-`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 42-tool toolbox (31 browser + 4 agent-control + 7 script). It ships as a single binary with three modes: an interactive Ratatui TUI REPL (requires a TTY), non-interactive `prompt` (one-shot) / `--resume` (slash-command replay), and `mcp` (built-in MCP server over stdio).
+`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 43-tool toolbox (32 browser + 4 agent-control + 7 script). It ships as a single binary with three modes: an interactive Ratatui TUI REPL (requires a TTY), non-interactive `prompt` (one-shot) / `--resume` (slash-command replay), and `mcp` (built-in MCP server over stdio).
 
 ## Commands
 
 ```bash
 cargo build --release                                        # produce ./target/release/acrawl
 cargo test --workspace                                       # run full test suite (~1,100 tests)
-cargo test -p <crate> <test_name>                            # run a single test (e.g. -p agent mvp_tool_specs_contains_expected_42_tools)
+cargo test -p <crate> <test_name>                            # run a single test (e.g. -p agent mvp_tool_specs_contains_expected_43_tools)
 cargo clippy --workspace --all-targets -- -D warnings        # lints must be clean (workspace lints set pedantic = warn)
 cargo fmt --check                                            # format check
 
@@ -44,10 +44,10 @@ Eleven crates under `crates/`, compiled with `resolver = "2"`:
 - **core** (`acrawl-core`) — shared types, traits, and error hierarchy used across the workspace. Defines `ToolSpec`, `ToolEffect`, `AssistantEvent`, `RuntimeObserver`, `ContentBlock`/`ConversationMessage`/`MessageRole`/`TokenUsage`, `ToolOutcome`, `ApiClient`/`ApiRequest`, `config_home_dir`, and `OAuthConfig`.
 - **api** — HTTP + SSE clients for Anthropic (`client.rs`), OpenAI-compatible (`openai.rs`), and Codex OAuth (`codex.rs`). `sse.rs` is the shared streaming frame parser; `types.rs` holds the Anthropic message schema. `oauth.rs` contains OAuth PKCE helpers, credential persistence, and token exchange types. `provider/registry.rs` and `provider/factory.rs` handle provider discovery and client construction.
 - **browser** — browser automation layer. `PlaywrightBridge` (CloakBrowser headless Chromium), `ExtensionBridge` (Chrome extension backend via CDP), `FetchRouter` (HTTP→browser escalation), `BrowserContext` (tab/URL state), and `WsBridgeServer` (WebSocket server for extension communication). `browser_backend.rs` defines the `BrowserBackend` trait that both bridges implement.
-- **agent** — agent orchestration and the 42-tool toolbox (31 browser + 4 agent-control + 7 script). `agent.rs` drives the agent loop; `tools/` contains individual tool handlers; `manager.rs` manages sub-agent fork/join lifecycle; `prompt.rs` builds the system prompt; `state.rs` holds `CrawlState`; `url_claim.rs` coordinates URL claims across agents.
+- **agent** — agent orchestration and the 43-tool toolbox (32 browser + 4 agent-control + 7 script). `agent.rs` drives the agent loop; `tools/` contains individual tool handlers; `manager.rs` manages sub-agent fork/join lifecycle; `prompt.rs` builds the system prompt; `state.rs` holds `CrawlState`; `url_claim.rs` coordinates URL claims across agents.
 - **runtime** — `ConversationRuntime` (the core turn loop), `Session` persistence, system-prompt builder, compaction, usage/pricing, `config/` subdirectory (loader, MCP config, features), and a full MCP client stack in `mcp/` (`client.rs`, `types.rs`, `server_manager.rs`, `process.rs`, `naming.rs`).
 - **render** — markdown/terminal rendering (`markdown.rs`), tool call output formatting (`tool_format.rs`), output format selection (`format.rs`), and the `OutputSink` trait + implementations (`sink.rs`) that bridge runtime events to the UI.
-- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 31 direct browser tools + 7 script tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`; `skill.rs` embeds `skills/acrawl-mcp/` and installs it with `--skill`, so files added to that folder must be listed in `SKILL_FILES`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
+- **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 32 direct browser tools + 7 script tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`; `skill.rs` embeds `skills/acrawl-mcp/` and installs it with `--skill`, so files added to that folder must be listed in `SKILL_FILES`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
 - **tui** (`acrawl-tui`) — Ratatui terminal UI. `repl_app/` (directory) owns the application state; `repl_render.rs` handles rendering; `modals/` contains auth, model-picker, and slash-command overlay widgets. Depends on `acrawl-ui`.
 - **ui** (`acrawl-ui`) — shared application layer used by both TUI and CLI. Owns `LiveCli`, provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`), session management (`session_mgr.rs`), output sink (`output_sink.rs`), and auth helpers.
 - **cli** — thin binary entry point (`main.rs`). `self_update.rs` handles `acrawl update`; `uninstall.rs` handles `acrawl uninstall`. All orchestration and session management live in `acrawl-ui`.
@@ -58,7 +58,7 @@ Eleven crates under `crates/`, compiled with `resolver = "2"`:
 1. `cli::app::LiveCli` builds a `ProviderClient` via `ProviderRegistry` from the persisted `CredentialStore` (`credentials.json`), plus a `ToolExecutor` backed by `agent::ToolRegistry`.
 2. `runtime::ConversationRuntime::run_turn` drives the loop: call `ApiClient::stream` → feed `AssistantEvent`s (text deltas, tool_use, usage, stop) → execute tools through `ToolExecutor` → append results → repeat until the model emits `MessageStop` with no tool calls or `MAX_STEPS` is hit. The runtime notifies a `RuntimeObserver` at each event (text deltas, tool calls, turn end); `OutputSink` (`StdoutSink` for non-interactive `prompt`/`--resume`, `ChannelSink` for TUI) implements this trait to bridge events to the UI.
 3. The crawler tool handlers (`crates/agent/src/tools/*.rs`) take JSON input, consult `CrawlState`, and act through a `BrowserContext` that wraps either the `FetchRouter` (reqwest HTTP path) or the `PlaywrightBridge` (headless Chromium). The router auto-escalates from HTTP to the browser when JS is needed.
-4. The optional `--allowedTools` CLI flag restricts which tools are available; `CliToolExecutor` enforces this before execution. `ToolSpec` has no permission tier — all 42 tools are unrestricted by default.
+4. The optional `--allowedTools` CLI flag restricts which tools are available; `CliToolExecutor` enforces this before execution. `ToolSpec` has no permission tier — all 43 tools are unrestricted by default.
 5. `runtime::UsageTracker` + `pricing_for_model` feed `/cost` and `/status`. `runtime::compact` watches `ACRAWL_AUTO_COMPACT_INPUT_TOKENS` (default 200k) and auto-compacts the session when the threshold trips.
 
 The CloakBrowser bridge is notable: it is a **single embedded Node script** launched as a subprocess, using CloakBrowser (not stock Playwright) for stealth browsing. The browser binary auto-downloads on first use — no separate install step needed.
@@ -85,8 +85,8 @@ Key design decisions:
 
 `run_mcp_server` honours `settings.browser_backend` for all three tool families. Backend selection funnels through two helpers in `crates/mcp-server/src/server.rs`:
 
-- `ensure_extension_bridge` — lazily starts `ExtensionBridgeManager`, waits up to `settings.extension_bridge_connect_timeout_secs` (default 30) for the extension to connect, and returns a `SharedBridge`.
-- `ensure_browser_context` — picks the backend and publishes a `BrowserContext`. The 31 direct browser tools and the 7 script tools go through this; `run_goal` instead receives the `SharedBridge` and calls `set_shared_bridge` + `set_extension_mode(true)` on its own `CrawlerAgent`.
+- `ensure_extension_bridge` — lazily starts `ExtensionBridgeManager`, waits up to `settings.extension_bridge_connect_timeout_secs` (default 3) for an already-paired extension to connect, and returns a `SharedBridge`. If no extension has ever paired (`settings.extension_paired` unset) it skips the wait and returns the pairing code at once. The flag is set on the first authenticated WebSocket connection (via `WsBridgeServer::authenticated`, a `Notify`, so a quick connect/disconnect is not lost) and cleared when `extension_bridge_token` is set to a different value or unset. The wait is only 3s because the extension caps its reconnect backoff at 2s (`MAX_RECONNECT_DELAY_MS` in `extension/background.js`); keep the two aligned. `open_pairing` reuses a live offer, so concurrent unpaired calls all show the same valid code.
+- `ensure_browser_context` — picks the backend and publishes a `BrowserContext`. The 32 direct browser tools and the 7 script tools go through this; `run_goal` instead receives the `SharedBridge` and calls `set_shared_bridge` + `set_extension_mode(true)` on its own `CrawlerAgent`.
 
 Two invariants worth preserving:
 
@@ -105,7 +105,7 @@ Default model comes from the `default_model` field in the active provider's `Sto
 
 ## Tool surface
 
-`agent::mvp_tool_specs()` returns the canonical 42-tool list with JSON schemas and required permission. When you add or rename a tool, update `mvp_tool_specs`, add a handler in `tools/mod.rs`, and adjust the count assertion in `crates/agent/src/lib.rs` tests.
+`agent::mvp_tool_specs()` returns the canonical 43-tool list with JSON schemas and required permission. When you add or rename a tool, update `mvp_tool_specs`, add a handler in `tools/mod.rs`, and adjust the count assertion in `crates/agent/src/lib.rs` tests.
 
 ## Optimization layer
 

@@ -11,11 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Goal-aware pruning** (`optimization.semantic_prune`, default off): `navigate` accepts `focus`, a phrase or a list of phrases. With the flag on and a TypeSafe key configured (`optimization.semantic_prune_api_key`, falling back to the `TYPESAFE_API_KEY` env var; `navigate` with a `focus` fails if neither is set), the heuristically pruned page is split into record-level blocks (a table row, list item, paragraph or comment stays whole), each block is scored against the focus by TypeSafe's Jev model, and blocks below 0.35 collapse into `[N blocks pruned]` markers. When more blocks pass than the content cap allows, the lowest-scoring ones are dropped instead of cutting the page off at the cap. `pruned_ratio` reports how much was removed, and `focus_note` says why a focus was not applied (flag off, extension backend, API error). Page text is sent to `api.typesafe.ai`, so the feature is never used with the logged-in extension backend.
 - `navigate` replies carry `pruned_ratio` for `fit_markdown`.
+- **`get_page_info` tool**: a cheap read of the current page's `url`, `title` and `ready_state` without a DOM walk or refetch. `live: false` marks values taken from the last fetch because no browser page is open yet. It is read-only: it never advances `seq` and its reply carries none, so `since: "last"` on the log and network tools keeps meaning "what the last action caused".
+- **`get_page_info` `all_tabs`**: also lists every tab you can use as `{index, url, title, active}` without switching; `active` marks the tab the agent is working on. In extension mode only tabs in the `acrawl` group appear.
 
 ### Fixed
 
-- `fit_markdown` no longer deletes comment threads: class names containing "comment" were treated as boilerplate, which emptied Hacker News, forum and issue-thread pages.
-- `fit_markdown` falls back to the unpruned markdown when pruning leaves under 500 characters of a page with at least 2,000.
+- **The MCP server no longer waits 30 s for an unpaired extension**: it returns the pairing code at once, and an extension that has paired before gets a short (3 s) connect wait.
+
+## [0.15.2] - 2026-10-12
+
+### Fixed
+
+- **`save_file` path traversal and symlink escape**: the Playwright backend rejects `..` path components, and the symlink-escape check no longer fails open.
+- **Terminal escape injection in rendered markdown**: ANSI/control sequences (including entity-decoded ones and C1 string terminators) are stripped from untrusted page text before it reaches the TUI.
+- **`select_option` on custom dropdowns** verifies the selection instead of reporting success on a closed menu.
+- **`execute_js`** accepts scripts with a top-level `return`; declaration-style scripts still run in the page's global scope.
+- **`fill_form`** no longer drops values on JS-framework reactive inputs, and escapes submit JS as JSON strings.
+- **`click` `region` and `page_map` `scope`** share one selector for `dialog`, `main` and `sidebar`.
+- **Coverage sessions** are no longer stopped twice on reset.
+- **URL claims** are normalized before comparison, so trailing slashes and fragments no longer let two siblings claim the same page.
+- **Bedrock streams** surface exception frames as errors instead of dropping them silently.
+- **Copilot OAuth** responses are checked for HTTP status without aborting device-flow polling.
+- **`optimization.budget_enforcement`** accepts `route_down`.
+- **MCP servers** whose tool-name prefixes collide are detected instead of shadowing each other.
+- **Script `while` loops** without tool calls are bounded by the step limit.
+- **Mojibake** in user-facing strings and comments is repaired, and a few TUI helpers and a duplicate auth-modal method were cleaned up.
+
+## [0.15.1] - 2026-10-12
+
+### Fixed
+
+- **`fit_markdown` deleted comment threads**: class names containing "comment" were treated as boilerplate, which emptied Hacker News, forum and issue-thread pages.
+- **`fit_markdown` over-pruning**: falls back to the unpruned markdown when pruning leaves under 500 characters of a page with at least 2,000.
+- **The extension no longer steals focus** when the agent selects its tab.
+- **Script executor rebuilt its tool registry for every node**: it is now built once per run.
+- **Codex CLI and Hermes installers removed the existing entry before adding the new one**: a failed add no longer loses the user's configuration.
 
 ## [0.15.0] - 2026-10-06
 
@@ -1031,6 +1061,8 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.15.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.2
+[0.15.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.1
 [0.15.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.0
 [0.14.3]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.3
 [0.14.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.14.2

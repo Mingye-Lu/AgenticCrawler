@@ -145,6 +145,10 @@ impl BrowserBackend for PlaywrightBridge {
         PlaywrightBridge::switch_tab(self, index).await
     }
 
+    async fn list_tabs(&mut self) -> Result<serde_json::Value, BridgeError> {
+        PlaywrightBridge::list_tabs(self).await
+    }
+
     async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         PlaywrightBridge::export_cookies(self).await
     }

@@ -513,6 +513,41 @@ async fn for_loop_correct_iterations() {
 }
 
 #[tokio::test]
+async fn for_loop_with_tool_calls_builds_registry_once() {
+    let before = crate::registry::NEW_WITH_CORE_TOOLS_CALLS.with(std::cell::Cell::get);
+
+    let mock = MockBridge::new();
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, default_limits());
+
+    let result = executor
+        .execute(script(vec![ScriptNode::ForLoop {
+            variable: "i".to_string(),
+            from: literal(json!(0)),
+            to: literal(json!(5)),
+            steps: vec![tool_call(
+                "scroll",
+                json!({"direction": "down", "pixels": 100}),
+                None,
+            )],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Completed);
+    assert_eq!(result.steps_executed, 5);
+
+    let after = crate::registry::NEW_WITH_CORE_TOOLS_CALLS.with(std::cell::Cell::get);
+    // ToolRegistry::new_with_core_tools() must be called exactly once for
+    // the whole script run (in ScriptExecutor::new), not once per ForLoop
+    // iteration / ToolCall node execution.
+    assert_eq!(
+        after - before,
+        1,
+        "expected exactly one ToolRegistry build for a 5-iteration ForLoop with a ToolCall body"
+    );
+}
+
+#[tokio::test]
 async fn for_each_iterates_array() {
     let mock = MockBridge::new();
     let bridge = make_shared_bridge(mock);
@@ -624,6 +659,45 @@ async fn while_loop_step_limit_terminates() {
 
     assert_eq!(result.status, ScriptStatus::Failed);
     assert!(result.error.as_ref().unwrap().contains("step limit"));
+}
+
+#[tokio::test]
+async fn while_loop_without_tool_calls_is_bounded_by_step_limit() {
+    // A body with no ToolCall never advances step_counter through
+    // execute_node's ToolCall arm, so this loop must be bounded by
+    // execute_while_loop incrementing step_counter itself on every
+    // iteration -- otherwise it would only be caught by the (much larger)
+    // wall-clock timeout instead of max_steps. Use a short max_timeout_secs
+    // too, so if this regresses the test fails fast instead of hanging.
+    let mock = MockBridge::new();
+    let bridge = make_shared_bridge(mock);
+    let limits = ScriptLimits {
+        max_steps: 5,
+        max_timeout_secs: 2,
+        max_output_bytes: 1_048_576,
+        max_script_size_bytes: 1_048_576,
+        max_parallel_branches: 4,
+        max_nesting_depth: 10,
+        per_step_timeout_secs: 30,
+    };
+    let executor = make_executor(bridge, limits);
+
+    let result = executor
+        .execute(script(vec![ScriptNode::WhileLoop {
+            condition: literal(json!(true)),
+            steps: vec![ScriptNode::Assign {
+                variable: "x".to_string(),
+                value: literal(json!(1)),
+            }],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert!(
+        result.error.as_ref().unwrap().contains("step limit"),
+        "expected termination via max_steps, not the wall-clock timeout; got: {:?}",
+        result.error
+    );
 }
 
 #[tokio::test]
@@ -1000,7 +1074,10 @@ async fn variable_substitution_in_tool_input() {
     let calls = log.lock().unwrap();
     let eval_calls: Vec<_> = calls.iter().filter(|(m, _)| m == "evaluate").collect();
     assert_eq!(eval_calls.len(), 1);
-    assert_eq!(eval_calls[0].1["script"], "document.title");
+    assert!(eval_calls[0].1["script"]
+        .as_str()
+        .unwrap()
+        .contains("document.title"));
 }
 
 #[tokio::test]
