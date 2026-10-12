@@ -85,13 +85,15 @@ fn navigation_tools() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "get_page_info",
-            description: "Get the current page URL, title, and readyState without any DOM traversal or page refetch. Returns lightweight metadata ideal for confirming navigation or redirect outcomes between steps. Use this instead of navigate() or page_map() when you only need to verify the current page identity.",
+            description: "Get the current page URL, title, and readyState without any DOM traversal or page refetch. Returns lightweight metadata ideal for confirming navigation or redirect outcomes between steps. Use this instead of navigate() or page_map() when you only need to verify the current page identity. Set all_tabs=true to also list every tab you can use (index, url, title) and see which one you are working on; it never switches tabs.",
             input_schema: json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "all_tabs": { "type": "boolean", "description": "Also list every tab available to you as {index, url, title, active}; `active` marks the tab you are working on. Does not switch tabs. Default false." }
+                },
                 "additionalProperties": false
             }),
-            instructions: Some("Use this for a cheap check of the current page's URL, title, and readyState — e.g. to confirm a redirect landed where expected — instead of a full navigate() or page_map() call."),
+            instructions: Some("Use this for a cheap check of the current page's URL, title, and readyState — e.g. to confirm a redirect landed where expected — instead of a full navigate() or page_map() call. The reply never carries a `seq` (it is read-only and does not advance it); `live: false` means the values are from the last fetch because no browser page is open yet. With all_tabs=true the reply adds `tabs` and `tab_count`; pass a listed `index` to switch_tab to move there."),
         },
         ToolSpec {
             name: "go_back",

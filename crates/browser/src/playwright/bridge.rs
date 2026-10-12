@@ -404,6 +404,11 @@ impl PlaywrightBridge {
         self.send_raw_command(&cmd).await
     }
 
+    pub async fn list_tabs(&mut self) -> Result<serde_json::Value, BridgeError> {
+        let cmd = serde_json::json!({ "action": "list_tabs" });
+        self.send_raw_command(&cmd).await
+    }
+
     pub async fn export_cookies(&mut self) -> Result<BrowserState, BridgeError> {
         let cmd = serde_json::json!({ "action": "export_cookies" });
         let result = self.send_raw_command(&cmd).await?;
