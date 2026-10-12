@@ -18,12 +18,14 @@ pub async fn execute(
             .map(ToString::to_string)
             .ok_or_else(|| ToolExecutionError::new("no page loaded; call navigate first"))?;
 
+        // Nothing is open in the browser yet, so there is no live document to ask. Report what
+        // the last fetch saw and say so: `ready_state` is unknown, not empty.
         return Ok(ToolEffect::reply_json(&serde_json::json!({
-            "seq": 0,
             "success": true,
             "url": url,
-            "title": "",
-            "ready_state": ""
+            "title": browser.current_title(),
+            "ready_state": null,
+            "live": false
         })));
     }
 
@@ -85,11 +87,11 @@ pub async fn execute(
     };
 
     let mut reply = serde_json::json!({
-        "seq": 0,
         "success": true,
         "url": url,
         "title": title,
-        "ready_state": ready_state
+        "ready_state": ready_state,
+        "live": true
     });
 
     if let Some(err) = title_error {
@@ -109,15 +111,45 @@ pub async fn execute(
 mod tests {
     use serde_json::json;
 
-    #[test]
-    fn empty_input_is_valid_json_object() {
-        let input = json!({});
-        assert!(input.is_object());
+    use super::execute;
+    use crate::state::CrawlState;
+    use crate::tools::test_support::browser_with_observations;
+    use crate::ToolEffect;
+
+    #[tokio::test]
+    async fn errors_when_no_page_is_loaded() {
+        let mut browser = browser_with_observations(vec![]);
+        let mut state = CrawlState::default();
+
+        let err = execute(&json!({}), &mut browser, &mut state)
+            .await
+            .expect_err("no page yet");
+
+        assert!(err.to_string().contains("no page loaded"), "{err}");
     }
 
-    #[test]
-    fn null_input_is_accepted() {
-        let input = serde_json::Value::Null;
-        assert!(input.is_null());
+    #[tokio::test]
+    async fn without_a_browser_page_reports_the_fetched_title_and_unknown_ready_state() {
+        let mut browser = browser_with_observations(vec![]);
+        browser.set_navigated_url("https://example.com/", false);
+        browser.set_current_title(Some("Example Domain"));
+        let mut state = CrawlState::default();
+
+        let effect = execute(&json!({}), &mut browser, &mut state)
+            .await
+            .expect("reply");
+        let ToolEffect::Reply(body) = effect else {
+            panic!("expected Reply");
+        };
+        let reply: serde_json::Value = serde_json::from_str(&body).expect("json");
+
+        assert_eq!(reply["url"], "https://example.com/");
+        assert_eq!(reply["title"], "Example Domain");
+        assert!(reply["ready_state"].is_null(), "{reply}");
+        assert_eq!(reply["live"], false);
+        assert!(
+            reply.get("seq").is_none(),
+            "a read-only call has no seq: {reply}"
+        );
     }
 }
