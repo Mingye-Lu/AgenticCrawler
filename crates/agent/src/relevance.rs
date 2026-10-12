@@ -27,6 +27,9 @@ const CHUNK_BLOCKS: usize = 40;
 /// Characters of each block shown to the scorer.
 const SCORED_CHARS: usize = 500;
 const MAX_IN_FLIGHT: usize = 8;
+/// Most blocks scored for one page. Bounds API spend and latency per navigation; a page with more
+/// candidate blocks is left to the heuristic pruner instead of being scored in part.
+const MAX_SCORED_BLOCKS: usize = CHUNK_BLOCKS * 10;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_DELAY: Duration = Duration::from_millis(400);
 pub const API_KEY_ENV: &str = "TYPESAFE_API_KEY";
@@ -73,7 +76,7 @@ pub async fn prune_to_focus(
     max_chars: usize,
 ) -> Result<Option<FocusedPage>, RelevanceError> {
     let blocks = segment_html(cleaned_html, DEFAULT_MAX_BLOCK_CHARS);
-    let md: Vec<String> = blocks
+    let mut md: Vec<String> = blocks
         .iter()
         .map(|b| html_to_markdown(&b.html).trim().to_string())
         .collect();
@@ -112,7 +115,10 @@ pub async fn prune_to_focus(
         return Ok(None);
     }
     if kept_chars(&md, &keep) > max_chars {
-        fit_to_budget(&blocks, &md, &mut per_block, &mut keep, max_chars);
+        fit_to_budget(&blocks, &mut md, &mut per_block, &mut keep, max_chars);
+        if !scorable.iter().any(|&i| keep[i]) {
+            return Ok(None);
+        }
     }
     Ok(Some(assemble(&md, &keep)))
 }
@@ -129,7 +135,7 @@ fn kept_chars(md: &[String], keep: &[bool]) -> usize {
 /// preserving document order.
 fn fit_to_budget(
     blocks: &[Block],
-    md: &[String],
+    md: &mut [String],
     per_block: &mut [f64],
     keep: &mut Vec<bool>,
     max_chars: usize,
@@ -139,13 +145,24 @@ fn fit_to_budget(
         .collect();
     ranked.sort_by(|&a, &b| per_block[b].total_cmp(&per_block[a]).then(a.cmp(&b)));
 
-    let mut budget = max_chars.saturating_sub(max_chars / 20);
+    let total = max_chars.saturating_sub(max_chars / 20);
+    let mut budget = total;
     let mut chosen = vec![false; blocks.len()];
-    for i in ranked {
+    for &i in &ranked {
         let cost = md[i].chars().count() + 2;
         if cost <= budget {
             budget -= cost;
             chosen[i] = true;
+        }
+    }
+    // A single relevant block can be longer than the whole budget (a long paragraph or `<pre>`).
+    // Shorten the best one rather than dropping everything and returning only markers.
+    if let (false, Some(&top)) = (chosen.iter().any(|&c| c), ranked.first()) {
+        let room = total.saturating_sub(2);
+        if room > 0 {
+            let head = clip_chars(&md[top], room.saturating_sub(1));
+            md[top] = format!("{head}…");
+            chosen[top] = true;
         }
     }
     for (score, &picked) in per_block.iter_mut().zip(&chosen) {
@@ -343,6 +360,12 @@ impl JevScorer {
 impl RelevanceScorer for JevScorer {
     fn score<'a>(&'a self, focus: &'a [String], blocks: &'a [String]) -> ScoreFuture<'a> {
         Box::pin(async move {
+            if blocks.len() > MAX_SCORED_BLOCKS {
+                return Err(RelevanceError(format!(
+                    "page has {} candidate blocks; scoring is capped at {MAX_SCORED_BLOCKS}",
+                    blocks.len()
+                )));
+            }
             let gate = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
             let focus: Arc<[String]> = focus.into();
             let mut tasks = JoinSet::new();
@@ -470,6 +493,32 @@ mod tests {
         assert!(out.markdown.contains("number 19."));
         assert!(!out.markdown.contains("number 0."));
         assert!(out.markdown.contains("blocks pruned]"));
+    }
+
+    #[tokio::test]
+    async fn a_relevant_block_longer_than_the_budget_is_shortened_not_dropped() {
+        let html = format!(
+            "<h2>Spec</h2><p>NEEDLE {}</p><p>unrelated one {}</p><p>unrelated two {}</p>",
+            "long ".repeat(800),
+            "filler ".repeat(40),
+            "filler ".repeat(40),
+        );
+        let out = prune_to_focus(&Needle("NEEDLE"), &focus(), &html, 1_000)
+            .await
+            .unwrap()
+            .expect("the relevant block must survive");
+        assert!(out.markdown.contains("NEEDLE"), "{}", out.markdown);
+        assert!(out.markdown.contains('…'), "{}", out.markdown);
+        assert!(out.markdown.chars().count() <= 1_000, "{}", out.markdown);
+        assert_eq!(out.kept_blocks, 2, "the heading plus the shortened block");
+    }
+
+    #[tokio::test]
+    async fn jev_scorer_refuses_pages_over_the_block_cap_before_any_request() {
+        let scorer = JevScorer::new("tsk-test").expect("scorer");
+        let blocks = vec!["block".to_string(); MAX_SCORED_BLOCKS + 1];
+        let err = scorer.score(&focus(), &blocks).await.unwrap_err();
+        assert!(err.0.contains("capped"), "{err}");
     }
 
     #[test]
