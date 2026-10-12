@@ -265,10 +265,26 @@ pub struct JevScorer {
 }
 
 impl JevScorer {
-    /// A scorer using `TYPESAFE_API_KEY`, or `None` when it is unset or blank.
+    /// The API key to use: `configured` (from settings) first, then `TYPESAFE_API_KEY`.
+    /// Blank values count as unset.
     #[must_use]
-    pub fn from_env() -> Option<Self> {
-        let key = std::env::var(API_KEY_ENV).ok()?;
+    pub fn resolve_api_key(configured: Option<&str>) -> Option<String> {
+        let non_blank = |key: &str| {
+            let key = key.trim();
+            (!key.is_empty()).then(|| key.to_string())
+        };
+        configured.and_then(non_blank).or_else(|| {
+            std::env::var(API_KEY_ENV)
+                .ok()
+                .as_deref()
+                .and_then(non_blank)
+        })
+    }
+
+    /// A scorer authenticating with `key`, or `None` when it is blank or the HTTP client
+    /// cannot be built.
+    #[must_use]
+    pub fn new(key: &str) -> Option<Self> {
         let key = key.trim();
         if key.is_empty() {
             return None;
@@ -454,6 +470,14 @@ mod tests {
         assert!(out.markdown.contains("number 19."));
         assert!(!out.markdown.contains("number 0."));
         assert!(out.markdown.contains("blocks pruned]"));
+    }
+
+    #[test]
+    fn configured_key_wins_and_is_trimmed() {
+        assert_eq!(
+            JevScorer::resolve_api_key(Some("  tsk-settings ")).as_deref(),
+            Some("tsk-settings")
+        );
     }
 
     #[test]

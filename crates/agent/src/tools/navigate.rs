@@ -372,31 +372,42 @@ async fn focus_content(
     )))
 }
 
-/// Apply `focus` when it is set and permitted. The `Err` is a short reason to tell the caller
-/// why the page came back unfocused; any failure leaves the heuristic content in place.
+/// Why `focus` produced no pruned content.
+enum FocusError {
+    /// A short reason to tell the caller why the page came back unfocused; the heuristic
+    /// content stays in place.
+    Ignored(String),
+    /// `optimization.semantic_prune` is on but no scorer key is configured anywhere. Fails the
+    /// call: a missing credential is a setup error the caller has to see.
+    MissingApiKey,
+}
+
+/// Apply `focus` when it is set and permitted.
 async fn apply_focus(
     params: &NavigateInput,
     page: &browser::FetchedPage,
     profile: CleaningProfile,
-) -> Result<Option<ResolvedContent>, String> {
+) -> Result<Option<ResolvedContent>, FocusError> {
     if params.focus.is_empty() || params.format != "fit_markdown" {
         return Ok(None);
     }
     let settings = runtime::load_settings();
     if !runtime::settings_get_semantic_prune(&settings) {
-        return Err("focus ignored: optimization.semantic_prune is off".to_string());
+        return Err(FocusError::Ignored(
+            "focus ignored: optimization.semantic_prune is off".to_string(),
+        ));
     }
     if settings.browser_backend.as_deref() == Some("extension") {
-        return Err(
+        return Err(FocusError::Ignored(
             "focus ignored: not sent to a third-party scorer while using the logged-in browser extension"
                 .to_string(),
-        );
-    }
-    let Some(scorer) = JevScorer::from_env() else {
-        return Err(format!(
-            "focus ignored: {} is not set",
-            crate::relevance::API_KEY_ENV
         ));
+    }
+    let configured = runtime::settings_get_semantic_prune_api_key(&settings);
+    let Some(scorer) =
+        JevScorer::resolve_api_key(configured.as_deref()).and_then(|key| JevScorer::new(&key))
+    else {
+        return Err(FocusError::MissingApiKey);
     };
     focus_content(
         &scorer,
@@ -406,7 +417,7 @@ async fn apply_focus(
         profile,
     )
     .await
-    .map_err(|e| format!("focus ignored: {e}"))
+    .map_err(|e| FocusError::Ignored(format!("focus ignored: {e}")))
 }
 
 fn resolve_content_with_stats(
@@ -617,7 +628,13 @@ pub async fn execute(
     let (resolved, focus_note) = match apply_focus(&params, &page, profile).await {
         Ok(Some(focused)) => (focused, None),
         Ok(None) => (resolved, None),
-        Err(reason) => (resolved, Some(reason)),
+        Err(FocusError::Ignored(reason)) => (resolved, Some(reason)),
+        Err(FocusError::MissingApiKey) => {
+            return Err(ToolExecutionError::new(format!(
+                "optimization.semantic_prune is on but no TypeSafe API key is configured: run `acrawl config set optimization.semantic_prune_api_key <key>` or set {}",
+                crate::relevance::API_KEY_ENV
+            )));
+        }
     };
     let ResolvedContent {
         content,

@@ -128,6 +128,11 @@ pub struct OptimizationSettings {
     #[serde(default)]
     pub semantic_prune: Option<bool>,
 
+    /// `TypeSafe` API key for semantic pruning. Takes priority over the `TYPESAFE_API_KEY`
+    /// environment variable (default: None)
+    #[serde(default)]
+    pub semantic_prune_api_key: Option<String>,
+
     /// Budget: max session cost in USD (default: None = unlimited)
     #[serde(default)]
     pub budget_max_session_cost_usd: Option<f64>,
@@ -163,6 +168,7 @@ impl Default for OptimizationSettings {
             compound_enrichment: None,
             content_aware_profiles: Some(true),
             semantic_prune: None,
+            semantic_prune_api_key: None,
             budget_max_session_cost_usd: None,
             budget_enforcement: None,
             budget_warn_threshold_pct: None,
@@ -623,6 +629,17 @@ pub fn settings_get_semantic_prune(s: &Settings) -> bool {
         .as_ref()
         .and_then(|o| o.semantic_prune)
         .unwrap_or(false)
+}
+
+/// Get the `TypeSafe` API key configured for semantic pruning; blank values count as unset.
+#[must_use]
+pub fn settings_get_semantic_prune_api_key(s: &Settings) -> Option<String> {
+    s.optimization
+        .as_ref()
+        .and_then(|o| o.semantic_prune_api_key.as_deref())
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
 }
 
 /// Get `budget_max_session_cost_usd` optimization setting, with default fallback.
@@ -1373,5 +1390,25 @@ mod tests {
             ..Settings::default()
         };
         assert!(settings_get_semantic_prune(&settings));
+    }
+
+    #[test]
+    fn semantic_prune_api_key_ignores_blank_values() {
+        assert_eq!(
+            settings_get_semantic_prune_api_key(&Settings::default()),
+            None
+        );
+        let with_key = |key: &str| Settings {
+            optimization: Some(OptimizationSettings {
+                semantic_prune_api_key: Some(key.to_string()),
+                ..OptimizationSettings::default()
+            }),
+            ..Settings::default()
+        };
+        assert_eq!(settings_get_semantic_prune_api_key(&with_key("  ")), None);
+        assert_eq!(
+            settings_get_semantic_prune_api_key(&with_key(" tsk-1 ")).as_deref(),
+            Some("tsk-1")
+        );
     }
 }

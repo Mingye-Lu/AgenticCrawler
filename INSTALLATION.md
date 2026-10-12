@@ -323,7 +323,8 @@ All optimization flags are off by default.
 | `optimization.confidence_tracking` | bool | `false` | Parse `[confidence: ...]` from assistant text |
 | `optimization.compound_enrichment` | bool | `false` | Enable compound enrichment passes |
 | `optimization.content_aware_profiles` | bool | `true` ¹ | Enable content-aware tool profiles |
-| `optimization.semantic_prune` | bool | `false` | Honour `navigate`'s `focus` by dropping blocks a relevance model rates unrelated (needs `TYPESAFE_API_KEY`; sends page text to `api.typesafe.ai`; not used with the extension backend) |
+| `optimization.semantic_prune_api_key` | string | unset | TypeSafe key for semantic pruning; takes priority over `TYPESAFE_API_KEY` |
+| `optimization.semantic_prune` | bool | `false` | Honour `navigate`'s `focus` by dropping blocks a relevance model rates unrelated (needs `optimization.semantic_prune_api_key` or `TYPESAFE_API_KEY`; sends page text to `api.typesafe.ai`; not used with the extension backend) |
 | `optimization.budget_max_session_cost_usd` | f64 | — | Hard cost cap per session in USD (unset = unlimited) |
 | `optimization.budget_enforcement` | string | — | `"warn"`, `"block"`, or `"route_down"` |
 | `optimization.budget_warn_threshold_pct` | u32 | `80` | Warn when cost reaches this % of the budget cap |
