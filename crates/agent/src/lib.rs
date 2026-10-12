@@ -84,6 +84,18 @@ fn navigation_tools() -> Vec<ToolSpec> {
             instructions: Some("Always use full URLs including the protocol (https://). Returns page content with an embedded page_map showing page structure. Use content_depth to control context size: 'main' (default) extracts article/main content only, 'full' returns everything, 'slim' gives first 2000 chars of main content, 'none' skips content (page_map only). Images are stripped by default (strip_images=true) since they waste context — set false only when you need image URLs. The page_map.links array lets you navigate to linked pages without clicking. The default format is fit_markdown which prunes boilerplate (ads, navs, sidebars) before conversion, saving tokens. Fall back to 'markdown' or 'text' only if content seems missing. page_map_depth controls structural data verbosity: 'slim' (default) strips CSS selectors from all elements to save tokens — use @eN refs for interaction instead. Set 'full' only when you need raw selectors, 'none' to omit page_map entirely."),
         },
         ToolSpec {
+            name: "get_page_info",
+            description: "Get the current page URL, title, and readyState without any DOM traversal or page refetch. Returns lightweight metadata ideal for confirming navigation or redirect outcomes between steps. Use this instead of navigate() or page_map() when you only need to verify the current page identity. Set all_tabs=true to also list every tab you can use (index, url, title) and see which one you are working on; it never switches tabs.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "all_tabs": { "type": "boolean", "description": "Also list every tab available to you as {index, url, title, active}; `active` marks the tab you are working on. Does not switch tabs. Default false." }
+                },
+                "additionalProperties": false
+            }),
+            instructions: Some("Use this for a cheap check of the current page's URL, title, and readyState — e.g. to confirm a redirect landed where expected — instead of a full navigate() or page_map() call. The reply never carries a `seq` (it is read-only and does not advance it); `live: false` means the values are from the last fetch because no browser page is open yet. With all_tabs=true the reply adds `tabs` and `tab_count`; pass a listed `index` to switch_tab to move there."),
+        },
+        ToolSpec {
             name: "go_back",
             description: "Navigate the browser back to the previous page in history (equivalent to the browser back button). Returns the URL navigated to and a page_state object with headings, landmarks, and links of the resulting page. Use after clicking into a page to return to a listing or search results without re-navigating by URL.",
             input_schema: json!({
@@ -1057,12 +1069,12 @@ mod tests {
     use super::mvp_tool_specs;
 
     #[test]
-    fn mvp_tool_specs_contains_expected_42_tools() {
+    fn mvp_tool_specs_contains_expected_43_tools() {
         let specs = mvp_tool_specs();
-        assert_eq!(specs.len(), 42);
+        assert_eq!(specs.len(), 43);
 
         let names: BTreeSet<_> = specs.iter().map(|spec| spec.name).collect();
-        assert_eq!(names.len(), 42, "tool names should be unique");
+        assert_eq!(names.len(), 43, "tool names should be unique");
         assert!(names.contains("navigate"));
         assert!(names.contains("click_at"));
         assert!(names.contains("save_file"));

@@ -18,6 +18,8 @@ pub struct BrowserContext {
     bridge: SharedBridge,
     page_index: usize,
     current_url: Option<String>,
+    /// Title of `current_url` as of the last fetch; cleared whenever the URL changes.
+    current_title: Option<String>,
     browser_has_url: Option<String>,
     /// Cached `page_map` snapshots, keyed by (`normalized_url`, `scope_key`).
     /// `scope_key` is the scope string or "" for `None`. Bounded to 8 entries (LRU/insertion-order eviction).
@@ -38,6 +40,7 @@ impl BrowserContext {
             bridge,
             page_index,
             current_url: None,
+            current_title: None,
             browser_has_url: None,
             page_snapshots: Vec::new(),
             ref_map: RefMap::new(),
@@ -84,9 +87,20 @@ impl BrowserContext {
 
     pub fn set_navigated_url(&mut self, url: &str, loaded_in_browser: bool) {
         self.current_url = Some(url.to_string());
+        self.current_title = None;
         if loaded_in_browser {
             self.browser_has_url = Some(url.to_string());
         }
+    }
+
+    /// Record the title of the page `set_navigated_url` last pointed at.
+    pub fn set_current_title(&mut self, title: Option<&str>) {
+        self.current_title = title.map(ToString::to_string);
+    }
+
+    #[must_use]
+    pub fn current_title(&self) -> Option<&str> {
+        self.current_title.as_deref()
     }
 
     #[must_use]
@@ -97,6 +111,11 @@ impl BrowserContext {
     #[must_use]
     pub fn current_url(&self) -> Option<&str> {
         self.current_url.as_deref()
+    }
+
+    #[must_use]
+    pub fn is_browser_loaded(&self) -> bool {
+        self.browser_has_url.is_some()
     }
 
     pub fn set_page_index(&mut self, page_index: usize) {
@@ -162,6 +181,17 @@ mod tests {
         std::sync::Arc::new(tokio::sync::Mutex::new(
             Box::new(NopBridge) as Box<dyn BrowserBackend + Send>
         ))
+    }
+
+    #[test]
+    fn current_title_is_cleared_when_the_url_changes() {
+        let mut ctx = BrowserContext::new(test_bridge());
+        ctx.set_navigated_url("https://example.com/a", false);
+        ctx.set_current_title(Some("A"));
+        assert_eq!(ctx.current_title(), Some("A"));
+
+        ctx.set_navigated_url("https://example.com/b", false);
+        assert_eq!(ctx.current_title(), None);
     }
 
     #[test]

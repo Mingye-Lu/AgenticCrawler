@@ -20,11 +20,11 @@
 </p>
 
 <p align="center">
-  Single Rust binary. Full DevTools observability. 42 tools. 25 LLM providers. MCP server built-in.
+  Single Rust binary. Full DevTools observability. 43 tools. 25 LLM providers. MCP server built-in.
 </p>
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="acrawl architecture: the TUI, one-shot prompt, and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 42 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge." width="100%">
+  <img src="docs/assets/architecture.svg" alt="acrawl architecture: the TUI, one-shot prompt, and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 43 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge." width="100%">
 </p>
 
 ---
@@ -217,7 +217,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 
 ## Features
 
-### 42-Tool Toolbox
+### 43-Tool Toolbox
 
 #### Navigation
 
@@ -225,6 +225,7 @@ The agent spawns up to 5 concurrent sub-agents, each on its own browser tab, to 
 |------|-------------|
 | `navigate` | Go to a URL (supports `format`: markdown/text/html/fit_markdown). Uses HTTP first, auto-escalates to browser when JS is detected. Returns structured content with a `page_map`. `fit_markdown` prunes boilerplate DOM nodes before conversion, saving tokens. |
 | `go_back` | Browser back button. Returns `page_state` with the resulting page structure. |
+| `get_page_info` | Cheap read of the current page's `url`, `title` and `ready_state` (no DOM walk, no refetch). `all_tabs: true` also lists every tab you can use as `{index, url, title, active}` without switching. Read-only: never advances `seq`. |
 | `scroll` | Scroll up or down by pixel amount (`pixels`, default: 500). Returns `page_state` after scrolling. |
 | `switch_tab` | Switch to a different browser tab by index. Returns `page_state` of the new tab. |
 | `wait` | Wait for a CSS selector to reach a given state (`visible`, `hidden`, `attached`, `detached`) or a fixed timeout (up to 300s). Set `silent: true` on a time-only wait to skip the `page_state` diff and save tokens. Returns `page_state` after the condition is met. |
@@ -545,11 +546,11 @@ Use `--allowedTools` to restrict which tools the agent can invoke (comma-separat
 acrawl prompt "scrape titles" --allowedTools navigate,read_content,screenshot
 ```
 
-Omit `--allowedTools` to allow all 42 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
+Omit `--allowedTools` to allow all 43 tools. Useful for locking down a crawl to read-only tools or excluding `fork`/`wait_for_subagents` when sub-agent parallelism is not desired.
 
 ### MCP Extensibility
 
-acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 42.
+acrawl supports [Model Context Protocol](https://modelcontextprotocol.io) servers as a **client**, allowing you to extend the agent with custom tools. MCP tools are namespaced as `server_name__tool_name` and available alongside the built-in 43.
 
 Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
@@ -557,10 +558,10 @@ Supported transports: **stdio**, **SSE**, **HTTP**, **WebSocket**.
 
 `acrawl mcp` starts a built-in MCP server that exposes acrawl's browser automation capabilities to external agents like Claude Code, Cursor, VS Code, Zed, JetBrains, TRAE, Gemini CLI, or any MCP-compatible client.
 
-The server provides **39 tools** in three modes:
+The server provides **40 tools** in three modes:
 
-**Direct browser tools (31)** — fine-grained control for clients that orchestrate themselves:
-`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `set_device`, `refresh`, `list_network_activity`, `inspect_request`, `list_page_logs`, `inspect_log`, `list_websocket_activity`, `inspect_websocket`, `get_page_performance`, `inspect_cookies`, `inspect_storage`, `measure_coverage`, `audit_accessibility`, `intercept_network`
+**Direct browser tools (32)** — fine-grained control for clients that orchestrate themselves:
+`navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `get_page_info`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`, `set_device`, `refresh`, `list_network_activity`, `inspect_request`, `list_page_logs`, `inspect_log`, `list_websocket_activity`, `inspect_websocket`, `get_page_performance`, `inspect_cookies`, `inspect_storage`, `measure_coverage`, `audit_accessibility`, `intercept_network`
 
 **Script tools (7)** — deterministic multi-step automation without per-step LLM calls:
 `run_script`, `save_script`, `list_scripts`, `read_script`, `wait_for_scripts`, `script_status`, `cancel_script`
@@ -899,7 +900,7 @@ flowchart LR
 ```
 
 1. The agent receives a goal and builds a multi-step plan via a [7-section system prompt](crates/agent/src/prompt.rs) covering identity, operating procedure, data integrity, constraints, error recovery, completion protocol, and parallel exploration guidance.
-2. Each turn, it picks from its 42 tools based on what it observes on the page.
+2. Each turn, it picks from its 43 tools based on what it observes on the page.
 3. `navigate` hits the FetchRouter, which tries HTTP first and auto-escalates to a headless Chromium browser when JavaScript, auth redirects, or framework markers are detected.
 4. The browser is driven by an embedded Node.js subprocess (the PlaywrightBridge) speaking newline-delimited JSON over stdio — uses CloakBrowser for stealth browsing, not stock Playwright. Alternatively, acrawl can drive the user's real browser via a Chrome extension (`/extension` command) using CDP over a local WebSocket bridge.
 5. For multi-page tasks, the agent can `fork` child agents onto separate browser tabs, each with independent state and step budgets. `wait_for_subagents` collects results; `cancel_subagent` aborts a running child; `subagent_status` polls without blocking.
@@ -913,7 +914,7 @@ crates/
   core/         Shared types, traits, error hierarchy (acrawl-core)
   api/          25 provider clients (Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, ...), SSE streaming
   browser/      PlaywrightBridge, ExtensionBridge, FetchRouter, BrowserContext, WsBridgeServer
-  agent/        42 tools, agent loop, sub-agent fork/join, CrawlState
+  agent/        43 tools, agent loop, sub-agent fork/join, CrawlState
   runtime/      ConversationRuntime, config, sessions, MCP client stack, OAuth PKCE
   render/       Markdown rendering, tool output formatting, OutputSink
   mcp-server/   Built-in MCP server (JSON-RPC over stdio), IDE installer

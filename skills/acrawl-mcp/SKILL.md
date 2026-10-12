@@ -5,7 +5,7 @@ description: Drive the acrawl MCP server for browser automation, web scraping, a
 
 # acrawl MCP
 
-acrawl exposes **39 MCP tools**: 31 browser/DevTools tools, 7 script tools, and 1 autonomous agent (`run_goal`). All 39 share **one persistent browser session** across calls — except `run_goal`, which builds its own isolated agent and browser.
+acrawl exposes **40 MCP tools**: 32 browser/DevTools tools, 7 script tools, and 1 autonomous agent (`run_goal`). All 40 share **one persistent browser session** across calls — except `run_goal`, which builds its own isolated agent and browser.
 
 What makes acrawl different from other browser MCPs is the observability half: you can read network traffic, console logs, WebSocket frames, cookies, storage, coverage, and axe-core audits from a live page. Reach for those instead of guessing why a page misbehaves.
 
@@ -163,7 +163,7 @@ So you **cannot** build a URL as `"https://x.com?page=$n"` — that string is se
 
 **3. `js_eval` receives no DSL variables at all.** Its string is forwarded to the page verbatim, and the variable map is never exposed to page scope, so `$n` arrives in JS as a literal `$n`. Combined with gotcha 2, there is **no supported way to build a dynamic URL from a loop variable inside a script.** Enumerate the URLs in your client when you construct the script and iterate them with `for_each` — see `references/scripting.md`.
 
-**4. Scripts can only call 17 of the 31 browser tools.** The scriptable set is `navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`.
+**4. Scripts can only call 17 of the 32 browser tools.** The scriptable set is `navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`.
 
 Every DevTools tool is excluded, plus `refresh` and `set_device`. **You cannot script a network/console/performance/a11y audit** — drive those with manual calls, or have a script gather pages and inspect afterwards.
 
@@ -213,7 +213,7 @@ Match the response to the signal rather than retrying blindly:
 
 Read these when you need the detail; don't preload them.
 
-- **`references/tools.md`** — all 39 tools, exact parameter names, types, enums, defaults. Check here before guessing a parameter name.
+- **`references/tools.md`** — all 40 tools, exact parameter names, types, enums, defaults. Check here before guessing a parameter name.
 - **`references/scripting.md`** — script DSL: every node type, expression kinds, limits, and runnable verified examples. Read before writing any script.
 - **`references/recipes.md`** — end-to-end workflows: paginated scrape, form login, network/performance audit, a11y sweep, mock-an-API.
 - **`references/setup.md`** — install, MCP client config, `credentials.json` / `settings.json`, troubleshooting.

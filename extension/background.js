@@ -515,6 +515,9 @@ async function handleCommand(cmd) {
       case 'close_page':
         result = await handleClosePage(cmd.payload || {});
         break;
+      case 'list_tabs':
+        result = await handleListTabs();
+        break;
       case 'switch_tab':
         {
           const previousTabId = getActiveTabId();
@@ -762,6 +765,20 @@ async function handleClosePage(payload) {
     await saveState();
   }
   return { closed: true };
+}
+
+// Read-only: reports the agent's tabs and nothing else. A tab the user moved out of the
+// acrawl group is no longer the agent's, so it is left out (and, unlike the access checks,
+// not revoked here: listing must not change state).
+async function handleListTabs() {
+  const indices = Object.keys(managedTabs).map(Number).sort((a, b) => a - b);
+  const tabs = [];
+  for (const index of indices) {
+    const tab = await chrome.tabs.get(managedTabs[index]).catch(() => null);
+    if (!tab || agentGroupId === null || tab.groupId !== agentGroupId) continue;
+    tabs.push({ index, url: tab.url || tab.pendingUrl || '', title: tab.title || '' });
+  }
+  return { tabs };
 }
 
 async function handleSwitchTab(payload) {

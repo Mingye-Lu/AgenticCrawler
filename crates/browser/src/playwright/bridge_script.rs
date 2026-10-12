@@ -1383,6 +1383,23 @@ const PLAYWRIGHT_BRIDGE_NODE_SCRIPT_SUFFIX: &str = r#"
       continue;
     }
 
+    if (command.action === 'list_tabs') {
+      try {
+        const tabs = [];
+        for (let i = 0; i < pages.length; i++) {
+          const p = pages[i];
+          if (!p || p.isClosed()) continue;
+          let title = '';
+          try { title = await p.title(); } catch (_) { /* page may be mid-navigation */ }
+          tabs.push({ index: i, url: p.url(), title });
+        }
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: true, result: { tabs } }) + '\n');
+      } catch (error) {
+        process.stdout.write(JSON.stringify({ event: 'bridge_response', ok: false, error: { kind: 'list_tabs_failed', message: String(error) } }) + '\n');
+      }
+      continue;
+    }
+
     if (command.action === 'switch_tab') {
       try {
         const idx = command.index === undefined ? -1 : command.index;

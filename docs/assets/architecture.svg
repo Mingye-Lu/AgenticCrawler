@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" role="img" aria-label="acrawl architecture: TUI, prompt and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 42 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" role="img" aria-label="acrawl architecture: TUI, prompt and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 43 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge.">
 <style>:root{--bg:#eef2f3;--fg:#10222a;--muted:#546a73;--line:#8fa6af;--box:#ffffff;--lane:#e2eaec;--accent:#0a7d6e;--accent-soft:#d3efe9;--warm:#b4501f;
 --body:system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root{--bg:#0b161b;--fg:#e3edf0;--muted:#8fa3ab;--line:#4a6571;--box:#15262e;--lane:#112027;--accent:#4fd1bd;--accent-soft:#14363a;--warm:#f09a62}}
@@ -68,13 +68,13 @@ svg{font-family:var(--body)}
 <text class="l" x="450" y="148" text-anchor="end">events</text>
 
 <!-- toolbox -->
-<rect class="hot" x="595" y="165" width="150" height="48" rx="8"/><text class="t" x="670" y="186" text-anchor="middle">CrawlerAgent</text><text class="s" x="670" y="202" text-anchor="middle">42 tools</text>
+<rect class="hot" x="595" y="165" width="150" height="48" rx="8"/><text class="t" x="670" y="186" text-anchor="middle">CrawlerAgent</text><text class="s" x="670" y="202" text-anchor="middle">43 tools</text>
 <path class="ac" d="M555 177H593" marker-end="url(#g)"/>
 <path class="ac" d="M593 201H557" marker-end="url(#g)"/>
 <text class="l" x="574" y="164" text-anchor="middle">call</text>
 <text class="l" x="574" y="226" text-anchor="middle">result</text>
 <path class="ln" d="M365 344H670V215" marker-end="url(#a)"/>
-<text class="l" x="385" y="334">31 browser + 7 script tools, run_goal</text>
+<text class="l" x="385" y="334">32 browser + 7 script tools, run_goal</text>
 
 <!-- browser -->
 <rect class="box" x="785" y="72" width="190" height="48" rx="8"/><text class="t" x="880" y="93" text-anchor="middle">FetchRouter</text><text class="s" x="880" y="109" text-anchor="middle">plain HTTP</text>
