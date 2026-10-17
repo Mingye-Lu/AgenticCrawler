@@ -363,7 +363,7 @@ impl ScriptExecutor {
                         ScriptExecutionError::VariableNotFound(variable_name.to_string())
                     })
                 } else {
-                    Ok(Value::String(text.clone()))
+                    self.interpolate(text).map(Value::String)
                 }
             }
             Value::Array(values) => values
@@ -380,23 +380,49 @@ impl ScriptExecutor {
         }
     }
 
+    /// Replaces each `{{name}}` in `text` with the variable's value (strings as-is, other
+    /// values as JSON). Braces around anything but an identifier are left alone, so JS
+    /// source such as `{{a: 1}}` passes through untouched.
+    fn interpolate(&self, text: &str) -> Result<String, ScriptExecutionError> {
+        let mut out = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(open) = rest.find("{{") {
+            let Some(len) = rest[open + 2..].find("}}") else {
+                break;
+            };
+            let name = rest[open + 2..open + 2 + len].trim();
+            let end = open + 2 + len + 2;
+            if Self::is_identifier(name) {
+                let value = self
+                    .variables
+                    .get(name)
+                    .ok_or_else(|| ScriptExecutionError::VariableNotFound(name.to_string()))?;
+                out.push_str(&rest[..open]);
+                match value {
+                    Value::String(value) => out.push_str(value),
+                    value => out.push_str(&value.to_string()),
+                }
+            } else {
+                out.push_str(&rest[..end]);
+            }
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+        Ok(out)
+    }
+
     fn variable_name(value: &str) -> Option<&str> {
-        let candidate = value.strip_prefix('$')?;
-        if candidate.is_empty() {
-            return None;
-        }
+        value
+            .strip_prefix('$')
+            .filter(|candidate| Self::is_identifier(candidate))
+    }
 
+    fn is_identifier(candidate: &str) -> bool {
         let mut chars = candidate.chars();
-        let first = chars.next()?;
-        if !(first == '_' || first.is_ascii_alphabetic()) {
-            return None;
-        }
-
-        if chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
-            Some(candidate)
-        } else {
-            None
-        }
+        chars
+            .next()
+            .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
     }
 
     fn tool_effect_to_value(tool_effect: ToolEffect) -> Result<Value, ScriptExecutionError> {
