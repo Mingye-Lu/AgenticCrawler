@@ -21,6 +21,7 @@ struct MockBridge {
     evaluate_responses: Mutex<Vec<Value>>,
     navigate_responses: Mutex<Vec<PageInfo>>,
     click_error: Mutex<Option<String>>,
+    hang_on_evaluate: bool,
 }
 
 #[allow(dead_code)]
@@ -32,6 +33,7 @@ impl MockBridge {
             evaluate_responses: Mutex::new(Vec::new()),
             navigate_responses: Mutex::new(Vec::new()),
             click_error: Mutex::new(None),
+            hang_on_evaluate: false,
         }
     }
 
@@ -47,6 +49,11 @@ impl MockBridge {
 
     fn with_click_error(mut self, error: &str) -> Self {
         self.click_error = Mutex::new(Some(error.to_string()));
+        self
+    }
+
+    fn hanging_on_evaluate(mut self) -> Self {
+        self.hang_on_evaluate = true;
         self
     }
 
@@ -158,6 +165,9 @@ impl BrowserBackend for MockBridge {
 
     async fn evaluate(&mut self, script: &str) -> Result<Value, BridgeError> {
         self.log("evaluate", json!({"script": script}));
+        if self.hang_on_evaluate {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
         let mut responses = self.evaluate_responses.lock().unwrap();
         if responses.is_empty() {
             Ok(json!({"value": null}))
@@ -1423,4 +1433,109 @@ async fn yield_over_output_byte_limit_fails() {
         "expected 'output size limit exceeded' in: {:?}",
         result.error
     );
+}
+
+#[tokio::test]
+async fn try_catch_catches_per_step_timeout() {
+    let mock = MockBridge::new().hanging_on_evaluate();
+    let bridge = make_shared_bridge(mock);
+    let limits = ScriptLimits {
+        per_step_timeout_secs: 1,
+        ..default_limits()
+    };
+    let executor = make_executor(bridge, limits);
+
+    let result = executor
+        .execute(script(vec![
+            ScriptNode::TryCatch {
+                try_steps: vec![tool_call("execute_js", json!({"script": "1"}), None)],
+                catch_steps: Some(vec![ScriptNode::Collect {
+                    value: variable("err"),
+                }]),
+                finally_steps: None,
+                error_var: Some("err".to_string()),
+            },
+            ScriptNode::Collect {
+                value: literal(json!("after")),
+            },
+        ]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Completed);
+    assert_eq!(
+        result.extracted_data,
+        vec![json!("script step timed out"), json!("after")]
+    );
+}
+
+#[tokio::test]
+async fn failed_script_returns_data_collected_before_the_failure() {
+    let mock = MockBridge::new().with_click_error("element not found");
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, default_limits());
+
+    let result = executor
+        .execute(script(vec![
+            ScriptNode::Collect {
+                value: literal(json!("first")),
+            },
+            tool_call("click", json!({"selector": "#missing"}), None),
+        ]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert_eq!(result.extracted_data, vec![json!("first")]);
+}
+
+#[tokio::test]
+async fn template_placeholders_interpolate_variables_inside_strings() {
+    let mock = MockBridge::new();
+    let log = mock.call_log();
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, default_limits());
+
+    let result = executor
+        .execute(script(vec![ScriptNode::ForEach {
+            variable: "q".to_string(),
+            iterable: literal(json!(["rust", 7])),
+            steps: vec![tool_call(
+                "navigate",
+                json!({"url": "https://mock.test/search?q={{q}}&again={{ q }}", "page_map_depth": "none"}),
+                None,
+            )],
+        }]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Completed, "{:?}", result.error);
+    let calls = log.lock().unwrap();
+    let urls: Vec<_> = calls
+        .iter()
+        .filter(|(m, _)| m == "navigate")
+        .map(|(_, args)| args["url"].clone())
+        .collect();
+    assert_eq!(
+        urls,
+        vec![
+            json!("https://mock.test/search?q=rust&again=rust"),
+            json!("https://mock.test/search?q=7&again=7"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn template_placeholder_with_unknown_variable_fails() {
+    let mock = MockBridge::new();
+    let bridge = make_shared_bridge(mock);
+    let executor = make_executor(bridge, default_limits());
+
+    let result = executor
+        .execute(script(vec![tool_call(
+            "navigate",
+            json!({"url": "https://mock.test/?q={{nope}}"}),
+            None,
+        )]))
+        .await;
+
+    assert_eq!(result.status, ScriptStatus::Failed);
+    assert_eq!(result.error.as_deref(), Some("variable not found: nope"));
 }

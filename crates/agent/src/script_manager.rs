@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use acrawl_core::{ScriptLimits, ScriptResult, ScriptState, ScriptStatus, ScriptTask};
 use runtime::settings::ScriptSettings;
 use script::parser::{parse_script, validate_script};
+use script::persistence::{load_script_from_disk, save_script_to_disk};
+use serde_json::Value;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -73,8 +76,14 @@ impl ScriptManager {
 
         let script_id = self.generate_script_id();
         let limits = self.effective_limits(&task.limits);
-        let script_definition = parse_script(&task.script)
-            .map_err(|error| ScriptError::ParseError(error.to_string()))?;
+        // `run_script` by `name` arrives as `{"__load_from_disk": name}`.
+        let script_definition = match task.script.get("__load_from_disk").and_then(Value::as_str) {
+            Some(name) => load_script_from_disk(&self.scripts_dir(), name).map_err(|error| {
+                ScriptError::Other(format!("failed to load script `{name}`: {error}"))
+            })?,
+            None => parse_script(&task.script)
+                .map_err(|error| ScriptError::ParseError(error.to_string()))?,
+        };
         validate_script(&script_definition, &limits).map_err(|errors| {
             let message = errors
                 .into_iter()
@@ -83,6 +92,11 @@ impl ScriptManager {
                 .join("; ");
             ScriptError::ParseError(message)
         })?;
+        if let Some(name) = &task.save_as {
+            save_script_to_disk(&self.scripts_dir(), name, &script_definition).map_err(
+                |error| ScriptError::Other(format!("failed to save script `{name}`: {error}")),
+            )?;
+        }
 
         let initial_state = ScriptState {
             script_id: script_id.clone(),
@@ -225,6 +239,10 @@ impl ScriptManager {
         )
     }
 
+    fn scripts_dir(&self) -> PathBuf {
+        self.settings.resolved_scripts_dir()
+    }
+
     fn effective_limits(&self, requested: &ScriptLimits) -> ScriptLimits {
         let defaults = ScriptSettings::default();
 
@@ -279,8 +297,9 @@ impl ScriptManager {
 mod tests {
     use std::sync::{Arc, RwLock};
 
-    use acrawl_core::{ScriptResult, ScriptState, ScriptStatus};
+    use acrawl_core::{ScriptLimits, ScriptResult, ScriptState, ScriptStatus, ScriptTask};
     use runtime::settings::ScriptSettings;
+    use serde_json::json;
     use tokio_util::sync::CancellationToken;
 
     use super::{RunningScript, ScriptManager};
@@ -314,6 +333,44 @@ mod tests {
             handle,
             cancel_token: CancellationToken::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn script_saved_with_save_as_runs_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut manager = ScriptManager::new(ScriptSettings {
+            scripts_dir: Some(dir.path().to_path_buf()),
+            ..ScriptSettings::default()
+        });
+        let browser = || {
+            let bridge: browser::SharedBridge =
+                Arc::new(tokio::sync::Mutex::new(Box::new(browser::NopBridge)));
+            crate::BrowserContext::new(bridge)
+        };
+        let task = |script, save_as: Option<&str>| ScriptTask {
+            script,
+            save_as: save_as.map(String::from),
+            limits: ScriptLimits::default(),
+        };
+        let inline = json!({"schema_version": 1, "steps": [
+            {"type": "collect", "value": {"kind": "literal", "value": "saved"}}
+        ]});
+
+        manager
+            .spawn_script(task(inline, Some("saved")), browser())
+            .expect("inline script should run");
+        let by_name = manager
+            .spawn_script(task(json!({"__load_from_disk": "saved"}), None), browser())
+            .expect("saved script should load by name");
+        let results = manager.wait_for_scripts(Some(vec![by_name])).await.unwrap();
+        assert_eq!(results[0].extracted_data, vec![json!("saved")]);
+
+        let missing = manager
+            .spawn_script(task(json!({"__load_from_disk": "absent"}), None), browser())
+            .unwrap_err();
+        assert!(missing
+            .to_string()
+            .contains("failed to load script `absent`"));
     }
 
     #[tokio::test]

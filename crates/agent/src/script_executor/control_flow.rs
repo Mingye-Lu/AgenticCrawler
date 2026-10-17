@@ -144,7 +144,6 @@ impl ScriptExecutor {
                     Err(
                         error @ (ScriptExecutionError::StepLimitExceeded
                         | ScriptExecutionError::WallClockTimeout
-                        | ScriptExecutionError::PerStepTimeout
                         | ScriptExecutionError::Cancelled),
                     ) => {
                         pending_error = Some(error);
@@ -152,6 +151,7 @@ impl ScriptExecutor {
                     }
                     Err(
                         error @ (ScriptExecutionError::ToolError(_)
+                        | ScriptExecutionError::PerStepTimeout
                         | ScriptExecutionError::VariableNotFound(_)),
                     ) => {
                         self.state.errors_caught += 1;

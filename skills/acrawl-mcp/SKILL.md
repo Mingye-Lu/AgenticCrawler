@@ -143,25 +143,15 @@ Verified: two navigations returned `seq: 0` then `seq: 1`; `since: 0` listed 64 
 
 These are confirmed against a live server and the source, and several contradict the surrounding documentation. They cause hard failures, so they're worth reading once before writing a script.
 
-**1. `run_script` requires `schema_version: 1` — not `version: "1.0"`.** The tool description is wrong. The server rejects the documented form:
+**1. `run_script` requires `schema_version: 1`** (an integer, at the script root). Same for `save_script`. Without it:
 
 ```
 Error: invalid script: failed to deserialize script JSON: missing field `schema_version`
 ```
 
-`schema_version` is an integer, at the script root. Same for `save_script`.
+**2. `$var` is whole-string; `{{var}}` interpolates.** A string that is entirely `$name` becomes the variable's value with its type preserved (`"$n"` becomes `7`). To build a string, use `{{name}}`: `"https://x.com?page={{n}}"`. An unknown `{{name}}` fails the step.
 
-**2. `$var` substitution is whole-string only.** There is no string interpolation. A string is replaced only if it is *entirely* `$name`:
-
-| In a `literal` | Result |
-|---|---|
-| `"$v"` | value of `v` |
-| `"hello_$v"` | `"hello_$v"` — unchanged |
-| `"page=$n"` | `"page=$n"` — unchanged |
-
-So you **cannot** build a URL as `"https://x.com?page=$n"` — that string is sent literally. Substitution recurses through arrays and objects, and it preserves type: `"$n"` where `n` is `7` yields the number `7`, not `"7"`.
-
-**3. `js_eval` receives no DSL variables at all.** Its string is forwarded to the page verbatim, and the variable map is never exposed to page scope, so `$n` arrives in JS as a literal `$n`. Combined with gotcha 2, there is **no supported way to build a dynamic URL from a loop variable inside a script.** Enumerate the URLs in your client when you construct the script and iterate them with `for_each` — see `references/scripting.md`.
+**3. `js_eval` receives no DSL variables at all.** Its string is forwarded to the page verbatim. To pass a variable into JS, use an `execute_js` `tool_call` with `{{var}}` in its `script` input.
 
 **4. Scripts can only call 17 of the 32 browser tools.** The scriptable set is `navigate`, `click`, `click_at`, `fill_form`, `page_map`, `read_content`, `screenshot`, `go_back`, `scroll`, `wait`, `select_option`, `execute_js`, `hover`, `press_key`, `switch_tab`, `list_resources`, `save_file`.
 
@@ -192,7 +182,7 @@ failed to close parallel pages: page 3: close_page_failed: Invalid page index 3
 
 **9. Self-healing, action caching, loop detection, and budget enforcement do not apply to MCP tool calls or scripts.** All of it lives in `CrawlerAgent::execute`; the MCP server dispatches straight to the tool registry. These features reach `run_goal` only.
 
-**10. Several documented conveniences are unimplemented on the MCP path.** `run_script(name: ...)` fails instead of loading a saved script; `save_as` never writes a file; tool names are matched verbatim so `read-content` is rejected rather than normalized. See `references/tools.md`.
+**10. Tool names are matched verbatim on the MCP path,** so `read-content` is rejected rather than normalized. See `references/tools.md`.
 
 ---
 

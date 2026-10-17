@@ -37,7 +37,7 @@ Every example here was executed against a live server and its output recorded. W
 | `name` | string | no |
 | `steps` | array of nodes, **must be non-empty** | **yes** |
 
-**`schema_version` is an integer and it is mandatory.** The `run_script` tool description claims the field is `version` with value `"1.0"` — that is wrong. Using it produces:
+**`schema_version` is an integer and it is mandatory.** Omitting it produces:
 
 ```
 Error: invalid script: failed to deserialize script JSON: missing field `schema_version`
@@ -175,7 +175,7 @@ The condition is re-evaluated before each iteration. Because the DSL has **no ar
 
 Only `try_steps` is required. `finally_steps` always runs. `error_var` binds the error message for use inside `catch_steps`.
 
-This catches **tool failures** — a missing selector, a navigation error. It does **not** catch undefined variables (those are rejected at parse time, see [Static validation](#static-validation)), and it cannot catch step-limit or timeout termination.
+This catches **tool failures** — a missing selector, a navigation error — and a step that exceeds `per_step_timeout_secs` (`error_var` is then `"script step timed out"`). It does **not** catch undefined variables in `variable` expressions (those are rejected at parse time, see [Static validation](#static-validation)), and it cannot catch step-limit, wall-clock timeout, or cancellation.
 
 ### `parallel`
 
@@ -193,7 +193,7 @@ Every value position takes an expression tagged by `"kind"`, with the payload un
 
 | Kind | Shape | Result |
 |---|---|---|
-| `literal` | `{"kind":"literal","value":<any JSON>}` | the value, **after `$var` substitution** |
+| `literal` | `{"kind":"literal","value":<any JSON>}` | the value, **after `$var` / `{{var}}` substitution** |
 | `variable` | `{"kind":"variable","value":"name"}` | the variable's value |
 | `js_eval` | `{"kind":"js_eval","value":"document.title"}` | JS result from the page — **no substitution** |
 | `field_access` | `{"kind":"field_access","value":{"object":<expr>,"field":"k"}}` | property, or `null` if absent |
@@ -201,7 +201,7 @@ Every value position takes an expression tagged by `"kind"`, with the payload un
 
 Verified: `array_index` on `["a","b"]` with index `1` returned `"b"`; `field_access` on `{"k1":1,"k2":2}` with field `k2` returned `2`.
 
-**That is the complete list — there is no arithmetic, comparison, concatenation, or boolean operator.** The DSL is deliberately minimal: `for_loop` covers bounded iteration, and `js_eval` is the escape hatch for real computation. Design around this rather than fighting it — if a step needs arithmetic or string building, do it inside one `js_eval` and bind the result.
+**That is the complete list — there is no arithmetic, comparison, or boolean operator.** The DSL is deliberately minimal: `for_loop` covers bounded iteration, `{{var}}` covers string building, and `js_eval` is the escape hatch for real computation. If a step needs arithmetic, do it inside one `js_eval` and bind the result.
 
 `js_eval` requires a browser, since it evaluates in page context.
 
@@ -209,25 +209,28 @@ Verified: `array_index` on `["a","b"]` with index `1` returned `"b"`; `field_acc
 
 ## Variable substitution
 
-Inside a `literal`, a string is replaced **only if the entire string is `$name`**. There is no interpolation.
+Inside a `literal` or a `tool_call` input, strings are substituted two ways:
 
-Verified with `v = "WORLD"` and `n = 7`:
+- A string that is **exactly** `$name` is replaced by the variable's value, keeping its type.
+- Each `{{name}}` inside a longer string is replaced by the value as text (strings as-is, anything else as JSON). Spaces inside the braces are allowed: `{{ name }}`.
+
+With `v = "WORLD"` and `n = 7`:
 
 | Input | Output |
 |---|---|
 | `"$v"` | `"WORLD"` |
 | `"hello_$v"` | `"hello_$v"` |
-| `{"embedded": "page=$n"}` | `{"embedded": "page=$n"}` |
+| `"hello_{{v}}"` | `"hello_WORLD"` |
+| `{"embedded": "page={{n}}"}` | `{"embedded": "page=7"}` |
 | `{"nested": ["$v", "x$v"]}` | `{"nested": ["WORLD", "x$v"]}` |
 | `{"whole": "$n"}` | `{"whole": 7}` |
 
-Three consequences worth internalising:
+Things worth knowing:
 
-1. **Substitution is type-preserving.** `"$n"` becomes the number `7`, not `"7"`. This is what lets you pass a captured object straight into a tool's `input`.
-2. **It recurses** through arrays and objects, still whole-string-only at each leaf.
-3. **You cannot build strings with it, and there is no workaround inside the script.** `"https://x.com?page=$n"` stays literal, so that request would 404. `js_eval` cannot help: it receives the raw string with no access to the variable map. **Enumerate the values in your client** when you construct the script, then iterate with `for_each` (example 6).
-
-`js_eval` strings get **no** substitution at all — `$page_num` arrives in the browser as literal `$page_num`.
+1. **`$name` is type-preserving.** `"$n"` becomes the number `7`, not `"7"`. This is what lets you pass a captured object straight into a tool's `input`.
+2. **Substitution recurses** through arrays and objects.
+3. **`{{name}}` with an unknown variable fails the step** with `variable not found: name`. Braces around anything other than an identifier (`{{a: 1}}`) are left alone, so JS source in an `execute_js` input passes through.
+4. **`js_eval` expressions get no substitution** — `$page_num` arrives in the browser as literal `$page_num`. To feed a variable to JS, run `execute_js` as a `tool_call` and put `{{var}}` in its `script` input.
 
 ---
 
@@ -264,27 +267,20 @@ Structure around it: use a script to gather and navigate, then run the observabi
 
 ## Limits
 
-Defaults come from `settings.json` under `script`. You can override them per run via `run_script`'s `limits`, but **`limits` is an all-or-nothing object, not a patch.**
+Override them per run via `run_script`'s `limits`; omitted keys keep their defaults, so `{"max_steps": 50}` is enough. Each value is **capped** by the matching `settings.json` `script` entry (which defaults to the same numbers), so raising a limit above its default takes a settings change, e.g. `"script": {"per_step_timeout_secs": 90}`.
 
-| Limit | Default | Required in an override? | Meaning |
-|---|---|---|---|
-| `max_steps` | `200` | **yes** | `tool_call` nodes only |
-| `max_timeout_secs` | `300` | **yes** | wall clock, whole script |
-| `per_step_timeout_secs` | `30` | **yes** | single tool call |
-| `max_output_bytes` | `10485760` (10 MB) | **yes** | collected + yielded combined |
-| `max_parallel_branches` | `10` | **yes** | branches in one `parallel` |
-| `max_script_size_bytes` | `1048576` (1 MB) | no | script JSON size |
-| `max_nesting_depth` | `10` | no | control-flow nesting |
-| `max_concurrent_scripts` | `5` | n/a | settings-only; not overridable per run |
+| Limit | Default | Meaning |
+|---|---|---|
+| `max_steps` | `200` | `tool_call` nodes only |
+| `max_timeout_secs` | `300` | wall clock, whole script |
+| `per_step_timeout_secs` | `30` | single tool call |
+| `max_output_bytes` | `10485760` (10 MB) | collected + yielded combined |
+| `max_parallel_branches` | `10` | branches in one `parallel` |
+| `max_script_size_bytes` | `1048576` (1 MB) | script JSON size |
+| `max_nesting_depth` | `10` | control-flow nesting |
+| `max_concurrent_scripts` | `5` | settings-only; not overridable per run |
 
-The five required fields have no serde defaults, so `{"max_steps": 50}` fails with a missing-field error rather than inheriting the rest. To change one value, send all five:
-
-```json
-{"max_steps": 50, "max_timeout_secs": 300, "per_step_timeout_secs": 30,
- "max_output_bytes": 10485760, "max_parallel_branches": 10}
-```
-
-Step-limit and timeout terminations are **not catchable** by `try_catch`. In a `parallel` block the output byte budget is shared across branches.
+A per-step timeout is catchable by `try_catch`; step-limit and wall-clock terminations are not. In a `parallel` block the output byte budget is shared across branches.
 
 ---
 
@@ -339,6 +335,8 @@ No error, no warning — just data from the wrong URL. A test using two pages wi
 ## Verified examples
 
 ### 1. Substitution semantics (no browser)
+
+Recorded before `{{var}}` interpolation existed; see [Variable substitution](#variable-substitution) for it.
 
 Executor time ~1.5 ms since it contains no `tool_call` (the browser still initializes first over MCP).
 
@@ -471,7 +469,7 @@ Falling back from a CSS selector to a label+role match is the durable pattern, b
 
 ### 6. Paginated crawl with progress
 
-Note the URLs are **enumerated literals**, not built by concatenation — substitution cannot interpolate. Generate the list in your client when constructing the script, or compute each URL in a `js_eval`.
+Here the URLs are enumerated literals. To build them from a loop variable instead, iterate the page numbers and use `"url": "https://books.toscrape.com/catalogue/page-{{n}}.html"`.
 
 ```json
 {

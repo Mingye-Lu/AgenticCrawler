@@ -37,15 +37,7 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
                 .map_err(|e| ToolExecutionError::new(format!("run_script: invalid limits: {e}")))
         })
         .transpose()?
-        .unwrap_or(ScriptLimits {
-            max_steps: 200,
-            max_timeout_secs: 300,
-            max_output_bytes: 10_485_760,
-            max_parallel_branches: 10,
-            per_step_timeout_secs: 30,
-            max_script_size_bytes: 1_048_576,
-            max_nesting_depth: 10,
-        });
+        .unwrap_or_default();
 
     Ok(ToolEffect::RunScript(ScriptTask {
         script,
@@ -115,6 +107,23 @@ mod tests {
                 assert_eq!(task.limits.max_steps, 50);
                 assert_eq!(task.limits.max_timeout_secs, 60);
                 assert_eq!(task.limits.max_nesting_depth, 3);
+            }
+            _ => panic!("expected RunScript effect"),
+        }
+    }
+
+    #[test]
+    fn run_script_partial_limits_fall_back_to_defaults() {
+        let effect = execute(&json!({
+            "script": {"steps": []},
+            "limits": {"per_step_timeout_secs": 90}
+        }))
+        .expect("partial limits should parse");
+        match effect {
+            ToolEffect::RunScript(task) => {
+                assert_eq!(task.limits.per_step_timeout_secs, 90);
+                assert_eq!(task.limits.max_steps, 200);
+                assert_eq!(task.limits.max_timeout_secs, 300);
             }
             _ => panic!("expected RunScript effect"),
         }

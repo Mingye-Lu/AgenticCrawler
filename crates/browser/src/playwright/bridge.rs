@@ -27,7 +27,7 @@ pub struct PlaywrightBridge {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     /// Responses still owed by the bridge process for commands whose read
-    /// previously hit `CommandTimeout`. The Node side processes commands
+    /// timed out or whose caller dropped the request mid-read. The Node side processes commands
     /// strictly in order and writes exactly one response line per command,
     /// so a timed-out read doesn't mean the response is lost — it means it
     /// hasn't arrived yet. If we moved on and issued the next command
@@ -822,14 +822,16 @@ impl PlaywrightBridge {
             .map_err(classify_io_error)?;
         self.stdin.flush().await.map_err(classify_io_error)?;
 
-        if let Ok(result) = timeout(command_timeout, self.read_bridge_line()).await {
-            result
-        } else {
-            self.pending_responses += 1;
-            Err(BridgeError::CommandTimeout {
+        // Owed until read, so a caller that drops this future mid-read (its
+        // own timeout) leaves the late response to be drained as well.
+        self.pending_responses += 1;
+        let result = timeout(command_timeout, self.read_bridge_line())
+            .await
+            .map_err(|_| BridgeError::CommandTimeout {
                 timeout: command_timeout,
-            })
-        }
+            })??;
+        self.pending_responses -= 1;
+        Ok(result)
     }
 
     pub async fn add_intercept_rule(

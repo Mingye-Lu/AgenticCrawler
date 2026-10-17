@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::fs;
 
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
-use acrawl_core::config_home_dir;
+use runtime::settings::ScriptSettings;
 
 pub fn parse_input(input: &Value) -> Result<(String, Value), CrawlError> {
     let name = input
@@ -29,7 +29,7 @@ pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
         .map_err(|e| ToolExecutionError::new(format!("invalid script: {e}")))?;
 
     // Create scripts directory
-    let scripts_dir = config_home_dir().join("scripts");
+    let scripts_dir = ScriptSettings::current_scripts_dir();
     fs::create_dir_all(&scripts_dir)
         .map_err(|e| ToolExecutionError::new(format!("failed to create scripts directory: {e}")))?;
 

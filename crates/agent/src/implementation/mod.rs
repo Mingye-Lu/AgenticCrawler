@@ -886,29 +886,24 @@ impl CrawlerAgent {
 
     async fn handle_run_script_effect(
         &mut self,
-        mut task: acrawl_core::ScriptTask,
+        task: acrawl_core::ScriptTask,
     ) -> Result<String, ToolError> {
         self.ensure_browser().await?;
-
-        if task
-            .script
-            .get("__load_from_disk")
-            .and_then(Value::as_str)
-            .is_some()
-        {
-            task.script = self.load_script_from_disk(&task)?;
-        }
 
         let current_url = self.crawl_state.current_url.clone();
         let cloned_context = self
             .clone_browser_context_for_script(current_url.as_deref())
             .await?;
-        let script_id = self
-            .script_manager
-            .spawn_script(task, cloned_context)
-            .map_err(script_error_to_tool)?;
-
-        Ok(format!("Script started: {script_id}"))
+        let page_index = cloned_context.page_index();
+        let bridge = cloned_context.bridge().clone();
+        match self.script_manager.spawn_script(task, cloned_context) {
+            Ok(script_id) => Ok(format!("Script started: {script_id}")),
+            Err(error) => {
+                // The script never started, so nothing else will close its tab.
+                let _ = bridge.lock().await.close_page(page_index).await;
+                Err(script_error_to_tool(error))
+            }
+        }
     }
 
     async fn handle_script_wait_effect(
@@ -974,33 +969,6 @@ impl CrawlerAgent {
             browser.set_navigated_url(url, true);
         }
         Ok(browser)
-    }
-
-    fn load_script_from_disk(&self, task: &acrawl_core::ScriptTask) -> Result<Value, ToolError> {
-        let script_name = task
-            .script
-            .get("__load_from_disk")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ToolError::new("script loader requires __load_from_disk string"))?;
-        let script_settings = self.script_manager.settings.clone();
-        let scripts_dir = script_settings.scripts_dir.unwrap_or_else(|| {
-            runtime::settings::ScriptSettings::default()
-                .scripts_dir
-                .unwrap_or_else(|| acrawl_core::config_home_dir().join("scripts"))
-        });
-        let script_path = scripts_dir.join(format!("{script_name}.json"));
-        let script_text = std::fs::read_to_string(&script_path).map_err(|error| {
-            ToolError::new(format!(
-                "failed to read script `{script_name}` from {}: {error}",
-                script_path.display()
-            ))
-        })?;
-        serde_json::from_str(&script_text).map_err(|error| {
-            ToolError::new(format!(
-                "failed to parse script `{script_name}` from {}: {error}",
-                script_path.display()
-            ))
-        })
     }
 }
 
@@ -1215,6 +1183,7 @@ mod tests {
     struct HealingBridgeState {
         latest_click_selector: Option<String>,
         page_map_calls: usize,
+        closed_pages: Vec<usize>,
     }
 
     #[derive(Debug)]
@@ -1256,10 +1225,15 @@ mod tests {
         }
 
         async fn new_page(&mut self, _url: Option<&str>) -> Result<usize, BridgeError> {
-            Ok(0)
+            Ok(7)
         }
 
-        async fn close_page(&mut self, _page_index: usize) -> Result<(), BridgeError> {
+        async fn close_page(&mut self, page_index: usize) -> Result<(), BridgeError> {
+            self.state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .closed_pages
+                .push(page_index);
             Ok(())
         }
 
@@ -1432,6 +1406,23 @@ mod tests {
             CrawlerAgent::new(browser, ToolRegistry::new_with_core_tools()),
             state,
         )
+    }
+
+    #[tokio::test]
+    async fn run_script_that_fails_to_spawn_closes_its_cloned_tab() {
+        let (mut agent, state) = healing_test_agent(0, "", serde_json::json!({}));
+
+        let error = agent
+            .dispatch_tool_effect(ToolEffect::RunScript(acrawl_core::ScriptTask {
+                script: serde_json::json!({"schema_version": 1, "steps": []}),
+                save_as: None,
+                limits: acrawl_core::ScriptLimits::default(),
+            }))
+            .await
+            .expect_err("a script with no steps must not spawn");
+
+        assert!(error.to_string().contains("empty steps"), "{error}");
+        assert_eq!(state.lock().unwrap().closed_pages, vec![7]);
     }
 
     fn set_assistant_text(agent: &CrawlerAgent, text: &str) {
