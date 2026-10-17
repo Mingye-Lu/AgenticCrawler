@@ -251,15 +251,9 @@ for line in sys.stdin:
     cleanup_temp_script(&script_path);
 }
 
-#[tokio::test]
-async fn command_timeout_does_not_desync_next_response() {
-    // Regression test for issue #69: a command whose read times out client-side
-    // still gets a response from the bridge process eventually (it's just late).
-    // If the next command's read isn't protected, it swallows that stale
-    // response instead of its own, corrupting whatever it returns.
-    let script_path = write_python_script(
-        "timeout-desync",
-        r#"import json
+/// Fake bridge whose `slow_action` answers after 300ms with a "stale" page and whose
+/// `navigate` answers at once with a "fresh" one.
+const SLOW_THEN_FRESH_BRIDGE: &str = r#"import json
 import sys
 import time
 print(json.dumps({"event": "bridge_bootstrap", "ok": True}), flush=True)
@@ -282,8 +276,15 @@ for line in sys.stdin:
     elif action == "close":
         print(json.dumps({"event": "bridge_response", "ok": True}), flush=True)
         break
-"#,
-    );
+"#;
+
+#[tokio::test]
+async fn command_timeout_does_not_desync_next_response() {
+    // Regression test for issue #69: a command whose read times out client-side
+    // still gets a response from the bridge process eventually (it's just late).
+    // If the next command's read isn't protected, it swallows that stale
+    // response instead of its own, corrupting whatever it returns.
+    let script_path = write_python_script("timeout-desync", SLOW_THEN_FRESH_BRIDGE);
 
     let mut bridge = PlaywrightBridge::new_with_invocation(
         python_program(),
@@ -323,6 +324,44 @@ for line in sys.stdin:
         },
         "navigate must not receive the stale slow_action response"
     );
+
+    bridge.close().await.expect("close should succeed");
+    cleanup_temp_script(&script_path);
+}
+
+#[tokio::test]
+async fn dropped_command_does_not_desync_next_response() {
+    // A caller's own timeout (e.g. a script's per-step timeout) can drop the
+    // command future mid-read, before the bridge's internal timeout fires. The
+    // late response must still be drained before the next command's read.
+    let script_path = write_python_script("drop-desync", SLOW_THEN_FRESH_BRIDGE);
+    let mut bridge = PlaywrightBridge::new_with_invocation(
+        python_program(),
+        vec![script_path.to_string_lossy().into_owned()],
+        Duration::from_secs(2),
+    )
+    .await
+    .expect("bridge should bootstrap");
+
+    let dropped = tokio::time::timeout(
+        Duration::from_millis(50),
+        bridge.send_bridge_command_with_timeout(
+            BridgeCommandEnvelope {
+                action: "slow_action",
+                url: None,
+            },
+            Duration::from_secs(5),
+        ),
+    )
+    .await;
+    assert!(dropped.is_err(), "outer timeout should drop the command");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let page = bridge
+        .navigate("https://example.com")
+        .await
+        .expect("navigate should succeed after a dropped command");
+    assert_eq!(page.title, "fresh");
 
     bridge.close().await.expect("close should succeed");
     cleanup_temp_script(&script_path);
