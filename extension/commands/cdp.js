@@ -38,8 +38,8 @@ function cdpExceptionMessage(exceptionDetails, fallbackMessage) {
   return message ? message.trim() : fallbackMessage;
 }
 
-async function ensureAttached(tabId) {
-  await new Promise((resolve, reject) => {
+function attachDebugger(tabId) {
+  return new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, '1.3', () => {
       if (chrome.runtime.lastError) {
         const message = chrome.runtime.lastError.message || '';
@@ -51,6 +51,32 @@ async function ensureAttached(tabId) {
       resolve();
     });
   });
+}
+
+// A failed navigation (cert error, DNS failure) commits a chrome-error:// page, which
+// detaches the debugger and refuses re-attach. Navigating the tab away is the only way
+// back, so reset it to about:blank and attach again.
+async function resetToBlank(tabId) {
+  await chrome.tabs.update(tabId, { url: 'about:blank' });
+  for (let i = 0; i < 50; i++) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.url === 'about:blank' && tab.status === 'complete') return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+async function ensureAttached(tabId) {
+  try {
+    await attachDebugger(tabId);
+  } catch (e) {
+    if (!e.message.includes('Cannot attach to this target')) throw e;
+    await resetToBlank(tabId);
+    await attachDebugger(tabId).catch((retryError) => {
+      throw new Error(
+        `${retryError.message} The tab could not be recovered; close it or re-run /extension.`
+      );
+    });
+  }
   await setupAutoAttach(tabId);
 }
 
