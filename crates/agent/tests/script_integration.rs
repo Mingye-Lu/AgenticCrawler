@@ -140,6 +140,28 @@ fn script_integration_test_save_script_writes_to_disk() {
 }
 
 #[test]
+fn script_integration_test_script_tools_use_configured_scripts_dir() {
+    with_temp_config_home(|config_home| {
+        let custom_dir = config_home.join("custom-scripts");
+        fs::write(
+            config_home.join("settings.json"),
+            json!({"script": {"scripts_dir": custom_dir}}).to_string(),
+        )
+        .expect("settings should be written");
+
+        tools::save_script::execute(&json!({"name": "custom", "script": script_fixture()}))
+            .expect("save_script should succeed");
+
+        assert!(custom_dir.join("custom.json").exists());
+        assert!(!saved_script_path(config_home, "custom").exists());
+        let listed = unwrap_reply(tools::list_scripts::execute(&json!({})).unwrap());
+        assert!(listed.contains("custom"), "{listed}");
+        tools::read_script::execute(&json!({"name": "custom"}))
+            .expect("read_script should find the saved script");
+    });
+}
+
+#[test]
 fn script_integration_test_list_scripts_returns_empty_for_new_dir() {
     with_temp_config_home(|_config_home| {
         let effect = tools::list_scripts::execute(&json!({}))

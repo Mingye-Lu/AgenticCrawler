@@ -45,6 +45,25 @@ pub struct ScriptSettings {
     pub scripts_dir: Option<PathBuf>,
 }
 
+impl ScriptSettings {
+    /// The configured scripts directory, or `~/.acrawl/scripts/`.
+    #[must_use]
+    pub fn resolved_scripts_dir(&self) -> PathBuf {
+        self.scripts_dir
+            .clone()
+            .unwrap_or_else(|| core_config_home_dir().join("scripts"))
+    }
+
+    /// The scripts directory from the persisted settings.
+    #[must_use]
+    pub fn current_scripts_dir() -> PathBuf {
+        crate::load_settings()
+            .script
+            .unwrap_or_default()
+            .resolved_scripts_dir()
+    }
+}
+
 impl Default for ScriptSettings {
     fn default() -> Self {
         Self {

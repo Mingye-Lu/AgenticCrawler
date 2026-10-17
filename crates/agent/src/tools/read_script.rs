@@ -2,7 +2,7 @@ use serde_json::Value;
 use std::fs;
 
 use crate::{CrawlError, ToolEffect, ToolExecutionError};
-use acrawl_core::config_home_dir;
+use runtime::settings::ScriptSettings;
 
 pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
     let name = input
@@ -19,9 +19,7 @@ pub fn parse_input(input: &Value) -> Result<String, CrawlError> {
 pub fn execute(input: &Value) -> Result<ToolEffect, ToolExecutionError> {
     let name = parse_input(input)?;
 
-    let script_path = config_home_dir()
-        .join("scripts")
-        .join(format!("{name}.json"));
+    let script_path = ScriptSettings::current_scripts_dir().join(format!("{name}.json"));
 
     if !script_path.exists() {
         return Err(ToolExecutionError::new(format!(

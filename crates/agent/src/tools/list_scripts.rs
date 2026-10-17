@@ -5,10 +5,10 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 use crate::{ToolEffect, ToolExecutionError};
-use acrawl_core::config_home_dir;
+use runtime::settings::ScriptSettings;
 
 pub fn execute(_input: &Value) -> Result<ToolEffect, ToolExecutionError> {
-    let scripts_dir = config_home_dir().join("scripts");
+    let scripts_dir = ScriptSettings::current_scripts_dir();
 
     let mut scripts = Vec::new();
 
