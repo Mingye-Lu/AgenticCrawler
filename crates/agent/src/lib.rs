@@ -859,7 +859,7 @@ fn script_management_tools() -> Vec<ToolSpec> {
                 "properties": {
                     "script": {
                         "type": "object",
-                        "description": "Inline script definition object. Must include: version (\"1.0\"), steps (array of node objects: ToolCall, Assign, Collect, Yield, ForLoop, ForEach, WhileLoop, IfElse, TryCatch, Parallel), and optional limits. Use instead of 'name' for new scripts."
+                        "description": "Inline script definition: {\"schema_version\": 1, \"steps\": [...]}. Each step has a snake_case `type`: tool_call {tool, input, output?}, assign {variable, value}, collect {value}, yield {value}, for_loop {variable, from, to (exclusive), steps}, for_each {variable, iterable, steps}, while_loop {condition, steps}, if_else {condition, then_steps, else_steps?}, try_catch {try_steps, catch_steps?, finally_steps?, error_var?}, parallel {branches}. Values are expressions tagged by `kind`: {\"kind\": \"literal\"|\"variable\"|\"js_eval\", \"value\": ...}, {\"kind\": \"field_access\", \"value\": {\"object\": <expr>, \"field\": \"key\"}} or {\"kind\": \"array_index\", \"value\": {\"array\": <expr>, \"index\": <expr>}}. In tool inputs and literals, a string that is exactly \"$name\" is replaced by the variable's value and \"{{name}}\" is interpolated inside a string. Example: {\"schema_version\": 1, \"steps\": [{\"type\": \"for_each\", \"variable\": \"q\", \"iterable\": {\"kind\": \"literal\", \"value\": [\"a\", \"b\"]}, \"steps\": [{\"type\": \"tool_call\", \"tool\": \"navigate\", \"input\": {\"url\": \"https://example.com/search?q={{q}}\", \"page_map_depth\": \"none\"}, \"output\": \"page\"}, {\"type\": \"collect\", \"value\": {\"kind\": \"variable\", \"value\": \"page\"}}]}]}"
                     },
                     "name": {
                         "type": "string",
@@ -867,16 +867,16 @@ fn script_management_tools() -> Vec<ToolSpec> {
                     },
                     "save_as": {
                         "type": "string",
-                        "description": "Save the script under this name after execution for future reuse (alphanumeric + underscore). Persists to ~/.acrawl/scripts/<name>.json."
+                        "description": "Validate and save the script under this name before running it, for later runs by `name` (alphanumeric, underscore, hyphen). Persists to the scripts directory (default ~/.acrawl/scripts/<name>.json)."
                     },
                     "limits": {
                         "type": "object",
-                        "description": "Override default execution limits. Keys: max_steps (int), max_timeout_secs (int), max_output_bytes (int), max_parallel_branches (int), per_step_timeout_secs (int)."
+                        "description": "Override execution limits; omitted keys keep their defaults and values are capped by settings. Keys: max_steps (200), max_timeout_secs (300), max_output_bytes (10485760), max_parallel_branches (10), per_step_timeout_secs (30)."
                     }
                 },
                 "additionalProperties": false
             }),
-            instructions: Some("Generate and execute a deterministic multi-step script without per-step LLM round-trips. Use when you detect a repetitive pattern (same operation on 3+ pages/items). Workflow: navigate manually first to understand the pattern, then generate a script with for/while loops. Scripts support: tool calls, for/while/if/try-catch/parallel branches, yield checkpoints, and variable capture. Scripts run on a cloned browser tab. Returns a script_id; use wait_for_scripts to collect results. Provide either an inline `script` definition or `name` to load a previously saved script. You can also set `save_as` to persist the executed script and `limits` to override execution limits. Script definition must include: version (\"1.0\"), steps (array of nodes), and limits (max_steps, max_script_size_bytes, max_nesting_depth, max_parallel_branches). Each step is a node: ToolCall (invoke a tool), Assign (set variable), Collect (append to results), Yield (checkpoint), ForLoop/ForEach/WhileLoop (iteration), IfElse (conditional), TryCatch (error handling), or Parallel (concurrent branches)."),
+            instructions: Some("Generate and execute a deterministic multi-step script without per-step LLM round-trips. Use when you detect a repetitive pattern (same operation on 3+ pages/items). Workflow: navigate manually first to understand the pattern, then generate a script with for/while loops. Scripts support: tool calls, for/while/if/try-catch/parallel branches, yield checkpoints, and variable capture. Scripts run on a cloned browser tab. Returns a script_id; use wait_for_scripts to collect results. Provide either an inline `script` definition or `name` to load a previously saved script. You can also set `save_as` to save the script before it runs and `limits` to override execution limits. Script definition must include `schema_version: 1` and a non-empty `steps` array; the `script` parameter documents the node types and an example. A failing step (tool error or per-step timeout) ends the script unless it is inside a try_catch; a failed script still returns the data collected before the failure."),
         },
         ToolSpec {
             name: "script_status",

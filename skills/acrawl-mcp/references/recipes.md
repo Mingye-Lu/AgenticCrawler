@@ -65,7 +65,7 @@ If the list is lazy-loaded, `scroll(direction: "down", pixels: 800)` until the c
 
 Prove the extraction on one page first (recipe 2). Then move the loop into a script so the remaining pages cost zero LLM round-trips.
 
-Enumerate URLs as literals — `$var` substitution **cannot** build strings, so `"?page=$n"` will not interpolate (see `scripting.md`).
+Build URLs with `{{var}}` interpolation (`"?page={{n}}"`) or enumerate them as literals; a plain `"?page=$n"` is not interpolated (see `scripting.md`).
 
 ```json
 {

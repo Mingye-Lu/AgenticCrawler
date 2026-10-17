@@ -380,16 +380,11 @@ Full DSL in `references/scripting.md`.
 | Param | Type | Notes |
 |---|---|---|
 | `script` | object | Inline definition. **Must include `schema_version: 1`** (integer) and a non-empty `steps`. |
-| `name` | string | **Not functional over MCP** — see below. |
-| `save_as` | string | **Not functional over MCP** — see below. |
-| `limits` | object | All-or-nothing override, not a patch. Five fields are mandatory: `max_steps`, `max_timeout_secs`, `per_step_timeout_secs`, `max_output_bytes`, `max_parallel_branches`. |
+| `name` | string | Run a script saved in `~/.acrawl/scripts/<name>.json` (by `save_as` or `save_script`). |
+| `save_as` | string | Save the validated script under this name before running it. |
+| `limits` | object | Per-key override; omitted keys keep their defaults. Values are capped by the `settings.json` `script` limits. |
 
 Returns `{"script_id": "scr_XXXXXXXX"}` **immediately** — it does not block. Collect with `wait_for_scripts`.
-
-Two options in this schema are not wired up on the MCP path:
-
-- **`name`** is converted to an internal `{"__load_from_disk": "<name>"}` marker that only the agent loop resolves. Over MCP that marker reaches the script parser, which expects `schema_version`/`steps`, so the call fails. To run a saved script from MCP, `read_script` it and pass the JSON as `script`.
-- **`save_as`** is parsed into the task but never written to disk by any consumer, so nothing is persisted and `list_scripts` will not show it. Use `save_script` explicitly instead.
 
 Do **not** issue concurrent `run_script` calls for browser work: all scripts share the session's tab and will silently corrupt each other's results (see `references/scripting.md`).
 
