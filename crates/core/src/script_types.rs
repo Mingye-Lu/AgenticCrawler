@@ -47,26 +47,31 @@ pub struct ScriptResult {
     pub error: Option<String>,
 }
 
-/// Execution limits for a script.
+/// Execution limits for a script. Omitted fields take their default.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScriptLimits {
     pub max_steps: usize,
     pub max_timeout_secs: u64,
     pub max_output_bytes: usize,
-    #[serde(default = "default_max_script_size_bytes")]
     pub max_script_size_bytes: usize,
     pub max_parallel_branches: usize,
-    #[serde(default = "default_max_nesting_depth")]
     pub max_nesting_depth: usize,
     pub per_step_timeout_secs: u64,
 }
 
-const fn default_max_script_size_bytes() -> usize {
-    1_048_576
-}
-
-const fn default_max_nesting_depth() -> usize {
-    10
+impl Default for ScriptLimits {
+    fn default() -> Self {
+        Self {
+            max_steps: 200,
+            max_timeout_secs: 300,
+            max_output_bytes: 10_485_760,
+            max_script_size_bytes: 1_048_576,
+            max_parallel_branches: 10,
+            max_nesting_depth: 10,
+            per_step_timeout_secs: 30,
+        }
+    }
 }
 
 /// Parameters for waiting on script execution.
