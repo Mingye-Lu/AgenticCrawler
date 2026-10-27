@@ -5,13 +5,13 @@
 //! provider credentials. The script is validated before the browser launches,
 //! so a typo fails in milliseconds with exit code 2.
 
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use acrawl_core::{ScriptLimits, ScriptResult, ScriptStatus, ScriptTask};
-use agent::extension_bridge::{connect_timeout, extension_backend_selected, extension_paired};
+use agent::extension_bridge::{connect_timeout, extension_backend_selected};
 use agent::script_manager::{ScriptError, ScriptManager};
 use agent::ExtensionBridgeManager;
 use browser::{BrowserBackend, BrowserContext, PlaywrightBridge, SharedBridge};
@@ -22,8 +22,6 @@ use serde_json::Value;
 use crate::TOKIO_RUNTIME;
 
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(250);
-/// Matches the pairing code TTL, so an interactive user has the whole window.
-const PAIRING_WAIT: Duration = Duration::from_secs(180);
 
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_FAILED: i32 = 1;
@@ -101,7 +99,7 @@ async fn run_resolved(
     // Held until the script finishes: dropping the manager stops the bridge
     // server, and dropping the CloakBrowser bridge kills its subprocess.
     let mut bridge_manager = None;
-    let shared = match launch_browser(&mut bridge_manager, options.quiet).await {
+    let shared = match launch_browser(&mut bridge_manager).await {
         Ok(shared) => shared,
         Err(error) => {
             eprintln!("error: failed to launch browser: {error}");
@@ -216,7 +214,6 @@ fn prevalidate(script: &Value, limits: &ScriptLimits) -> Result<(), String> {
 /// back to `CloakBrowser`: an unreachable extension is an error.
 async fn launch_browser(
     bridge_manager: &mut Option<ExtensionBridgeManager>,
-    quiet: bool,
 ) -> Result<SharedBridge, String> {
     if !extension_backend_selected() {
         let bridge = PlaywrightBridge::new()
@@ -228,51 +225,20 @@ async fn launch_browser(
     }
 
     let manager = bridge_manager.insert(ExtensionBridgeManager::start_from_settings().await?);
-    if manager.is_connected() {
+    let timeout = connect_timeout();
+    if manager.is_connected() || manager.wait_for_connection(timeout).await {
         return Ok(manager.shared_bridge());
     }
-
-    if extension_paired() && manager.wait_for_connection(connect_timeout()).await {
-        return Ok(manager.shared_bridge());
-    }
-
-    // A pairing code only works while this process keeps the bridge server
-    // up, so offer one only when someone is at the terminal to enter it
-    // during the wait. A non-interactive run exits at once and would print a
-    // code that is already dead.
-    if !io::stderr().is_terminal() {
-        return Err(not_connected_error(manager.port()));
-    }
-
-    let pairing = manager.open_pairing("acrawl run", "run");
-    eprintln!(
-        "The acrawl Bridge extension is not connected (port {}). Make sure the browser with \
-         the extension is open; if it is not paired, open the extension popup and enter this \
-         code:\n  {pairing}",
-        manager.port()
-    );
-    eprintln!("Waiting up to {}s...", PAIRING_WAIT.as_secs());
-    if manager.wait_for_connection(PAIRING_WAIT).await {
-        if !quiet {
-            eprintln!("Extension connected.");
-        }
-        return Ok(manager.shared_bridge());
-    }
-    Err(format!(
-        "the acrawl Bridge extension did not connect within {}s. {USE_CLOAKBROWSER_HINT}",
-        PAIRING_WAIT.as_secs()
-    ))
+    Err(not_connected_error(timeout, manager.port()))
 }
 
-const USE_CLOAKBROWSER_HINT: &str =
-    "To use the bundled headless browser instead, run `acrawl config unset browser_backend`.";
-
-fn not_connected_error(port: u16) -> String {
+fn not_connected_error(timeout: Duration, port: u16) -> String {
     format!(
-        "extension mode is enabled but the acrawl Bridge extension is not connected on port \
-         {port}. Make sure the browser with the extension is open. To pair it, run this \
-         command from a terminal (it shows a pairing code and waits for it), or run \
-         `/extension` in the acrawl REPL. {USE_CLOAKBROWSER_HINT}"
+        "extension mode is enabled but the acrawl Bridge extension did not connect within \
+         {secs}s on port {port}. Make sure the browser with the extension installed is open \
+         and the extension's port matches, then retry. To use the bundled headless browser \
+         instead, run `acrawl config unset browser_backend`.",
+        secs = timeout.as_secs(),
     )
 }
 
@@ -649,18 +615,13 @@ mod tests {
     }
 
     #[test]
-    fn non_interactive_extension_error_points_to_a_live_pairing_flow() {
-        let message = not_connected_error(19876);
-        assert!(message.contains("19876"), "{message}");
-        assert!(message.contains("from a terminal"), "{message}");
-        assert!(message.contains("/extension"), "{message}");
+    fn extension_error_is_actionable_and_never_suggests_a_fallback() {
+        let message = not_connected_error(Duration::from_secs(3), 19876);
+        assert!(message.contains("within 3s on port 19876"), "{message}");
         assert!(
             message.contains("acrawl config unset browser_backend"),
             "{message}"
         );
-        // The process exits right after printing this, so any code in it
-        // would already be unusable.
-        assert!(!message.contains("Pairing code"), "{message}");
     }
 
     #[test]

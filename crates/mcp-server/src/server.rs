@@ -7,7 +7,7 @@ use acrawl_core::{
     ApiClient, ApiRequest, AssistantEvent, ContentBlock, ConversationMessage, MessageRole,
     RuntimeError, TokenUsage, ToolEffect, ToolSpec,
 };
-use agent::extension_bridge::{connect_timeout, extension_backend_selected, extension_paired};
+use agent::extension_bridge::{connect_timeout, extension_backend_selected};
 use agent::script_manager::ScriptManager;
 use agent::{mvp_tool_specs, ToolRegistry};
 use agent::{CrawlResult, CrawlerAgent, ExtensionBridgeManager};
@@ -179,19 +179,6 @@ fn send_error(id: Option<Value>, code: i32, message: String) {
     });
 }
 
-/// MCP client name from `initialize` (`clientInfo`), shown in the extension's
-/// pairing prompt so the user can tell which agent is asking.
-static CLIENT_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-fn remember_client(params: Option<&Value>) {
-    let info = params.and_then(|p| p.get("clientInfo"));
-    let field = |k: &str| info.and_then(|i| i.get(k)).and_then(Value::as_str);
-    if let Some(name) = field("name") {
-        let label = field("version").map_or_else(|| name.to_string(), |v| format!("{name} {v}"));
-        let _ = CLIENT_NAME.set(label);
-    }
-}
-
 fn initialize_response(id: Option<Value>) {
     let result = json!({
         "protocolVersion": PROTOCOL_VERSION,
@@ -315,33 +302,13 @@ fn ensure_extension_bridge(
         .ok_or_else(|| "extension bridge manager missing after start".to_string())?;
 
     if !manager.is_connected() {
-        let client = CLIENT_NAME.get().map_or("MCP client", String::as_str);
-
-        // An extension that has never paired cannot connect until the user
-        // enters a code, so waiting for it only delays showing the code.
-        if !extension_paired() {
-            let pairing = manager.open_pairing(client, "mcp");
-            return Err(format!(
-                "extension mode is enabled but no acrawl Bridge extension has paired yet \
-                 (port {port}). Open the extension popup and enter this code, then retry. \
-                 {pairing}. If the extension was already paired, retry in a moment. To use \
-                 the bundled headless browser instead, run `acrawl config unset \
-                 browser_backend`.",
-                port = manager.port(),
-            ));
-        }
-
         let timeout = connect_timeout();
         if !rt.block_on(manager.wait_for_connection(timeout)) {
-            // The paired flag can be stale (extension reinstalled or its storage
-            // cleared), so offer a code here too rather than dead-ending.
-            let pairing = manager.open_pairing(client, "mcp");
             return Err(format!(
                 "extension mode is enabled but the acrawl Bridge extension did not connect \
-                 within {secs}s on port {port}. Make sure the browser with the extension is \
-                 open, then retry. If the extension is not paired, open its popup and enter \
-                 this code. {pairing}. To use the bundled headless browser instead, run \
-                 `acrawl config unset browser_backend`.",
+                 within {secs}s on port {port}. Make sure the browser with the extension \
+                 installed is open and the extension's port matches, then retry. To use the \
+                 bundled headless browser instead, run `acrawl config unset browser_backend`.",
                 secs = timeout.as_secs(),
                 port = manager.port(),
             ));
@@ -1269,10 +1236,7 @@ pub fn run_mcp_server() {
         }
 
         match request.method.as_str() {
-            "initialize" => {
-                remember_client(request.params.as_ref());
-                initialize_response(request.id);
-            }
+            "initialize" => initialize_response(request.id),
             "notifications/initialized" => {}
             "tools/list" => tools_list_response(request.id),
             "tools/call" => {
@@ -1350,33 +1314,15 @@ mod tests {
     }
 
     #[test]
-    fn unpaired_extension_gets_pairing_code_without_waiting() {
-        let _guard = env_lock();
-        // A 600s timeout proves the unpaired path does not wait it out.
-        let started = std::time::Instant::now();
-        let error = extension_connect_error(
-            "ext_unpaired",
-            r#"{"browser_backend":"extension","extension_bridge_port":0,"extension_bridge_connect_timeout_secs":600}"#,
-        );
-
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(30),
-            "unpaired extension must not wait for the connect timeout"
-        );
-        assert!(error.contains("paired yet"), "{error}");
-        assert!(error.contains("Pairing code"), "{error}");
-    }
-
-    #[test]
-    fn paired_extension_waits_then_reports_not_connected() {
+    fn absent_extension_waits_then_reports_not_connected() {
         let _guard = env_lock();
         let error = extension_connect_error(
-            "ext_paired",
-            r#"{"browser_backend":"extension","extension_paired":true,"extension_bridge_port":0,"extension_bridge_connect_timeout_secs":0}"#,
+            "ext_absent",
+            r#"{"browser_backend":"extension","extension_bridge_port":0,"extension_bridge_connect_timeout_secs":0}"#,
         );
 
         assert!(error.contains("did not connect"), "{error}");
-        assert!(error.contains("Pairing code"), "{error}");
+        assert!(!error.to_lowercase().contains("pair"), "{error}");
     }
 
     #[test]

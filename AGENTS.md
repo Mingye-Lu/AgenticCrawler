@@ -68,25 +68,24 @@ The CloakBrowser bridge is notable: it is a **single embedded Node script** laun
 
 An alternative to CloakBrowser: a Chrome MV3 extension that lets acrawl drive the user's real browser via CDP (Chrome DevTools Protocol). The system has three layers:
 
-1. **`WsBridgeServer`** (`crates/browser/src/ws_server/`) — A tokio TCP server listening on `127.0.0.1:<port>` (default 19876). Handles `/health` (reachability check, no auth info) and `/bridge` (WebSocket upgrade with token auth + origin validation). Single-client gate: only one extension connection at a time.
+1. **`WsBridgeServer`** (`crates/browser/src/ws_server/`) — A tokio TCP server listening on `127.0.0.1:<port>` (default 19876). Handles `/health` (reachability check, no auth info) and `/bridge` (WebSocket upgrade, accepted only from a browser-extension `Origin`). Single-client gate: only one extension connection at a time.
 2. **`ExtensionBridge`** (`crates/browser/src/extension.rs`) — Implements the `BrowserBackend` trait. Sends `{id, action, payload}` JSON commands over the WebSocket and awaits `{id, ok, result/error}` responses. Fails fast if no client is connected (checks `watch::Receiver<bool>`).
-3. **`ExtensionBridgeManager`** (`crates/agent/src/extension_bridge.rs`) — Settings-aware owner of the activation sequence: resolve port/token, start `WsBridgeServer`, `wait_for_connection`, then hand out a `SharedBridge`. Lives in `agent` because that is the only crate depending on both `browser` and `runtime`, so both the TUI/CLI (`crates/ui`) and the MCP server can share it.
+3. **`ExtensionBridgeManager`** (`crates/agent/src/extension_bridge.rs`) — Settings-aware owner of the activation sequence: resolve the port, start `WsBridgeServer`, `wait_for_connection`, then hand out a `SharedBridge`. Lives in `agent` because that is the only crate depending on both `browser` and `runtime`, so both the TUI/CLI (`crates/ui`) and the MCP server can share it.
 4. **Chrome Extension** (`extension/`) — MV3 service worker (`background.js`) that connects to the bridge server, dispatches CDP commands to Chrome tabs, and returns results. Command handlers live in `extension/commands/*.js`.
 
 Key design decisions:
 - `BrowserBackend` trait (`browser_backend.rs`) is the abstraction — both `PlaywrightBridge` and `ExtensionBridge` implement it. Error type is `BridgeError` (not backend-specific).
 - Bridge server auto-starts only when `settings.browser_backend == "extension"`. In the TUI/CLI, mode activation (`extension_mode`) is event-driven: it flips only when the extension actually connects, not when the server starts.
-- Pairing hands the token to the extension: `open_pairing` mints a 6-digit code (3 min TTL) shown only on the acrawl side (REPL `/extension`, or the MCP connect-failure error, which names the MCP client from `initialize.clientInfo`). The extension popup posts it to `POST /pair`; `GET /pair/info` returns host info but never the code. Five wrong codes burn the offer. Keep the code flowing acrawl → user → extension: an approve-only click on the extension side would let any local process approve itself.
-- Token auth uses a 256-bit hex token with constant-time comparison. The token is generated once, persisted to `settings.extension_bridge_token`, and reused on later starts so the copy stored in the extension stays valid. The `/health` endpoint does NOT expose the token.
-- Origin validation requires valid 32-char Chrome/Edge extension ID format.
-- `/extension` starts the bridge server and shows the token. `/cloakbrowser` tears down extension mode and switches back.
+- No pairing and no token: the extension lives in the user's own browser, and installing it is the consent for acrawl to drive it. The extension simply dials `/bridge` and reconnects on its own.
+- The `Origin` check is the only gate and is mandatory: it must be `chrome-extension://` or `edge-extension://` with a 32-char lowercase ID, and a missing `Origin` is refused. This is what stops ordinary web pages (which can open `ws://127.0.0.1` too) from connecting; do not relax it. Failed upgrades count toward the per-IP rate limit.
+- `/extension` starts the bridge server. `/cloakbrowser` tears down extension mode and switches back.
 - `extension/` at the repo root is the Chrome extension source. It has its own `manifest.json`, build scripts, and `PRIVACY.md`.
 
 ### Extension mode in the MCP server
 
 `run_mcp_server` honours `settings.browser_backend` for all three tool families. Backend selection funnels through two helpers in `crates/mcp-server/src/server.rs`:
 
-- `ensure_extension_bridge` — lazily starts `ExtensionBridgeManager`, waits up to `settings.extension_bridge_connect_timeout_secs` (default 3) for an already-paired extension to connect, and returns a `SharedBridge`. If no extension has ever paired (`settings.extension_paired` unset) it skips the wait and returns the pairing code at once. The flag is set on the first authenticated WebSocket connection (via `WsBridgeServer::authenticated`, a `Notify`, so a quick connect/disconnect is not lost) and cleared when `extension_bridge_token` is set to a different value or unset. The wait is only 3s because the extension caps its reconnect backoff at 2s (`MAX_RECONNECT_DELAY_MS` in `extension/background.js`); keep the two aligned. `open_pairing` reuses a live offer, so concurrent unpaired calls all show the same valid code.
+- `ensure_extension_bridge` — lazily starts `ExtensionBridgeManager`, waits up to `settings.extension_bridge_connect_timeout_secs` (default 3) for the extension to connect, and returns a `SharedBridge`. The wait is only 3s because the extension caps its reconnect backoff at 2s (`MAX_RECONNECT_DELAY_MS` in `extension/background.js`); keep the two aligned.
 - `ensure_browser_context` — picks the backend and publishes a `BrowserContext`. The 32 direct browser tools and the 7 script tools go through this; `run_goal` instead receives the `SharedBridge` and calls `set_shared_bridge` + `set_extension_mode(true)` on its own `CrawlerAgent`.
 
 Two invariants worth preserving:

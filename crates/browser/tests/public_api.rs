@@ -297,20 +297,6 @@ fn browser_state_serialization_roundtrip() {
 }
 
 #[test]
-fn generate_bridge_token_format() {
-    let token = browser::generate_bridge_token();
-    assert_eq!(token.len(), 64);
-    assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
-}
-
-#[test]
-fn generate_bridge_token_uniqueness() {
-    let t1 = browser::generate_bridge_token();
-    let t2 = browser::generate_bridge_token();
-    assert_ne!(t1, t2);
-}
-
-#[test]
 fn ws_bridge_error_display() {
     let bind_err = WsBridgeError::Bind(std::io::Error::new(
         std::io::ErrorKind::AddrInUse,

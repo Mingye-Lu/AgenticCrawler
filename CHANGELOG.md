@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- **Extension pairing and the bridge token.** The acrawl Bridge extension runs in your own browser, and installing it is the permission for acrawl to drive it, so there is no longer a pairing code to type. `/extension` and the MCP connect error no longer show a code, the `/pair` and `/pair/info` endpoints are gone, and the popup no longer has a pairing panel or PAIR badge. The `extension_bridge_token` and `extension_paired` settings are dropped (an existing `settings.json` still loads; the keys are removed on its next save), and the extension deletes the token it stored on its next install or update.
+
+### Changed
+
+- **The bridge accepts a WebSocket only from a browser extension `Origin`.** With no token, the Origin check is what keeps ordinary web pages, which can also open `ws://127.0.0.1`, from connecting; requests without an `Origin` header are now refused. An older extension that still sends `?token=` keeps working.
+- **The MCP server always waits `extension_bridge_connect_timeout_secs` (default 3) for the extension** before reporting that it did not connect, since there is no "never paired" state to skip the wait for.
+- **The updated extension needs this acrawl version or newer**: it no longer sends a token, which an older acrawl rejects.
+
 ## [0.16.0] - 2026-10-12
 
 ### Added

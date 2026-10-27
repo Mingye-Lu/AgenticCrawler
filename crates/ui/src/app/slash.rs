@@ -105,12 +105,11 @@ impl LiveCli {
                     println!("{status}");
                 } else {
                     match self.start_extension_server() {
-                        Ok((_, port)) => {
-                            let pairing = self.extension_pairing_line();
+                        Ok(port) => {
                             println!(
                                 "Extension bridge\n  \
-                                 Status           server started (port {port})\n  \
-                                 {pairing}"
+                                 Status           server started (port {port}); \
+                                 waiting for the acrawl Bridge extension to connect"
                             );
                         }
                         Err(e) => eprintln!("{e}"),
@@ -192,26 +191,13 @@ impl LiveCli {
         } else {
             "waiting for browser"
         };
-        let pairing = if server.is_connected() {
-            String::new()
-        } else {
-            format!("\n  {}", server.open_pairing("acrawl REPL", "repl"))
-        };
         Some(format!(
             "Extension mode\n  \
-             Status           {status} (port {port}){pairing}"
+             Status           {status} (port {port})"
         ))
     }
 
-    /// Current pairing code for the running bridge (a live one is reused), ready to print.
-    pub fn extension_pairing_line(&self) -> String {
-        self.ws_bridge_server
-            .as_ref()
-            .map(|s| s.open_pairing("acrawl REPL", "repl"))
-            .unwrap_or_default()
-    }
-
-    pub fn start_extension_server(&mut self) -> Result<(String, u16), String> {
+    pub fn start_extension_server(&mut self) -> Result<u16, String> {
         if self.ws_bridge_server.is_some() {
             self.ws_bridge_server = None;
             self.runtime.tool_executor_mut().clear_extension_bridge();
@@ -236,13 +222,12 @@ impl LiveCli {
         })
         .map_err(|e| format!("Extension bridge server\n  Error            {e}"))?;
 
-        let token = server.token().to_string();
         let port = server.port();
 
         self.pending_extension_state = saved_state;
         self.ws_bridge_server = Some(server);
 
-        Ok((token, port))
+        Ok(port)
     }
 
     pub(super) fn boot_bridge_server_if_needed(&mut self) {

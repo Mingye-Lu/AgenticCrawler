@@ -133,10 +133,6 @@ const KEY_SPECS: &[KeySpec] = &[
         kind: ValueKind::U32,
     },
     KeySpec {
-        key: "extension_bridge_token",
-        kind: ValueKind::String,
-    },
-    KeySpec {
         key: "extension_bridge_port",
         kind: ValueKind::U16,
     },
@@ -470,14 +466,6 @@ fn apply_set(settings: &mut Settings, spec: &KeySpec, value: &str) -> Result<(),
         ("fork_wait_timeout_secs", ValueKind::U32) => {
             settings.fork_wait_timeout_secs = Some(parse_u32(spec.key, value)?);
         }
-        ("extension_bridge_token", ValueKind::String) => {
-            // The extension keeps the token it was paired with, so a different
-            // token means it is no longer paired.
-            if settings.extension_bridge_token.as_deref() != Some(value) {
-                settings.extension_paired = None;
-            }
-            settings.extension_bridge_token = Some(value.to_string());
-        }
         ("extension_bridge_port", ValueKind::U16) => {
             settings.extension_bridge_port = Some(parse_u16(spec.key, value)?);
         }
@@ -615,11 +603,6 @@ fn apply_unset(settings: &mut Settings, key: &str) {
         "max_total_agents" => settings.max_total_agents = None,
         "fork_child_max_steps" => settings.fork_child_max_steps = None,
         "fork_wait_timeout_secs" => settings.fork_wait_timeout_secs = None,
-        "extension_bridge_token" => {
-            // A new token is minted on next start; the extension holds the old one.
-            settings.extension_bridge_token = None;
-            settings.extension_paired = None;
-        }
         "extension_bridge_port" => settings.extension_bridge_port = None,
         "extension_bridge_connect_timeout_secs" => {
             settings.extension_bridge_connect_timeout_secs = None;
@@ -814,7 +797,6 @@ fn stored_value(settings: &Settings, key: &str) -> Value {
         "max_total_agents" => json!(settings.max_total_agents),
         "fork_child_max_steps" => json!(settings.fork_child_max_steps),
         "fork_wait_timeout_secs" => json!(settings.fork_wait_timeout_secs),
-        "extension_bridge_token" => json!(settings.extension_bridge_token),
         "extension_bridge_port" => json!(settings.extension_bridge_port),
         "extension_bridge_connect_timeout_secs" => {
             json!(settings.extension_bridge_connect_timeout_secs)
@@ -1000,7 +982,6 @@ fn effective_value(settings: &Settings, key: &str) -> Value {
         "max_total_agents" => json!(settings_get_max_total_agents(settings)),
         "fork_child_max_steps" => json!(settings_get_fork_child_max_steps(settings)),
         "fork_wait_timeout_secs" => json!(settings_get_fork_wait_timeout_secs(settings)),
-        "extension_bridge_token" => json!(settings.extension_bridge_token.clone()),
         "extension_bridge_port" => json!(settings.extension_bridge_port.unwrap_or(19_876)),
         "extension_bridge_connect_timeout_secs" => {
             json!(settings.extension_bridge_connect_timeout_secs.unwrap_or(3))
@@ -1099,9 +1080,7 @@ fn effective_settings(settings: &Settings) -> Settings {
         max_total_agents: Some(settings_get_max_total_agents(settings)),
         fork_child_max_steps: Some(settings_get_fork_child_max_steps(settings)),
         fork_wait_timeout_secs: Some(settings_get_fork_wait_timeout_secs(settings)),
-        extension_bridge_token: settings.extension_bridge_token.clone(),
         extension_bridge_port: Some(settings.extension_bridge_port.unwrap_or(19_876)),
-        extension_paired: settings.extension_paired,
         extension_bridge_connect_timeout_secs: Some(
             settings.extension_bridge_connect_timeout_secs.unwrap_or(3),
         ),
@@ -1294,33 +1273,6 @@ mod tests {
         let settings = load_settings();
         assert_eq!(settings.output_dir.as_deref(), Some("true"));
 
-        cleanup_temp_dir(&temp_dir);
-    }
-
-    #[test]
-    fn changing_the_bridge_token_clears_the_paired_state() {
-        let _lock = test_env_lock();
-        let temp_dir = setup_temp_dir();
-        std::env::set_var("ACRAWL_CONFIG_HOME", &temp_dir);
-
-        config_set("extension_bridge_token", "token-a").expect("set token");
-        crate::update_settings(|s| s.extension_paired = Some(true)).expect("mark paired");
-
-        config_set("extension_bridge_token", "token-a").expect("set same token");
-        assert_eq!(
-            load_settings().extension_paired,
-            Some(true),
-            "re-setting the same token keeps the pairing"
-        );
-
-        config_set("extension_bridge_token", "token-b").expect("rotate token");
-        assert_eq!(load_settings().extension_paired, None);
-
-        crate::update_settings(|s| s.extension_paired = Some(true)).expect("mark paired");
-        config_unset("extension_bridge_token").expect("unset token");
-        assert_eq!(load_settings().extension_paired, None);
-
-        std::env::remove_var("ACRAWL_CONFIG_HOME");
         cleanup_temp_dir(&temp_dir);
     }
 

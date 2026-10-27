@@ -27,6 +27,6 @@ pub use playwright::{BridgeError, BrowserState, PageInfo, PlaywrightBridge, Shar
 pub use ref_map::{parse_ref, RefEntry, RefMap};
 pub use testing::NopBridge;
 pub use ws_server::{
-    bridge_file_path, generate_bridge_token, read_bridge_file, BridgeCommand, BridgeFileInfo,
-    BridgeResponse, PairingHost, PairingOffer, WsBridgeError, WsBridgeServer, PAIRING_TTL,
+    bridge_file_path, read_bridge_file, BridgeCommand, BridgeFileInfo, BridgeResponse,
+    WsBridgeError, WsBridgeServer,
 };

@@ -2,17 +2,14 @@
 //!
 //! The interactive UI and the MCP server both need the same three steps to put
 //! the extension backend into service: start [`WsBridgeServer`] on the
-//! configured port/token, wait for the extension to dial in, then hand out a
+//! configured port, wait for the extension to dial in, then hand out a
 //! [`SharedBridge`]. This module owns them so neither front end reimplements it.
 
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use browser::{
-    generate_bridge_token, read_bridge_file, BrowserBackend, ExtensionBridge, PairingHost,
-    SharedBridge, WsBridgeServer,
-};
-use tokio::sync::{watch, Notify};
+use browser::{read_bridge_file, BrowserBackend, ExtensionBridge, SharedBridge, WsBridgeServer};
+use tokio::sync::watch;
 
 pub const EXTENSION_BACKEND: &str = "extension";
 pub const DEFAULT_BRIDGE_PORT: u16 = 19876;
@@ -23,59 +20,11 @@ pub fn extension_backend_selected() -> bool {
     runtime::load_settings().browser_backend.as_deref() == Some(EXTENSION_BACKEND)
 }
 
-/// Generates and persists an `extension_bridge_token` if one is not already
-/// set. Called when the user enables the extension backend via
-/// `acrawl config set browser_backend extension`, so that a subsequent
-/// `acrawl config get extension_bridge_token` returns a usable token instead of
-/// `null` — the token would otherwise only be minted on the first browser tool
-/// call, which is the very call that needs the token to authenticate.
 #[must_use]
-pub fn ensure_bridge_token() -> String {
-    let (_, token) = resolve_bridge_config();
-    token
-}
-
-/// Generates and persists a token on first use so the copy already stored in
-/// the extension stays valid across restarts.
-fn resolve_bridge_config() -> (u16, String) {
-    let settings = runtime::load_settings();
-    let token = settings
-        .extension_bridge_token
-        .unwrap_or_else(generate_bridge_token);
-    let _ = runtime::update_settings(|s| {
-        s.extension_bridge_token = Some(token.clone());
-    });
-    let port = settings
+pub fn bridge_port() -> u16 {
+    runtime::load_settings()
         .extension_bridge_port
-        .unwrap_or(DEFAULT_BRIDGE_PORT);
-    (port, token)
-}
-
-/// Whether an extension has ever authenticated against this bridge, i.e. holds
-/// the token. When false there is nothing to wait for: the extension cannot
-/// connect until the user enters a pairing code.
-#[must_use]
-pub fn extension_paired() -> bool {
-    runtime::load_settings().extension_paired == Some(true)
-}
-
-/// A WebSocket upgrade only succeeds with the token, so the first authenticated
-/// connection proves the extension is paired. Persist that so later processes
-/// can tell "never paired" from "paired but not reachable right now".
-fn persist_paired_on_authentication(authenticated: Arc<Notify>) {
-    mark_on_first_authentication(authenticated, || {
-        let _ = runtime::update_settings(|s| s.extension_paired = Some(true));
-    });
-}
-
-/// Runs `mark` once, after the first authentication. `Notify` keeps a signal
-/// sent before the task first polls, so a connection that opens and closes
-/// quickly is still recorded.
-fn mark_on_first_authentication(authenticated: Arc<Notify>, mark: impl FnOnce() + Send + 'static) {
-    tokio::spawn(async move {
-        authenticated.notified().await;
-        mark();
-    });
+        .unwrap_or(DEFAULT_BRIDGE_PORT)
 }
 
 #[must_use]
@@ -100,7 +49,6 @@ fn describe_bind_conflict(port: u16, error: &str) -> String {
 
 pub struct ExtensionBridgeManager {
     server: WsBridgeServer,
-    token: String,
     /// Lazily-created [`SharedBridge`], cached so that every consumer (direct
     /// tools, script execution, and `run_goal`) shares a single
     /// [`ExtensionBridge`] — and therefore a single monotonically-increasing
@@ -111,23 +59,18 @@ pub struct ExtensionBridgeManager {
 }
 
 impl ExtensionBridgeManager {
-    pub async fn start(port: u16, token: String) -> Result<Self, String> {
-        match WsBridgeServer::start(port, token.clone()).await {
-            Ok(server) => {
-                persist_paired_on_authentication(server.authenticated());
-                Ok(Self {
-                    server,
-                    token,
-                    shared_bridge: OnceLock::new(),
-                })
-            }
+    pub async fn start(port: u16) -> Result<Self, String> {
+        match WsBridgeServer::start(port).await {
+            Ok(server) => Ok(Self {
+                server,
+                shared_bridge: OnceLock::new(),
+            }),
             Err(error) => Err(describe_bind_conflict(port, &error.to_string())),
         }
     }
 
     pub async fn start_from_settings() -> Result<Self, String> {
-        let (port, token) = resolve_bridge_config();
-        Self::start(port, token).await
+        Self::start(bridge_port()).await
     }
 
     #[must_use]
@@ -136,22 +79,8 @@ impl ExtensionBridgeManager {
     }
 
     #[must_use]
-    pub fn token(&self) -> &str {
-        &self.token
-    }
-
-    #[must_use]
     pub fn is_connected(&self) -> bool {
         self.server.is_client_connected()
-    }
-
-    /// Opens a pairing window and returns the line to show the user. `client`
-    /// names whoever is driving acrawl (e.g. the MCP client), `mode` is
-    /// `repl` or `mcp`.
-    #[must_use]
-    pub fn open_pairing(&self, client: &str, mode: &str) -> String {
-        let offer = self.server.open_pairing(PairingHost::current(client, mode));
-        format!("Pairing code    {}", offer.describe())
     }
 
     #[must_use]
@@ -201,24 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn default_connect_timeout_is_short_grace_for_paired_extension() {
+    fn default_connect_timeout_is_short_grace_for_extension_reconnect() {
         assert_eq!(DEFAULT_CONNECT_TIMEOUT_SECS, 3);
-    }
-
-    #[tokio::test]
-    async fn authentication_before_the_task_polls_is_not_lost() {
-        let authenticated = Arc::new(Notify::new());
-        // The extension authenticated and dropped again before anyone was waiting.
-        authenticated.notify_one();
-
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-        mark_on_first_authentication(authenticated, move || {
-            let _ = done_tx.send(());
-        });
-
-        tokio::time::timeout(Duration::from_secs(5), done_rx)
-            .await
-            .expect("mark callback should fire for an earlier authentication")
-            .expect("callback sent");
     }
 }
