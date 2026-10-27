@@ -5,8 +5,8 @@
 ## Set it up
 
 1. Install **acrawl Bridge** from the [Chrome Web Store](https://chromewebstore.google.com/detail/acrawl-bridge/nbkpmfofkdjcgkncmpicbdkjmddllcep). The same listing works in Edge, Brave, Arc, Vivaldi and Opera.
-2. In the acrawl terminal UI, run `/extension`. It starts the bridge and shows a pairing code.
-3. Type the code into the extension popup. You only pair once.
+2. In the acrawl terminal UI, run `/extension`. It starts the bridge, and the extension connects on its own within a couple of seconds; its badge turns green.
+3. That's it. There's no pairing code or token: installing the extension is the permission for acrawl to drive your browser, and the bridge only accepts connections from a browser extension. acrawl remembers extension mode, so later sessions reconnect without running `/extension` again.
 
 To install an unreleased build without the store, see the [extension README](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/extension/README.md#manual-install-from-release).
 
