@@ -322,6 +322,26 @@ If `fit_markdown` prunes all content (empty result), the tool automatically fall
 | `script_status` | Check execution status of a running script without blocking. |
 | `cancel_script` | Abort a running script immediately. |
 
+#### Running saved scripts without an agent
+
+A saved script needs a browser but no LLM, so `acrawl run` replays it from a shell, cron job, or CI step with no provider credentials:
+
+```bash
+acrawl run mideast_headlines                                   # saved name → JSON array on stdout
+acrawl run ./scripts/news.json --format jsonl --flatten -o headlines.jsonl
+acrawl run mideast_headlines --format result                   # full result: status, error, yielded data
+```
+
+| Option | Description |
+|--------|-------------|
+| `--format json\|jsonl\|result` | `json` (default) prints `extracted_data` as one array; `jsonl` prints one item per line; `result` prints the full result envelope. |
+| `--output, -o PATH` | Write to a file instead of stdout (written atomically, so readers never see a partial file). |
+| `--flatten` | Unwrap one level of arrays, e.g. one `collect` per page becomes one record per item. |
+| `--max-steps N`, `--timeout SECS`, `--step-timeout SECS` | Per-run limits, capped by the `script` section of `settings.json`. |
+| `--quiet, -q` | Suppress progress (`yield` values) and the summary on stderr. |
+
+Exit codes: `0` completed, `1` script failed or the browser could not start, `2` unknown script or invalid script (checked before the browser launches), `130` interrupted with Ctrl+C. Partial data is still written on `1` and `130`. The browser backend follows `browser_backend`, so extension mode replays the script in your own logged-in browser.
+
 #### page_state Reference
 
 Interaction tools (`click`, `click_at`, `fill_form`, `hover`, `press_key`, `go_back`, `scroll`, `switch_tab`, `select_option`, `set_device`, `refresh`) all return a `page_state` object. There are two variants:

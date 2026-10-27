@@ -15,6 +15,7 @@ Every example here was executed against a live server and its output recorded. W
 - [The 17 scriptable tools](#the-17-scriptable-tools)
 - [Limits](#limits)
 - [Concurrency is unsafe over MCP](#concurrency-is-unsafe-over-mcp)
+- [Replaying a saved script without an agent](#replaying-a-saved-script-without-an-agent)
 - [Verified examples](#verified-examples)
 
 ---
@@ -329,6 +330,18 @@ No error, no warning — just data from the wrong URL. A test using two pages wi
 - **Sequential scripts.** Run one, `wait_for_scripts`, then run the next. Slower, correct.
 - **`run_goal` for genuine parallelism.** Its internal sub-agents each get their own tab, and a URL-claiming registry stops two children crawling the same page.
 - **Batch inside one script.** One `execute_js` returning an array beats many round-trips, and `for_each` over enumerated URLs stays on one tab by design — which is safe precisely because it's sequential.
+
+---
+
+## Replaying a saved script without an agent
+
+Once a script works, save it (`save_script`, or `run_script` with `save_as`) and hand the user a shell command instead of asking them to come back to you for every refresh. `acrawl run` needs a browser but no LLM or credentials, so it fits cron, CI, or any other program:
+
+```bash
+acrawl run mideast_headlines --format jsonl --flatten --output headlines.jsonl
+```
+
+`--format` is `json` (default, the `extracted_data` array), `jsonl` (one item per line), or `result` (the full result with `status` and `error`). It exits `0` on success, `1` on script failure (partial data still written), `2` if the script is missing or invalid, and `130` on Ctrl+C. Run `acrawl --help` for the limit flags.
 
 ---
 

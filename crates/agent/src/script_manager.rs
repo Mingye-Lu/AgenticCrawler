@@ -243,7 +243,11 @@ impl ScriptManager {
         self.settings.resolved_scripts_dir()
     }
 
-    fn effective_limits(&self, requested: &ScriptLimits) -> ScriptLimits {
+    /// Caps each requested limit at the configured `script` setting, falling
+    /// back to the defaults. Front ends validate with this before launching a
+    /// browser so they reject exactly what `spawn_script` would.
+    #[must_use]
+    pub fn effective_limits(&self, requested: &ScriptLimits) -> ScriptLimits {
         let defaults = ScriptSettings::default();
 
         ScriptLimits {

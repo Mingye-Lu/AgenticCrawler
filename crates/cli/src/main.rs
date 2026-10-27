@@ -12,7 +12,7 @@ use acrawl_ui::{
         initial_model_from_credentials, run_auth_cli, run_resume_command, AllowedToolSet, LiveCli,
     },
     error::CliError,
-    AuthFlags, CliOutputFormat, ConfigAction, TOKIO_RUNTIME,
+    AuthFlags, CliOutputFormat, ConfigAction, RunFormat, RunOptions, TOKIO_RUNTIME,
 };
 use agent::mvp_tool_specs;
 use commands::{render_slash_command_help, resume_supported_slash_commands, SlashCommand};
@@ -110,6 +110,7 @@ fn run(action: CliAction) -> Result<(), Box<dyn std::error::Error>> {
         CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
         CliAction::InstallBrowser => install_browser()?,
         CliAction::Mcp => mcp_server::run_mcp_server(),
+        CliAction::Run(options) => process::exit(acrawl_ui::run_script_cli(&options)),
         CliAction::McpInstall => {
             if !std::io::stdin().is_terminal() {
                 eprintln!(
@@ -239,6 +240,7 @@ enum CliAction {
     },
     InstallBrowser,
     Mcp,
+    Run(RunOptions),
     McpInstall,
     McpUninstall,
     ConfigGet {
@@ -405,6 +407,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         }),
         "install-browser" => Ok(CliAction::InstallBrowser),
         "mcp" => parse_mcp_args(&rest[1..]),
+        "run" => parse_run_args(&rest[1..]),
         "prompt" => {
             let prompt = rest[1..].join(" ");
             if prompt.trim().is_empty() {
@@ -846,6 +849,103 @@ fn parse_mcp_configured_args(args: &[String], install: bool) -> Result<CliAction
             skill,
         }
     })
+}
+
+fn parse_run_args(args: &[String]) -> Result<CliAction, String> {
+    let mut script = None;
+    let mut format = RunFormat::Json;
+    let mut output = None;
+    let mut flatten = false;
+    let mut quiet = false;
+    let mut max_steps = None;
+    let mut timeout_secs = None;
+    let mut step_timeout_secs = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        let arg = args[index].as_str();
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
+            _ => (arg, None),
+        };
+        let mut value = || take_flag_value(args, &mut index, flag, inline.as_deref());
+        match flag {
+            "--format" => format = RunFormat::parse(&value()?)?,
+            "--output" | "-o" => output = Some(PathBuf::from(value()?)),
+            "--max-steps" => max_steps = Some(parse_count(flag, &value()?)?),
+            "--timeout" => timeout_secs = Some(parse_secs(flag, &value()?)?),
+            "--step-timeout" => step_timeout_secs = Some(parse_secs(flag, &value()?)?),
+            "--flatten" => {
+                flatten = true;
+                index += 1;
+            }
+            "--quiet" | "-q" => {
+                quiet = true;
+                index += 1;
+            }
+            other if other.starts_with('-') => {
+                return Err(format!("unknown run option: {other}"));
+            }
+            other => {
+                if script.is_some() {
+                    return Err(format!(
+                        "`acrawl run` takes one script, got an extra argument: {other}"
+                    ));
+                }
+                script = Some(other.to_string());
+                index += 1;
+            }
+        }
+    }
+
+    let script = script.ok_or_else(|| {
+        "usage: acrawl run <NAME|FILE.json> [--format json|jsonl|result] [--output PATH]"
+            .to_string()
+    })?;
+    Ok(CliAction::Run(RunOptions {
+        script,
+        format,
+        output,
+        flatten,
+        quiet,
+        max_steps,
+        timeout_secs,
+        step_timeout_secs,
+    }))
+}
+
+/// Reads a flag's value from `--flag=value` or the following argument.
+fn take_flag_value(
+    args: &[String],
+    index: &mut usize,
+    flag: &str,
+    inline: Option<&str>,
+) -> Result<String, String> {
+    if let Some(value) = inline {
+        *index += 1;
+        return Ok(value.to_string());
+    }
+    let value = required_flag_value(args, *index, flag)?.clone();
+    *index += 2;
+    Ok(value)
+}
+
+fn parse_count(flag: &str, value: &str) -> Result<usize, String> {
+    match value.parse::<usize>() {
+        Ok(count) if count > 0 => Ok(count),
+        _ => Err(format!(
+            "invalid value for {flag}: {value} (expected a positive integer)"
+        )),
+    }
+}
+
+fn parse_secs(flag: &str, value: &str) -> Result<u64, String> {
+    match value.parse::<u64>() {
+        Ok(secs) if secs > 0 => Ok(secs),
+        _ => Err(format!(
+            "invalid value for {flag}: {value} (expected a positive number of seconds)"
+        )),
+    }
 }
 
 fn required_flag_value<'a>(
@@ -1360,6 +1460,18 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Remove acrawl from IDE MCP configurations (interactive)"
     )?;
+    writeln!(
+        out,
+        "  acrawl run <NAME|FILE.json> [--format json|jsonl|result] [--output PATH] [--flatten]"
+    )?;
+    writeln!(
+        out,
+        "             [--max-steps N] [--timeout SECS] [--step-timeout SECS] [--quiet]"
+    )?;
+    writeln!(
+        out,
+        "      Run a saved script (or script file) without an LLM; data goes to stdout or --output"
+    )?;
     writeln!(out, "  acrawl install-browser")?;
     writeln!(
         out,
@@ -1418,6 +1530,10 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "  3  State check failed (e.g. --check provider not configured)"
     )?;
+    writeln!(
+        out,
+        "  130  `acrawl run` interrupted (partial data is still written)"
+    )?;
     writeln!(out)?;
     writeln!(out, "Examples:")?;
     writeln!(
@@ -1435,6 +1551,10 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     writeln!(
         out,
         "  acrawl --resume session.json /status /compact /export notes.txt"
+    )?;
+    writeln!(
+        out,
+        "  acrawl run mideast_headlines --format jsonl --flatten --output headlines.jsonl"
     )?;
     Ok(())
 }
@@ -2217,5 +2337,80 @@ mod tests {
                 CliAction::McpListClients { json: false }
             );
         });
+    }
+
+    fn run_args(args: &[&str]) -> Result<CliAction, String> {
+        let mut full = vec!["run".to_string()];
+        full.extend(args.iter().map(ToString::to_string));
+        parse_args(&full)
+    }
+
+    #[test]
+    fn parses_run_with_defaults() {
+        assert_eq!(
+            run_args(&["mideast_headlines"]).expect("run should parse"),
+            CliAction::Run(RunOptions {
+                script: "mideast_headlines".to_string(),
+                format: RunFormat::Json,
+                output: None,
+                flatten: false,
+                quiet: false,
+                max_steps: None,
+                timeout_secs: None,
+                step_timeout_secs: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parses_run_with_all_options_in_both_flag_styles() {
+        assert_eq!(
+            run_args(&[
+                "--format=jsonl",
+                "scripts/news.json",
+                "-o",
+                "out.jsonl",
+                "--flatten",
+                "-q",
+                "--max-steps",
+                "50",
+                "--timeout=120",
+                "--step-timeout",
+                "10",
+            ])
+            .expect("run should parse"),
+            CliAction::Run(RunOptions {
+                script: "scripts/news.json".to_string(),
+                format: RunFormat::Jsonl,
+                output: Some(PathBuf::from("out.jsonl")),
+                flatten: true,
+                quiet: true,
+                max_steps: Some(50),
+                timeout_secs: Some(120),
+                step_timeout_secs: Some(10),
+            })
+        );
+    }
+
+    #[test]
+    fn run_requires_exactly_one_script() {
+        let err = run_args(&[]).expect_err("missing script");
+        assert!(err.contains("usage: acrawl run"), "{err}");
+        let err = run_args(&["a", "b"]).expect_err("two scripts");
+        assert!(err.contains("extra argument: b"), "{err}");
+    }
+
+    #[test]
+    fn run_rejects_bad_option_values() {
+        let err = run_args(&["x", "--format", "csv"]).expect_err("bad format");
+        assert!(err.contains("--format"), "{err}");
+        let err = run_args(&["x", "--max-steps", "0"]).expect_err("zero steps");
+        assert!(err.contains("--max-steps"), "{err}");
+        let err = run_args(&["x", "--timeout", "soon"]).expect_err("bad timeout");
+        assert!(err.contains("--timeout"), "{err}");
+        let err = run_args(&["x", "--output"]).expect_err("missing value");
+        assert!(err.contains("missing value for --output"), "{err}");
+        let err = run_args(&["x", "--nope"]).expect_err("unknown flag");
+        assert!(err.contains("unknown run option: --nope"), "{err}");
     }
 }

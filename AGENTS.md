@@ -2,7 +2,7 @@
 
 ## Project
 
-`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 43-tool toolbox (32 browser + 4 agent-control + 7 script). It ships as a single binary with three modes: an interactive Ratatui TUI REPL (requires a TTY), non-interactive `prompt` (one-shot) / `--resume` (slash-command replay), and `mcp` (built-in MCP server over stdio).
+`acrawl` is a native-Rust LLM-driven web crawler. A user provides a natural-language goal; the agent plans, navigates, and extracts structured data via a 43-tool toolbox (32 browser + 4 agent-control + 7 script). It ships as a single binary with three modes: an interactive Ratatui TUI REPL (requires a TTY), non-interactive `prompt` (one-shot) / `--resume` (slash-command replay) / `run` (replay a saved script with no LLM), and `mcp` (built-in MCP server over stdio).
 
 ## Commands
 
@@ -18,6 +18,7 @@ cargo fmt --check                                            # format check
 ./target/release/acrawl mcp                                  # launch MCP server (stdio)
 ./target/release/acrawl mcp install                          # interactive IDE installer
 ./target/release/acrawl --resume session.json /status /compact        # non-interactive session maintenance
+./target/release/acrawl run my_script --format jsonl --output out.jsonl   # replay a saved script, no LLM/credentials
 
 # Non-interactive provider setup (agent/CI use)
 acrawl auth anthropic --api-key "sk-ant-..."      # configure credentials
@@ -50,7 +51,7 @@ Eleven crates under `crates/`, compiled with `resolver = "2"`:
 - **mcp-server** — built-in MCP server (`server.rs`: JSON-RPC over stdio, 32 direct browser tools + 7 script tools + `run_goal`) and the interactive IDE installer (`installer.rs`: `acrawl mcp install`; `skill.rs` embeds `skills/acrawl-mcp/` and installs it with `--skill`, so files added to that folder must be listed in `SKILL_FILES`). Supports 17 clients: Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush, Aider.
 - **tui** (`acrawl-tui`) — Ratatui terminal UI. `repl_app/` (directory) owns the application state; `repl_render.rs` handles rendering; `modals/` contains auth, model-picker, and slash-command overlay widgets. Depends on `acrawl-ui`.
 - **ui** (`acrawl-ui`) — shared application layer used by both TUI and CLI. Owns `LiveCli`, provider code paths (`api_client.rs`, `tool_executor.rs`, `model_support.rs`, `runtime_builder.rs`, `resume.rs`), session management (`session_mgr.rs`), output sink (`output_sink.rs`), and auth helpers.
-- **cli** — thin binary entry point (`main.rs`). `self_update.rs` handles `acrawl update`; `uninstall.rs` handles `acrawl uninstall`. All orchestration and session management live in `acrawl-ui`.
+- **cli** — thin binary entry point (`main.rs`). `acrawl run` parses here and executes in `acrawl-ui`'s `script_run.rs`, which validates the script before launching the browser so bad input exits 2 without Node/Chromium. `self_update.rs` handles `acrawl update`; `uninstall.rs` handles `acrawl uninstall`. All orchestration and session management live in `acrawl-ui`.
 - **commands** — slash-command registry (`/help`, `/status`, `/model`, `/compact`, `/clear`, `/cost`, `/sessions`, `/export`, `/config`, `/auth`, `/headed`, `/headless`, `/extension`, `/cloakbrowser`, `/debug`, `/version`, `/exit`). Knows which commands are safe to replay in `--resume`.
 
 ## Architecture: how a turn actually flows
