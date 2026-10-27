@@ -1,0 +1,21 @@
+[book]
+title = "acrawl (AgenticCrawler)"
+description = "acrawl is an open-source browser agent and MCP server in a single Rust binary. Describe a goal in plain English and get structured data back, with full DevTools observability and 25 LLM providers."
+authors = ["Mingye Lu"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/Mingye-Lu/AgenticCrawler"
+edit-url-template = "https://github.com/Mingye-Lu/AgenticCrawler/edit/main/docs/{path}"
+site-url = "/AgenticCrawler/"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+no-section-label = true
+
+[output.html.search]
+enable = true

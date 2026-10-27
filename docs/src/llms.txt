@@ -1,0 +1,34 @@
+# acrawl (AgenticCrawler)
+
+> acrawl is an open-source (MIT) browser agent and MCP server that ships as a single Rust binary. Describe a web task in plain English and it navigates, clicks, fills forms and returns structured data. It also exposes DevTools-style observation (network requests, console logs, WebSocket frames, performance, cookies, storage, JS/CSS coverage, axe-core accessibility audits, request interception) as agent tools. It supports 25 LLM providers plus any OpenAI-compatible endpoint, runs repetitive steps as deterministic JSON scripts with no LLM calls, and forks sub-agents onto separate tabs.
+
+Key facts: the agent has 43 tools; the MCP server (`acrawl mcp`, stdio) exposes 40 tools: 32 browser and DevTools tools, 7 script tools and `run_goal`. Browser automation uses a bundled stealth browser (CloakBrowser) through a Node.js 20+ bridge, or the user's real browser through the acrawl Bridge extension. Source: https://github.com/Mingye-Lu/AgenticCrawler
+
+## Docs
+
+- [What is acrawl?](https://mingye-lu.github.io/AgenticCrawler/): overview, key facts, demo video
+- [Install](https://mingye-lu.github.io/AgenticCrawler/install.html): install script for Linux, macOS and Windows; build from source
+- [Quick start](https://mingye-lu.github.io/AgenticCrawler/quickstart.html): connect an LLM provider and run a first crawl
+- [Use acrawl as an MCP server](https://mingye-lu.github.io/AgenticCrawler/mcp-server.html): setup for Claude Code, Cursor, VS Code, Zed and 13 other clients
+- [Tools](https://mingye-lu.github.io/AgenticCrawler/tools.html): all 43 tools by group
+- [FAQ](https://mingye-lu.github.io/AgenticCrawler/faq.html)
+
+## Guides
+
+- [Scrape JavaScript-rendered sites without code](https://mingye-lu.github.io/AgenticCrawler/guides/scrape-js-sites.html): HTTP-first fetching with automatic browser escalation, fit_markdown, focus-based pruning
+- [Repeatable crawls with zero LLM calls](https://mingye-lu.github.io/AgenticCrawler/guides/deterministic-scripts.html): JSON script format and script tools
+- [Debug a live page](https://mingye-lu.github.io/AgenticCrawler/guides/devtools-debugging.html): network, console, performance, cookies, coverage, accessibility tools
+- [Use your real, logged-in browser](https://mingye-lu.github.io/AgenticCrawler/guides/real-browser.html): acrawl Bridge extension
+
+## Comparisons
+
+- [acrawl vs other browser agents](https://mingye-lu.github.io/AgenticCrawler/comparisons/overview.html)
+- [acrawl vs browser-use](https://mingye-lu.github.io/AgenticCrawler/comparisons/vs-browser-use.html)
+- [acrawl vs Playwright MCP](https://mingye-lu.github.io/AgenticCrawler/comparisons/vs-playwright-mcp.html)
+- [acrawl vs Firecrawl](https://mingye-lu.github.io/AgenticCrawler/comparisons/vs-firecrawl.html)
+
+## Optional
+
+- [Full docs as one text file](https://mingye-lu.github.io/AgenticCrawler/llms-full.txt)
+- [README](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/README.md)
+- [Changelog](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/CHANGELOG.md)
