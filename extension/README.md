@@ -46,13 +46,12 @@ Download `acrawl-extension.zip` from the [latest release](https://github.com/Min
 ## Configuration
 
 1. Start acrawl in REPL mode: `acrawl`
-2. Type `/extension` — this starts the bridge server and prints a 6-digit **pairing code** (valid for 3 minutes)
-3. Click the acrawl Bridge icon. The popup shows which acrawl session is asking to pair, with a countdown
-4. Type the code into the popup and click **Pair** — the badge turns green
+2. Type `/extension` — this starts the bridge server
+3. The extension connects on its own within a couple of seconds and the badge turns green
 
-Over MCP, call any acrawl browser tool; if the extension isn't connected the tool error includes the pairing code, and the popup names your MCP client.
+Over MCP, just call any acrawl browser tool; the bridge starts and the extension connects to it.
 
-The code is only ever shown on the acrawl side and typed into the extension, so another process that can reach the port cannot pair by itself. Five wrong codes cancel the request. Pairing is one-time: the extension keeps the token and reconnects on its own.
+There is no pairing step or token. The extension runs in your own browser, and installing it is the permission for acrawl to drive it. The bridge only accepts connections whose `Origin` is a browser extension, so ordinary web pages cannot connect to it.
 
 Once connected, acrawl persists `browser_backend: "extension"` in `~/.acrawl/settings.json`. On subsequent launches, the bridge server auto-starts and waits for the extension to reconnect — no need to type `/extension` again.
 
@@ -65,7 +64,7 @@ To switch back to CloakBrowser mode: type `/cloakbrowser` in the acrawl REPL. Th
 The extension communicates with acrawl over a local WebSocket connection:
 
 1. acrawl starts a TCP server on `127.0.0.1:<port>`
-2. The extension connects to `ws://127.0.0.1:<port>/bridge?token=<token>`
+2. The extension connects to `ws://127.0.0.1:<port>/bridge`
 3. acrawl sends `{id, action, payload}` commands (navigate, click, screenshot, etc.)
 4. The extension executes them via Chrome DevTools Protocol (CDP) and returns `{id, ok, result}`
 
@@ -74,7 +73,7 @@ All browser automation tools work through this bridge — the same tool surface 
 ## Troubleshooting
 
 - **Badge stays red**: Check that acrawl is running. If `browser_backend` is set to `"extension"` in settings, the server starts automatically on launch.
-- **Connected before but not now (stale pairing)**: if acrawl's config was reset or you switched `ACRAWL_CONFIG_HOME`, the saved token no longer matches. Run `/extension` and enter the new pairing code in the popup.
+- **Port mismatch**: the port in the extension popup must match acrawl's `extension_bridge_port` (default 19876).
 - **Port in use**: Change the port in `~/.acrawl/settings.json` (`extension_bridge_port` field).
 - **Extension disconnects frequently**: The extension uses exponential backoff reconnection (1s → 30s). Check if another process is competing for the port.
 
