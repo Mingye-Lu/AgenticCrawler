@@ -455,14 +455,13 @@ pub(super) fn handle_slash_command_tui(
                     state.push_system_card("Extension", &status);
                 } else {
                     match g.start_extension_server() {
-                        Ok((_, port)) => {
-                            let pairing = g.extension_pairing_line();
+                        Ok(port) => {
                             state.push_system_card(
                                 "Extension",
                                 &format!(
                                     "Extension bridge\n  \
-                                     Status           server started (port {port})\n  \
-                                     {pairing}"
+                                     Status           server started (port {port}); \
+                                     waiting for the acrawl Bridge extension to connect"
                                 ),
                             );
                             if let Some(watch) = g.extension_connection_watch() {

@@ -244,21 +244,11 @@ pub struct Settings {
     #[serde(default)]
     pub fork_wait_timeout_secs: Option<u32>,
 
-    /// Token for Chrome extension bridge authentication
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extension_bridge_token: Option<String>,
-
     /// Port for Chrome extension bridge WebSocket server (default: 19876)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension_bridge_port: Option<u16>,
 
-    /// Set once an extension has authenticated against the bridge, i.e. it
-    /// holds the token. Lets an unpaired setup get a pairing code immediately
-    /// instead of waiting out the connect timeout.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extension_paired: Option<bool>,
-
-    /// Seconds to wait for an already-paired extension to connect before
+    /// Seconds to wait for the extension to connect before
     /// failing a browser tool call in extension mode (default: 3)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extension_bridge_connect_timeout_secs: Option<u64>,
@@ -314,9 +304,7 @@ impl Default for Settings {
             max_total_agents: Some(10),
             fork_child_max_steps: Some(100),
             fork_wait_timeout_secs: Some(60),
-            extension_bridge_token: None,
             extension_bridge_port: None,
-            extension_paired: None,
             extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
@@ -824,9 +812,7 @@ mod tests {
             max_total_agents: Some(20),
             fork_child_max_steps: Some(25),
             fork_wait_timeout_secs: Some(120),
-            extension_bridge_token: None,
             extension_bridge_port: None,
-            extension_paired: None,
             extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
@@ -861,8 +847,7 @@ mod tests {
         fs::write(&path, "{}").expect("seed settings");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("loosen mode");
 
-        update_settings(|s| s.extension_bridge_token = Some("secret".to_string()))
-            .expect("save settings");
+        update_settings(|s| s.model = Some("anthropic/test".to_string())).expect("save settings");
 
         let mode = fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "settings.json holds secrets");
@@ -1056,9 +1041,7 @@ mod tests {
             max_total_agents: Some(15),
             fork_child_max_steps: Some(20),
             fork_wait_timeout_secs: Some(90),
-            extension_bridge_token: None,
             extension_bridge_port: None,
-            extension_paired: None,
             extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
@@ -1122,9 +1105,7 @@ mod tests {
             max_total_agents: Some(16),
             fork_child_max_steps: Some(20),
             fork_wait_timeout_secs: Some(75),
-            extension_bridge_token: None,
             extension_bridge_port: None,
-            extension_paired: None,
             extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,
@@ -1188,9 +1169,7 @@ mod tests {
             max_total_agents: None,
             fork_child_max_steps: None,
             fork_wait_timeout_secs: None,
-            extension_bridge_token: None,
             extension_bridge_port: None,
-            extension_paired: None,
             extension_bridge_connect_timeout_secs: None,
             browser_backend: None,
             compaction_prune_protect_tokens: None,

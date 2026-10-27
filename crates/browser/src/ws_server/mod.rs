@@ -5,7 +5,6 @@
 
 mod auth;
 mod http;
-mod pairing;
 mod session;
 
 use std::collections::HashMap;
@@ -19,15 +18,12 @@ use std::time::Instant;
 use acrawl_core::config_home_dir;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot, watch, Notify};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use tokio_tungstenite::tungstenite::http::{self as ws_http};
 
-pub use auth::generate_bridge_token;
 use auth::{validate_ws_upgrade, RateEntry};
-use http::{send_raw_http_error, serve_health, serve_pair};
-use pairing::PairingState;
-pub use pairing::{PairingHost, PairingOffer, PAIRING_TTL};
+use http::{send_raw_http_error, serve_health};
 use session::{run_ws_session, CommandRx};
 
 /// A command sent from the crawler to the Chrome extension via WebSocket.
@@ -76,7 +72,6 @@ pub struct WsBridgeServer {
     shutdown_tx: Option<oneshot::Sender<()>>,
     bridge_file_path: PathBuf,
     client_connected_rx: watch::Receiver<bool>,
-    state: Arc<ServerState>,
     _task: tokio::task::JoinHandle<()>,
 }
 
@@ -91,7 +86,7 @@ impl WsBridgeServer {
     /// `WsBridgeError::BridgeFileWrite` if the discovery file cannot be written.
     // async keeps the tokio::spawn below inside a runtime context at poll time.
     #[allow(clippy::unused_async, clippy::unused_async_trait_impl)]
-    pub async fn start(port: u16, token: String) -> Result<Self, WsBridgeError> {
+    pub async fn start(port: u16) -> Result<Self, WsBridgeError> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
         let listener = try_bind_with_retry(addr).map_err(WsBridgeError::Bind)?;
         let actual_port = listener.local_addr().map_err(WsBridgeError::Bind)?.port();
@@ -136,21 +131,13 @@ impl WsBridgeServer {
         let (client_connected_tx, client_connected_rx) = watch::channel(false);
 
         let state = Arc::new(ServerState {
-            token,
-            pairing: PairingState::default(),
             port: actual_port,
             has_active_client: AtomicBool::new(false),
             client_connected_tx,
-            authenticated: Arc::new(Notify::new()),
             rate_limiter: tokio::sync::Mutex::new(HashMap::new()),
         });
 
-        let task = tokio::spawn(run_server(
-            listener,
-            Arc::clone(&state),
-            command_rx,
-            shutdown_rx,
-        ));
+        let task = tokio::spawn(run_server(listener, state, command_rx, shutdown_rx));
 
         Ok(Self {
             port: actual_port,
@@ -158,25 +145,8 @@ impl WsBridgeServer {
             shutdown_tx: Some(shutdown_tx),
             bridge_file_path,
             client_connected_rx,
-            state,
             _task: task,
         })
-    }
-
-    /// Open a pairing window and return the code to show the user, reusing the
-    /// live one so earlier displays stay valid. The code is never served over
-    /// HTTP; the extension popup must be given it by the user.
-    #[must_use]
-    pub fn open_pairing(&self, host: PairingHost) -> PairingOffer {
-        self.state.pairing.open_or_reuse(host, PAIRING_TTL)
-    }
-
-    /// Signalled each time an extension authenticates. Unlike the connection
-    /// watch, a signal that fires before anyone waits is kept, so a connect
-    /// that is quickly followed by a disconnect is not lost.
-    #[must_use]
-    pub fn authenticated(&self) -> Arc<Notify> {
-        Arc::clone(&self.state.authenticated)
     }
 
     #[must_use]
@@ -237,12 +207,9 @@ impl Drop for WsBridgeServer {
 // ---------------------------------------------------------------------------
 
 struct ServerState {
-    token: String,
-    pairing: PairingState,
     port: u16,
     has_active_client: AtomicBool,
     client_connected_tx: watch::Sender<bool>,
-    authenticated: Arc<Notify>,
     rate_limiter: tokio::sync::Mutex<HashMap<IpAddr, RateEntry>>,
 }
 
@@ -286,11 +253,6 @@ async fn handle_incoming(
         return;
     }
 
-    if preview.starts_with("GET /pair/info") || preview.starts_with("POST /pair ") {
-        serve_pair(stream, &state).await;
-        return;
-    }
-
     {
         let client_ip = peer_addr.ip();
         let mut limiter = state.rate_limiter.lock().await;
@@ -320,18 +282,14 @@ async fn handle_incoming(
         return;
     }
 
-    let token_clone = state.token.clone();
     #[allow(clippy::result_large_err)]
     let ws_result = tokio_tungstenite::accept_hdr_async(
         stream,
-        move |req: &ws_http::Request<()>, resp: ws_http::Response<()>| {
-            validate_ws_upgrade(&token_clone, req, resp)
-        },
+        |req: &ws_http::Request<()>, resp: ws_http::Response<()>| validate_ws_upgrade(req, resp),
     )
     .await;
 
     if let Ok(ws) = ws_result {
-        state.authenticated.notify_one();
         let _ = state.client_connected_tx.send(true);
         run_ws_session(ws, command_rx).await;
         let _ = state.client_connected_tx.send(false);
@@ -420,18 +378,6 @@ mod tests {
     use tokio_tungstenite::tungstenite::http::StatusCode;
 
     #[test]
-    fn constant_time_eq_same() {
-        assert_eq!(auth::generate_bridge_token().len(), 64);
-    }
-
-    #[test]
-    fn generate_bridge_token_is_64_hex_chars() {
-        let token = generate_bridge_token();
-        assert_eq!(token.len(), 64);
-        assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
     fn bridge_command_roundtrip() {
         let cmd = BridgeCommand {
             id: 42,
@@ -466,94 +412,61 @@ mod tests {
         assert!(json2.contains("timeout"));
     }
 
+    fn upgrade(uri: &str, origin: Option<&str>) -> Result<(), StatusCode> {
+        let mut req = ws_http::Request::builder().uri(uri);
+        if let Some(origin) = origin {
+            req = req.header("origin", origin);
+        }
+        let resp = ws_http::Response::builder().body(()).unwrap();
+        validate_ws_upgrade(&req.body(()).unwrap(), resp)
+            .map(|_| ())
+            .map_err(|e| e.status())
+    }
+
+    const EXT: &str = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb";
+
     #[test]
     fn validate_ws_upgrade_rejects_wrong_path() {
-        let req = ws_http::Request::builder()
-            .uri("http://localhost/wrong")
-            .body(())
-            .unwrap();
-        let resp = ws_http::Response::builder().body(()).unwrap();
-        let result = validate_ws_upgrade("secret", &req, resp);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            upgrade("http://localhost/wrong", Some(EXT)),
+            Err(StatusCode::NOT_FOUND)
+        );
     }
 
     #[test]
-    fn validate_ws_upgrade_rejects_bad_origin() {
-        let req = ws_http::Request::builder()
-            .uri("http://localhost/bridge?token=secret")
-            .header("origin", "https://evil.com")
-            .body(())
-            .unwrap();
-        let resp = ws_http::Response::builder().body(()).unwrap();
-        let result = validate_ws_upgrade("secret", &req, resp);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().status(), StatusCode::FORBIDDEN);
+    fn validate_ws_upgrade_rejects_web_page_origin() {
+        assert_eq!(
+            upgrade("http://localhost/bridge", Some("https://evil.com")),
+            Err(StatusCode::FORBIDDEN)
+        );
     }
 
     #[test]
-    fn validate_ws_upgrade_rejects_missing_token() {
-        let req = ws_http::Request::builder()
-            .uri("http://localhost/bridge")
-            .body(())
-            .unwrap();
-        let resp = ws_http::Response::builder().body(()).unwrap();
-        let result = validate_ws_upgrade("secret", &req, resp);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().status(), StatusCode::UNAUTHORIZED);
+    fn validate_ws_upgrade_rejects_absent_origin() {
+        assert_eq!(
+            upgrade("http://localhost/bridge", None),
+            Err(StatusCode::FORBIDDEN)
+        );
     }
 
     #[test]
-    fn validate_ws_upgrade_rejects_wrong_token() {
-        let req = ws_http::Request::builder()
-            .uri("http://localhost/bridge?token=wrong")
-            .body(())
-            .unwrap();
-        let resp = ws_http::Response::builder().body(()).unwrap();
-        let result = validate_ws_upgrade("secret", &req, resp);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().status(), StatusCode::UNAUTHORIZED);
+    fn validate_ws_upgrade_accepts_extension_origins_without_token() {
+        assert_eq!(upgrade("http://localhost/bridge", Some(EXT)), Ok(()));
+        assert_eq!(
+            upgrade(
+                "http://localhost/bridge",
+                Some("edge-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb")
+            ),
+            Ok(())
+        );
     }
 
     #[test]
-    fn validate_ws_upgrade_accepts_valid_request() {
-        let req = ws_http::Request::builder()
-            .uri("http://localhost/bridge?token=secret")
-            .header(
-                "origin",
-                "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb",
-            )
-            .body(())
-            .unwrap();
-        let resp = ws_http::Response::builder().body(()).unwrap();
-        let result = validate_ws_upgrade("secret", &req, resp);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn validate_ws_upgrade_accepts_edge_extension_origin() {
-        let req = ws_http::Request::builder()
-            .uri("http://localhost/bridge?token=secret")
-            .header(
-                "origin",
-                "edge-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaabb",
-            )
-            .body(())
-            .unwrap();
-        let resp = ws_http::Response::builder().body(()).unwrap();
-        let result = validate_ws_upgrade("secret", &req, resp);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn validate_ws_upgrade_accepts_absent_origin() {
-        let req = ws_http::Request::builder()
-            .uri("http://localhost/bridge?token=mytoken")
-            .body(())
-            .unwrap();
-        let resp = ws_http::Response::builder().body(()).unwrap();
-        let result = validate_ws_upgrade("mytoken", &req, resp);
-        assert!(result.is_ok());
+    fn validate_ws_upgrade_ignores_a_token_from_an_older_extension() {
+        assert_eq!(
+            upgrade("http://localhost/bridge?token=stale", Some(EXT)),
+            Ok(())
+        );
     }
 
     #[tokio::test]
@@ -609,13 +522,13 @@ mod tests {
         std::env::set_var("ACRAWL_CONFIG_HOME", &temp);
 
         let first = rt
-            .block_on(WsBridgeServer::start(0, "token-a".to_string()))
+            .block_on(WsBridgeServer::start(0))
             .expect("first bridge server starts on an ephemeral port");
         let owner = read_bridge_file().expect("first server writes a discovery record");
         assert_eq!(owner.port, first.port());
         assert_eq!(owner.pid, std::process::id());
 
-        let second = rt.block_on(WsBridgeServer::start(first.port(), "token-b".to_string()));
+        let second = rt.block_on(WsBridgeServer::start(first.port()));
         assert!(
             second.is_err(),
             "binding an already-owned port must fail rather than steal the port"
@@ -629,74 +542,5 @@ mod tests {
         drop(first);
         std::env::remove_var("ACRAWL_CONFIG_HOME");
         let _ = std::fs::remove_dir_all(&temp);
-    }
-    async fn http(port: u16, req: &str) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let mut c = TcpStream::connect(("127.0.0.1", port))
-            .await
-            .expect("connect");
-        c.write_all(req.as_bytes()).await.expect("write");
-        let mut out = String::new();
-        c.read_to_string(&mut out).await.expect("read");
-        out
-    }
-
-    fn pair_post(code: &str, origin: &str) -> String {
-        let body = format!(r#"{{"code":"{code}"}}"#);
-        format!(
-            "POST /pair HTTP/1.1\r\nHost: x\r\nOrigin: {origin}\r\nContent-Length: {}\r\n\r\n{body}",
-            body.len()
-        )
-    }
-
-    #[test]
-    fn pairing_releases_token_only_for_the_right_code() {
-        let _guard = env_lock();
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("build runtime");
-        let temp = std::env::temp_dir().join(format!("acrawl_ws_pair_test_{}", std::process::id()));
-        std::fs::create_dir_all(&temp).expect("create temp config home");
-        std::env::set_var("ACRAWL_CONFIG_HOME", &temp);
-        rt.block_on(pairing_flow());
-        std::env::remove_var("ACRAWL_CONFIG_HOME");
-        let _ = std::fs::remove_dir_all(&temp);
-    }
-
-    async fn pairing_flow() {
-        let ext = format!("chrome-extension://{}", "a".repeat(32));
-        let server = WsBridgeServer::start(0, "the-token".to_string())
-            .await
-            .expect("start");
-        let port = server.port();
-        let info = "GET /pair/info HTTP/1.1\r\nHost: x\r\n\r\n";
-
-        assert!(http(port, info).await.contains(r#""offer":null"#));
-        assert!(http(port, &pair_post("123456", &ext)).await.contains("404"));
-
-        let offer = server.open_pairing(PairingHost::current("Claude Code 1.0", "mcp"));
-        let shown = http(port, info).await;
-        assert!(shown.contains("Claude Code 1.0"), "{shown}");
-        assert!(!shown.contains(&offer.code), "code must never be served");
-
-        let wrong = if offer.code == "000000" {
-            "000001"
-        } else {
-            "000000"
-        };
-        assert!(http(port, &pair_post(wrong, &ext)).await.contains("403"));
-        let evil = http(port, &pair_post(&offer.code, "https://evil.com")).await;
-        assert!(
-            evil.contains("403") && !evil.contains("the-token"),
-            "{evil}"
-        );
-
-        let ok = http(port, &pair_post(&offer.code, &ext)).await;
-        assert!(ok.contains(r#""token":"the-token""#), "{ok}");
-        assert!(http(port, &pair_post(&offer.code, &ext))
-            .await
-            .contains("404"));
-        drop(server);
     }
 }

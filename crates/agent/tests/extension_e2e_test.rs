@@ -6,20 +6,28 @@ use browser::{BrowserBackend, ExtensionBridge, SharedBridge, WsBridgeServer};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 
 async fn start_server_and_connect() -> (
     WsBridgeServer,
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 ) {
-    let token = "test-token-abc".to_string();
-    let server = WsBridgeServer::start(0, token.clone())
+    let server = WsBridgeServer::start(0)
         .await
         .expect("server should start on ephemeral port");
     let port = server.port();
 
-    let url = format!("ws://127.0.0.1:{port}/bridge?token={token}");
-    let (ws, _) = tokio_tungstenite::connect_async(&url)
+    let mut request = format!("ws://127.0.0.1:{port}/bridge")
+        .into_client_request()
+        .expect("valid bridge URL");
+    request.headers_mut().insert(
+        "origin",
+        "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            .parse()
+            .expect("valid origin header"),
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(request)
         .await
         .expect("should connect to bridge server");
 
