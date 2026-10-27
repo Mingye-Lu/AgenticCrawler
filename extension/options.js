@@ -61,11 +61,13 @@ function showWaiting() {
   setPairNote('Not paired. Run /extension in acrawl, or call an acrawl tool from your agent, and a pairing request appears here.', false);
 }
 
+const MODE_LABELS = { mcp: 'acrawl mcp', run: 'acrawl run', repl: 'acrawl REPL' };
+
 function showOffer(offer) {
   const host = offer.host;
   pairBox.className = 'offer';
   pairHost.textContent = `${host.client} wants to pair`;
-  pairMeta.textContent = `${host.mode === 'mcp' ? 'acrawl mcp' : 'acrawl REPL'} · pid ${host.pid} · ${host.cwd}`;
+  pairMeta.textContent = `${MODE_LABELS[host.mode] || 'acrawl REPL'} · pid ${host.pid} · ${host.cwd}`;
   pairCode.style.display = '';
   pairButton.style.display = '';
   pairDeadline = Date.now() + offer.expires_in_secs * 1000;
