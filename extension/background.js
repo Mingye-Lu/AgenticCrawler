@@ -32,7 +32,7 @@ try {
 let ws = null;
 let wsConnected = false;
 let reconnectTimer = null;
-// Exponential backoff, capped low: acrawl waits only a few seconds for an already-paired
+// Exponential backoff, capped low: acrawl waits only a few seconds for the
 // extension to dial in, so a long retry interval would make its first tool call fail.
 const MAX_RECONNECT_DELAY_MS = 2000;
 let reconnectDelay = 1000;
@@ -274,27 +274,19 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 
 async function getSettings() {
   return new Promise((resolve) => {
-    chrome.storage.local.get({ port: 19876, token: '' }, resolve);
+    chrome.storage.local.get({ port: 19876 }, resolve);
   });
 }
 
-async function getConnectionStatus() {
-  const { token } = await getSettings();
+function getConnectionStatus() {
   return {
     connected: wsConnected,
     connecting: Boolean(ws && ws.readyState === WebSocket.CONNECTING),
-    configured: Boolean(token),
   };
 }
 
 async function connect(timeoutMs = 0) {
-  const { port, token } = await getSettings();
-
-  if (!token) {
-    disconnect({ suppressReconnect: true, unconfigured: true });
-    checkPairingOffer();
-    return false;
-  }
+  const { port } = await getSettings();
 
   clearReconnectTimer();
   stopKeepalive();
@@ -306,7 +298,7 @@ async function connect(timeoutMs = 0) {
   return new Promise((resolve) => {
     let settled = false;
     let timeoutId = null;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/bridge?token=${encodeURIComponent(token)}`);
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/bridge`);
     ws = socket;
     wsConnected = false;
     setBadge('...', '#888888');
@@ -350,10 +342,6 @@ async function connect(timeoutMs = 0) {
     };
 
     socket.onclose = () => {
-      if (!settled) {
-        // Never connected: the saved token may be stale, so see if acrawl is offering to pair.
-        checkPairingOffer();
-      }
       const isCurrentSocket = ws === socket;
       const wasManualClose = socket.acrawlManualClose === true;
       if (isCurrentSocket) {
@@ -375,7 +363,7 @@ async function connect(timeoutMs = 0) {
 }
 
 function disconnect(options = {}) {
-  const { suppressReconnect = true, preserveBadge = false, unconfigured = false } = options;
+  const { suppressReconnect = true, preserveBadge = false } = options;
   const socket = ws;
   ws = null;
   wsConnected = false;
@@ -385,9 +373,7 @@ function disconnect(options = {}) {
     socket.acrawlManualClose = suppressReconnect;
     socket.close();
   }
-  if (unconfigured) {
-    setBadge('?', '#888888');
-  } else if (!preserveBadge) {
+  if (!preserveBadge) {
     setBadge('', '#cc0000');
   }
 }
@@ -427,35 +413,6 @@ function stopKeepalive() {
   }
 }
 
-// ----------- Pairing prompt -----------
-
-// When acrawl opens a pairing window (REPL /extension, or an MCP connect failure),
-// flag it with a blue "PAIR" badge; the user opens the popup and types the code.
-// Runs from the connect path and the 30s watchdog. Programmatic popups are not
-// used: openPopup needs the browser focused, and the offer usually arrives while
-// the user is in a terminal.
-async function checkPairingOffer() {
-  if (wsConnected) {
-    return;
-  }
-  const { port, token } = await getSettings();
-  let offer = null;
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/pair/info`);
-    ({ offer } = await res.json());
-  } catch {
-    offer = null;
-  }
-  const { pairBadge } = await chrome.storage.session.get({ pairBadge: false });
-  if (offer) {
-    setBadge('PAIR', '#2563eb');
-  } else if (pairBadge) {
-    // The offer expired or was used: put back the badge connect() would show.
-    setBadge(token ? '' : '?', token ? '#cc0000' : '#888888');
-  }
-  await chrome.storage.session.set({ pairBadge: Boolean(offer) });
-}
-
 // ----------- Badge -----------
 
 function setBadge(text, color) {
@@ -467,10 +424,8 @@ function setBadge(text, color) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === 'getConnectionStatus') {
-    getConnectionStatus()
-      .then(sendResponse)
-      .catch(() => sendResponse({ connected: false, connecting: false, configured: false }));
-    return true;
+    sendResponse(getConnectionStatus());
+    return false;
   }
 
   if (message && message.type === 'reconnect') {
@@ -947,6 +902,8 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
+  // Older versions stored a bridge token obtained by pairing; it is no longer used.
+  chrome.storage.local.remove('token');
   connect();
 });
 
