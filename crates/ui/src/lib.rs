@@ -27,11 +27,13 @@ pub mod display_width;
 pub mod error;
 pub mod events;
 pub mod output_sink;
+pub mod script_run;
 pub mod session_mgr;
 
 pub use auth::configure::{run_auth_configure, AuthFlags};
 pub use auth::status::{run_auth_list, run_auth_status};
 pub use config_runner::{run_config, ConfigAction};
+pub use script_run::{run_script_cli, RunFormat, RunOptions};
 
 #[cfg(test)]
 pub(crate) mod test_support {

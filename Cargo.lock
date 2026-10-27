@@ -23,6 +23,7 @@ dependencies = [
  "runtime",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "unicode-width",
 ]
@@ -71,8 +72,10 @@ dependencies = [
  "dialoguer",
  "render",
  "runtime",
+ "script",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "unicode-width",
  "zeroize",
