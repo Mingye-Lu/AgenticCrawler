@@ -2205,9 +2205,9 @@ exit /b 1\r\n";
         script_path
     }
 
+    /// Not marked executable: [`run_fake_cli_mcp_add`] runs it through `sh`.
     #[cfg(unix)]
     fn write_fake_mcp_cli_script(dir: &Path) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt as _;
         let script_path = dir.join("fake-mcp-cli.sh");
         let script = "#!/bin/sh\n\
 STATE=\"$3\"\n\
@@ -2229,10 +2229,26 @@ if [ \"$2\" = \"add\" ]; then\n\
 fi\n\
 exit 1\n";
         fs::write(&script_path, script).expect("write fake cli script");
-        let mut perms = fs::metadata(&script_path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script_path, perms).expect("chmod");
         script_path
+    }
+
+    /// Runs `run_cli_mcp_add` against the fake CLI with `mcp add|remove <state_dir>`.
+    ///
+    /// On Unix the script is passed to `sh` instead of being executed itself.
+    /// Executing a file that was just written races with other test threads:
+    /// a child forked by a concurrent test briefly inherits this file's write
+    /// descriptor (until its own exec closes it), and exec of a file open for
+    /// writing fails with `ETXTBSY` ("Text file busy"). `sh` only reads it.
+    fn run_fake_cli_mcp_add(script: &Path, state_dir: &Path) -> io::Result<String> {
+        let script = script.to_string_lossy();
+        let state_dir = state_dir.to_string_lossy();
+        #[cfg(unix)]
+        let (program, prefix) = (Path::new("sh"), vec![&*script]);
+        #[cfg(windows)]
+        let (program, prefix) = (Path::new(&*script), Vec::new());
+        let add = [prefix.as_slice(), &["mcp", "add", &state_dir]].concat();
+        let remove = [prefix.as_slice(), &["mcp", "remove", &state_dir]].concat();
+        run_cli_mcp_add(program, &add, &remove, "fake cli")
     }
 
     fn setup_fake_cli(name: &str) -> (PathBuf, PathBuf, PathBuf) {
@@ -2248,14 +2264,8 @@ exit 1\n";
     fn run_cli_mcp_add_does_not_remove_when_first_add_succeeds() {
         let (root, script, state_dir) = setup_fake_cli("add-success");
         fs::write(state_dir.join("allow_add"), b"").expect("seed allow_add marker");
-        let state_dir_str = state_dir.to_string_lossy().into_owned();
 
-        let result = run_cli_mcp_add(
-            &script,
-            &["mcp", "add", &state_dir_str],
-            &["mcp", "remove", &state_dir_str],
-            "fake cli",
-        );
+        let result = run_fake_cli_mcp_add(&script, &state_dir);
 
         assert_eq!(
             result.expect("add should succeed"),
@@ -2272,14 +2282,8 @@ exit 1\n";
     #[test]
     fn run_cli_mcp_add_removes_and_retries_when_first_add_fails() {
         let (root, script, state_dir) = setup_fake_cli("add-retry");
-        let state_dir_str = state_dir.to_string_lossy().into_owned();
 
-        let result = run_cli_mcp_add(
-            &script,
-            &["mcp", "add", &state_dir_str],
-            &["mcp", "remove", &state_dir_str],
-            "fake cli",
-        );
+        let result = run_fake_cli_mcp_add(&script, &state_dir);
 
         assert_eq!(
             result.expect("add should succeed after remove+retry"),
@@ -2297,15 +2301,9 @@ exit 1\n";
     fn run_cli_mcp_add_reports_manual_reinstall_when_retry_also_fails() {
         let (root, script, state_dir) = setup_fake_cli("add-fail-forever");
         fs::write(state_dir.join("fail_forever"), b"").expect("seed fail_forever marker");
-        let state_dir_str = state_dir.to_string_lossy().into_owned();
 
-        let error = run_cli_mcp_add(
-            &script,
-            &["mcp", "add", &state_dir_str],
-            &["mcp", "remove", &state_dir_str],
-            "fake cli",
-        )
-        .expect_err("add should fail even after remove+retry");
+        let error = run_fake_cli_mcp_add(&script, &state_dir)
+            .expect_err("add should fail even after remove+retry");
 
         assert!(
             error
