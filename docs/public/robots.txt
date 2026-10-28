@@ -1,0 +1,23 @@
+# Search engines and AI answer engines are welcome to read and cite these docs.
+User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+Sitemap: https://mingye-lu.github.io/AgenticCrawler/sitemap-index.xml

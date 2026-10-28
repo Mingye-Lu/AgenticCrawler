@@ -1,0 +1,738 @@
+---
+import Landing from '../layouts/Landing.astro';
+import { DESCRIPTION, FACTS, INSTALL, REPO, SITE, TAGLINE, VERSION } from '../site';
+
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+const docs = (path = '') => `${base}docs/${path}`;
+
+// Star count, fetched at build time. The page reads fine without it.
+let stars: number | null = null;
+try {
+	const res = await fetch('https://api.github.com/repos/Mingye-Lu/AgenticCrawler', {
+		headers: { Accept: 'application/vnd.github+json' },
+		signal: AbortSignal.timeout(5000),
+	});
+	if (res.ok) stars = (await res.json()).stargazers_count ?? null;
+} catch {
+	stars = null;
+}
+const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`);
+
+const title = 'acrawl: open-source AI browser agent and MCP server in one binary';
+
+const clients = [
+	'Claude Code', 'Claude Desktop', 'Cursor', 'Windsurf', 'VS Code', 'OpenCode', 'Zed', 'TRAE',
+	'JetBrains', 'Gemini CLI', 'Qwen Code', 'Codex CLI', 'Hermes', 'OpenClaw', 'Goose', 'Crush', 'Aider',
+];
+
+const features = [
+	{
+		tag: 'one binary',
+		title: 'No Python. No Docker.',
+		body: 'acrawl is a single compiled Rust executable. A bundled stealth browser handles JavaScript pages through a small Node.js bridge.',
+	},
+	{
+		tag: 'smart fetch',
+		title: 'HTTP first, browser when needed',
+		body: 'Static pages come over plain HTTP. Framework markers, auth redirects or an empty SPA shell switch the request to a headless browser automatically.',
+	},
+	{
+		tag: 'sub-agents',
+		title: 'Fork onto parallel tabs',
+		body: 'The agent can split work across child agents, each with its own tab and step budget. A URL-claim registry keeps siblings off the same page.',
+	},
+	{
+		tag: 'any model',
+		title: `${FACTS.providers} LLM providers`,
+		body: 'Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, Vertex, Copilot, Groq, Mistral, xAI, OpenRouter and more, plus any OpenAI-compatible endpoint, local models included.',
+	},
+	{
+		tag: 'your browser',
+		title: 'Logged-in sessions',
+		body: 'The acrawl Bridge extension lets the agent drive your real Chrome, Edge or Brave, with your cookies and sign-ins, for sites a headless browser can’t reach.',
+	},
+	{
+		tag: 'token diet',
+		title: 'Pages trimmed to what matters',
+		body: '`fit_markdown` strips navigation and boilerplate, typically saving 30–60% of tokens. An optional focus prunes pages down to the blocks your goal is about.',
+	},
+];
+
+const devtools = [
+	{
+		id: 'network',
+		label: 'Network',
+		tool: 'list_network_activity',
+		rows: [
+			['GET', '/api/search?q=laptop', '200', 'xhr', '184 ms'],
+			['GET', '/static/app.9f2c.js', '200', 'script', '62 ms'],
+			['POST', '/api/cart/add', '409', 'fetch', '231 ms'],
+			['GET', '/img/hero@2x.webp', '200', 'image', '96 ms'],
+			['GET', 'wss://live.example.com/feed', '101', 'websocket', 'open'],
+		],
+	},
+	{
+		id: 'console',
+		label: 'Console',
+		tool: 'list_page_logs',
+		rows: [
+			['error', 'TypeError: price is undefined', 'checkout.js:212', '×14', ''],
+			['warn', 'Deprecated API: document.domain', 'vendor.js:3', '×1', ''],
+			['log', 'cart hydrated (3 items)', 'app.js:88', '×1', ''],
+			['error', 'Failed to load /api/reviews (503)', 'reviews.js:40', '×2', ''],
+		],
+	},
+	{
+		id: 'perf',
+		label: 'Performance',
+		tool: 'get_page_performance',
+		rows: [
+			['TTFB', '142 ms', '', '', ''],
+			['DOMContentLoaded', '1.18 s', '', '', ''],
+			['Load', '2.64 s', '', '', ''],
+			['Transfer', '2.1 MB over 86 requests', '', '', ''],
+			['Largest resource', 'app.9f2c.js · 712 KB', '', '', ''],
+		],
+	},
+	{
+		id: 'a11y',
+		label: 'Accessibility',
+		tool: 'audit_accessibility',
+		rows: [
+			['serious', 'color-contrast', '7 nodes', 'WCAG 1.4.3', ''],
+			['critical', 'button-name', '2 nodes', 'WCAG 4.1.2', ''],
+			['moderate', 'heading-order', '1 node', 'best practice', ''],
+			['minor', 'image-redundant-alt', '3 nodes', 'best practice', ''],
+		],
+	},
+];
+
+const moreTools = [
+	'inspect_request', 'inspect_websocket', 'inspect_cookies', 'inspect_storage',
+	'measure_coverage', 'intercept_network', 'inspect_log', 'list_resources',
+];
+
+const compare = [
+	['Plain-English goal, own agent loop', 'yes', 'yes', 'no', 'hosted'],
+	['Runs fully on your machine', 'yes', 'yes', 'yes', 'self-host option'],
+	['DevTools observation as tools', 'full', 'no', 'console + network', 'no'],
+	['Deterministic scripts, zero LLM calls', 'yes', 'no', 'no', 'no'],
+	['Install', 'one binary', 'Python package', 'Node package', 'API / self-host'],
+	['License', 'MIT', 'MIT', 'Apache 2.0', 'AGPL-3.0'],
+];
+
+const faq = [
+	{
+		q: 'What is acrawl?',
+		a: 'acrawl (the project is called AgenticCrawler) is an open-source, MIT-licensed browser agent and MCP server written in Rust. You describe a web task in plain English and it navigates, interacts and returns structured data. It also exposes DevTools-style observation (network, console, performance, cookies, storage, coverage, accessibility) as agent tools.',
+	},
+	{
+		q: 'Do I need to write code?',
+		a: 'No. Goals are plain English, for example acrawl prompt "scrape all book titles and prices from books.toscrape.com". For repeatable, cheaper runs you can save the repetitive part as a JSON script and replay it with acrawl run.',
+	},
+	{
+		q: 'Which LLMs does it work with?',
+		a: '25 providers, including Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, Cohere, Alibaba DashScope and OpenRouter, plus any OpenAI-compatible endpoint, including local models.',
+	},
+	{
+		q: 'Can I use it from Claude Code, Cursor or VS Code?',
+		a: 'Yes. Run acrawl mcp install and pick your clients. The MCP server exposes 40 tools: 32 browser and DevTools tools, 7 script tools and run_goal. Only run_goal needs an LLM key; the rest work without one.',
+	},
+	{
+		q: 'Can it handle JavaScript-heavy sites and SPAs?',
+		a: 'Yes. acrawl fetches over HTTP first and escalates to a headless stealth browser when it detects framework markers, auth redirects or an empty SPA shell.',
+	},
+	{
+		q: 'Can it log in to sites or get past CAPTCHAs?',
+		a: "It can fill login forms and type a 2FA code you paste in, but it can't receive or generate codes, and it won't solve image or proof-of-work CAPTCHAs. For logged-in or heavily protected sites, use your real browser through the acrawl Bridge extension.",
+	},
+	{
+		q: 'How does it keep costs down?',
+		a: 'Static pages skip the browser entirely. fit_markdown strips boilerplate, typically saving 30–60% of tokens. Deterministic scripts run repetitive steps with no LLM calls, and sub-agents work in parallel with their own step budgets.',
+	},
+];
+
+const jsonLd = {
+	'@context': 'https://schema.org',
+	'@graph': [
+		{
+			'@type': 'WebSite',
+			'@id': `${SITE}#website`,
+			name: 'acrawl',
+			alternateName: 'AgenticCrawler',
+			url: SITE,
+			description: DESCRIPTION,
+			inLanguage: 'en',
+		},
+		{
+			'@type': 'SoftwareApplication',
+			'@id': `${SITE}#software`,
+			name: 'acrawl',
+			alternateName: 'AgenticCrawler',
+			description: DESCRIPTION,
+			applicationCategory: 'DeveloperApplication',
+			applicationSubCategory: 'Browser automation, web scraping, MCP server',
+			operatingSystem: 'Linux, macOS, Windows',
+			softwareVersion: VERSION,
+			license: 'https://opensource.org/licenses/MIT',
+			url: SITE,
+			downloadUrl: `${REPO}/releases/latest`,
+			installUrl: `${SITE}docs/install/`,
+			codeRepository: REPO,
+			programmingLanguage: 'Rust',
+			isAccessibleForFree: true,
+			featureList: [
+				'Plain-English goals turned into browser actions',
+				`${FACTS.mcpTools}-tool MCP server for Claude Code, Cursor, VS Code and ${FACTS.mcpClients - 3} more clients`,
+				'Network, console, WebSocket, performance, cookie, storage, coverage and axe-core accessibility tools',
+				'Deterministic JSON scripts replayed with no LLM calls',
+				`${FACTS.providers} LLM providers plus any OpenAI-compatible endpoint`,
+				'Sub-agents on parallel tabs',
+			],
+			author: { '@type': 'Person', name: 'Mingye Lu', url: 'https://github.com/Mingye-Lu' },
+			offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+		},
+		{
+			'@type': 'VideoObject',
+			name: 'acrawl promo: describe it, acrawl it',
+			description:
+				'A 52-second animated promo for acrawl: a shopping goal in plain English becomes a plan, a 50-page search becomes a script with zero LLM calls, pages are pruned to what matters, and DevTools verify the checkout.',
+			thumbnailUrl: `${SITE}media/acrawl-promo-poster.jpg`,
+			contentUrl: `${SITE}media/acrawl-promo.mp4`,
+			uploadDate: '2026-10-13',
+			duration: 'PT52S',
+		},
+		{
+			'@type': 'FAQPage',
+			mainEntity: faq.map(({ q, a }) => ({
+				'@type': 'Question',
+				name: q,
+				acceptedAnswer: { '@type': 'Answer', text: a },
+			})),
+		},
+	],
+};
+---
+
+<Landing title={title} description={DESCRIPTION} jsonLd={jsonLd}>
+	<a class="skip" href="#main">Skip to content</a>
+
+	<header class="nav" data-nav>
+		<div class="wrap nav-inner">
+			<a class="brand" href={base} aria-label="acrawl home">
+				<svg viewBox="0 0 64 64" aria-hidden="true" class="brand-mark">
+					<g stroke="currentColor" stroke-width="3.6" stroke-linecap="round" fill="none">
+						<path d="M32 32 12 14M32 32l20-18M32 32 9 34M32 32l23 2M32 32 16 52M32 32l16 20"></path>
+					</g>
+					<g fill="currentColor">
+						<circle cx="12" cy="14" r="4.6"></circle><circle cx="52" cy="14" r="4.6"></circle>
+						<circle cx="9" cy="34" r="4"></circle><circle cx="55" cy="34" r="4"></circle>
+						<circle cx="16" cy="52" r="4.6"></circle><circle cx="48" cy="52" r="4.6"></circle>
+					</g>
+					<circle cx="32" cy="32" r="8.5" class="brand-core"></circle>
+				</svg>
+				<span>acrawl</span>
+			</a>
+			<nav aria-label="Primary" class="nav-links">
+				<a href="#scripts">Scripts</a>
+				<a href="#devtools">DevTools</a>
+				<a href="#mcp">MCP</a>
+				<a href="#compare">Compare</a>
+				<a class="nav-docs" href={docs()}>Docs</a>
+			</nav>
+			<div class="nav-actions">
+				<a class="gh" href={REPO} rel="noopener">
+					<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+					<span>GitHub</span>
+					{stars !== null && <span class="gh-stars">★ {fmt(stars)}</span>}
+				</a>
+				<button class="theme" type="button" data-theme-toggle aria-label="Switch color theme">
+					<svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"></circle><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"></path></g></svg>
+					<svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1z"></path></svg>
+				</button>
+				<a class="btn btn-lime btn-sm" href="#install">Install</a>
+			</div>
+		</div>
+	</header>
+
+	<main id="main">
+		<!-- Hero -->
+		<section class="hero">
+			<canvas class="hero-graph" data-crawl-graph aria-hidden="true"></canvas>
+			<div class="hero-fade" aria-hidden="true"></div>
+			<div class="wrap hero-inner">
+				{
+					VERSION && (
+						<a class="pill" href={docs('guides/deterministic-scripts/#replaying-a-saved-script-from-the-shell')}>
+							<span class="pill-tag">v{VERSION}</span>
+							<span>
+								New: <code>acrawl run</code> replays saved crawls with zero LLM calls
+							</span>
+							<span aria-hidden="true">→</span>
+						</a>
+					)
+				}
+				<h1 class="hero-title">
+					<span>Describe it.</span>
+					<span class="hero-accent">acrawl it.</span>
+				</h1>
+				<p class="hero-sub">
+					An open-source browser agent and MCP server in a single Rust binary. Tell it what you want from
+					the web in plain English. It navigates, clicks, fills forms, watches the network, and hands back
+					structured data.
+				</p>
+
+				<div class="install" id="install" data-tabs>
+					<div class="install-tabs" role="tablist" aria-label="Install method">
+						<button role="tab" aria-selected="true" aria-controls="i-unix" id="t-unix">macOS / Linux</button>
+						<button role="tab" aria-selected="false" aria-controls="i-win" id="t-win" tabindex="-1">Windows</button>
+						<button role="tab" aria-selected="false" aria-controls="i-src" id="t-src" tabindex="-1">From source</button>
+					</div>
+					{
+						[
+							['i-unix', 't-unix', INSTALL.unix, false],
+							['i-win', 't-win', INSTALL.windows, true],
+							['i-src', 't-src', INSTALL.source, true],
+						].map(([id, tab, cmd, hidden]) => (
+							<div class="install-cmd" role="tabpanel" id={id as string} aria-labelledby={tab as string} hidden={hidden as boolean}>
+								<span class="prompt" aria-hidden="true">$</span>
+								<code>{cmd}</code>
+								<button class="copy" type="button" data-copy={cmd as string} aria-label="Copy install command">
+									<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2"></path></svg>
+									<span class="copy-done">Copied</span>
+								</button>
+							</div>
+						))
+					}
+					<p class="install-note">
+						Verifies the release checksum and sets up the stealth browser. Browser features need Node.js 20+.
+					</p>
+				</div>
+
+				<div class="hero-ctas">
+					<a class="btn btn-lime" href={docs('quickstart/')}>Run your first crawl</a>
+					<a class="btn btn-ghost" href={docs()}>Read the docs</a>
+				</div>
+			</div>
+		</section>
+
+		<!-- Terminal demo -->
+		<section class="demo wrap" aria-label="Example session">
+			<div class="term" data-term>
+				<div class="term-bar">
+					<span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+					<span class="term-title">~/crawls · acrawl</span>
+				</div>
+				<pre class="term-body" data-term-body><code></code></pre>
+				<noscript>
+					<pre class="term-body"><code>$ acrawl prompt "every morning, grab the top 10 stories from news.example.com"</code></pre>
+				</noscript>
+			</div>
+			<ol class="demo-steps">
+				<li><span>01</span> You describe the goal.</li>
+				<li><span>02</span> The agent plans, browses and extracts.</li>
+				<li><span>03</span> It saves the repeatable part as a script.</li>
+				<li><span>04</span> <code>acrawl run</code> replays it. No model, no key, no cost.</li>
+			</ol>
+		</section>
+
+		<!-- Stats -->
+		<section class="stats wrap" aria-label="acrawl at a glance">
+			<div><b>{FACTS.agentTools}</b><span>agent tools</span></div>
+			<div><b>{FACTS.mcpTools}</b><span>MCP tools</span></div>
+			<div><b>{FACTS.providers}</b><span>LLM providers</span></div>
+			<div><b>{FACTS.mcpClients}</b><span>MCP clients</span></div>
+			<div><b>0</b><span>LLM calls per script step</span></div>
+			<div><b>1</b><span>binary</span></div>
+		</section>
+
+		<!-- Scripts -->
+		<section class="section wrap" id="scripts">
+			<p class="eyebrow">AI once, then a script</p>
+			<h2>Stop paying a model to click “next page”.</h2>
+			<p class="lede">
+				A ReAct-style agent calls the model on every page, every run. acrawl’s agent works the job out once, saves the
+				repetitive part as a JSON script with loops, conditionals and parallel branches, and replays it from MCP, the
+				REPL or <code>acrawl run</code>, straight to tools.
+			</p>
+
+			<div class="calc" data-calc>
+				<div class="calc-control">
+					<label for="pages">Pages per run <output data-pages-out>50</output></label>
+					<input id="pages" type="range" min="10" max="500" step="10" value="50" data-pages />
+					<label for="runs">Runs <output data-runs-out>30</output></label>
+					<input id="runs" type="range" min="1" max="365" step="1" value="30" data-runs />
+				</div>
+				<div class="calc-bars">
+					<div class="bar-row">
+						<span class="bar-label">Agent on every page</span>
+						<div class="bar"><i class="bar-fill bar-orange" data-bar-agent></i></div>
+						<span class="bar-val" data-agent-calls>1,500</span>
+					</div>
+					<div class="bar-row">
+						<span class="bar-label">acrawl script</span>
+						<div class="bar"><i class="bar-fill bar-lime" data-bar-script></i></div>
+						<span class="bar-val" data-script-calls>~1 run’s worth</span>
+					</div>
+					<p class="calc-note">
+						Model calls, at one per page. The script’s only model cost is the first run that writes it.
+					</p>
+				</div>
+			</div>
+
+			<div class="split">
+				<pre class="code"><code><span class="c">// books_catalog.json: written once by the agent</span>
+{`{`}
+  <span class="k">"schema_version"</span>: <span class="n">1</span>,
+  <span class="k">"name"</span>: <span class="s">"books_catalog"</span>,
+  <span class="k">"steps"</span>: [{`{`}
+    <span class="k">"type"</span>: <span class="s">"for_each"</span>, <span class="k">"variable"</span>: <span class="s">"u"</span>,
+    <span class="k">"iterable"</span>: {`{`} <span class="k">"kind"</span>: <span class="s">"variable"</span>, <span class="k">"value"</span>: <span class="s">"urls"</span> {`}`},
+    <span class="k">"steps"</span>: [
+      {`{`} <span class="k">"type"</span>: <span class="s">"tool_call"</span>, <span class="k">"tool"</span>: <span class="s">"navigate"</span>,
+        <span class="k">"input"</span>: {`{`} <span class="k">"url"</span>: <span class="s">"$u"</span> {`}`} {`}`},
+      {`{`} <span class="k">"type"</span>: <span class="s">"tool_call"</span>, <span class="k">"tool"</span>: <span class="s">"execute_js"</span>,
+        <span class="k">"input"</span>: {`{`} <span class="k">"script"</span>: <span class="s">"…"</span> {`}`}, <span class="k">"output"</span>: <span class="s">"rows"</span> {`}`},
+      {`{`} <span class="k">"type"</span>: <span class="s">"collect"</span>,
+        <span class="k">"value"</span>: {`{`} <span class="k">"kind"</span>: <span class="s">"variable"</span>, <span class="k">"value"</span>: <span class="s">"rows"</span> {`}`} {`}`}
+    ]
+  {`}`}]
+{`}`}</code></pre>
+				<div class="split-side">
+					<pre class="code code-shell"><code><span class="p">$</span> acrawl run books_catalog --format jsonl -o books.jsonl
+<span class="c">script completed: 40 item(s), 13 step(s), 6.2s</span>
+
+<span class="p">$</span> crontab -l
+<span class="c">  0 7 * * *  acrawl run books_catalog -q -o /data/books.json</span></code></pre>
+					<ul class="ticks">
+						<li>No provider credentials needed to replay</li>
+						<li>Validated before the browser launches; bad input exits 2</li>
+						<li>Partial data still written on failure or Ctrl+C</li>
+					</ul>
+					<a class="link" href={docs('guides/deterministic-scripts/')}>How scripts work →</a>
+				</div>
+			</div>
+		</section>
+
+		<!-- DevTools -->
+		<section class="section section-alt" id="devtools">
+			<div class="wrap">
+				<p class="eyebrow">Acts and observes</p>
+				<h2>Your agent gets DevTools, not just a mouse.</h2>
+				<p class="lede">
+					Most browser agents see pixels or HTML. acrawl’s agent, and any MCP client, can ask the page what it actually
+					did: which requests it made, which errors it threw, how fast it loaded and which WCAG rules it breaks.
+				</p>
+
+				<div class="dt" data-tabs>
+					<div class="dt-tabs" role="tablist" aria-label="DevTools panels">
+						{
+							devtools.map((p, i) => (
+								<button role="tab" id={`dt-t-${p.id}`} aria-controls={`dt-${p.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+									{p.label}
+								</button>
+							))
+						}
+					</div>
+					{
+						devtools.map((p, i) => (
+							<div class="dt-panel" role="tabpanel" id={`dt-${p.id}`} aria-labelledby={`dt-t-${p.id}`} hidden={i !== 0}>
+								<div class="dt-call">
+									<span class="dt-fn">{p.tool}</span>
+									<span class="dt-paren">()</span>
+								</div>
+								<table>
+									<tbody>
+										{p.rows.map((r) => (
+											<tr>
+												{r.filter(Boolean).map((c, j) => (
+													<td class={j === 0 ? `lvl lvl-${c.toLowerCase()}` : ''}>{c}</td>
+												))}
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						))
+					}
+					<div class="dt-more">
+						<span>Also:</span>
+						{moreTools.map((t) => <code>{t}</code>)}
+					</div>
+				</div>
+				<a class="link" href={docs('guides/devtools-debugging/')}>Debug a live page with acrawl →</a>
+			</div>
+		</section>
+
+		<!-- Features -->
+		<section class="section wrap" aria-labelledby="why">
+			<p class="eyebrow">Under the hood</p>
+			<h2 id="why">Built to crawl, not to demo.</h2>
+			<div class="grid">
+				{
+					features.map((f, i) => (
+						<article class="card">
+							<p class="card-tag">
+								<span>[{String(i + 1).padStart(2, '0')}]</span> {f.tag}
+							</p>
+							<h3>{f.title}</h3>
+							<p set:html={f.body.replace(/`([^`]+)`/g, '<code>$1</code>')} />
+						</article>
+					))
+				}
+			</div>
+		</section>
+
+		<!-- MCP -->
+		<section class="section section-alt" id="mcp">
+			<div class="wrap mcp">
+				<div>
+					<p class="eyebrow">MCP both ways</p>
+					<h2>A real browser for the agent you already use.</h2>
+					<p class="lede">
+						<code>acrawl mcp</code> gives your coding agent {FACTS.mcpTools} tools over stdio: 32 browser and DevTools
+						tools, 7 script tools and <code>run_goal</code>, which hands a whole task to acrawl’s own agent. Only
+						<code>run_goal</code> needs an LLM key.
+					</p>
+					<pre class="code code-shell"><code><span class="p">$</span> acrawl mcp install
+<span class="c">  detected: Claude Code, Cursor, VS Code</span>
+<span class="c">  ✓ wrote 3 configs</span></code></pre>
+					<a class="link" href={docs('mcp-server/')}>Set up the MCP server →</a>
+				</div>
+				<div class="marquee" aria-label={`Supported MCP clients: ${clients.join(', ')}`}>
+					{
+						[0, 1, 2, 3, 4].map((row) => (
+							<div class={`marquee-row marquee-row-${row}`} aria-hidden="true">
+								<div class="marquee-track">
+									{[...clients.slice(row * 4), ...clients.slice(0, row * 4), ...clients.slice(row * 4), ...clients.slice(0, row * 4)].map((c) => (
+										<span class="chip">{c}</span>
+									))}
+								</div>
+							</div>
+						))
+					}
+				</div>
+			</div>
+		</section>
+
+		<!-- Video -->
+		<section class="section wrap" aria-labelledby="watch">
+			<p class="eyebrow">Promo · 52 seconds</p>
+			<h2 id="watch">acrawl in 52 seconds.</h2>
+			<div class="video">
+				<video controls preload="none" playsinline poster={`${base}media/acrawl-promo-poster.jpg`}>
+					<source src={`${base}media/acrawl-promo.mp4`} type="video/mp4" />
+					<a href={`${base}media/acrawl-promo.mp4`}>Download the acrawl promo video (MP4, 52 s)</a>
+				</video>
+			</div>
+		</section>
+
+		<!-- Compare -->
+		<section class="section section-alt" id="compare">
+			<div class="wrap">
+				<p class="eyebrow">Honest comparison</p>
+				<h2>How acrawl stacks up.</h2>
+				<div class="table-wrap">
+					<table class="cmp">
+						<thead>
+							<tr>
+								<th scope="col"></th>
+								<th scope="col" class="us">acrawl</th>
+								<th scope="col">browser-use</th>
+								<th scope="col">Playwright MCP</th>
+								<th scope="col">Firecrawl</th>
+							</tr>
+						</thead>
+						<tbody>
+							{
+								compare.map(([label, ...cells]) => (
+									<tr>
+										<th scope="row">{label}</th>
+										{cells.map((c, i) => (
+											<td class:list={[i === 0 && 'us', c === 'yes' && 'yes', c === 'no' && 'no']}>
+												{c === 'yes' ? '✓' : c === 'no' ? '—' : c}
+											</td>
+										))}
+									</tr>
+								))
+							}
+						</tbody>
+					</table>
+				</div>
+				<p class="fine">
+					Reviewed October 2026 against each project’s own README. Spot something out of date?
+					<a href={`${REPO}/issues`}>Open an issue</a>.
+					<a class="link" href={docs('comparisons/overview/')}>Full comparison →</a>
+				</p>
+			</div>
+		</section>
+
+		<!-- FAQ -->
+		<section class="section wrap faq" aria-labelledby="faq">
+			<p class="eyebrow">FAQ</p>
+			<h2 id="faq">Questions people ask.</h2>
+			<div class="faq-list">
+				{
+					faq.map(({ q, a }, i) => (
+						<details open={i === 0}>
+							<summary>{q}</summary>
+							<p>{a}</p>
+						</details>
+					))
+				}
+			</div>
+			<a class="link" href={docs('faq/')}>All questions →</a>
+		</section>
+
+		<!-- CTA -->
+		<section class="cta">
+			<div class="wrap cta-inner">
+				<h2>Point it at the web.</h2>
+				<p>Free, open source, MIT-licensed. One command to install.</p>
+				<div class="install-cmd install-cmd-solo">
+					<span class="prompt" aria-hidden="true">$</span>
+					<code>{INSTALL.unix}</code>
+					<button class="copy" type="button" data-copy={INSTALL.unix} aria-label="Copy install command">
+						<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2"></path></svg>
+						<span class="copy-done">Copied</span>
+					</button>
+				</div>
+				<div class="hero-ctas">
+					<a class="btn btn-lime" href={docs('install/')}>Install guide</a>
+					<a class="btn btn-ghost" href={REPO}>Star on GitHub{stars !== null && ` · ${fmt(stars)}`}</a>
+				</div>
+			</div>
+		</section>
+	</main>
+
+	<footer class="foot">
+		<div class="wrap foot-inner">
+			<div class="foot-brand">
+				<span class="brand">acrawl</span>
+				<p>{TAGLINE} Open-source browser agent and MCP server, written in Rust.</p>
+			</div>
+			<nav aria-label="Docs">
+				<h3>Docs</h3>
+				<a href={docs('install/')}>Install</a>
+				<a href={docs('quickstart/')}>Quick start</a>
+				<a href={docs('mcp-server/')}>MCP server</a>
+				<a href={docs('tools/')}>Tools</a>
+			</nav>
+			<nav aria-label="Guides">
+				<h3>Guides</h3>
+				<a href={docs('guides/scrape-js-sites/')}>JavaScript sites</a>
+				<a href={docs('guides/deterministic-scripts/')}>Scripts</a>
+				<a href={docs('guides/devtools-debugging/')}>DevTools</a>
+				<a href={docs('guides/real-browser/')}>Your browser</a>
+			</nav>
+			<nav aria-label="Project">
+				<h3>Project</h3>
+				<a href={REPO}>GitHub</a>
+				<a href={`${REPO}/releases`}>Releases</a>
+				<a href={`${REPO}/blob/main/CHANGELOG.md`}>Changelog</a>
+				<a href={`${base}llms.txt`}>llms.txt</a>
+			</nav>
+		</div>
+		<div class="wrap foot-legal">
+			<span>MIT License · © {new Date().getFullYear()} Mingye Lu</span>
+			{VERSION && <span>v{VERSION}</span>}
+		</div>
+	</footer>
+</Landing>
+
+<script>
+	import { mountCrawlGraph } from '../scripts/crawl-graph';
+	import { mountTerminal } from '../scripts/terminal';
+
+	const graph = document.querySelector<HTMLCanvasElement>('[data-crawl-graph]');
+	if (graph) mountCrawlGraph(graph);
+
+	const term = document.querySelector<HTMLElement>('[data-term-body] code');
+	if (term) mountTerminal(term);
+
+	// Theme toggle, sharing Starlight's storage key.
+	document.querySelector('[data-theme-toggle]')?.addEventListener('click', () => {
+		const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+		document.documentElement.dataset.theme = next;
+		try {
+			localStorage.setItem('starlight-theme', next);
+		} catch {}
+	});
+
+	// Tabs: install methods and DevTools panels.
+	for (const group of document.querySelectorAll<HTMLElement>('[data-tabs]')) {
+		const tabs = [...group.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+		const select = (tab: HTMLButtonElement) => {
+			for (const t of tabs) {
+				const on = t === tab;
+				t.setAttribute('aria-selected', String(on));
+				t.tabIndex = on ? 0 : -1;
+				const panel = document.getElementById(t.getAttribute('aria-controls') ?? '');
+				if (panel) panel.hidden = !on;
+			}
+		};
+		tabs.forEach((tab, i) => {
+			tab.addEventListener('click', () => select(tab));
+			tab.addEventListener('keydown', (e) => {
+				const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+				if (!d) return;
+				const next = tabs[(i + d + tabs.length) % tabs.length];
+				select(next);
+				next.focus();
+			});
+		});
+	}
+
+	// Copy buttons.
+	for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+		btn.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(btn.dataset.copy ?? '');
+				btn.classList.add('copied');
+				setTimeout(() => btn.classList.remove('copied'), 1400);
+			} catch {}
+		});
+	}
+
+	// Script savings calculator.
+	const calc = document.querySelector<HTMLElement>('[data-calc]');
+	if (calc) {
+		const pages = calc.querySelector<HTMLInputElement>('[data-pages]')!;
+		const runs = calc.querySelector<HTMLInputElement>('[data-runs]')!;
+		const num = new Intl.NumberFormat('en');
+		const update = () => {
+			const p = Number(pages.value);
+			const r = Number(runs.value);
+			const agent = p * r;
+			calc.querySelector('[data-pages-out]')!.textContent = String(p);
+			calc.querySelector('[data-runs-out]')!.textContent = String(r);
+			calc.querySelector('[data-agent-calls]')!.textContent = num.format(agent);
+			calc.querySelector('[data-script-calls]')!.textContent = `≤ ${num.format(p)}`;
+			calc.querySelector<HTMLElement>('[data-bar-agent]')!.style.width = '100%';
+			calc.querySelector<HTMLElement>('[data-bar-script]')!.style.width = `${Math.max(1.5, (100 * p) / agent)}%`;
+		};
+		pages.addEventListener('input', update);
+		runs.addEventListener('input', update);
+		update();
+	}
+
+	// Reveal sections as they scroll in.
+	const io = new IntersectionObserver(
+		(entries) => {
+			for (const e of entries) {
+				if (e.isIntersecting) {
+					e.target.classList.add('in');
+					io.unobserve(e.target);
+				}
+			}
+		},
+		{ rootMargin: '0px 0px -10% 0px' },
+	);
+	for (const el of document.querySelectorAll('.section, .demo, .stats')) io.observe(el);
+
+	// Nav border once scrolled.
+	const nav = document.querySelector('[data-nav]');
+	const onScroll = () => nav?.classList.toggle('scrolled', window.scrollY > 8);
+	addEventListener('scroll', onScroll, { passive: true });
+	onScroll();
+</script>

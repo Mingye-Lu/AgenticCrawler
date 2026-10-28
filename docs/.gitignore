@@ -1,2 +1,3 @@
-# mdBook output
-book/
+dist/
+.astro/
+node_modules/
