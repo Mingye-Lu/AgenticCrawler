@@ -62,7 +62,7 @@ export default defineConfig({
 			],
 			components: {
 				Head: './src/components/DocsHead.astro',
-				SiteTitle: './src/components/SiteTitle.astro',
+				Header: './src/components/Header.astro',
 				SocialIcons: './src/components/SocialIcons.astro',
 				ThemeSelect: './src/components/ThemeSelect.astro',
 			},

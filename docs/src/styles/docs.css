@@ -53,20 +53,30 @@ body::before {
 	mask-image: linear-gradient(to bottom, black, transparent 70%);
 }
 
+/* The header is the landing page's header row (src/components/Header.astro),
+   which pads itself, so Starlight's bar only sets the height and background. */
+:root {
+	--sl-nav-height: 4.25rem;
+}
+
 header.header {
+	padding: 0;
 	backdrop-filter: blur(14px);
 	border-color: var(--ac-line);
 }
 
-/* Header actions: the landing page's GitHub, theme and Install controls, with
-   no divider between them. */
-.right-group,
-.social-icons {
-	gap: 0.6rem;
-}
-
-.social-icons::after {
-	display: none;
+/* On phones the actions live in the menu, and the menu button sits on the
+   right edge of the bar. */
+@media (max-width: 49.99rem) {
+	header.header .nav-actions {
+		display: none;
+	}
+	header.header .site-nav {
+		padding-inline-end: calc(var(--sl-menu-button-size) + 1.5rem);
+	}
+	header.header .nav-search {
+		width: auto;
+	}
 }
 
 /* Phone menu: keep the actions on one centred row, and draw the menu button
@@ -85,28 +95,6 @@ header.header {
 	box-shadow: none;
 }
 
-/* Starlight clips the title area to cut off long titles; ours is short, and
-   the hanging spider needs to drop below the header. */
-.title-wrapper {
-	overflow: visible;
-}
-
-.site-title {
-	font-family: var(--ac-mono);
-	font-weight: 700;
-	letter-spacing: -0.02em;
-}
-
-.site-title::after {
-	content: 'docs';
-	margin-inline-start: 0.5rem;
-	padding: 0.1rem 0.45rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 999px;
-	font-size: 0.7rem;
-	font-weight: 500;
-	color: var(--sl-color-gray-3);
-}
 
 .sl-markdown-content h1,
 .sl-markdown-content h2,

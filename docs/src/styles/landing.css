@@ -1,4 +1,5 @@
 @import './controls.css';
+@import './site-nav.css';
 
 /* Landing page. Colors come from tokens.css. */
 
@@ -148,69 +149,6 @@ h2 {
 	background: color-mix(in srgb, var(--ac-bg) 82%, transparent);
 	backdrop-filter: blur(14px);
 	border-color: var(--ac-line);
-}
-
-.nav-inner {
-	display: flex;
-	align-items: center;
-	gap: 1.5rem;
-	height: 4.25rem;
-}
-
-.brand {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.6rem;
-	font-family: var(--ac-mono);
-	font-weight: 700;
-	font-size: 1.15rem;
-	letter-spacing: -0.03em;
-	text-decoration: none;
-}
-
-.brand {
-	--spider-gap: calc((4.25rem - 1.9rem) / 2);
-}
-
-.nav-links {
-	display: flex;
-	gap: 1.4rem;
-	margin-inline-start: 1rem;
-	font-size: 0.95rem;
-}
-
-.nav-links a {
-	color: var(--ac-muted);
-	text-decoration: none;
-}
-
-.nav-links a:hover {
-	color: var(--ac-text);
-}
-
-.nav-actions {
-	display: flex;
-	align-items: center;
-	gap: 0.6rem;
-	margin-inline-start: auto;
-}
-
-@media (max-width: 860px) {
-	.nav-links a:not(.nav-docs) {
-		display: none;
-	}
-	.nav-links {
-		margin-inline-start: 0.25rem;
-	}
-}
-
-@media (max-width: 520px) {
-	.gh span:not(.gh-stars) {
-		display: none;
-	}
-	.nav-actions .btn-sm {
-		display: none;
-	}
 }
 
 /* ---------- hero ---------- */

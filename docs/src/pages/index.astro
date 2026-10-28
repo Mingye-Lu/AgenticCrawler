@@ -1,9 +1,7 @@
 ---
 import MorphIcon from 'morphicons/astro';
 import { Copy, Network, icons } from 'lucide';
-import GitHubButton from '../components/GitHubButton.astro';
-import Spider from '../components/Spider.astro';
-import ThemeToggle from '../components/ThemeToggle.astro';
+import SiteNav from '../components/SiteNav.astro';
 import Landing from '../layouts/Landing.astro';
 import { formatCount, STARS } from '../lib/github';
 import { CLIENTS, PROVIDERS } from '../lib/logos';
@@ -233,24 +231,7 @@ const jsonLd = {
 	<a class="skip" href="#main">Skip to content</a>
 
 	<header class="nav" data-nav>
-		<div class="wrap nav-inner">
-			<a class="brand" href={base} aria-label="acrawl home">
-				<Spider />
-				<span>acrawl</span>
-			</a>
-			<nav aria-label="Primary" class="nav-links">
-				<a href="#scripts">Scripts</a>
-				<a href="#devtools">DevTools</a>
-				<a href="#mcp">MCP</a>
-				<a href="#compare">Compare</a>
-				<a class="nav-docs" href={docs()}>Docs</a>
-			</nav>
-			<div class="nav-actions">
-				<GitHubButton />
-				<ThemeToggle />
-				<a class="btn btn-primary btn-sm" href="#install">Install</a>
-			</div>
-		</div>
+		<SiteNav current="home" />
 	</header>
 
 	<main id="main">
