@@ -17,6 +17,16 @@
   <a href="https://github.com/Mingye-Lu/AgenticCrawler/actions/workflows/ci.yml"><img src="https://github.com/Mingye-Lu/AgenticCrawler/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-2021_edition-orange.svg" alt="Rust"></a>
+  <a href="https://mingye-lu.github.io/AgenticCrawler/"><img src="https://img.shields.io/badge/website-acrawl-c8f43c.svg" alt="Website"></a>
+</p>
+
+<p align="center">
+  <a href="https://mingye-lu.github.io/AgenticCrawler/"><strong>Website</strong></a> ·
+  <a href="https://mingye-lu.github.io/AgenticCrawler/docs/">Docs</a> ·
+  <a href="https://mingye-lu.github.io/AgenticCrawler/docs/install/">Install</a> ·
+  <a href="https://mingye-lu.github.io/AgenticCrawler/docs/quickstart/">Quick start</a> ·
+  <a href="https://mingye-lu.github.io/AgenticCrawler/docs/mcp-server/">MCP server</a> ·
+  <a href="https://mingye-lu.github.io/AgenticCrawler/docs/comparisons/overview/">Comparisons</a>
 </p>
 
 <p align="center">
@@ -97,6 +107,8 @@ Notes:
 - **Copilot / Edge** (Microsoft): Edge's Copilot Mode uses Bing retrieval with some ability to navigate pages. Real-world tests show high latency (6+ minutes for multi-page comparison tasks) and frequent interruptions for user confirmation. Not a developer API.
 
 ## Quick Start
+
+> Full documentation, guides and comparisons live at **[mingye-lu.github.io/AgenticCrawler](https://mingye-lu.github.io/AgenticCrawler/)**.
 
 ### Install
 
