@@ -278,13 +278,9 @@ h2 {
 }
 
 .theme svg {
-	width: 1.05rem;
-	height: 1.05rem;
-}
-
-:root[data-theme='dark'] .i-moon,
-:root[data-theme='light'] .i-sun {
-	display: none;
+	display: block;
+	width: 1.1rem;
+	height: 1.1rem;
 }
 
 @media (max-width: 860px) {
@@ -529,6 +525,7 @@ h2 {
 }
 
 .copy svg {
+	display: block;
 	width: 1rem;
 	height: 1rem;
 }
@@ -957,9 +954,16 @@ h2 {
 
 .dt-tabs {
 	display: flex;
+	align-items: center;
 	gap: 0.25rem;
 	padding-inline: 0.5rem;
 	overflow-x: auto;
+}
+
+.dt-icon {
+	flex: none;
+	margin-inline: 0.2rem 0.4rem;
+	color: var(--ac-accent);
 }
 
 .dt-panel {
@@ -1089,6 +1093,12 @@ h2 {
 	transition: background 0.25s ease;
 }
 
+.card-icon {
+	display: block;
+	margin-bottom: 1rem;
+	color: var(--ac-accent);
+}
+
 .card::after {
 	content: '';
 	position: absolute;
@@ -1213,12 +1223,22 @@ h2 {
 }
 
 .chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
 	padding: 0.75rem 1.2rem;
 	border: 1px solid var(--ac-line-2);
 	border-radius: 0.6rem;
 	background: var(--ac-panel);
 	font: 500 0.88rem var(--ac-mono);
 	white-space: nowrap;
+}
+
+.chip svg {
+	flex: none;
+	width: 1.15rem;
+	height: 1.15rem;
+	color: var(--ac-muted);
 }
 
 .chip:nth-child(4n + 1) {
@@ -1477,4 +1497,47 @@ h2 {
 	.hero {
 		padding-top: 7.5rem;
 	}
+}
+
+/* ---------- providers ---------- */
+
+.providers {
+	padding-block: 3rem 1rem;
+	text-align: center;
+}
+
+.logo-row {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 1.6rem 2.2rem;
+	margin: 0.4rem auto 1.4rem;
+	padding: 0;
+	max-width: 56rem;
+	list-style: none;
+}
+
+.logo-row li {
+	color: var(--ac-faint);
+	transition: color 0.2s ease;
+}
+
+.logo-row li:hover {
+	color: var(--ac-text);
+}
+
+.logo-row svg {
+	display: block;
+	width: 1.9rem;
+	height: 1.9rem;
+}
+
+.providers-note {
+	margin: 0;
+	color: var(--ac-muted);
+	font-size: 0.95rem;
+}
+
+.providers-note a {
+	color: var(--ac-accent);
 }
