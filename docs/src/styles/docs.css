@@ -40,6 +40,12 @@ header.header {
 	backdrop-filter: blur(12px);
 }
 
+/* Starlight clips the title area to cut off long titles; ours is short, and
+   the hanging spider needs to drop below the header. */
+.title-wrapper {
+	overflow: visible;
+}
+
 .site-title {
 	font-family: var(--ac-mono);
 	font-weight: 700;

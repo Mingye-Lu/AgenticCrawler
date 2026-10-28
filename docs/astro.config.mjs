@@ -60,7 +60,10 @@ export default defineConfig({
 				'./src/styles/tokens.css',
 				'./src/styles/docs.css',
 			],
-			components: { Head: './src/components/DocsHead.astro' },
+			components: {
+				Head: './src/components/DocsHead.astro',
+				SiteTitle: './src/components/SiteTitle.astro',
+			},
 			head: [
 				{ tag: 'meta', attrs: { property: 'og:image', content: `${site}${base}/media/og.jpg` } },
 				{ tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },

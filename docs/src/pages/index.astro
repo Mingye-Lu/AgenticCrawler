@@ -1,6 +1,7 @@
 ---
 import MorphIcon from 'morphicons/astro';
 import { Copy, Network, Sun, icons } from 'lucide';
+import Spider from '../components/Spider.astro';
 import Landing from '../layouts/Landing.astro';
 import { CLIENTS, PROVIDERS } from '../lib/logos';
 import { DESCRIPTION, FACTS, INSTALL, META_DESCRIPTION, REPO, SITE, TAGLINE, VERSION } from '../site';
@@ -243,20 +244,7 @@ const jsonLd = {
 	<header class="nav" data-nav>
 		<div class="wrap nav-inner">
 			<a class="brand" href={base} aria-label="acrawl home">
-				<span class="brand-hang">
-				<svg viewBox="0 0 64 64" aria-hidden="true" class="brand-mark">
-					<!-- Legs are separate so src/scripts/spider.ts can swing each one. -->
-					<g class="leg"><path d="M32 32 10 11"></path><circle cx="10" cy="11" r="4"></circle></g>
-					<g class="leg"><path d="M32 32 5 25"></path><circle cx="5" cy="25" r="3.5"></circle></g>
-					<g class="leg"><path d="M32 32 6 40"></path><circle cx="6" cy="40" r="3.5"></circle></g>
-					<g class="leg"><path d="M32 32 12 55"></path><circle cx="12" cy="55" r="4"></circle></g>
-					<g class="leg"><path d="M32 32 54 11"></path><circle cx="54" cy="11" r="4"></circle></g>
-					<g class="leg"><path d="M32 32 59 25"></path><circle cx="59" cy="25" r="3.5"></circle></g>
-					<g class="leg"><path d="M32 32 58 40"></path><circle cx="58" cy="40" r="3.5"></circle></g>
-					<g class="leg"><path d="M32 32 52 55"></path><circle cx="52" cy="55" r="4"></circle></g>
-					<circle cx="32" cy="32" r="8.5" class="brand-core"></circle>
-				</svg>
-				</span>
+				<Spider />
 				<span>acrawl</span>
 			</a>
 			<nav aria-label="Primary" class="nav-links">
@@ -727,7 +715,6 @@ const jsonLd = {
 	} from 'lucide';
 	import type { IconNode } from 'morphicons';
 	import { mountCrawlGraph } from '../scripts/crawl-graph';
-	import { mountSpider } from '../scripts/spider';
 	import { mountTerminal } from '../scripts/terminal';
 
 	const graph = document.querySelector<HTMLCanvasElement>('[data-crawl-graph]');
@@ -742,9 +729,6 @@ const jsonLd = {
 		Accessibility, AppWindow, Brain, BrainCircuit, FileMinus, FileText, Gauge, Globe, Lock, LockOpen,
 		Merge, Network, Package, PackageCheck, Split, SquareTerminal,
 	};
-
-	const brand = document.querySelector<HTMLElement>('.brand');
-	if (brand) mountSpider(brand);
 
 	// Theme toggle, sharing Starlight's storage key. The icon shows the theme you'd switch to.
 	const themeIcon = document.querySelector<Morph>('[data-theme-icon]');

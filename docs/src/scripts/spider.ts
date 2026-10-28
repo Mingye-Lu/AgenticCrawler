@@ -1,7 +1,7 @@
-// Header mark: a spider hanging from a silk thread. Hovering drops it lower and
-// leaving climbs it back up. The body rides the thread like a damped spring,
-// and each leg is a stick with a mass at its tip held by a damped rotational
-// spring, so the legs swing only because the body accelerates:
+// Header mark: a spider hanging from a silk thread. Hovering its link drops it
+// lower and leaving climbs it back up. The body rides the thread like a damped
+// spring, and each leg is a stick with a mass at its tip held by a damped
+// rotational spring, so the legs swing only because the body accelerates:
 //
 //   body:  ÿ = KS (y* − y) − CS ẏ                (y runs 0 at rest → 1 dropped)
 //   leg:   θ̈ = −K (θ − θ₀) − C θ̇ − a·REACH / l · cos θ
@@ -19,10 +19,8 @@ const STEP = 0.002;
 
 type Leg = { el: SVGGElement; th0: number; th: number; w: number; len: number };
 
-export function mountSpider(brand: HTMLElement): void {
-	const hang = brand.querySelector<HTMLElement>('.brand-hang');
-	if (!hang) return;
-	const legs: Leg[] = [...brand.querySelectorAll<SVGGElement>('.leg')].map((el) => {
+export function mountSpider(trigger: HTMLElement, hang: HTMLElement): void {
+	const legs: Leg[] = [...hang.querySelectorAll<SVGGElement>('.leg')].map((el) => {
 		const foot = el.querySelector('circle')!;
 		const dx = Number(foot.getAttribute('cx')) - 32;
 		const dy = Number(foot.getAttribute('cy')) - 32;
@@ -87,8 +85,8 @@ export function mountSpider(brand: HTMLElement): void {
 		requestAnimationFrame(frame);
 	};
 
-	brand.addEventListener('pointerenter', () => go(1));
-	brand.addEventListener('pointerleave', () => go(0));
-	brand.addEventListener('focus', () => go(1));
-	brand.addEventListener('blur', () => go(0));
+	trigger.addEventListener('pointerenter', () => go(1));
+	trigger.addEventListener('pointerleave', () => go(0));
+	trigger.addEventListener('focus', () => go(1));
+	trigger.addEventListener('blur', () => go(0));
 }

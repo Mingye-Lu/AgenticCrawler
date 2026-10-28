@@ -203,51 +203,8 @@ h2 {
 	text-decoration: none;
 }
 
-/* --drop is set by the spider script (src/scripts/spider.ts). */
-.brand-hang {
-	--drop: 0px;
-	position: relative;
-	display: block;
-}
-
-/* The silk thread, from the top of the header to the spider's body. */
-.brand-hang::before {
-	content: '';
-	position: absolute;
-	top: calc((1.9rem - 4.25rem) / 2);
-	bottom: calc(50% - var(--drop));
-	left: calc(50% - 0.5px);
-	width: 1px;
-	background: color-mix(in srgb, var(--ac-muted) 70%, transparent);
-}
-
-.brand-mark {
-	display: block;
-	width: 1.9rem;
-	height: 1.9rem;
-	color: var(--ac-accent);
-	overflow: visible;
-	transform: translateY(var(--drop));
-}
-
-.leg {
-	transform-box: view-box;
-	transform-origin: 32px 32px;
-}
-
-.leg path {
-	stroke: currentColor;
-	stroke-width: 3.4;
-	stroke-linecap: round;
-}
-
-.leg circle {
-	fill: currentColor;
-	opacity: 0.75;
-}
-
-.brand-core {
-	fill: var(--ac-spark);
+.brand {
+	--spider-gap: calc((4.25rem - 1.9rem) / 2);
 }
 
 .nav-links {
