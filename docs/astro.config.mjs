@@ -79,6 +79,7 @@ export default defineConfig({
 						'docs/install',
 						'docs/quickstart',
 						'docs/mcp-server',
+						'docs/providers',
 					],
 				},
 				{
@@ -90,7 +91,10 @@ export default defineConfig({
 						'docs/guides/real-browser',
 					],
 				},
-				{ label: 'Reference', items: ['docs/tools', 'docs/faq'] },
+				{
+					label: 'Reference',
+					items: ['docs/how-it-works', 'docs/tools', 'docs/cli', 'docs/configuration', 'docs/faq'],
+				},
 				{
 					label: 'Comparisons',
 					items: [
@@ -100,6 +104,7 @@ export default defineConfig({
 						'docs/comparisons/vs-firecrawl',
 					],
 				},
+				{ label: 'Project', items: ['about'] },
 			],
 		}),
 	],

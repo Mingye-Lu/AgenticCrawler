@@ -6,9 +6,10 @@ import { DESCRIPTION, FACTS, REPO, SITE } from '../site';
 import { docUrl, sortDocs } from '../lib/docs';
 
 const SECTIONS: [string, (id: string) => boolean][] = [
-	['Docs', (id) => !id.includes('/guides/') && !id.includes('/comparisons/')],
+	['Docs', (id) => id.startsWith('docs') && !id.includes('/guides/') && !id.includes('/comparisons/')],
 	['Guides', (id) => id.includes('/guides/')],
 	['Comparisons', (id) => id.includes('/comparisons/')],
+	['Project', (id) => !id.startsWith('docs')],
 ];
 
 export const GET: APIRoute = async () => {
