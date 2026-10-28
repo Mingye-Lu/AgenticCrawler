@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The documentation site is now a full website.** A new landing page (crawl animation, live terminal demo, script savings calculator, DevTools tour, MCP client list, comparison table and FAQ) sits at the site root, and the docs move to `/docs/` on Astro Starlight with search and a light/dark theme. Every page carries structured data for search and AI answer engines, alongside a sitemap, `robots.txt`, `llms.txt` and `llms-full.txt`. Old mdBook URLs such as `/install.html` redirect to their new pages.
+
 ## [0.17.0] - 2026-10-27
 
 ### Added

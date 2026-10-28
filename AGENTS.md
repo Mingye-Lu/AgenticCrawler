@@ -64,6 +64,15 @@ Eleven crates under `crates/`, compiled with `resolver = "2"`:
 
 The CloakBrowser bridge is notable: it is a **single embedded Node script** launched as a subprocess, using CloakBrowser (not stock Playwright) for stealth browsing. The browser binary auto-downloads on first use — no separate install step needed.
 
+## Website (`docs/`)
+
+`docs/` is an Astro site deployed to GitHub Pages by `.github/workflows/pages.yml` on pushes to `main` that touch `docs/` or `Cargo.toml`. Run `npm ci && npm run dev` inside `docs/` to preview (Node 22.23+).
+
+- `src/pages/index.astro` is the hand-built landing page; `src/content/docs/docs/**.md` are the Starlight docs, served under `/docs/`. Sidebar order lives in `astro.config.mjs`.
+- Each docs page needs `title` and `description` frontmatter; the description is the search snippet, so write it as a one-sentence answer. Internal links use the full base path (`/AgenticCrawler/docs/...`).
+- Product facts shown on the site (tool, provider and client counts, install commands) live in `src/site.ts`; the version is read from the root `Cargo.toml`. Update `src/site.ts` when those numbers change.
+- `llms.txt`, `llms-full.txt`, the sitemap and per-page JSON-LD are generated at build time. To move to a custom domain, change `site`/`base` in `astro.config.mjs`, `SITE` in `src/site.ts`, and the absolute links in the docs.
+
 ## Extension bridge (Chrome extension backend)
 
 An alternative to CloakBrowser: a Chrome MV3 extension that lets acrawl drive the user's real browser via CDP (Chrome DevTools Protocol). The system has three layers:
