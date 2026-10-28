@@ -1,6 +1,13 @@
 ---
 title: "Quick start"
 description: "Connect an LLM provider and run your first acrawl crawl in a few minutes, from the terminal UI or a one-shot prompt."
+head:
+  - tag: title
+    content: "acrawl quick start: run your first AI web crawl"
+  - tag: meta
+    attrs:
+      property: og:title
+      content: "acrawl quick start: run your first AI web crawl"
 ---
 
 ## 1. Connect an LLM provider

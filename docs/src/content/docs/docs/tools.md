@@ -1,6 +1,13 @@
 ---
 title: "Tools"
 description: "All 43 acrawl agent tools by group: navigation, interaction, extraction, DevTools observation, sub-agents and deterministic scripts."
+head:
+  - tag: title
+    content: "acrawl tools: 43 browser, DevTools and script tools"
+  - tag: meta
+    attrs:
+      property: og:title
+      content: "acrawl tools: 43 browser, DevTools and script tools"
 ---
 
 acrawl's agent has **43 tools** in six groups. The MCP server exposes 40 of them: every navigation, interaction, extraction and DevTools tool, the 7 script tools and `run_goal`. The 4 sub-agent tools are used inside the agent loop, so MCP clients reach them through `run_goal`.
