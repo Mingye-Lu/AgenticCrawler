@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-27
+
+### Added
+
+- **`acrawl run` replays a saved script without an LLM.** `acrawl run <name|path.json>` runs a script from a terminal, cron job or CI step with no provider credentials and no agent. It prints the collected data as a JSON array (`--format json`, default), one item per line (`jsonl`) or the full result envelope (`result`). `--output`/`-o` writes the file atomically, `--flatten` unwraps one level of arrays, and `--max-steps`, `--timeout` and `--step-timeout` set per-run limits, capped by the `script` settings. The script is validated before the browser launches. Exit codes: `0` completed, `1` failed (partial data is still written), `2` unknown or invalid script, `130` interrupted. It follows `browser_backend`, so extension mode replays in your own logged-in browser.
+- **`{{var}}` interpolation inside script strings.** Previously only a whole-string `"$var"` was substituted, so a `for_each` over search terms couldn't build a URL. Each `{{name}}` is now replaced with the variable's value; braces around anything that isn't an identifier are left alone so JavaScript source passes through, and an unknown name fails the step.
+- **Documentation site** at <https://mingye-lu.github.io/AgenticCrawler/>, built with mdBook from `docs/` and deployed by GitHub Pages: overview with a promo video, install, quick start, MCP server setup, guides (real browser, repeatable scripts, JavaScript-heavy sites, DevTools debugging), tool reference, FAQ, and comparisons with browser-use, Playwright MCP and Firecrawl. It also publishes `llms.txt`, `llms-full.txt` and `sitemap.xml` for search engines and AI assistants.
+- **`acrawl run` is documented** in the README, the docs site and the `acrawl-mcp` agent skill, which now tells agents to hand users a replay command for a saved script.
+
 ### Removed
 
 - **Extension pairing and the bridge token.** The acrawl Bridge extension runs in your own browser, and installing it is the permission for acrawl to drive it, so there is no longer a pairing code to type. `/extension` and the MCP connect error no longer show a code, the `/pair` and `/pair/info` endpoints are gone, and the popup no longer has a pairing panel or PAIR badge. The `extension_bridge_token` and `extension_paired` settings are dropped (an existing `settings.json` still loads; the keys are removed on its next save), and the extension deletes the token it stored on its next install or update.
@@ -16,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The bridge accepts a WebSocket only from a browser extension `Origin`.** With no token, the Origin check is what keeps ordinary web pages, which can also open `ws://127.0.0.1`, from connecting; requests without an `Origin` header are now refused. An older extension that still sends `?token=` keeps working.
 - **The MCP server always waits `extension_bridge_connect_timeout_secs` (default 3) for the extension** before reporting that it did not connect, since there is no "never paired" state to skip the wait for.
 - **The updated extension needs this acrawl version or newer**: it no longer sends a token, which an older acrawl rejects.
+- **acrawl Bridge extension 1.4.0.** Ships the pairing removal and the two extension fixes below.
+
+### Fixed
+
+- **`run_script` by name works over MCP.** Only the agent loop resolved a saved script's name, so the MCP server failed with "missing field schema_version". Named scripts now load in one shared path, `save_as` is actually written, and `save_script`, `read_script` and `list_scripts` all use the configured `scripts_dir`. The agent also closes the tab it cloned for a script that fails to start.
+- **The `run_script` tool description matches the real script grammar.** It named a `version: "1.0"` field and PascalCase node types that the parser rejects; it now describes `schema_version`, the snake_case node types, expressions and substitution, with a minimal working example. The `acrawl-mcp` skill is updated to match. (#169)
+- **Omitted `run_script` limit fields default** instead of failing, so `limits: {"per_step_timeout_secs": 90}` no longer errors with "missing field max_steps".
+- **`try_catch` catches per-step timeouts.** One slow page no longer aborts an otherwise independent loop. Step-limit, wall-clock timeout and cancellation still end the script, and a failed script still returns the data collected before the failure. The CloakBrowser bridge now stays in sync when a timed-out command is abandoned mid-read, so the script can keep using it.
+- **Extension `navigate` waits for client-rendered pages.** It used to return at the load event, so single-page apps read as empty or as their server-rendered shell. It now waits for network idle and a settled DOM, like the CloakBrowser backend. (#168)
+- **The extension recovers a tab after a certificate or DNS error page.** Such a page detached the debugger and every later command on the tab failed with "Cannot attach to this target"; the tab is now reset to `about:blank` and re-attached. (#167)
+- **MCP installer tests no longer fail at random on Linux** with "Text file busy" (ETXTBSY): the fake CLI they run is now passed to `sh` instead of being executed right after it is written. Test-only; no change to the installer.
 
 ## [0.16.0] - 2026-10-12
 
@@ -1074,6 +1094,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.17.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.17.0
 [0.16.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.16.0
 [0.15.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.2
 [0.15.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.1
