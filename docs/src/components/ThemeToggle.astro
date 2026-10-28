@@ -1,0 +1,33 @@
+---
+// Light/dark toggle shared by the landing and docs headers. It writes the same
+// storage key as Starlight's theme picker, and its icon morphs to the theme
+// you'd switch to.
+import MorphIcon from 'morphicons/astro';
+import { Sun } from 'lucide';
+import '../styles/controls.css';
+---
+
+<button class="theme" type="button" data-theme-toggle aria-label="Switch color theme">
+	<MorphIcon icon={Sun} size={18} reducedMotion="user" data-theme-icon />
+</button>
+
+<script>
+	import { Moon, Sun } from 'lucide';
+	import type { IconNode } from 'morphicons';
+
+	type Morph = HTMLElement & { morphTo(icon: IconNode): void; set(icon: IconNode): void };
+	const glyph = () => (document.documentElement.dataset.theme === 'light' ? Moon : Sun);
+
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]')) {
+		const icon = button.querySelector<Morph>('[data-theme-icon]');
+		customElements.whenDefined('morph-icon').then(() => icon?.set(glyph()));
+		button.addEventListener('click', () => {
+			const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+			document.documentElement.dataset.theme = next;
+			try {
+				localStorage.setItem('starlight-theme', next);
+			} catch {}
+			for (const other of document.querySelectorAll<Morph>('[data-theme-icon]')) other.morphTo(glyph());
+		});
+	}
+</script>

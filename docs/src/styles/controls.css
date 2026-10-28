@@ -1,0 +1,83 @@
+/* Buttons and header controls shared by the landing page and the docs. */
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.85rem 1.35rem;
+	border-radius: 0.7rem;
+	font-weight: 600;
+	text-decoration: none;
+	border: 1px solid transparent;
+	transition:
+		transform 0.15s ease,
+		box-shadow 0.2s ease,
+		background 0.2s ease;
+}
+
+.btn:hover {
+	transform: translateY(-2px);
+}
+
+.btn-sm {
+	padding: 0.5rem 0.95rem;
+	font-size: 0.92rem;
+}
+
+.btn-primary {
+	background: var(--ac-accent);
+	color: var(--ac-accent-ink);
+	box-shadow: 0 10px 30px -12px color-mix(in srgb, var(--ac-accent) 70%, transparent);
+}
+
+.btn-ghost {
+	border-color: var(--ac-line-2);
+	background: color-mix(in srgb, var(--ac-panel) 70%, transparent);
+}
+
+.btn-ghost:hover {
+	border-color: var(--ac-accent);
+}
+
+.gh {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.45rem;
+	padding: 0.45rem 0.75rem;
+	border: 1px solid var(--ac-line-2);
+	border-radius: 0.6rem;
+	color: var(--ac-text);
+	font-size: 0.9rem;
+	text-decoration: none;
+}
+
+.gh svg {
+	width: 1rem;
+	height: 1rem;
+}
+
+.gh-stars {
+	font-family: var(--ac-mono);
+	font-size: 0.8rem;
+	color: var(--ac-muted);
+	padding-inline-start: 0.45rem;
+	border-inline-start: 1px solid var(--ac-line-2);
+}
+
+.theme {
+	display: grid;
+	place-items: center;
+	width: 2.3rem;
+	height: 2.3rem;
+	border: 1px solid var(--ac-line-2);
+	border-radius: 0.6rem;
+	background: none;
+	color: var(--ac-text);
+	cursor: pointer;
+}
+
+.theme svg {
+	display: block;
+	width: 1.1rem;
+	height: 1.1rem;
+}
