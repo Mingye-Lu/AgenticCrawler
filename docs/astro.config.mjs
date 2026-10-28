@@ -63,6 +63,8 @@ export default defineConfig({
 			components: {
 				Head: './src/components/DocsHead.astro',
 				SiteTitle: './src/components/SiteTitle.astro',
+				SocialIcons: './src/components/SocialIcons.astro',
+				ThemeSelect: './src/components/ThemeSelect.astro',
 			},
 			head: [
 				{ tag: 'meta', attrs: { property: 'og:image', content: `${site}${base}/media/og.jpg` } },
