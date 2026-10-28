@@ -12,7 +12,7 @@ head:
 
 acrawl's agent has **43 tools** in six groups. The MCP server exposes 40 of them: every navigation, interaction, extraction and DevTools tool, the 7 script tools and `run_goal`. The 4 sub-agent tools are used inside the agent loop, so MCP clients reach them through `run_goal`.
 
-Full parameter details are in the [README](https://github.com/Mingye-Lu/AgenticCrawler#43-tool-toolbox).
+Each tool's exact parameters are in its JSON schema, which MCP clients receive when they connect. The tables below say what each one is for.
 
 ## Navigation (7)
 
@@ -81,3 +81,49 @@ Full parameter details are in the [README](https://github.com/Mingye-Lu/AgenticC
 | `wait_for_scripts` / `script_status` / `cancel_script` | Track and control runs. |
 
 See [Repeatable crawls with zero LLM calls](/AgenticCrawler/docs/guides/deterministic-scripts/).
+
+## Page formats
+
+`navigate` takes a `format` that controls how much of the page comes back:
+
+| Format | What you get |
+|---|---|
+| `fit_markdown` | Recommended. Markdown with navigation, footers, ads, sidebars and other low-content blocks removed first. Typically 30 to 60% fewer tokens. |
+| `markdown` | The whole page as Markdown. |
+| `text` | Plain text. |
+| `html` | The raw HTML. |
+
+`fit_markdown` drops elements whose class or id names them as navigation, footer, sidebar, ads, comments or sharing widgets, then scores what is left by text density, link density and tag, and keeps the content-heavy parts. Use `markdown` when the data you want lives in a sidebar or similar block. If pruning would leave nothing, the tool returns plain text instead.
+
+## What interaction tools return
+
+Tools that change the page (`click`, `click_at`, `fill_form`, `select_option`, `hover`, `press_key`, `scroll`, `go_back`, `switch_tab`, `set_device`, `refresh`) return a `page_state`, so the agent sees the effect of its action without a separate call.
+
+The first action on a URL returns the full accessibility tree, with a `ref` on every element the agent can use:
+
+```yaml
+url: https://example.com/page
+title: Page Title
+page_map: |
+  - main "" [ref=e1]:
+    - navigation "Primary" [ref=e2]:
+      - link "Docs" [ref=e3]:
+    - heading "Platform" [level=1] [ref=e4]:
+    - button "Get Started" [ref=e5]:
+```
+
+Later actions on the same page return only what changed, which keeps long sessions cheap:
+
+```yaml
+url: https://example.com/page
+title: Page Title
+changed: true
+changes: |
+  + [ref=e5] added:
+    - dialog "Confirm" [ref=e5]:
+      - button "OK" [ref=e6]:
+      - button "Cancel" [ref=e7]:
+  ~ button "Submit" [ref=e2]: [] → [disabled]
+```
+
+If nothing changed, the result is just `changed: false`. When the changes are too large to diff usefully, the full tree comes back instead.

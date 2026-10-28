@@ -10,13 +10,21 @@ head:
       content: "acrawl quick start: run your first AI web crawl"
 ---
 
+This page takes you from a fresh [install](/AgenticCrawler/docs/install/) to a finished crawl. You need an API key for one LLM provider, or a local model server such as Ollama.
+
 ## 1. Connect an LLM provider
 
 ```bash
-acrawl auth anthropic   # or: openai, other
+acrawl auth anthropic   # or: openai, google, other, ... (acrawl auth list shows all 25)
 ```
 
-Credentials are stored in `~/.acrawl/credentials.json`. Set `ACRAWL_CONFIG_HOME` to use a different config directory.
+acrawl asks for your key and stores it in `~/.acrawl/credentials.json`. Set `ACRAWL_CONFIG_HOME` to use a different config directory. For a local model, run `acrawl auth other --base-url http://localhost:11434/v1`. [LLM providers](/AgenticCrawler/docs/providers/) covers every provider and how to pick a model.
+
+Check it worked:
+
+```bash
+acrawl auth status
+```
 
 ## 2. Run a crawl
 
@@ -32,11 +40,34 @@ Or run a single goal and exit, which suits scripts and CI:
 acrawl prompt "scrape all book titles and prices from books.toscrape.com"
 ```
 
-Resume a saved session:
+The terminal UI streams the agent's reasoning and every tool call as it happens. Type a goal and press Enter; press `Esc` twice to interrupt. Sessions save automatically when you quit with `/exit`.
+
+## 3. Watch it, steer it, check the cost
+
+- **See the browser.** Start with `acrawl --headed`, or type `/headed`, to watch the agent click through the page in a visible window.
+- **Steer it.** If the agent heads the wrong way, interrupt and add a message such as "only the first page, please". It keeps the context it has built so far.
+- **Check the cost.** `/cost` shows tokens and spend for the session; `/status` shows the model and context use.
+- **Switch model.** `/model` opens a searchable list of every configured provider's models.
+
+## 4. Get the data out
+
+In the terminal UI the agent replies with the data, normally as JSON or a table. For scripts and pipelines, ask for JSON output:
 
 ```bash
-acrawl --resume session.json /status /compact
+acrawl --output-format json prompt "list the 10 newest posts on example.com/blog with title and date" > result.json
 ```
+
+The JSON holds the agent's final `message`, the `model`, the `tool_uses` it made and token `usage`. Files the agent downloads with `save_file` go to the `output` folder, which you can change with `acrawl config set output_dir <path>`.
+
+## Write goals that work
+
+| Instead of | Try |
+|---|---|
+| "get the products" | "get the name, price and rating of every product on example.com/shop, following pagination" |
+| "check the site" | "open example.com, list any console errors and any network requests that failed" |
+| "log in and get my orders" | Use [your own browser](/AgenticCrawler/docs/guides/real-browser/), where you're already signed in, then "list my last 5 orders" |
+
+Name the site, the fields you want and when to stop. The agent does better with a clear finish line than with an open-ended "everything".
 
 ## Example goals
 
@@ -75,4 +106,5 @@ The agent runs up to 5 sub-agents at once, each in its own tab, and merges their
 ## Next
 
 - [Use acrawl from Claude Code, Cursor or VS Code](/AgenticCrawler/docs/mcp-server/)
-- [Turn a crawl into a repeatable script](/AgenticCrawler/docs/guides/deterministic-scripts/)
+- [Turn a crawl into a repeatable script](/AgenticCrawler/docs/guides/deterministic-scripts/) that runs without a model
+- [Every command and slash command](/AgenticCrawler/docs/cli/)

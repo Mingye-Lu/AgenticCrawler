@@ -33,3 +33,41 @@ description: "acrawl vs Firecrawl: a self-hosted browser agent compared with a h
 - You want a managed API that handles crawling infrastructure and scale for you.
 - You mostly need clean, LLM-ready content from many URLs.
 - You'd rather not run browsers yourself.
+
+## The same job, two ways
+
+Take "collect the name and price of every product in a 40-page catalog, every morning".
+
+**With Firecrawl**, you call its crawl or extract endpoint with the start URL and a schema, and it returns clean records from its own infrastructure. You pay per page on a hosted plan, or run the AGPL engine yourself.
+
+**With acrawl**, you describe the job once:
+
+```text
+acrawl > get the name and price of every product on example.com/catalog, following
+         pagination, and save the crawl as a script called catalog
+```
+
+The agent works out the pagination and the selectors, returns the data, and saves the steps as a [deterministic script](/AgenticCrawler/docs/guides/deterministic-scripts/). Every morning after that, a cron job runs it with no model at all:
+
+```bash
+acrawl run catalog --format jsonl --flatten --output catalog.jsonl
+```
+
+The first run costs some model tokens; the daily runs cost nothing but the machine they run on.
+
+## Using them together
+
+They don't compete for every job. A common split:
+
+- Firecrawl for broad, shallow coverage: turning thousands of public URLs into Markdown for search or retrieval.
+- acrawl for deep, interactive work: logging in with [your own browser](/AgenticCrawler/docs/guides/real-browser/), working through multi-step flows, and [debugging](/AgenticCrawler/docs/guides/devtools-debugging/) the pages your own team ships.
+
+Both ship MCP servers, so a coding agent such as Claude Code can have both connected and pick the right one per task.
+
+## Common questions
+
+**Is acrawl a self-hosted Firecrawl?** No. Firecrawl is a scraping service with an API; acrawl is an agent with a browser. acrawl has no HTTP API or job queue to host, and Firecrawl has no local agent that works through a task in your own browser.
+
+**Which is cheaper?** For a few repeated jobs, acrawl, because scripts replay without model calls and there are no per-page fees. At very large scale, compare Firecrawl's plan prices with your own LLM and server costs.
+
+**Does acrawl return Markdown like Firecrawl?** Yes. `navigate` returns a page as `markdown`, `fit_markdown` (main content only), `text` or `html`, and the agent can shape results into whatever JSON you ask for.

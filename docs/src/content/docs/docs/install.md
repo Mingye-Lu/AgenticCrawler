@@ -27,9 +27,41 @@ irm https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.ps1 
 ## Requirements
 
 - **Node.js 20+** for browser features. Plain HTTP fetching works without it.
-- **An API key** for at least one of the [25 supported LLM providers](https://github.com/Mingye-Lu/AgenticCrawler#25-llm-providers), or a local OpenAI-compatible endpoint. The MCP server's 39 direct and script tools work without any key; only the autonomous `run_goal` tool needs one.
+- **An API key** for at least one of the [25 supported LLM providers](/AgenticCrawler/docs/providers/), or a local OpenAI-compatible endpoint. The MCP server's 39 direct and script tools work without any key; only the autonomous `run_goal` tool needs one.
 
-acrawl checks for updates on startup and tells you when a new version is available.
+## What the script does
+
+1. Detects your operating system and CPU, and picks the matching release (Linux and macOS on x64 or ARM64, Windows on x64).
+2. Downloads it from the latest GitHub release and checks it against the published SHA256 checksum. A mismatch stops the install.
+3. On Linux and macOS, puts the binary in `~/.local/bin` (or `ACRAWL_INSTALL_DIR`) and tells you if that folder isn't on your `PATH`. On Windows, puts it in `%USERPROFILE%\.acrawl\bin` and adds that folder to your user `PATH`.
+4. Installs CloakBrowser into `~/.acrawl` if Node.js 20+ is available. The browser itself downloads the first time a page needs it.
+
+Prefer to read the script first? It's [install.sh](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/install.sh) or [install.ps1](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/install.ps1). You can also download a binary and `checksums.sha256` from the [releases page](https://github.com/Mingye-Lu/AgenticCrawler/releases) yourself.
+
+## Check that it works
+
+```bash
+acrawl --version
+acrawl auth list
+```
+
+The first prints the version and build details; the second lists the providers you can set up. Neither needs a key or a browser.
+
+## Update and uninstall
+
+acrawl checks for updates on startup and tells you when a new version is available. To install it:
+
+```bash
+acrawl update
+```
+
+To remove acrawl, keeping your settings and credentials:
+
+```bash
+acrawl uninstall
+```
+
+Add `--purge` to delete `~/.acrawl` as well, including credentials and saved sessions.
 
 ## Build from source
 
@@ -59,5 +91,14 @@ Or configure the MCP server and install the skill in one step, without Node:
 ```bash
 acrawl mcp install --client claude-code --skill
 ```
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `acrawl: command not found` | The install folder isn't on your `PATH`. On Linux and macOS the script prints the line to add to your shell profile. On any system, open a new terminal afterwards. |
+| "Node.js 20+ is required for browser automation" | Install Node.js 20 or newer, then run `acrawl install-browser`. Pages that don't need JavaScript still work without it. |
+| CloakBrowser install failed | Run `acrawl install-browser`, or `npm install --prefix ~/.acrawl cloakbrowser playwright-core`. |
+| `acrawl` refuses to start the UI | The terminal UI needs an interactive terminal. In scripts and CI, use `acrawl prompt` or `acrawl run`. |
 
 Next: [Quick start](/AgenticCrawler/docs/quickstart/).
