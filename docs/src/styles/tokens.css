@@ -1,21 +1,24 @@
 /* acrawl palette, shared by the landing page and the docs.
    Dark is the default; `data-theme="light"` on <html> switches it, which is
    the attribute Starlight's theme picker already sets. */
+/* acrawl palette, shared by the landing page and the docs.
+   One brand hue (signal blue) on blue-tinted neutrals, plus a yellow
+   "spark" kept for the mark's body and a few small highlights. */
 :root {
-	--ac-bg: #0b0d0a;
-	--ac-bg-2: #10130f;
-	--ac-panel: #151914;
-	--ac-line: #252b23;
-	--ac-line-2: #333a30;
-	--ac-text: #eef2e8;
-	--ac-muted: #9aa494;
-	--ac-faint: #7d8678;
-	--ac-lime: #c8f43c;
-	--ac-lime-ink: #0b0d0a;
-	--ac-lime-soft: rgb(200 244 60 / 0.12);
-	--ac-orange: #ff7a45;
-	--ac-cyan: #6fe3e8;
-	--ac-pink: #ff6fae;
+	--ac-bg: #0a0e14;
+	--ac-bg-2: #0d121a;
+	--ac-panel: #121925;
+	--ac-line: #1e2734;
+	--ac-line-2: #2a3546;
+	--ac-text: #e6ebf2;
+	--ac-muted: #93a0b4;
+	--ac-faint: #7a879b;
+	--ac-accent: #5b9dff;
+	--ac-accent-ink: #06101f;
+	--ac-accent-soft: rgb(91 157 255 / 0.12);
+	--ac-accent-2: #9cc4ff;
+	--ac-spark: #ffd23f;
+	--ac-spark-text: #ffd23f;
 	--ac-shadow: 0 30px 80px -30px rgb(0 0 0 / 0.7);
 	--ac-font: 'Space Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
 	--ac-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
@@ -23,20 +26,20 @@
 }
 
 :root[data-theme='light'] {
-	--ac-bg: #f6f5ef;
-	--ac-bg-2: #efede4;
+	--ac-bg: #f6f8fb;
+	--ac-bg-2: #edf1f7;
 	--ac-panel: #ffffff;
-	--ac-line: #e0ddd1;
-	--ac-line-2: #cfcbbd;
-	--ac-text: #141712;
-	--ac-muted: #555d50;
-	--ac-faint: #636a5e;
-	--ac-lime: #4b7a00;
-	--ac-lime-ink: #ffffff;
-	--ac-lime-soft: rgb(75 122 0 / 0.1);
-	--ac-orange: #c2410c;
-	--ac-cyan: #0e7f86;
-	--ac-pink: #be185d;
-	--ac-shadow: 0 30px 70px -35px rgb(40 40 20 / 0.35);
+	--ac-line: #dde3ec;
+	--ac-line-2: #c8d1de;
+	--ac-text: #0f1623;
+	--ac-muted: #4a5568;
+	--ac-faint: #5b6577;
+	--ac-accent: #1f5fd6;
+	--ac-accent-ink: #ffffff;
+	--ac-accent-soft: rgb(31 95 214 / 0.1);
+	--ac-accent-2: #0b4bb3;
+	--ac-spark: #f2b200;
+	--ac-spark-text: #8a6100;
+	--ac-shadow: 0 30px 70px -35px rgb(20 35 60 / 0.3);
 	color-scheme: light;
 }

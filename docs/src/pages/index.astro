@@ -228,13 +228,14 @@ const jsonLd = {
 		<div class="wrap nav-inner">
 			<a class="brand" href={base} aria-label="acrawl home">
 				<svg viewBox="0 0 64 64" aria-hidden="true" class="brand-mark">
-					<g stroke="currentColor" stroke-width="3.6" stroke-linecap="round" fill="none">
-						<path d="M32 32 12 14M32 32l20-18M32 32 9 34M32 32l23 2M32 32 16 52M32 32l16 20"></path>
+					<g stroke="currentColor" stroke-width="3.4" stroke-linecap="round" fill="none">
+						<path d="M32 32 10 11M32 32 5 25M32 32 6 40M32 32 12 55M32 32l22-21M32 32l27-7M32 32l26 8M32 32l20 23"></path>
 					</g>
-					<g fill="currentColor">
-						<circle cx="12" cy="14" r="4.6"></circle><circle cx="52" cy="14" r="4.6"></circle>
-						<circle cx="9" cy="34" r="4"></circle><circle cx="55" cy="34" r="4"></circle>
-						<circle cx="16" cy="52" r="4.6"></circle><circle cx="48" cy="52" r="4.6"></circle>
+					<g fill="currentColor" opacity="0.75">
+						<circle cx="10" cy="11" r="4"></circle><circle cx="54" cy="11" r="4"></circle>
+						<circle cx="5" cy="25" r="3.5"></circle><circle cx="59" cy="25" r="3.5"></circle>
+						<circle cx="6" cy="40" r="3.5"></circle><circle cx="58" cy="40" r="3.5"></circle>
+						<circle cx="12" cy="55" r="4"></circle><circle cx="52" cy="55" r="4"></circle>
 					</g>
 					<circle cx="32" cy="32" r="8.5" class="brand-core"></circle>
 				</svg>
@@ -257,7 +258,7 @@ const jsonLd = {
 					<svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"></circle><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"></path></g></svg>
 					<svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1z"></path></svg>
 				</button>
-				<a class="btn btn-lime btn-sm" href="#install">Install</a>
+				<a class="btn btn-primary btn-sm" href="#install">Install</a>
 			</div>
 		</div>
 	</header>
@@ -318,7 +319,7 @@ const jsonLd = {
 				</div>
 
 				<div class="hero-ctas">
-					<a class="btn btn-lime" href={docs('quickstart/')}>Run your first crawl</a>
+					<a class="btn btn-primary" href={docs('quickstart/')}>Run your first crawl</a>
 					<a class="btn btn-ghost" href={docs()}>Read the docs</a>
 				</div>
 			</div>
@@ -374,12 +375,12 @@ const jsonLd = {
 				<div class="calc-bars">
 					<div class="bar-row">
 						<span class="bar-label">Agent on every page</span>
-						<div class="bar"><i class="bar-fill bar-orange" data-bar-agent></i></div>
+						<div class="bar"><i class="bar-fill bar-agent" data-bar-agent></i></div>
 						<span class="bar-val" data-agent-calls>1,500</span>
 					</div>
 					<div class="bar-row">
 						<span class="bar-label">acrawl script</span>
-						<div class="bar"><i class="bar-fill bar-lime" data-bar-script></i></div>
+						<div class="bar"><i class="bar-fill bar-script" data-bar-script></i></div>
 						<span class="bar-val" data-script-calls>~1 run’s worth</span>
 					</div>
 					<p class="calc-note">
@@ -616,7 +617,7 @@ const jsonLd = {
 					</button>
 				</div>
 				<div class="hero-ctas">
-					<a class="btn btn-lime" href={docs('install/')}>Install guide</a>
+					<a class="btn btn-primary" href={docs('install/')}>Install guide</a>
 					<a class="btn btn-ghost" href={REPO}>Star on GitHub{stars !== null && ` · ${fmt(stars)}`}</a>
 				</div>
 			</div>

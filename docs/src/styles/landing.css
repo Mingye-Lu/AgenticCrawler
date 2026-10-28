@@ -57,7 +57,7 @@ pre {
 	font-size: 0.86em;
 	padding: 0.12em 0.4em;
 	border-radius: 0.35em;
-	background: var(--ac-lime-soft);
+	background: var(--ac-accent-soft);
 	color: var(--ac-text);
 }
 
@@ -76,7 +76,7 @@ h2 {
 }
 
 :focus-visible {
-	outline: 2px solid var(--ac-lime);
+	outline: 2px solid var(--ac-accent);
 	outline-offset: 3px;
 	border-radius: 4px;
 }
@@ -104,8 +104,8 @@ h2 {
 	top: 0.5rem;
 	z-index: 100;
 	padding: 0.5rem 1rem;
-	background: var(--ac-lime);
-	color: var(--ac-lime-ink);
+	background: var(--ac-accent);
+	color: var(--ac-accent-ink);
 }
 
 .skip:focus {
@@ -138,10 +138,10 @@ h2 {
 	font-size: 0.92rem;
 }
 
-.btn-lime {
-	background: var(--ac-lime);
-	color: var(--ac-lime-ink);
-	box-shadow: 0 10px 30px -12px color-mix(in srgb, var(--ac-lime) 70%, transparent);
+.btn-primary {
+	background: var(--ac-accent);
+	color: var(--ac-accent-ink);
+	box-shadow: 0 10px 30px -12px color-mix(in srgb, var(--ac-accent) 70%, transparent);
 }
 
 .btn-ghost {
@@ -150,7 +150,7 @@ h2 {
 }
 
 .btn-ghost:hover {
-	border-color: var(--ac-lime);
+	border-color: var(--ac-accent);
 }
 
 .link {
@@ -158,7 +158,7 @@ h2 {
 	margin-top: 1.25rem;
 	font-family: var(--ac-mono);
 	font-size: 0.9rem;
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 	text-decoration: none;
 }
 
@@ -206,7 +206,7 @@ h2 {
 .brand-mark {
 	width: 1.9rem;
 	height: 1.9rem;
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 	transition: transform 0.6s cubic-bezier(0.3, 1.6, 0.5, 1);
 }
 
@@ -215,7 +215,7 @@ h2 {
 }
 
 .brand-core {
-	fill: var(--ac-orange);
+	fill: var(--ac-spark);
 }
 
 .nav-links {
@@ -356,15 +356,15 @@ h2 {
 }
 
 .pill:hover {
-	border-color: var(--ac-lime);
+	border-color: var(--ac-accent);
 	color: var(--ac-text);
 }
 
 .pill-tag {
 	padding: 0.15rem 0.55rem;
 	border-radius: 999px;
-	background: var(--ac-lime);
-	color: var(--ac-lime-ink);
+	background: var(--ac-accent);
+	color: var(--ac-accent-ink);
 	font-family: var(--ac-mono);
 	font-size: 0.75rem;
 	font-weight: 700;
@@ -393,7 +393,7 @@ h2 {
 	font-family: var(--ac-mono);
 	font-weight: 800;
 	letter-spacing: -0.07em;
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 	position: relative;
 }
 
@@ -403,7 +403,7 @@ h2 {
 	width: 0.09em;
 	height: 0.8em;
 	margin-inline-start: 0.06em;
-	background: var(--ac-orange);
+	background: var(--ac-spark);
 	vertical-align: -0.04em;
 	animation: blink 1.1s steps(1) infinite;
 }
@@ -505,7 +505,7 @@ h2 {
 
 .prompt {
 	font-family: var(--ac-mono);
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 	user-select: none;
 }
 
@@ -525,7 +525,7 @@ h2 {
 
 .copy:hover {
 	color: var(--ac-text);
-	border-color: var(--ac-lime);
+	border-color: var(--ac-accent);
 }
 
 .copy svg {
@@ -539,8 +539,8 @@ h2 {
 	right: 0;
 	padding: 0.15rem 0.5rem;
 	border-radius: 0.35rem;
-	background: var(--ac-lime);
-	color: var(--ac-lime-ink);
+	background: var(--ac-accent);
+	color: var(--ac-accent-ink);
 	font: 600 0.72rem var(--ac-mono);
 	opacity: 0;
 	transform: translateY(4px);
@@ -572,12 +572,12 @@ h2 {
 .term {
 	border: 1px solid var(--ac-line-2);
 	border-radius: 0.9rem;
-	background: #070907;
-	color: #e6ebe0;
+	background: #070a0f;
+	color: #e6ebf2;
 	box-shadow:
 		var(--ac-shadow),
-		0 0 0 1px rgb(200 244 60 / 0.04),
-		0 0 120px -40px rgb(200 244 60 / 0.25);
+		0 0 0 1px rgb(91 157 255 / 0.05),
+		0 0 120px -40px rgb(91 157 255 / 0.28);
 	overflow: hidden;
 }
 
@@ -586,8 +586,8 @@ h2 {
 	align-items: center;
 	gap: 0.45rem;
 	padding: 0.7rem 0.9rem;
-	border-bottom: 1px solid #1d221b;
-	background: #0d100c;
+	border-bottom: 1px solid #1a2230;
+	background: #0d121a;
 }
 
 .dot {
@@ -610,7 +610,7 @@ h2 {
 	margin-inline: auto;
 	padding-inline-end: 2rem;
 	font: 0.78rem var(--ac-mono);
-	color: #7d8778;
+	color: #7a879b;
 }
 
 .term-body {
@@ -624,34 +624,34 @@ h2 {
 }
 
 .t-prompt {
-	color: #c8f43c;
+	color: #5b9dff;
 }
 .t-arrow {
-	color: #5d6759;
+	color: #5a6678;
 }
 .t-tool {
-	color: #6fe3e8;
+	color: #9cc4ff;
 }
 .t-arg {
-	color: #e6ebe0;
+	color: #e6ebf2;
 }
 .t-note,
 .t-dim {
-	color: #8a948a;
+	color: #8b97aa;
 }
 .t-plan {
-	color: #ff7a45;
+	color: #ffd23f;
 	font-weight: 700;
 }
 .t-ok {
-	color: #c8f43c;
+	color: #5b9dff;
 	font-weight: 700;
 }
 .t-zero {
 	padding: 0.05rem 0.45rem;
 	border-radius: 0.3rem;
-	background: #c8f43c;
-	color: #0b0d0a;
+	background: #ffd23f;
+	color: #1f1600;
 	font-weight: 700;
 }
 
@@ -660,7 +660,7 @@ h2 {
 	width: 0.55em;
 	height: 1.1em;
 	margin-inline-start: 1px;
-	background: #c8f43c;
+	background: #5b9dff;
 	vertical-align: -0.2em;
 	animation: blink 1s steps(1) infinite;
 }
@@ -677,7 +677,7 @@ h2 {
 .demo-steps span {
 	display: block;
 	font: 600 0.75rem var(--ac-mono);
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 }
 
 @media (max-width: 900px) {
@@ -751,7 +751,7 @@ h2 {
 	font: 600 0.8rem var(--ac-mono);
 	text-transform: uppercase;
 	letter-spacing: 0.12em;
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 }
 
 .eyebrow::before {
@@ -819,7 +819,7 @@ h2 {
 .calc-control input {
 	width: 100%;
 	margin-bottom: 0.9rem;
-	accent-color: var(--ac-lime);
+	accent-color: var(--ac-accent);
 }
 
 .calc-bars {
@@ -850,12 +850,12 @@ h2 {
 	transition: width 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-.bar-orange {
-	background: repeating-linear-gradient(-45deg, var(--ac-orange) 0 8px, color-mix(in srgb, var(--ac-orange) 75%, black) 8px 16px);
+.bar-agent {
+	background: var(--ac-spark);
 }
 
-.bar-lime {
-	background: var(--ac-lime);
+.bar-script {
+	background: var(--ac-accent);
 }
 
 .bar-val {
@@ -894,31 +894,31 @@ h2 {
 .code {
 	margin: 0;
 	scrollbar-width: thin;
-	scrollbar-color: #333a30 transparent;
+	scrollbar-color: #2a3546 transparent;
 	padding: 1.2rem 1.3rem;
 	border: 1px solid var(--ac-line-2);
 	border-radius: 0.9rem;
-	background: #070907;
-	color: #e6ebe0;
+	background: #070a0f;
+	color: #e6ebf2;
 	font-size: 0.8rem;
 	line-height: 1.7;
 	overflow-x: auto;
 }
 
 .code .c {
-	color: #7d8778;
+	color: #7a879b;
 }
 .code .k {
-	color: #6fe3e8;
+	color: #9cc4ff;
 }
 .code .s {
-	color: #c8f43c;
+	color: #ffe08a;
 }
 .code .n {
-	color: #ff7a45;
+	color: #ffd23f;
 }
 .code .p {
-	color: #c8f43c;
+	color: #5b9dff;
 	user-select: none;
 }
 
@@ -939,7 +939,7 @@ h2 {
 .ticks li::before {
 	content: '✓';
 	margin-inline-end: 0.6rem;
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 	font-weight: 700;
 }
 
@@ -978,7 +978,7 @@ h2 {
 }
 
 .dt-fn {
-	color: var(--ac-cyan);
+	color: var(--ac-accent-2);
 	font-weight: 600;
 }
 
@@ -1013,7 +1013,7 @@ h2 {
 }
 
 .dt-panel tr:hover td {
-	background: var(--ac-lime-soft);
+	background: var(--ac-accent-soft);
 }
 
 .dt-panel td:not(.lvl) {
@@ -1034,7 +1034,7 @@ h2 {
 .lvl-error,
 .lvl-critical,
 .lvl-post {
-	color: var(--ac-orange);
+	color: var(--ac-spark-text);
 }
 
 .lvl-warn,
@@ -1045,7 +1045,7 @@ h2 {
 .lvl-get,
 .lvl-log,
 .lvl-ttfb {
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 }
 
 .dt-more {
@@ -1096,7 +1096,7 @@ h2 {
 	top: 0;
 	width: 100%;
 	height: 2px;
-	background: var(--ac-lime);
+	background: var(--ac-accent);
 	transform: scaleX(0);
 	transform-origin: left;
 	transition: transform 0.4s ease;
@@ -1119,7 +1119,7 @@ h2 {
 }
 
 .card-tag span {
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 }
 
 .card h3 {
@@ -1222,7 +1222,7 @@ h2 {
 }
 
 .chip:nth-child(4n + 1) {
-	border-color: color-mix(in srgb, var(--ac-lime) 45%, var(--ac-line-2));
+	border-color: color-mix(in srgb, var(--ac-accent) 45%, var(--ac-line-2));
 }
 
 @media (max-width: 900px) {
@@ -1294,17 +1294,17 @@ h2 {
 }
 
 .cmp .us {
-	background: var(--ac-lime-soft);
+	background: var(--ac-accent-soft);
 	color: var(--ac-text);
 	font-weight: 600;
 }
 
 .cmp thead .us {
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 }
 
 .cmp .yes {
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 	font-weight: 700;
 }
 
@@ -1355,7 +1355,7 @@ h2 {
 .faq summary::after {
 	content: '+';
 	font-family: var(--ac-mono);
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 	transition: transform 0.25s ease;
 }
 
@@ -1378,7 +1378,7 @@ h2 {
 	overflow: hidden;
 	border-top: 1px solid var(--ac-line);
 	background:
-		radial-gradient(50% 80% at 50% 100%, color-mix(in srgb, var(--ac-lime) 18%, transparent), transparent 70%),
+		radial-gradient(50% 80% at 50% 100%, color-mix(in srgb, var(--ac-accent) 18%, transparent), transparent 70%),
 		var(--ac-bg);
 }
 
@@ -1445,7 +1445,7 @@ h2 {
 }
 
 .foot nav a:hover {
-	color: var(--ac-lime);
+	color: var(--ac-accent);
 }
 
 .foot-legal {
