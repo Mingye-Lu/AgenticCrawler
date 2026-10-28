@@ -159,7 +159,7 @@ Every DevTools tool is excluded, plus `refresh` and `set_device`. **You cannot s
 
 **5. `steps_executed` counts only `tool_call` nodes.** `assign`, `collect`, `yield`, and control-flow nodes are free against `max_steps` (default 200), so a computation-only script finishes in about a millisecond. It does **not** avoid a browser launch: over MCP, `run_script` initializes the browser before it even parses the script, so any `run_script` call requires Node and a working Chromium.
 
-**6. Three optimizations default ON**, despite README text saying everything defaults off: `failure_classification`, `self_healing`, and `content_aware_profiles`. But **self-healing only applies to `run_goal`** — it lives in the agent loop, and direct MCP tool calls and script `tool_call` nodes bypass it entirely (see gotcha 9).
+**6. Three optimizations default ON**: `failure_classification`, `self_healing`, and `content_aware_profiles`. But **self-healing only applies to `run_goal`** — it lives in the agent loop, and direct MCP tool calls and script `tool_call` nodes bypass it entirely (see gotcha 9).
 
 **7. The 4 sub-agent tools are not on MCP.** `fork`, `wait_for_subagents`, `subagent_status`, and `cancel_subagent` are internal to the agent loop and return JSON-RPC `-32601` if called.
 

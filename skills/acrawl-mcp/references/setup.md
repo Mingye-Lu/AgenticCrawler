@@ -209,7 +209,7 @@ Script limits under `script` — see `scripting.md` for the full table:
 
 ### Optimizations — three default ON
 
-Under `optimization`. Contrary to README text saying everything defaults off, `OptimizationSettings::default()` enables three:
+Under `optimization`. Most default off, but `OptimizationSettings::default()` enables three:
 
 | Field | Default | Effect |
 |---|---|---|
