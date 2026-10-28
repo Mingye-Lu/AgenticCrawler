@@ -1,4 +1,7 @@
-# Quick start
+---
+title: "Quick start"
+description: "Connect an LLM provider and run your first acrawl crawl in a few minutes, from the terminal UI or a one-shot prompt."
+---
 
 ## 1. Connect an LLM provider
 
@@ -64,5 +67,5 @@ The agent runs up to 5 sub-agents at once, each in its own tab, and merges their
 
 ## Next
 
-- [Use acrawl from Claude Code, Cursor or VS Code](mcp-server.md)
-- [Turn a crawl into a repeatable script](guides/deterministic-scripts.md)
+- [Use acrawl from Claude Code, Cursor or VS Code](/AgenticCrawler/docs/mcp-server/)
+- [Turn a crawl into a repeatable script](/AgenticCrawler/docs/guides/deterministic-scripts/)

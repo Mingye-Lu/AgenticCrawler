@@ -1,4 +1,7 @@
-# acrawl vs browser-use
+---
+title: "acrawl vs browser-use"
+description: "acrawl vs browser-use: two MIT-licensed browser agents compared on install, LLM choice, DevTools observation and deterministic scripts."
+---
 
 *Last reviewed October 2026.*
 

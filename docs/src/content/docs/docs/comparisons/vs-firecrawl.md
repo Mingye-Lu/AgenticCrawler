@@ -1,4 +1,7 @@
-# acrawl vs Firecrawl
+---
+title: "acrawl vs Firecrawl"
+description: "acrawl vs Firecrawl: a self-hosted browser agent compared with a hosted scraping API, on control, cost, observation and license."
+---
 
 *Last reviewed October 2026.*
 

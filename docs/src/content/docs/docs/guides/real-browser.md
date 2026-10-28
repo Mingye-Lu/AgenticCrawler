@@ -1,4 +1,7 @@
-# Use your real, logged-in browser
+---
+title: "Use your real, logged-in browser"
+description: "Drive your own logged-in Chrome, Edge or Brave with the acrawl Bridge extension, for sites behind a login or strict bot detection."
+---
 
 **Short answer:** install the acrawl Bridge extension and run `/extension`. acrawl then drives your own browser, with your sessions, cookies and extensions, instead of a headless one. Use it for sites behind a login or with strict bot detection.
 

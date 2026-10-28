@@ -1,0 +1,103 @@
+/* Starlight theme: map its variables onto the acrawl palette. */
+:root {
+	--sl-font: var(--ac-font);
+	--sl-font-mono: var(--ac-mono);
+	--sl-color-accent-low: #1f2a08;
+	--sl-color-accent: #9ccf1f;
+	--sl-color-accent-high: #d9fa7a;
+	--sl-color-white: #ffffff;
+	--sl-color-gray-1: #eef2e8;
+	--sl-color-gray-2: #c4ccbd;
+	--sl-color-gray-3: #9aa494;
+	--sl-color-gray-4: #6b7466;
+	--sl-color-gray-5: #333a30;
+	--sl-color-gray-6: #151914;
+	--sl-color-black: #0b0d0a;
+	--sl-color-bg-nav: rgb(11 13 10 / 0.85);
+	--sl-color-hairline-light: #252b23;
+	--sl-color-hairline: #252b23;
+}
+
+:root[data-theme='light'] {
+	--sl-color-accent-low: #e6f2c8;
+	--sl-color-accent: #4b7a00;
+	--sl-color-accent-high: #2b4600;
+	--sl-color-white: #141712;
+	--sl-color-gray-1: #232720;
+	--sl-color-gray-2: #3a4036;
+	--sl-color-gray-3: #555d50;
+	--sl-color-gray-4: #7b8275;
+	--sl-color-gray-5: #cfcbbd;
+	--sl-color-gray-6: #efede4;
+	--sl-color-gray-7: #f6f5ef;
+	--sl-color-black: #fbfaf6;
+	--sl-color-bg-nav: rgb(251 250 246 / 0.85);
+	--sl-color-hairline-light: #e0ddd1;
+	--sl-color-hairline: #e0ddd1;
+}
+
+header.header {
+	backdrop-filter: blur(12px);
+}
+
+.site-title {
+	font-family: var(--ac-mono);
+	font-weight: 700;
+	letter-spacing: -0.02em;
+}
+
+.site-title::after {
+	content: 'docs';
+	margin-inline-start: 0.5rem;
+	padding: 0.1rem 0.45rem;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 999px;
+	font-size: 0.7rem;
+	font-weight: 500;
+	color: var(--sl-color-gray-3);
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+h1#_top {
+	letter-spacing: -0.025em;
+}
+
+.sl-markdown-content h2 {
+	padding-top: 0.5rem;
+	border-top: 1px dashed var(--sl-color-hairline);
+}
+
+.sl-markdown-content a:not(:where(.not-content *)) {
+	text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 45%, transparent);
+	text-underline-offset: 0.2em;
+}
+
+.sl-markdown-content table {
+	font-size: 0.9rem;
+}
+
+.sl-markdown-content th {
+	font-family: var(--ac-mono);
+	font-size: 0.78rem;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.promo-video {
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	border-radius: 0.75rem;
+	border: 1px solid var(--sl-color-hairline);
+	background: #000;
+	display: block;
+}
+
+.sidebar-content .large {
+	font-family: var(--ac-mono);
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--sl-color-gray-3);
+}

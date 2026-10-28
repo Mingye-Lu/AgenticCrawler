@@ -1,0 +1,40 @@
+---
+// Starlight's head plus per-page structured data, so search engines and AI
+// answer engines can tell what each docs page is and where it sits.
+import Default from '@astrojs/starlight/components/Head.astro';
+import { REPO, SITE } from '../site';
+
+const { entry, lastUpdated } = Astro.locals.starlightRoute;
+const url = new URL(Astro.url.pathname, Astro.site).href;
+const docsUrl = new URL('docs/', SITE).href;
+
+const crumbs = [
+	{ name: 'acrawl', item: SITE },
+	{ name: 'Docs', item: docsUrl },
+	...(url === docsUrl ? [] : [{ name: entry.data.title, item: url }]),
+];
+
+const ld = {
+	'@context': 'https://schema.org',
+	'@graph': [
+		{
+			'@type': 'TechArticle',
+			headline: entry.data.title,
+			description: entry.data.description,
+			url,
+			inLanguage: 'en',
+			...(lastUpdated ? { dateModified: lastUpdated.toISOString() } : {}),
+			author: { '@type': 'Person', name: 'Mingye Lu', url: 'https://github.com/Mingye-Lu' },
+			isPartOf: { '@type': 'WebSite', name: 'acrawl', url: SITE },
+			about: { '@type': 'SoftwareApplication', name: 'acrawl', url: SITE, codeRepository: REPO },
+		},
+		{
+			'@type': 'BreadcrumbList',
+			itemListElement: crumbs.map((c, i) => ({ '@type': 'ListItem', position: i + 1, ...c })),
+		},
+	],
+};
+---
+
+<Default />
+<script type="application/ld+json" set:html={JSON.stringify(ld)} />

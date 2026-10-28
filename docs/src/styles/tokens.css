@@ -1,0 +1,42 @@
+/* acrawl palette, shared by the landing page and the docs.
+   Dark is the default; `data-theme="light"` on <html> switches it, which is
+   the attribute Starlight's theme picker already sets. */
+:root {
+	--ac-bg: #0b0d0a;
+	--ac-bg-2: #10130f;
+	--ac-panel: #151914;
+	--ac-line: #252b23;
+	--ac-line-2: #333a30;
+	--ac-text: #eef2e8;
+	--ac-muted: #9aa494;
+	--ac-faint: #6b7466;
+	--ac-lime: #c8f43c;
+	--ac-lime-ink: #0b0d0a;
+	--ac-lime-soft: rgb(200 244 60 / 0.12);
+	--ac-orange: #ff7a45;
+	--ac-cyan: #6fe3e8;
+	--ac-pink: #ff6fae;
+	--ac-shadow: 0 30px 80px -30px rgb(0 0 0 / 0.7);
+	--ac-font: 'Space Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+	--ac-mono: 'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+	color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+	--ac-bg: #f6f5ef;
+	--ac-bg-2: #efede4;
+	--ac-panel: #ffffff;
+	--ac-line: #e0ddd1;
+	--ac-line-2: #cfcbbd;
+	--ac-text: #141712;
+	--ac-muted: #555d50;
+	--ac-faint: #7b8275;
+	--ac-lime: #4b7a00;
+	--ac-lime-ink: #ffffff;
+	--ac-lime-soft: rgb(75 122 0 / 0.1);
+	--ac-orange: #c2410c;
+	--ac-cyan: #0e7f86;
+	--ac-pink: #be185d;
+	--ac-shadow: 0 30px 70px -35px rgb(40 40 20 / 0.35);
+	color-scheme: light;
+}

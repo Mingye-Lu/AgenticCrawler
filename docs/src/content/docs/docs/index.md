@@ -1,10 +1,13 @@
-# acrawl (AgenticCrawler)
+---
+title: "What is acrawl?"
+description: "acrawl is an open-source browser agent and MCP server in one Rust binary: describe a web task in plain English and get structured data back."
+---
 
 **acrawl is an open-source browser agent and MCP server that ships as a single Rust binary.** You describe a goal in plain English, and it navigates, clicks, fills forms and returns structured data. It can also observe the page the way a developer does: network requests, console errors, performance, cookies, storage and accessibility are all tools the agent can call.
 
-<video class="promo-video" controls preload="metadata" playsinline poster="media/acrawl-promo-poster.jpg">
-  <source src="media/acrawl-promo.mp4" type="video/mp4">
-  Your browser can't play this video. <a href="media/acrawl-promo.mp4">Download the acrawl demo (MP4, 52 s)</a>.
+<video class="promo-video" controls preload="metadata" playsinline poster="/AgenticCrawler/media/acrawl-promo-poster.jpg">
+  <source src="/AgenticCrawler/media/acrawl-promo.mp4" type="video/mp4">
+  Your browser can't play this video. <a href="/AgenticCrawler/media/acrawl-promo.mp4">Download the acrawl promo video (MP4, 52 s)</a>.
 </video>
 
 ```bash
@@ -21,7 +24,7 @@ acrawl prompt 'find the best 14-inch laptop under $1,500'
 - **MCP both ways.** acrawl can use tools from other MCP servers, and `acrawl mcp` exposes 40 of its own tools to Claude Code, Cursor, VS Code, Zed and other MCP clients.
 - **25 LLM providers.** Anthropic, OpenAI, Google Gemini, DeepSeek, AWS Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, Groq, Mistral, xAI, OpenRouter and more, plus any OpenAI-compatible endpoint.
 
-![acrawl architecture: the TUI, one-shot prompt and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through an extension bridge.](media/architecture.svg)
+![acrawl architecture: the TUI, one-shot prompt and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through an extension bridge.](/AgenticCrawler/media/architecture.svg)
 
 ## Key facts
 
@@ -37,38 +40,7 @@ acrawl prompt 'find the best 14-inch laptop under $1,500'
 
 ## Next steps
 
-- [Install acrawl](install.md)
-- [Run your first crawl](quickstart.md)
-- [Add acrawl to Claude Code, Cursor or VS Code](mcp-server.md)
-- [See how it compares with browser-use, Playwright MCP and Firecrawl](comparisons/overview.md)
-
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@graph": [
-    {
-      "@type": "SoftwareApplication",
-      "name": "acrawl",
-      "alternateName": "AgenticCrawler",
-      "description": "Open-source browser agent and MCP server in a single Rust binary. Describe a goal in plain English and get structured data back, with full DevTools observability and 25 LLM providers.",
-      "applicationCategory": "DeveloperApplication",
-      "operatingSystem": "Linux, macOS, Windows",
-      "license": "https://opensource.org/licenses/MIT",
-      "url": "https://mingye-lu.github.io/AgenticCrawler/",
-      "codeRepository": "https://github.com/Mingye-Lu/AgenticCrawler",
-      "programmingLanguage": "Rust",
-      "author": { "@type": "Person", "name": "Mingye Lu", "url": "https://github.com/Mingye-Lu" },
-      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
-    },
-    {
-      "@type": "VideoObject",
-      "name": "acrawl demo: describe it, acrawl it",
-      "description": "acrawl plans a shopping task in plain English, turns a 50-page search into a script with zero LLM calls, prunes pages to what matters, and verifies the checkout.",
-      "thumbnailUrl": "https://mingye-lu.github.io/AgenticCrawler/media/acrawl-promo-poster.jpg",
-      "contentUrl": "https://mingye-lu.github.io/AgenticCrawler/media/acrawl-promo.mp4",
-      "uploadDate": "2026-10-13",
-      "duration": "PT52S"
-    }
-  ]
-}
-</script>
+- [Install acrawl](/AgenticCrawler/docs/install/)
+- [Run your first crawl](/AgenticCrawler/docs/quickstart/)
+- [Add acrawl to Claude Code, Cursor or VS Code](/AgenticCrawler/docs/mcp-server/)
+- [See how it compares with browser-use, Playwright MCP and Firecrawl](/AgenticCrawler/docs/comparisons/overview/)

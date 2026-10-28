@@ -1,4 +1,7 @@
-# acrawl vs other browser agents
+---
+title: "acrawl vs other browser agents"
+description: "How acrawl compares with browser-use, Playwright MCP and Firecrawl: reasoning loop, self-hosting, DevTools tools, scripts and license."
+---
 
 *Last reviewed October 2026 against each project's own README. These tools change quickly; if something here is out of date, please [open an issue](https://github.com/Mingye-Lu/AgenticCrawler/issues).*
 
@@ -18,6 +21,6 @@
 
 ## Detailed comparisons
 
-- [acrawl vs browser-use](vs-browser-use.md)
-- [acrawl vs Playwright MCP](vs-playwright-mcp.md)
-- [acrawl vs Firecrawl](vs-firecrawl.md)
+- [acrawl vs browser-use](/AgenticCrawler/docs/comparisons/vs-browser-use/)
+- [acrawl vs Playwright MCP](/AgenticCrawler/docs/comparisons/vs-playwright-mcp/)
+- [acrawl vs Firecrawl](/AgenticCrawler/docs/comparisons/vs-firecrawl/)

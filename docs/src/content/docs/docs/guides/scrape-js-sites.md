@@ -1,4 +1,7 @@
-# Scrape JavaScript-rendered sites without code
+---
+title: "Scrape JavaScript-rendered sites without code"
+description: "Scrape JavaScript-rendered sites and SPAs from a plain-English goal: acrawl fetches over HTTP and escalates to a stealth browser when needed."
+---
 
 **Short answer:** give acrawl the goal in plain English. It fetches over HTTP first and switches to a headless stealth browser automatically when the page needs JavaScript, so you don't choose the method or write selectors.
 
@@ -34,6 +37,6 @@ The agent can `scroll` to trigger lazy loading. For feeds with no natural end, g
 
 ## When it won't work
 
-- **Unsolvable CAPTCHAs** (image puzzles, proof-of-work challenges) stop the run. Use your [real browser](real-browser.md), where you already have a trusted session.
+- **Unsolvable CAPTCHAs** (image puzzles, proof-of-work challenges) stop the run. Use your [real browser](/AgenticCrawler/docs/guides/real-browser/), where you already have a trusted session.
 - **Login walls.** Same answer: use extension mode so the agent works inside your signed-in browser.
 - **PDF text.** `save_file` downloads the file, but the agent doesn't read PDF text itself.

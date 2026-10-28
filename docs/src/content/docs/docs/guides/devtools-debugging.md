@@ -1,4 +1,7 @@
-# Debug a live page: network, console, performance, accessibility
+---
+title: "Debug a live page: network, console, performance, accessibility"
+description: "Give an AI agent DevTools: network requests, console errors, WebSockets, performance, cookies, coverage and axe-core accessibility audits."
+---
 
 **Short answer:** acrawl's agent and MCP server include the DevTools surface as callable tools. An AI assistant can open a page, then ask what requests it made, which console errors it threw, how fast it loaded and which WCAG rules it breaks, instead of guessing from the HTML.
 

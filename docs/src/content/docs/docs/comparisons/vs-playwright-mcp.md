@@ -1,4 +1,7 @@
-# acrawl vs Playwright MCP
+---
+title: "acrawl vs Playwright MCP"
+description: "acrawl vs Playwright MCP: an MCP server with its own agent loop and DevTools tools compared with step-by-step browser control."
+---
 
 *Last reviewed October 2026.*
 

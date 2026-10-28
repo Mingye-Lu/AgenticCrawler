@@ -1,4 +1,7 @@
-# Install acrawl
+---
+title: "Install acrawl"
+description: "Install acrawl on Linux, macOS or Windows with one command. The script verifies the release checksum and sets up the stealth browser."
+---
 
 acrawl installs as a single binary. The install script downloads the latest release for your platform, verifies its SHA256 checksum and sets up CloakBrowser, the stealth browser acrawl uses for JavaScript-heavy pages.
 
@@ -34,7 +37,7 @@ The binary is written to `target/release/acrawl`.
 
 ## Optional: the browser extension
 
-The **acrawl Bridge** extension lets acrawl drive your real browser, with your existing sessions and cookies, instead of a headless one. See [Use your real, logged-in browser](guides/real-browser.md).
+The **acrawl Bridge** extension lets acrawl drive your real browser, with your existing sessions and cookies, instead of a headless one. See [Use your real, logged-in browser](/AgenticCrawler/docs/guides/real-browser/).
 
 ## Optional: the agent skill
 
@@ -50,4 +53,4 @@ Or configure the MCP server and install the skill in one step, without Node:
 acrawl mcp install --client claude-code --skill
 ```
 
-Next: [Quick start](quickstart.md).
+Next: [Quick start](/AgenticCrawler/docs/quickstart/).

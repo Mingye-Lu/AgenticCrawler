@@ -1,4 +1,7 @@
-# Tools
+---
+title: "Tools"
+description: "All 43 acrawl agent tools by group: navigation, interaction, extraction, DevTools observation, sub-agents and deterministic scripts."
+---
 
 acrawl's agent has **43 tools** in six groups. The MCP server exposes 40 of them: every navigation, interaction, extraction and DevTools tool, the 7 script tools and `run_goal`. The 4 sub-agent tools are used inside the agent loop, so MCP clients reach them through `run_goal`.
 
@@ -70,4 +73,4 @@ Full parameter details are in the [README](https://github.com/Mingye-Lu/AgenticC
 | `save_script` / `list_scripts` / `read_script` | Store and reuse scripts. |
 | `wait_for_scripts` / `script_status` / `cancel_script` | Track and control runs. |
 
-See [Repeatable crawls with zero LLM calls](guides/deterministic-scripts.md).
+See [Repeatable crawls with zero LLM calls](/AgenticCrawler/docs/guides/deterministic-scripts/).

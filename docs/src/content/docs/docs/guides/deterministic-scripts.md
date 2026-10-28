@@ -1,4 +1,7 @@
-# Repeatable crawls with zero LLM calls
+---
+title: "Repeatable crawls with zero LLM calls"
+description: "Let the agent work out a crawl once, then replay it as a JSON script with loops and branches and zero LLM calls, from MCP or acrawl run."
+---
 
 **Short answer:** let the agent work out a crawl once, then run the repetitive part as a JSON script. Scripts support loops, conditionals and parallel branches, and they call acrawl's tools directly, with no LLM call per step.
 
