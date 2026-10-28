@@ -1,6 +1,13 @@
 ---
 title: "Install acrawl"
 description: "Install acrawl on Linux, macOS or Windows with one command. The script verifies the release checksum and sets up the stealth browser."
+head:
+  - tag: title
+    content: "Install acrawl on Linux, macOS and Windows"
+  - tag: meta
+    attrs:
+      property: og:title
+      content: "Install acrawl on Linux, macOS and Windows"
 ---
 
 acrawl installs as a single binary. The install script downloads the latest release for your platform, verifies its SHA256 checksum and sets up CloakBrowser, the stealth browser acrawl uses for JavaScript-heavy pages.

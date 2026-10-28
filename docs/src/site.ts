@@ -10,6 +10,10 @@ export const TAGLINE = 'Describe it. acrawl it.';
 export const DESCRIPTION =
 	'acrawl is an open-source browser agent and MCP server in one Rust binary. Describe a web task in plain English and it navigates, clicks, fills forms, watches the network and returns structured data.';
 
+// Search snippets are cut at about 155 characters; keep this under that.
+export const META_DESCRIPTION =
+	'Open-source AI browser agent and MCP server in one Rust binary. Describe a web task in plain English and get structured data back, with DevTools built in.';
+
 export const FACTS = {
 	agentTools: 43,
 	mcpTools: 40,

@@ -1,6 +1,13 @@
 ---
 title: "FAQ"
 description: "Answers about acrawl: what it is, supported LLMs, MCP clients, JavaScript sites, logins and CAPTCHAs, costs, and how it compares."
+head:
+  - tag: title
+    content: "acrawl FAQ: AI browser agent and MCP server questions"
+  - tag: meta
+    attrs:
+      property: og:title
+      content: "acrawl FAQ: AI browser agent and MCP server questions"
 ---
 
 ## What is acrawl?
