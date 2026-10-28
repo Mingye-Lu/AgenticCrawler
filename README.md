@@ -29,6 +29,15 @@
   <a href="https://mingye-lu.github.io/AgenticCrawler/docs/comparisons/overview/">Comparisons</a>
 </p>
 
+<p align="center">
+  Single Rust binary. Full DevTools observability. 43 tools. 25 LLM providers. MCP server built-in.
+</p>
+
+<p align="center">
+  <img src="docs/assets/architecture.svg" alt="acrawl architecture: the TUI, one-shot prompt, and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 43 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge." width="100%">
+</p>
+
+---
 
 ```text
 acrawl > get the name, price and rating of every book on books.toscrape.com, all 50 pages
@@ -133,10 +142,6 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
-
-<p align="center">
-  <img src="docs/assets/architecture.svg" alt="acrawl architecture: the TUI, one-shot prompt, and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 43 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge." width="100%">
-</p>
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to get started, [CHANGELOG.md](CHANGELOG.md) for release notes and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
