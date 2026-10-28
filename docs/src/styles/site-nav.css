@@ -1,0 +1,81 @@
+/* The header row shared by the landing page and the docs
+   (src/components/SiteNav.astro): logo, section links, an optional search box
+   and the actions. Each page supplies the bar around it. */
+
+.site-nav {
+	--site-nav-height: 4.25rem;
+	display: flex;
+	align-items: center;
+	gap: 1.5rem;
+	height: var(--site-nav-height);
+	padding-inline: 1.5rem;
+	/* Fixed so the row measures the same inside either page's body text. */
+	line-height: 1.6;
+}
+
+.brand {
+	--spider-gap: calc((var(--site-nav-height) - 1.9rem) / 2);
+	display: inline-flex;
+	align-items: center;
+	gap: 0.6rem;
+	font-family: var(--ac-mono);
+	font-weight: 700;
+	font-size: 1.15rem;
+	letter-spacing: -0.03em;
+	color: var(--ac-text);
+	text-decoration: none;
+}
+
+.nav-links {
+	display: flex;
+	gap: 1.4rem;
+	margin-inline-start: 1rem;
+	font-size: 0.95rem;
+}
+
+.nav-links a {
+	color: var(--ac-muted);
+	text-decoration: none;
+}
+
+.nav-links a:hover,
+.nav-links a[aria-current='page'] {
+	color: var(--ac-text);
+}
+
+.nav-search {
+	margin-inline-start: auto;
+	width: 15rem;
+}
+
+.nav-actions {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+	margin-inline-start: auto;
+}
+
+.nav-search + .nav-actions {
+	margin-inline-start: 0;
+}
+
+@media (max-width: 860px) {
+	.nav-links a:not(.nav-docs) {
+		display: none;
+	}
+	.nav-links {
+		margin-inline-start: 0.25rem;
+	}
+}
+
+@media (max-width: 520px) {
+	.site-nav {
+		padding-inline: 1rem;
+	}
+	.gh span:not(.gh-stars) {
+		display: none;
+	}
+	.nav-actions .btn-sm {
+		display: none;
+	}
+}

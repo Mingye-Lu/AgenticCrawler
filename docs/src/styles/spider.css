@@ -1,0 +1,49 @@
+/* The hanging spider mark (src/components/Spider.astro). Its parent sets
+   --spider-gap, the distance from the top of the header to the top of the
+   mark, so the thread reaches the header's top edge. --drop is set by the
+   physics in src/scripts/spider.ts. */
+.spider {
+	--drop: 0px;
+	position: relative;
+	display: block;
+}
+
+/* The silk thread, from the top of the header to the spider's body. */
+.spider::before {
+	content: '';
+	position: absolute;
+	top: calc(-1 * var(--spider-gap, 0px));
+	bottom: calc(50% - var(--drop));
+	left: calc(50% - 0.5px);
+	width: 1px;
+	background: color-mix(in srgb, var(--ac-muted) 70%, transparent);
+}
+
+.spider-mark {
+	display: block;
+	width: 1.9rem;
+	height: 1.9rem;
+	color: var(--ac-accent);
+	overflow: visible;
+	transform: translateY(var(--drop));
+}
+
+.spider .leg {
+	transform-box: view-box;
+	transform-origin: 32px 32px;
+}
+
+.spider .leg path {
+	stroke: currentColor;
+	stroke-width: 3.4;
+	stroke-linecap: round;
+}
+
+.spider .leg circle {
+	fill: currentColor;
+	opacity: 0.75;
+}
+
+.spider-body {
+	fill: var(--ac-spark);
+}

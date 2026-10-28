@@ -1,58 +1,60 @@
 ---
+import MorphIcon from 'morphicons/astro';
+import { Copy, Network, icons } from 'lucide';
+import SiteNav from '../components/SiteNav.astro';
 import Landing from '../layouts/Landing.astro';
+import { formatCount, STARS } from '../lib/github';
+import { CLIENTS, PROVIDERS } from '../lib/logos';
 import { DESCRIPTION, FACTS, INSTALL, META_DESCRIPTION, REPO, SITE, TAGLINE, VERSION } from '../site';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const docs = (path = '') => `${base}docs/${path}`;
 
-// Star count, fetched at build time. The page reads fine without it.
-let stars: number | null = null;
-try {
-	const res = await fetch('https://api.github.com/repos/Mingye-Lu/AgenticCrawler', {
-		headers: { Accept: 'application/vnd.github+json' },
-		signal: AbortSignal.timeout(5000),
-	});
-	if (res.ok) stars = (await res.json()).stargazers_count ?? null;
-} catch {
-	stars = null;
-}
-const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`);
 
 const title = 'acrawl: open-source AI browser agent and MCP server in one binary';
 
-const clients = [
-	'Claude Code', 'Claude Desktop', 'Cursor', 'Windsurf', 'VS Code', 'OpenCode', 'Zed', 'TRAE',
-	'JetBrains', 'Gemini CLI', 'Qwen Code', 'Codex CLI', 'Hermes', 'OpenClaw', 'Goose', 'Crush', 'Aider',
-];
+const clients = CLIENTS;
 
 const features = [
 	{
 		tag: 'one binary',
+		icon: 'Package',
+		hover: 'PackageCheck',
 		title: 'No Python. No Docker.',
 		body: 'acrawl is a single compiled Rust executable. A bundled stealth browser handles JavaScript pages through a small Node.js bridge.',
 	},
 	{
 		tag: 'smart fetch',
+		icon: 'Globe',
+		hover: 'AppWindow',
 		title: 'HTTP first, browser when needed',
 		body: 'Static pages come over plain HTTP. Framework markers, auth redirects or an empty SPA shell switch the request to a headless browser automatically.',
 	},
 	{
 		tag: 'sub-agents',
+		icon: 'Split',
+		hover: 'Merge',
 		title: 'Fork onto parallel tabs',
 		body: 'The agent can split work across child agents, each with its own tab and step budget. A URL-claim registry keeps siblings off the same page.',
 	},
 	{
 		tag: 'any model',
+		icon: 'Brain',
+		hover: 'BrainCircuit',
 		title: `${FACTS.providers} LLM providers`,
 		body: 'Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, Vertex, Copilot, Groq, Mistral, xAI, OpenRouter and more, plus any OpenAI-compatible endpoint, local models included.',
 	},
 	{
 		tag: 'your browser',
+		icon: 'Lock',
+		hover: 'LockOpen',
 		title: 'Logged-in sessions',
 		body: 'The acrawl Bridge extension lets the agent drive your real Chrome, Edge or Brave, with your cookies and sign-ins, for sites a headless browser can’t reach.',
 	},
 	{
 		tag: 'token diet',
+		icon: 'FileText',
+		hover: 'FileMinus',
 		title: 'Pages trimmed to what matters',
 		body: '`fit_markdown` strips navigation and boilerplate, typically saving 30–60% of tokens. An optional focus prunes pages down to the blocks your goal is about.',
 	},
@@ -61,6 +63,7 @@ const features = [
 const devtools = [
 	{
 		id: 'network',
+		icon: 'Network',
 		label: 'Network',
 		tool: 'list_network_activity',
 		cols: ['Method', 'URL', 'Status', 'Type', 'Time'],
@@ -74,6 +77,7 @@ const devtools = [
 	},
 	{
 		id: 'console',
+		icon: 'SquareTerminal',
 		label: 'Console',
 		tool: 'list_page_logs',
 		cols: ['Level', 'Message', 'Source', 'Count'],
@@ -86,6 +90,7 @@ const devtools = [
 	},
 	{
 		id: 'perf',
+		icon: 'Gauge',
 		label: 'Performance',
 		tool: 'get_page_performance',
 		cols: ['Metric', 'Value'],
@@ -99,6 +104,7 @@ const devtools = [
 	},
 	{
 		id: 'a11y',
+		icon: 'Accessibility',
 		label: 'Accessibility',
 		tool: 'audit_accessibility',
 		cols: ['Impact', 'Rule', 'Affected', 'Standard'],
@@ -225,41 +231,7 @@ const jsonLd = {
 	<a class="skip" href="#main">Skip to content</a>
 
 	<header class="nav" data-nav>
-		<div class="wrap nav-inner">
-			<a class="brand" href={base} aria-label="acrawl home">
-				<svg viewBox="0 0 64 64" aria-hidden="true" class="brand-mark">
-					<g stroke="currentColor" stroke-width="3.6" stroke-linecap="round" fill="none">
-						<path d="M32 32 12 14M32 32l20-18M32 32 9 34M32 32l23 2M32 32 16 52M32 32l16 20"></path>
-					</g>
-					<g fill="currentColor">
-						<circle cx="12" cy="14" r="4.6"></circle><circle cx="52" cy="14" r="4.6"></circle>
-						<circle cx="9" cy="34" r="4"></circle><circle cx="55" cy="34" r="4"></circle>
-						<circle cx="16" cy="52" r="4.6"></circle><circle cx="48" cy="52" r="4.6"></circle>
-					</g>
-					<circle cx="32" cy="32" r="8.5" class="brand-core"></circle>
-				</svg>
-				<span>acrawl</span>
-			</a>
-			<nav aria-label="Primary" class="nav-links">
-				<a href="#scripts">Scripts</a>
-				<a href="#devtools">DevTools</a>
-				<a href="#mcp">MCP</a>
-				<a href="#compare">Compare</a>
-				<a class="nav-docs" href={docs()}>Docs</a>
-			</nav>
-			<div class="nav-actions">
-				<a class="gh" href={REPO} rel="noopener">
-					<svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-					<span>GitHub</span>
-					{stars !== null && <span class="gh-stars">★ {fmt(stars)}</span>}
-				</a>
-				<button class="theme" type="button" data-theme-toggle aria-label="Switch color theme">
-					<svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"></circle><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"></path></g></svg>
-					<svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M20.5 14.6A8.5 8.5 0 0 1 9.4 3.5a8.5 8.5 0 1 0 11.1 11.1z"></path></svg>
-				</button>
-				<a class="btn btn-lime btn-sm" href="#install">Install</a>
-			</div>
-		</div>
+		<SiteNav current="home" />
 	</header>
 
 	<main id="main">
@@ -306,7 +278,7 @@ const jsonLd = {
 								<span class="prompt" aria-hidden="true">$</span>
 								<code>{cmd}</code>
 								<button class="copy" type="button" data-copy={cmd as string} aria-label="Copy install command">
-									<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2"></path></svg>
+									<MorphIcon icon={Copy} size={16} reducedMotion="user" class="copy-icon" />
 									<span class="copy-done">Copied</span>
 								</button>
 							</div>
@@ -318,7 +290,7 @@ const jsonLd = {
 				</div>
 
 				<div class="hero-ctas">
-					<a class="btn btn-lime" href={docs('quickstart/')}>Run your first crawl</a>
+					<a class="btn btn-primary" href={docs('quickstart/')}>Run your first crawl</a>
 					<a class="btn btn-ghost" href={docs()}>Read the docs</a>
 				</div>
 			</div>
@@ -354,6 +326,23 @@ const jsonLd = {
 			<div><b>1</b><span>binary</span></div>
 		</section>
 
+		<section class="providers wrap" aria-labelledby="providers-title">
+			<p class="eyebrow" id="providers-title">Bring your own model</p>
+			<ul class="logo-row">
+				{
+					PROVIDERS.map((p) => (
+						<li title={p.name}>
+							<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" set:html={p.logo} />
+							<span class="sr-only">{p.name}</span>
+						</li>
+					))
+				}
+			</ul>
+			<p class="providers-note">
+				{FACTS.providers} providers, plus any OpenAI-compatible endpoint. <a href={docs('providers/')}>See them all →</a>
+			</p>
+		</section>
+
 		<!-- Scripts -->
 		<section class="section wrap" id="scripts">
 			<p class="eyebrow">AI once, then a script</p>
@@ -374,12 +363,12 @@ const jsonLd = {
 				<div class="calc-bars">
 					<div class="bar-row">
 						<span class="bar-label">Agent on every page</span>
-						<div class="bar"><i class="bar-fill bar-orange" data-bar-agent></i></div>
+						<div class="bar"><i class="bar-fill bar-agent" data-bar-agent></i></div>
 						<span class="bar-val" data-agent-calls>1,500</span>
 					</div>
 					<div class="bar-row">
 						<span class="bar-label">acrawl script</span>
-						<div class="bar"><i class="bar-fill bar-lime" data-bar-script></i></div>
+						<div class="bar"><i class="bar-fill bar-script" data-bar-script></i></div>
 						<span class="bar-val" data-script-calls>~1 run’s worth</span>
 					</div>
 					<p class="calc-note">
@@ -434,9 +423,10 @@ const jsonLd = {
 
 				<div class="dt" data-tabs>
 					<div class="dt-tabs" role="tablist" aria-label="DevTools panels">
+						<MorphIcon icon={Network} size={18} reducedMotion="user" class="dt-icon" data-dt-icon />
 						{
 							devtools.map((p, i) => (
-								<button role="tab" id={`dt-t-${p.id}`} aria-controls={`dt-${p.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+								<button role="tab" data-icon={p.icon} id={`dt-t-${p.id}`} aria-controls={`dt-${p.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
 									{p.label}
 								</button>
 							))
@@ -486,7 +476,8 @@ const jsonLd = {
 			<div class="grid">
 				{
 					features.map((f, i) => (
-						<article class="card">
+						<article class="card" data-rest-icon={f.icon} data-hover-icon={f.hover}>
+							<MorphIcon icon={icons[f.icon as keyof typeof icons]} size={22} reducedMotion="user" class="card-icon" />
 							<p class="card-tag">
 								<span>[{String(i + 1).padStart(2, '0')}]</span> {f.tag}
 							</p>
@@ -515,7 +506,7 @@ const jsonLd = {
 					<a class="link" href={docs('mcp-server/')}>Set up the MCP server →</a>
 				</div>
 				<ul class="sr-only" aria-label="Supported MCP clients">
-					{clients.map((c) => <li>{c}</li>)}
+					{clients.map((c) => <li>{c.name}</li>)}
 				</ul>
 				<div class="marquee">
 					{
@@ -523,7 +514,10 @@ const jsonLd = {
 							<div class={`marquee-row marquee-row-${row}`} aria-hidden="true">
 								<div class="marquee-track">
 									{[...clients.slice(row * 4), ...clients.slice(0, row * 4), ...clients.slice(row * 4), ...clients.slice(0, row * 4)].map((c) => (
-										<span class="chip">{c}</span>
+										<span class="chip">
+											{c.logo && <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" set:html={c.logo} />}
+											{c.name}
+										</span>
 									))}
 								</div>
 							</div>
@@ -611,13 +605,13 @@ const jsonLd = {
 					<span class="prompt" aria-hidden="true">$</span>
 					<code>{INSTALL.unix}</code>
 					<button class="copy" type="button" data-copy={INSTALL.unix} aria-label="Copy install command">
-						<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2"></path></svg>
+						<MorphIcon icon={Copy} size={16} reducedMotion="user" class="copy-icon" />
 						<span class="copy-done">Copied</span>
 					</button>
 				</div>
 				<div class="hero-ctas">
-					<a class="btn btn-lime" href={docs('install/')}>Install guide</a>
-					<a class="btn btn-ghost" href={REPO}>Star on GitHub{stars !== null && ` · ${fmt(stars)}`}</a>
+					<a class="btn btn-primary" href={docs('install/')}>Install guide</a>
+					<a class="btn btn-ghost" href={REPO}>Star on GitHub{STARS !== null && ` · ${formatCount(STARS)}`}</a>
 				</div>
 			</div>
 		</section>
@@ -663,6 +657,27 @@ const jsonLd = {
 </Landing>
 
 <script>
+	import {
+		Accessibility,
+		AppWindow,
+		Brain,
+		BrainCircuit,
+		Check,
+		Copy,
+		FileMinus,
+		FileText,
+		Gauge,
+		Globe,
+		Lock,
+		LockOpen,
+		Merge,
+		Network,
+		Package,
+		PackageCheck,
+		Split,
+		SquareTerminal,
+	} from 'lucide';
+	import type { IconNode } from 'morphicons';
 	import { mountCrawlGraph } from '../scripts/crawl-graph';
 	import { mountTerminal } from '../scripts/terminal';
 
@@ -672,14 +687,12 @@ const jsonLd = {
 	const term = document.querySelector<HTMLElement>('[data-term-body] code');
 	if (term) mountTerminal(term);
 
-	// Theme toggle, sharing Starlight's storage key.
-	document.querySelector('[data-theme-toggle]')?.addEventListener('click', () => {
-		const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-		document.documentElement.dataset.theme = next;
-		try {
-			localStorage.setItem('starlight-theme', next);
-		} catch {}
-	});
+	// Morphing icons: <morph-icon> elements rendered by MorphIcon, driven here.
+	type Morph = HTMLElement & { morphTo(icon: IconNode): void; set(icon: IconNode): void };
+	const ICONS: Record<string, IconNode> = {
+		Accessibility, AppWindow, Brain, BrainCircuit, FileMinus, FileText, Gauge, Globe, Lock, LockOpen,
+		Merge, Network, Package, PackageCheck, Split, SquareTerminal,
+	};
 
 	// Tabs: install methods and DevTools panels.
 	for (const group of document.querySelectorAll<HTMLElement>('[data-tabs]')) {
@@ -692,6 +705,8 @@ const jsonLd = {
 				const panel = document.getElementById(t.getAttribute('aria-controls') ?? '');
 				if (panel) panel.hidden = !on;
 			}
+			const icon = tab.dataset.icon && ICONS[tab.dataset.icon];
+			if (icon) group.querySelector<Morph>('[data-dt-icon]')?.morphTo(icon);
 		};
 		tabs.forEach((tab, i) => {
 			tab.addEventListener('click', () => select(tab));
@@ -710,10 +725,25 @@ const jsonLd = {
 		btn.addEventListener('click', async () => {
 			try {
 				await navigator.clipboard.writeText(btn.dataset.copy ?? '');
+				const icon = btn.querySelector<Morph>('morph-icon');
 				btn.classList.add('copied');
-				setTimeout(() => btn.classList.remove('copied'), 1400);
+				icon?.morphTo(Check);
+				setTimeout(() => {
+					btn.classList.remove('copied');
+					icon?.morphTo(Copy);
+				}, 1400);
 			} catch {}
 		});
+	}
+
+	// Feature cards: each icon morphs to its counterpart while the card is hovered.
+	for (const card of document.querySelectorAll<HTMLElement>('[data-hover-icon]')) {
+		const icon = card.querySelector<Morph>('morph-icon');
+		const rest = ICONS[card.dataset.restIcon ?? ''];
+		const to = ICONS[card.dataset.hoverIcon ?? ''];
+		if (!icon || !rest || !to) continue;
+		card.addEventListener('pointerenter', () => icon.morphTo(to));
+		card.addEventListener('pointerleave', () => icon.morphTo(rest));
 	}
 
 	// Script savings calculator.

@@ -1,0 +1,39 @@
+---
+// The acrawl mark as a spider hanging from a silk thread, used in the landing
+// page and docs headers. Hovering or focusing the enclosing link drops it,
+// physically simulated by src/scripts/spider.ts.
+import '../styles/spider.css';
+
+const FEET = [
+	[10, 11, 4],
+	[5, 25, 3.5],
+	[6, 40, 3.5],
+	[12, 55, 4],
+	[54, 11, 4],
+	[59, 25, 3.5],
+	[58, 40, 3.5],
+	[52, 55, 4],
+];
+---
+
+<span class="spider" data-spider>
+	<svg viewBox="0 0 64 64" aria-hidden="true" class="spider-mark">
+		{
+			FEET.map(([x, y, r]) => (
+				<g class="leg">
+					<path d={`M32 32 ${x} ${y}`} />
+					<circle cx={x} cy={y} r={r} />
+				</g>
+			))
+		}
+		<circle cx="32" cy="32" r="8.5" class="spider-body"></circle>
+	</svg>
+</span>
+
+<script>
+	import { mountSpider } from '../scripts/spider';
+
+	for (const spider of document.querySelectorAll<HTMLElement>('[data-spider]')) {
+		mountSpider(spider.closest('a') ?? spider, spider);
+	}
+</script>

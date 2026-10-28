@@ -101,8 +101,8 @@ export function mountCrawlGraph(canvas: HTMLCanvasElement): void {
 
 	const draw = (now: number) => {
 		const t = now - start;
-		const lime = css('--ac-lime');
-		const orange = css('--ac-orange');
+		const accent = css('--ac-accent');
+		const spark = css('--ac-spark');
 		const line = css('--ac-line-2');
 		const crawlEnd = order.length * VISIT_EVERY_MS + EDGE_TRAVEL_MS;
 		const fade = t > crawlEnd + HOLD_MS ? Math.max(0, 1 - (t - crawlEnd - HOLD_MS) / 900) : 1;
@@ -130,7 +130,7 @@ export function mountCrawlGraph(canvas: HTMLCanvasElement): void {
 
 		// Crawled edges, drawn growing from parent to child.
 		ctx.globalAlpha = 0.85 * fade;
-		ctx.strokeStyle = lime;
+		ctx.strokeStyle = accent;
 		ctx.lineWidth = 1.4;
 		order.forEach((i, k) => {
 			const p = parent[i];
@@ -146,7 +146,7 @@ export function mountCrawlGraph(canvas: HTMLCanvasElement): void {
 			ctx.stroke();
 		});
 
-		// Pages: grey until visited, then lime with a short flash.
+		// Pages: grey until visited, then blue with a short flash.
 		for (const n of nodes) {
 			ctx.globalAlpha = 0.5;
 			ctx.fillStyle = line;
@@ -160,7 +160,7 @@ export function mountCrawlGraph(canvas: HTMLCanvasElement): void {
 			const n = nodes[i];
 			const flash = Math.max(0, 1 - arrived / 600);
 			ctx.globalAlpha = fade;
-			ctx.fillStyle = k === 0 ? orange : lime;
+			ctx.fillStyle = k === 0 ? spark : accent;
 			ctx.beginPath();
 			ctx.arc(n.x, n.y, n.r + 0.8 + flash * 5, 0, Math.PI * 2);
 			ctx.fill();

@@ -1,0 +1,11 @@
+---
+// Starlight's theme dropdown, replaced with the landing page's toggle, then the
+// Install button, matching the landing header's order of actions.
+import ThemeToggle from './ThemeToggle.astro';
+import '../styles/controls.css';
+
+const install = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}docs/install/`;
+---
+
+<ThemeToggle />
+<a class="btn btn-primary btn-sm" href={install}>Install</a>

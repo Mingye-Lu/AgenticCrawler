@@ -1,0 +1,40 @@
+---
+// The header row shared by the landing page and the docs, so both offer the
+// same logo, sections and actions. `current` marks where the reader is; the
+// docs pass Starlight's search box in the `search` slot.
+import GitHubButton from './GitHubButton.astro';
+import Spider from './Spider.astro';
+import ThemeToggle from './ThemeToggle.astro';
+import '../styles/controls.css';
+import '../styles/site-nav.css';
+
+interface Props {
+	current: 'home' | 'docs';
+}
+
+const { current } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
+// On the landing page the sections are on the same page.
+const home = current === 'home' ? '' : base;
+const install = current === 'home' ? '#install' : `${base}docs/install/`;
+---
+
+<div class="site-nav" data-current={current}>
+	<a class="brand" href={base} aria-label="acrawl home">
+		<Spider />
+		<span translate="no">acrawl</span>
+	</a>
+	<nav aria-label="Primary" class="nav-links">
+		<a href={`${home}#scripts`}>Scripts</a>
+		<a href={`${home}#devtools`}>DevTools</a>
+		<a href={`${home}#mcp`}>MCP</a>
+		<a href={`${home}#compare`}>Compare</a>
+		<a class="nav-docs" href={`${base}docs/`} aria-current={current === 'docs' ? 'page' : undefined}>Docs</a>
+	</nav>
+	{Astro.slots.has('search') && <div class="nav-search"><slot name="search" /></div>}
+	<div class="nav-actions">
+		<GitHubButton />
+		<ThemeToggle />
+		<a class="btn btn-primary btn-sm" href={install}>Install</a>
+	</div>
+</div>

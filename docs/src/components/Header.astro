@@ -1,0 +1,10 @@
+---
+// Starlight's header, replaced with the landing page's header row so the docs
+// and the landing page share one banner. Starlight's search box rides along.
+import Search from '@astrojs/starlight/components/Search.astro';
+import SiteNav from './SiteNav.astro';
+---
+
+<SiteNav current="docs">
+	<Search slot="search" />
+</SiteNav>

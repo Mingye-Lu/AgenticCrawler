@@ -2,60 +2,99 @@
 :root {
 	--sl-font: var(--ac-font);
 	--sl-font-mono: var(--ac-mono);
-	--sl-color-accent-low: #1f2a08;
-	--sl-color-accent: #9ccf1f;
-	--sl-color-accent-high: #d9fa7a;
+	--sl-color-accent-low: #0f2140;
+	--sl-color-accent: #5b9dff;
+	--sl-color-accent-high: #c4dbff;
 	--sl-color-white: #ffffff;
-	--sl-color-gray-1: #eef2e8;
-	--sl-color-gray-2: #c4ccbd;
-	--sl-color-gray-3: #9aa494;
-	--sl-color-gray-4: #6b7466;
-	--sl-color-gray-5: #333a30;
-	--sl-color-gray-6: #151914;
-	--sl-color-black: #0b0d0a;
-	--sl-color-bg-nav: rgb(11 13 10 / 0.85);
-	--sl-color-hairline-light: #252b23;
-	--sl-color-hairline: #252b23;
+	--sl-color-gray-1: #e6ebf2;
+	--sl-color-gray-2: #bcc6d5;
+	--sl-color-gray-3: #93a0b4;
+	--sl-color-gray-4: #647185;
+	--sl-color-gray-5: #2a3546;
+	--sl-color-gray-6: #121925;
+	--sl-color-black: var(--ac-bg);
+	--sl-color-bg-nav: color-mix(in srgb, var(--ac-bg) 82%, transparent);
+	--sl-color-bg-sidebar: var(--ac-bg);
+	--sl-color-hairline-light: #1e2734;
+	--sl-color-hairline: #1e2734;
 }
 
 :root[data-theme='light'] {
-	--sl-color-accent-low: #e6f2c8;
-	--sl-color-accent: #4b7a00;
-	--sl-color-accent-high: #2b4600;
-	--sl-color-white: #141712;
-	--sl-color-gray-1: #232720;
-	--sl-color-gray-2: #3a4036;
-	--sl-color-gray-3: #555d50;
-	--sl-color-gray-4: #7b8275;
-	--sl-color-gray-5: #cfcbbd;
-	--sl-color-gray-6: #efede4;
-	--sl-color-gray-7: #f6f5ef;
-	--sl-color-black: #fbfaf6;
-	--sl-color-bg-nav: rgb(251 250 246 / 0.85);
-	--sl-color-hairline-light: #e0ddd1;
-	--sl-color-hairline: #e0ddd1;
+	--sl-color-accent-low: #dce8fc;
+	--sl-color-accent: #1f5fd6;
+	--sl-color-accent-high: #0b3a8f;
+	--sl-color-white: #0f1623;
+	--sl-color-gray-1: #1b2433;
+	--sl-color-gray-2: #334055;
+	--sl-color-gray-3: #4a5568;
+	--sl-color-gray-4: #717d91;
+	--sl-color-gray-5: #c8d1de;
+	--sl-color-gray-6: #edf1f7;
+	--sl-color-gray-7: #f6f8fb;
+	--sl-color-black: var(--ac-bg);
+	--sl-color-bg-nav: color-mix(in srgb, var(--ac-bg) 82%, transparent);
+	--sl-color-bg-sidebar: var(--ac-bg);
+	--sl-color-hairline-light: #dde3ec;
+	--sl-color-hairline: #dde3ec;
+}
+
+/* The landing page's faint grid behind everything. */
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
+	background-image:
+		linear-gradient(var(--ac-line) 1px, transparent 1px),
+		linear-gradient(90deg, var(--ac-line) 1px, transparent 1px);
+	background-size: 56px 56px;
+	opacity: 0.28;
+	mask-image: linear-gradient(to bottom, black, transparent 70%);
+}
+
+/* The header is the landing page's header row (src/components/Header.astro),
+   which pads itself, so Starlight's bar only sets the height and background. */
+:root {
+	--sl-nav-height: 4.25rem;
 }
 
 header.header {
-	backdrop-filter: blur(12px);
+	padding: 0;
+	backdrop-filter: blur(14px);
+	border-color: var(--ac-line);
 }
 
-.site-title {
-	font-family: var(--ac-mono);
-	font-weight: 700;
-	letter-spacing: -0.02em;
+/* On phones the actions live in the menu, and the menu button sits on the
+   right edge of the bar. */
+@media (max-width: 49.99rem) {
+	header.header .nav-actions {
+		display: none;
+	}
+	header.header .site-nav {
+		padding-inline-end: calc(var(--sl-menu-button-size) + 1.5rem);
+	}
+	header.header .nav-search {
+		width: auto;
+	}
 }
 
-.site-title::after {
-	content: 'docs';
-	margin-inline-start: 0.5rem;
-	padding: 0.1rem 0.45rem;
-	border: 1px solid var(--sl-color-gray-5);
-	border-radius: 999px;
-	font-size: 0.7rem;
-	font-weight: 500;
-	color: var(--sl-color-gray-3);
+/* Phone menu: keep the actions on one centred row, and draw the menu button
+   like the landing page's bordered controls instead of a solid disc. */
+.mobile-preferences {
+	align-items: center;
+	padding-block: 0.75rem;
 }
+
+.sl-menu-button,
+[data-theme='light'] .sl-menu-button {
+	border: 1px solid var(--ac-line-2);
+	border-radius: 0.6rem;
+	background: color-mix(in srgb, var(--ac-bg) 82%, transparent);
+	color: var(--ac-text);
+	box-shadow: none;
+}
+
 
 .sl-markdown-content h1,
 .sl-markdown-content h2,
@@ -70,8 +109,32 @@ h1#_top {
 }
 
 .sl-markdown-content a:not(:where(.not-content *)) {
-	text-decoration-color: color-mix(in srgb, var(--sl-color-accent) 45%, transparent);
+	color: var(--ac-accent);
+	text-decoration-color: color-mix(in srgb, var(--ac-accent) 40%, transparent);
 	text-underline-offset: 0.2em;
+}
+
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+	text-decoration-color: var(--ac-accent);
+}
+
+/* Inline code as the landing page draws it: a soft accent chip. */
+.sl-markdown-content :not(pre) > code:not(:where(.not-content *)) {
+	padding: 0.12em 0.4em;
+	border: 0;
+	border-radius: 0.35em;
+	background: var(--ac-accent-soft);
+	color: var(--ac-text);
+	font-size: 0.86em;
+}
+
+/* Sidebar: the current page gets the accent tint and a bar, not a solid fill. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+	background: var(--ac-accent-soft);
+	color: var(--ac-accent);
+	box-shadow: inset 2px 0 0 var(--ac-accent);
 }
 
 .sl-markdown-content table {

@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" role="img" aria-label="acrawl architecture: TUI, prompt and MCP entry points feed a runtime turn loop that streams from an LLM provider and runs 43 tools, which fetch over HTTP, escalate to CloakBrowser, or drive the user's Chrome through a WebSocket extension bridge.">
-<style>:root{--bg:#eef2f3;--fg:#10222a;--muted:#546a73;--line:#8fa6af;--box:#ffffff;--lane:#e2eaec;--accent:#0a7d6e;--accent-soft:#d3efe9;--warm:#b4501f;
+<style>:root{--bg:#eef2f7;--fg:#0f1623;--muted:#4a5568;--line:#93a0b4;--box:#ffffff;--lane:#e3e9f2;--accent:#1f5fd6;--accent-soft:#dce8fc;--warm:#8a6100;
 --body:system-ui,-apple-system,"Segoe UI",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#0b161b;--fg:#e3edf0;--muted:#8fa3ab;--line:#4a6571;--box:#15262e;--lane:#112027;--accent:#4fd1bd;--accent-soft:#14363a;--warm:#f09a62}}
+@media (prefers-color-scheme:dark){:root{--bg:#0a0e14;--fg:#e6ebf2;--muted:#93a0b4;--line:#3a4a62;--box:#121925;--lane:#0d121a;--accent:#5b9dff;--accent-soft:#13264a;--warm:#ffd23f}}
 svg{font-family:var(--body)}
 .lane{fill:var(--lane)}
 .box{fill:var(--box);stroke:var(--line);stroke-width:1.2}
@@ -15,8 +15,8 @@ svg{font-family:var(--body)}
 .ac{stroke:var(--accent);stroke-width:2.2;fill:none}
 .wm{stroke:var(--warm);stroke-width:1.8;fill:none;stroke-dasharray:6 4}
 .pulse.gray{fill:var(--muted)}
-.pulse.teal{fill:var(--accent)}
-.pulse.orange{fill:var(--warm)}
+.pulse.blue{fill:var(--accent)}
+.pulse.yellow{fill:var(--warm)}
 @media (prefers-reduced-motion:reduce){.pulse{display:none}}</style>
 <rect width="1000" height="420" rx="10" fill="var(--bg)"/>
 <defs>
@@ -89,7 +89,7 @@ svg{font-family:var(--body)}
 <text class="l w" x="742" y="256" transform="rotate(-90 742 256)" text-anchor="middle">extension mode</text>
 <path class="wm" d="M880 312V344" marker-end="url(#w)"/>
 <text class="l w" x="890" y="332">CDP commands</text>
-<!-- travelling dots: grey = control flow, teal = turn loop, orange = extension mode -->
+<!-- travelling dots: grey = control flow, blue = turn loop, yellow = extension mode -->
 <g class="pulse gray"><circle r="3.5" opacity="0"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath href="#p1"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.149;0.851;1" dur="1.6s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.149;0.851;1" dur="1.6s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="1.6s" begin="0.4s" repeatCount="indefinite"><mpath href="#p2"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.149;0.851;1" dur="1.6s" begin="0.4s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.149;0.851;1" dur="1.6s" begin="0.4s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="1.2s" begin="0.2s" repeatCount="indefinite"><mpath href="#p3"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.2s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.2s" repeatCount="indefinite"/></circle>
@@ -97,10 +97,10 @@ svg{font-family:var(--body)}
 <circle r="3.5" opacity="0"><animateMotion dur="3.2s" repeatCount="indefinite"><mpath href="#p9"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.023;0.977;1" dur="3.2s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.023;0.977;1" dur="3.2s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="2s" begin="0.5s" repeatCount="indefinite"><mpath href="#p10"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.085;0.915;1" dur="2s" begin="0.5s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.085;0.915;1" dur="2s" begin="0.5s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="1.4s" begin="1s" repeatCount="indefinite"><mpath href="#p11"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.244;0.756;1" dur="1.4s" begin="1s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.244;0.756;1" dur="1.4s" begin="1s" repeatCount="indefinite"/></circle></g>
-<g class="pulse teal"><circle r="3.5" opacity="0"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath href="#p5"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.233;0.767;1" dur="1.6s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.233;0.767;1" dur="1.6s" repeatCount="indefinite"/></circle>
+<g class="pulse blue"><circle r="3.5" opacity="0"><animateMotion dur="1.6s" repeatCount="indefinite"><mpath href="#p5"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.233;0.767;1" dur="1.6s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.233;0.767;1" dur="1.6s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="1.6s" begin="0.8s" repeatCount="indefinite"><mpath href="#p6"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.244;0.756;1" dur="1.6s" begin="0.8s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.244;0.756;1" dur="1.6s" begin="0.8s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="1.2s" begin="0.3s" repeatCount="indefinite"><mpath href="#p7"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.3s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.263;0.737;1" dur="1.2s" begin="0.3s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="1.2s" begin="0.9s" repeatCount="indefinite"><mpath href="#p8"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.278;0.722;1" dur="1.2s" begin="0.9s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.278;0.722;1" dur="1.2s" begin="0.9s" repeatCount="indefinite"/></circle></g>
-<g class="pulse orange"><circle r="3.5" opacity="0"><animateMotion dur="2.4s" begin="0.3s" repeatCount="indefinite"><mpath href="#p12"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.083;0.917;1" dur="2.4s" begin="0.3s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.083;0.917;1" dur="2.4s" begin="0.3s" repeatCount="indefinite"/></circle>
+<g class="pulse yellow"><circle r="3.5" opacity="0"><animateMotion dur="2.4s" begin="0.3s" repeatCount="indefinite"><mpath href="#p12"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.083;0.917;1" dur="2.4s" begin="0.3s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.083;0.917;1" dur="2.4s" begin="0.3s" repeatCount="indefinite"/></circle>
 <circle r="3.5" opacity="0"><animateMotion dur="1.4s" begin="0.7s" repeatCount="indefinite"><mpath href="#p13"/></animateMotion><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.312;0.688;1" dur="1.4s" begin="0.7s" repeatCount="indefinite"/><animate attributeName="r" values="0;3.5;3.5;0" keyTimes="0;0.312;0.688;1" dur="1.4s" begin="0.7s" repeatCount="indefinite"/></circle></g>
 </svg>
