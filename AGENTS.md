@@ -66,7 +66,7 @@ The CloakBrowser bridge is notable: it is a **single embedded Node script** laun
 
 ## Website (`docs/`)
 
-`docs/` is an Astro site deployed to GitHub Pages by `.github/workflows/pages.yml` on pushes to `main` that touch `docs/` or `Cargo.toml`. Run `npm ci && npm run dev` inside `docs/` to preview (Node 22.23+).
+`docs/` is an Astro site deployed to GitHub Pages by `.github/workflows/pages.yml` on pushes to `main` that touch `docs/` or `Cargo.toml`. Run `npm ci && npm run dev` inside `docs/` to preview (Node 22.23.4+ or 24; CI builds on 24).
 
 - `src/pages/index.astro` is the hand-built landing page; `src/content/docs/docs/**.md` are the Starlight docs, served under `/docs/`. Sidebar order lives in `astro.config.mjs`.
 - Each docs page needs `title` and `description` frontmatter; the description is the search snippet, so write it as a one-sentence answer. Internal links use the full base path (`/AgenticCrawler/docs/...`).
