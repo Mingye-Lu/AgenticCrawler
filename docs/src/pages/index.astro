@@ -1,6 +1,6 @@
 ---
 import Landing from '../layouts/Landing.astro';
-import { DESCRIPTION, FACTS, INSTALL, REPO, SITE, TAGLINE, VERSION } from '../site';
+import { DESCRIPTION, FACTS, INSTALL, META_DESCRIPTION, REPO, SITE, TAGLINE, VERSION } from '../site';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const docs = (path = '') => `${base}docs/${path}`;
@@ -63,6 +63,7 @@ const devtools = [
 		id: 'network',
 		label: 'Network',
 		tool: 'list_network_activity',
+		cols: ['Method', 'URL', 'Status', 'Type', 'Time'],
 		rows: [
 			['GET', '/api/search?q=laptop', '200', 'xhr', '184 ms'],
 			['GET', '/static/app.9f2c.js', '200', 'script', '62 ms'],
@@ -75,6 +76,7 @@ const devtools = [
 		id: 'console',
 		label: 'Console',
 		tool: 'list_page_logs',
+		cols: ['Level', 'Message', 'Source', 'Count'],
 		rows: [
 			['error', 'TypeError: price is undefined', 'checkout.js:212', '×14', ''],
 			['warn', 'Deprecated API: document.domain', 'vendor.js:3', '×1', ''],
@@ -86,6 +88,7 @@ const devtools = [
 		id: 'perf',
 		label: 'Performance',
 		tool: 'get_page_performance',
+		cols: ['Metric', 'Value'],
 		rows: [
 			['TTFB', '142 ms', '', '', ''],
 			['DOMContentLoaded', '1.18 s', '', '', ''],
@@ -98,6 +101,7 @@ const devtools = [
 		id: 'a11y',
 		label: 'Accessibility',
 		tool: 'audit_accessibility',
+		cols: ['Impact', 'Rule', 'Affected', 'Standard'],
 		rows: [
 			['serious', 'color-contrast', '7 nodes', 'WCAG 1.4.3', ''],
 			['critical', 'button-name', '2 nodes', 'WCAG 4.1.2', ''],
@@ -179,6 +183,9 @@ const jsonLd = {
 			downloadUrl: `${REPO}/releases/latest`,
 			installUrl: `${SITE}docs/install/`,
 			codeRepository: REPO,
+			sameAs: [REPO, 'https://smithery.ai/server/mingyel2/acrawl'],
+			image: `${SITE}media/og.jpg`,
+			screenshot: `${SITE}media/acrawl-promo-poster.jpg`,
 			programmingLanguage: 'Rust',
 			isAccessibleForFree: true,
 			featureList: [
@@ -214,7 +221,7 @@ const jsonLd = {
 };
 ---
 
-<Landing title={title} description={DESCRIPTION} jsonLd={jsonLd}>
+<Landing title={title} description={META_DESCRIPTION} jsonLd={jsonLd}>
 	<a class="skip" href="#main">Skip to content</a>
 
 	<header class="nav" data-nav>
@@ -273,7 +280,8 @@ const jsonLd = {
 					)
 				}
 				<h1 class="hero-title">
-					<span>Describe it.</span>
+					<span class="hero-kicker">The open-source AI browser agent</span>{' '}
+					<span>Describe it.</span>{' '}
 					<span class="hero-accent">acrawl it.</span>
 				</h1>
 				<p class="hero-sub">
@@ -442,6 +450,13 @@ const jsonLd = {
 									<span class="dt-paren">()</span>
 								</div>
 								<table>
+									<thead>
+										<tr>
+											{p.cols.map((c) => (
+												<th scope="col">{c}</th>
+											))}
+										</tr>
+									</thead>
 									<tbody>
 										{p.rows.map((r) => (
 											<tr>
@@ -499,7 +514,10 @@ const jsonLd = {
 <span class="c">  ✓ wrote 3 configs</span></code></pre>
 					<a class="link" href={docs('mcp-server/')}>Set up the MCP server →</a>
 				</div>
-				<div class="marquee" aria-label={`Supported MCP clients: ${clients.join(', ')}`}>
+				<ul class="sr-only" aria-label="Supported MCP clients">
+					{clients.map((c) => <li>{c}</li>)}
+				</ul>
+				<div class="marquee">
 					{
 						[0, 1, 2, 3, 4].map((row) => (
 							<div class={`marquee-row marquee-row-${row}`} aria-hidden="true">
