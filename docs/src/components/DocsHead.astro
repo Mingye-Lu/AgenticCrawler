@@ -7,10 +7,11 @@ import { REPO, SITE } from '../site';
 const { entry, lastUpdated } = Astro.locals.starlightRoute;
 const url = new URL(Astro.url.pathname, Astro.site).href;
 const docsUrl = new URL('docs/', SITE).href;
+const isAbout = entry.id === 'about';
 
 const crumbs = [
 	{ name: 'acrawl', item: SITE },
-	{ name: 'Docs', item: docsUrl },
+	...(isAbout ? [] : [{ name: 'Docs', item: docsUrl }]),
 	...(url === docsUrl ? [] : [{ name: entry.data.title, item: url }]),
 ];
 
@@ -18,7 +19,7 @@ const ld = {
 	'@context': 'https://schema.org',
 	'@graph': [
 		{
-			'@type': 'TechArticle',
+			'@type': isAbout ? 'AboutPage' : 'TechArticle',
 			headline: entry.data.title,
 			description: entry.data.description,
 			url,

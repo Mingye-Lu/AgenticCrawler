@@ -21,6 +21,7 @@ const ORDER = [
 	'docs/comparisons/vs-browser-use',
 	'docs/comparisons/vs-playwright-mcp',
 	'docs/comparisons/vs-firecrawl',
+	'about',
 ];
 
 export function docUrl(id: string): string {

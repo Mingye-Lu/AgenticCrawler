@@ -104,6 +104,7 @@ export default defineConfig({
 						'docs/comparisons/vs-firecrawl',
 					],
 				},
+				{ label: 'Project', items: ['about'] },
 			],
 		}),
 	],
