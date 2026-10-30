@@ -1,8 +1,10 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
-    <img src="docs/assets/readme/hero-light.svg" alt="acrawl" width="560">
-  </picture>
+  <a href="https://mingye-lu.github.io/AgenticCrawler/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
+      <img src="docs/assets/readme/hero-light.svg" alt="acrawl" width="560">
+    </picture>
+  </a>
 </p>
 
 <p align="center">
