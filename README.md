@@ -1,16 +1,8 @@
 <p align="center">
-  <img src="docs/src/assets/mark.svg" alt="acrawl spider mark" width="88">
-</p>
-
-<p align="center">
-<pre align="center">
-  █████╗  ██████╗██████╗  █████╗ ██╗    ██╗██╗     
- ██╔══██╗██╔════╝██╔══██╗██╔══██╗██║    ██║██║     
- ███████║██║     ██████╔╝███████║██║ █╗ ██║██║     
- ██╔══██║██║     ██╔══██╗██╔══██║██║███╗██║██║     
- ██║  ██║╚██████╗██║  ██║██║  ██║╚███╔███╔╝███████╗
- ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝
-</pre>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
+    <img src="docs/assets/readme/hero-light.svg" alt="acrawl" width="560">
+  </picture>
 </p>
 
 <p align="center">
