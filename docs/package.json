@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "readme-logos": "node scripts/readme-logos.ts"
   },
   "dependencies": {
     "@astrojs/sitemap": "3.7.4",

@@ -1,12 +1,10 @@
 <p align="center">
-<pre align="center">
-  █████╗  ██████╗██████╗  █████╗ ██╗    ██╗██╗     
- ██╔══██╗██╔════╝██╔══██╗██╔══██╗██║    ██║██║     
- ███████║██║     ██████╔╝███████║██║ █╗ ██║██║     
- ██╔══██║██║     ██╔══██╗██╔══██║██║███╗██║██║     
- ██║  ██║╚██████╗██║  ██║██║  ██║╚███╔███╔╝███████╗
- ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝
-</pre>
+  <a href="https://mingye-lu.github.io/AgenticCrawler/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/hero-dark.svg">
+      <img src="docs/assets/readme/hero-light.svg" alt="acrawl" width="560">
+    </picture>
+  </a>
 </p>
 
 <p align="center">
@@ -17,7 +15,7 @@
   <a href="https://github.com/Mingye-Lu/AgenticCrawler/actions/workflows/ci.yml"><img src="https://github.com/Mingye-Lu/AgenticCrawler/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-2021_edition-orange.svg" alt="Rust"></a>
-  <a href="https://mingye-lu.github.io/AgenticCrawler/"><img src="https://img.shields.io/badge/website-acrawl-c8f43c.svg" alt="Website"></a>
+  <a href="https://mingye-lu.github.io/AgenticCrawler/"><img src="https://img.shields.io/badge/website-acrawl-5b9dff.svg" alt="Website"></a>
 </p>
 
 <p align="center">
@@ -106,6 +104,22 @@ acrawl > open localhost:3000/checkout, submit the form, and tell me which reques
 - **Your choice of model.** 25 providers, including Anthropic, OpenAI, Gemini, DeepSeek, Bedrock, Azure, Vertex AI, GitHub Copilot, Groq, Mistral and OpenRouter, plus any OpenAI-compatible endpoint such as Ollama.
 - **MCP both ways.** Use other MCP servers as extra agent tools, or expose acrawl's 40 tools to your coding agent with `acrawl mcp`.
 - **Open source.** MIT-licensed, runs on your machine, with your own LLM key and no telemetry.
+
+### Bring your own model
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/providers-dark.svg">
+  <img src="docs/assets/readme/providers-light.svg" alt="Anthropic, OpenAI, Google Gemini, DeepSeek, Amazon Bedrock, Azure OpenAI, Vertex AI, GitHub Copilot, GitLab Duo, Groq, Cerebras, Mistral AI, xAI, Cohere, Alibaba, OpenRouter, Together AI and Ollama" width="100%">
+</picture>
+
+### Use it from your coding agent
+
+`acrawl mcp install` sets acrawl up as an MCP server in any of these clients.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/clients-dark.svg">
+  <img src="docs/assets/readme/clients-light.svg" alt="Claude Code, Claude Desktop, Cursor, Windsurf, VS Code, OpenCode, Zed, TRAE, JetBrains, Gemini CLI, Qwen Code, Codex CLI, Hermes, OpenClaw, Goose, Crush and Aider" width="100%">
+</picture>
 
 ## How it compares
 
