@@ -144,9 +144,34 @@
       font-size: 12px;
       font-weight: 400;
     }
-    #status {
-      display: block;
+    .status-row {
+      display: flex;
+      gap: 10px;
       margin: 0 0 14px;
+    }
+    #power {
+      flex: none;
+      width: 96px;
+      background-color: #dc2626;
+      color: white;
+    }
+    #power:hover {
+      background-color: #b91c1c;
+    }
+    #power.start {
+      background-color: #16a34a;
+    }
+    #power.start:hover {
+      background-color: #15803d;
+    }
+    #power:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    #status {
+      flex: 1;
+      display: block;
+      margin: 0;
       padding: 12px;
       border-radius: 10px;
       font-size: 14px;
@@ -166,6 +191,11 @@
       border-color: #f44336;
       color: #c62828;
     }
+    #status.stopped {
+      background-color: #f1f5f9;
+      border-color: #cbd5e1;
+      color: #475569;
+    }
     #status.testing {
       background-color: #fff3e0;
       border-color: #ff9800;
@@ -178,12 +208,15 @@
     <div class="header">
       <div>
         <h1>acrawl Bridge</h1>
-        <div class="subtitle">Save reconnects the extension. Test Connection only checks the local bridge server.</div>
+        <div class="subtitle">Stop pauses all connection attempts until you press Start. Save reconnects with the new port; Test Connection only checks the local bridge server.</div>
       </div>
       <span id="version" class="version"></span>
     </div>
 
-    <span id="status">Disconnected</span>
+    <div class="status-row">
+      <span id="status">Disconnected</span>
+      <button id="power" disabled>Stop</button>
+    </div>
 
     <div class="connection">
       <div class="form-group">
