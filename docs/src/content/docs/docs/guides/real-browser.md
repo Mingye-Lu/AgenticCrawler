@@ -40,7 +40,7 @@ The extension serves one acrawl process at a time. If a terminal session already
 ## How it works
 
 1. `/extension` starts a small server on `127.0.0.1`, port 19876 by default. It listens only on your machine, never on the network.
-2. The extension, running in your browser, connects to it over a local WebSocket and reconnects on its own, retrying every couple of seconds, if acrawl restarts.
+2. The extension, running in your browser, connects to it over a local WebSocket and reconnects on its own, retrying every couple of seconds, if acrawl restarts. To pause those attempts while you aren't using acrawl, press **Stop** in the extension's popup; the badge shows OFF until you press **Start**.
 3. acrawl sends commands such as "navigate", "click" or "read the network log". The extension carries them out through the browser's DevTools Protocol and sends the results back. Tabs it opens for acrawl are kept together in an orange tab group, so you can see what the agent is working on.
 
 The server accepts a connection only when the browser identifies it as coming from an extension. Ordinary web pages can also try to reach `127.0.0.1`, and they are refused, so a site you visit can't take control of acrawl or your browser through the bridge.
@@ -66,6 +66,7 @@ acrawl config unset browser_backend
 | Symptom | Fix |
 |---|---|
 | The extension badge stays red | acrawl isn't running the bridge. Run `/extension`, or set `browser_backend` to `extension` so it starts on launch. |
+| The extension badge shows OFF | The extension is stopped. Open its popup and press **Start**. |
 | It never connects | The port in the extension's options page must match `extension_bridge_port` in acrawl's settings (default 19876). |
 | "Port in use" | Another program has the port. Pick another one with `acrawl config set extension_bridge_port 19877` and set the same port in the extension's options page. |
 | The MCP server says another process owns the bridge | One acrawl process can hold the bridge at a time. Close the other terminal session, or let it finish, then retry. |

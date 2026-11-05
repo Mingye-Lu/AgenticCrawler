@@ -55,6 +55,12 @@ There is no pairing step or token. The extension runs in your own browser, and i
 
 Once connected, acrawl persists `browser_backend: "extension"` in `~/.acrawl/settings.json`. On subsequent launches, the bridge server auto-starts and waits for the extension to reconnect — no need to type `/extension` again.
 
+## Starting and Stopping
+
+While it is on, the extension keeps trying to reach acrawl, retrying every couple of seconds, so it connects as soon as acrawl starts the bridge. If you don't want it doing that while you aren't using acrawl, open the extension popup and press **Stop**: it disconnects and makes no further connection attempts, and the badge shows **OFF**. The choice survives browser restarts. Press **Start** to resume.
+
+While stopped, acrawl's extension mode can't reach your browser, and its tools report that the extension isn't connected.
+
 ## Switching Back
 
 To switch back to CloakBrowser mode: type `/cloakbrowser` in the acrawl REPL. This clears the `browser_backend` setting and restores the default headless behavior.
@@ -75,7 +81,8 @@ All browser automation tools work through this bridge — the same tool surface 
 - **Badge stays red**: Check that acrawl is running. If `browser_backend` is set to `"extension"` in settings, the server starts automatically on launch.
 - **Port mismatch**: the port in the extension popup must match acrawl's `extension_bridge_port` (default 19876).
 - **Port in use**: Change the port in `~/.acrawl/settings.json` (`extension_bridge_port` field).
-- **Extension disconnects frequently**: The extension uses exponential backoff reconnection (1s → 30s). Check if another process is competing for the port.
+- **Badge shows OFF**: the extension is stopped. Open the popup and press **Start**.
+- **Extension disconnects frequently**: The extension retries with a short backoff (1s, then every 2s). Check if another process is competing for the port.
 
 ## Permissions
 

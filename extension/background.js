@@ -37,6 +37,11 @@ let reconnectTimer = null;
 const MAX_RECONNECT_DELAY_MS = 2000;
 let reconnectDelay = 1000;
 let keepaliveInterval = null;
+// The user's start/stop switch (popup). While stopped the extension makes no
+// connection attempts at all: no reconnect timer, no watchdog alarm. Persisted in
+// storage.local so it survives browser restarts; loaded by restoreState().
+let bridgeEnabled = true;
+const WATCHDOG_ALARM = 'ws-watchdog';
 
 // Tab management: maps pageIndex -> Chrome tabId
 const managedTabs = {};
@@ -280,13 +285,48 @@ async function getSettings() {
 
 function getConnectionStatus() {
   return {
+    enabled: bridgeEnabled,
     connected: wsConnected,
     connecting: Boolean(ws && ws.readyState === WebSocket.CONNECTING),
   };
 }
 
+function showStoppedBadge() {
+  setBadge('OFF', '#6b7280');
+}
+
+// Keep the watchdog alarm only while the bridge is switched on, so a stopped
+// extension never wakes its service worker.
+function syncWatchdog() {
+  if (bridgeEnabled) {
+    chrome.alarms.create(WATCHDOG_ALARM, { periodInMinutes: 0.5 });
+  } else {
+    chrome.alarms.clear(WATCHDOG_ALARM);
+  }
+}
+
+async function setBridgeEnabled(enabled) {
+  await stateReady;
+  // Flip the in-memory flag first: an in-flight connect() checks it right before
+  // opening a socket, and a reconnect timer checks it before re-arming.
+  bridgeEnabled = enabled;
+  syncWatchdog();
+  if (!enabled) {
+    disconnect();
+    showStoppedBadge();
+  }
+  await chrome.storage.local.set({ bridgeEnabled: enabled });
+  return enabled ? connect(5000) : false;
+}
+
 async function connect(timeoutMs = 0) {
   const { port } = await getSettings();
+  await stateReady;
+
+  if (!bridgeEnabled) {
+    showStoppedBadge();
+    return false;
+  }
 
   clearReconnectTimer();
   stopKeepalive();
@@ -380,6 +420,7 @@ function disconnect(options = {}) {
 
 function scheduleReconnect() {
   clearReconnectTimer();
+  if (!bridgeEnabled) return;
   reconnectTimer = setTimeout(() => {
     connect();
   }, reconnectDelay);
@@ -424,11 +465,20 @@ function setBadge(text, color) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message && message.type === 'getConnectionStatus') {
-    sendResponse(getConnectionStatus());
-    return false;
+    // A cold service worker must load the start/stop switch before reporting it.
+    stateReady.then(() => sendResponse(getConnectionStatus()));
+    return true;
+  }
+
+  if (message && message.type === 'setEnabled') {
+    setBridgeEnabled(message.enabled === true)
+      .then((connected) => sendResponse({ ok: true, enabled: bridgeEnabled, connected }))
+      .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : String(error) }));
+    return true;
   }
 
   if (message && message.type === 'reconnect') {
+    // connect() is a no-op while stopped, so saving the port never restarts the bridge.
     reconnect()
       .then((connected) => sendResponse({ ok: connected, connected }))
       .catch((error) => sendResponse({ ok: false, error: error && error.message ? error.message : String(error) }));
@@ -872,6 +922,8 @@ async function reclaimRestoredGroup() {
 }
 
 async function restoreState() {
+  const { bridgeEnabled: enabled } = await chrome.storage.local.get({ bridgeEnabled: true });
+  bridgeEnabled = enabled !== false;
   const state = await loadState();
   Object.assign(managedTabs, state.managedTabs);
   nextPageIndex = state.nextPageIndex;
@@ -885,11 +937,11 @@ const stateReady = restoreState();
 
 // ----------- Alarms watchdog -----------
 
-chrome.alarms.create('ws-watchdog', { periodInMinutes: 0.5 });
+stateReady.then(syncWatchdog);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'ws-watchdog') {
-    if (!wsConnected && (!ws || ws.readyState === WebSocket.CLOSED)) {
+  if (alarm.name === WATCHDOG_ALARM) {
+    if (bridgeEnabled && !wsConnected && (!ws || ws.readyState === WebSocket.CLOSED)) {
       connect();
     }
   }

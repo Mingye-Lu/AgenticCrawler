@@ -5,6 +5,45 @@ const portInput = document.getElementById('port');
 const saveButton = document.getElementById('save');
 const testButton = document.getElementById('test');
 const statusSpan = document.getElementById('status');
+const powerButton = document.getElementById('power');
+let bridgeEnabled = true;
+let statusTimer = null;
+
+function renderPower(enabled) {
+  bridgeEnabled = enabled;
+  powerButton.disabled = false;
+  powerButton.textContent = enabled ? 'Stop' : 'Start';
+  powerButton.className = enabled ? '' : 'start';
+  powerButton.title = enabled
+    ? 'Stop connecting to acrawl'
+    : 'Start connecting to acrawl';
+}
+
+function showStopped() {
+  statusSpan.textContent = 'Stopped: not connecting';
+  statusSpan.className = 'stopped';
+}
+
+// Start / stop the bridge. While stopped the extension makes no connection attempts.
+powerButton.addEventListener('click', () => {
+  const enable = !bridgeEnabled;
+  powerButton.disabled = true;
+  clearTimeout(statusTimer);
+  if (enable) {
+    statusSpan.textContent = 'Connecting...';
+    statusSpan.className = 'testing';
+  }
+  chrome.runtime.sendMessage({ type: 'setEnabled', enabled: enable }, (response) => {
+    if (chrome.runtime.lastError || !response || !response.ok) {
+      powerButton.disabled = false;
+      statusSpan.textContent = enable ? 'Could not start' : 'Could not stop';
+      statusSpan.className = 'disconnected';
+      return;
+    }
+    renderPower(response.enabled);
+    updateStatusDisplay();
+  });
+});
 
 // Display toggles persist immediately; the service worker picks them up via storage.onChanged.
 const toggleKeys = ['showIndicators', 'highlightChanges'];
@@ -39,6 +78,13 @@ saveButton.addEventListener('click', () => {
     statusSpan.className = 'testing';
     saveButton.disabled = true;
     testButton.disabled = true;
+    if (!bridgeEnabled) {
+      saveButton.disabled = false;
+      testButton.disabled = false;
+      statusSpan.textContent = 'Saved. Press Start to connect';
+      statusSpan.className = 'stopped';
+      return;
+    }
     chrome.runtime.sendMessage({ type: 'reconnect' }, (response) => {
       saveButton.disabled = false;
       testButton.disabled = false;
@@ -93,21 +139,27 @@ testButton.addEventListener('click', () => {
 });
 
 function updateStatusDisplay() {
+  clearTimeout(statusTimer);
   chrome.runtime.sendMessage({ type: 'getConnectionStatus' }, (response) => {
     if (chrome.runtime.lastError || !response) {
       statusSpan.textContent = 'Disconnected';
       statusSpan.className = 'disconnected';
+      return;
+    }
+    renderPower(response.enabled !== false);
+    if (response.enabled === false) {
+      showStopped();
     } else if (response.connected) {
       statusSpan.textContent = 'Connected ✓';
       statusSpan.className = 'connected';
     } else if (response.connecting) {
       statusSpan.textContent = 'Connecting...';
       statusSpan.className = 'testing';
-      setTimeout(updateStatusDisplay, 1000);
+      statusTimer = setTimeout(updateStatusDisplay, 1000);
     } else {
       statusSpan.textContent = 'Waiting for acrawl';
       statusSpan.className = 'disconnected';
-      setTimeout(updateStatusDisplay, 1500);
+      statusTimer = setTimeout(updateStatusDisplay, 1500);
     }
   });
 }
