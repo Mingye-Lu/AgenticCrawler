@@ -50,7 +50,7 @@ acrawl has no telemetry and no account. It talks to:
 - **GitHub**, to check for a newer release on startup and to download one when you run `acrawl update`.
 - **TypeSafe**, only if you turn on the optional `semantic_prune` setting and give it a key.
 
-The browser extension's data handling is described in its [privacy policy](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/extension/PRIVACY.md).
+The browser extension's data handling is described in its [privacy policy](/AgenticCrawler/privacy/).
 
 ## Get involved
 

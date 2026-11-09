@@ -51,7 +51,7 @@ The server accepts a connection only when the browser identifies it as coming fr
 - It does nothing until acrawl connects, and it talks only to acrawl on your own machine.
 - Whatever the agent reads goes to the LLM provider you configured, as with any acrawl run. Keep that in mind on pages with private data, or use a [local model](/AgenticCrawler/docs/providers/#local-and-self-hosted-models).
 
-The full details are in the extension's [privacy policy](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/extension/PRIVACY.md).
+The full details are in the extension's [privacy policy](/AgenticCrawler/privacy/).
 
 ## Switch back to the headless browser
 

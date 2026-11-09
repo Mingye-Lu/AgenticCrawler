@@ -14,6 +14,7 @@ const base = '/AgenticCrawler';
 function sourceFor(url) {
 	const path = new URL(url).pathname.slice(base.length).replace(/^\/|\/$/g, '');
 	if (path === '') return 'src/pages/index.astro';
+	if (path === 'privacy') return '../extension/PRIVACY.md';
 	for (const candidate of [`src/content/docs/${path}.md`, `src/content/docs/${path}/index.md`]) {
 		if (existsSync(candidate)) return candidate;
 	}
@@ -109,7 +110,7 @@ export default defineConfig({
 						'docs/comparisons/vs-firecrawl',
 					],
 				},
-				{ label: 'Project', items: ['about'] },
+				{ label: 'Project', items: ['about', { label: 'Privacy policy', link: '/privacy/' }] },
 			],
 		}),
 	],

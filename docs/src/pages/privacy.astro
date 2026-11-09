@@ -1,0 +1,28 @@
+---
+// The acrawl Bridge privacy policy, rendered from extension/PRIVACY.md so the
+// extension and the site share one source. The Chrome Web Store listing links
+// here, so the URL must stay stable.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Content } from '../../../extension/PRIVACY.md';
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Privacy policy',
+		description:
+			'The acrawl Bridge extension talks only to acrawl on localhost and collects no personal data, analytics or telemetry: what it stores and why each permission is needed.',
+		editUrl: 'https://github.com/Mingye-Lu/AgenticCrawler/edit/main/extension/PRIVACY.md',
+		tableOfContents: false,
+	}}
+>
+	<div class="policy">
+		<Content />
+	</div>
+</StarlightPage>
+
+<style>
+	/* PRIVACY.md opens with its own H1; the page title already provides it. */
+	.policy > :global(h1:first-child) {
+		display: none;
+	}
+</style>

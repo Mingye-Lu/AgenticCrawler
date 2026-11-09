@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/**"
       - "Cargo.toml" # the landing page shows the release version
+      - "extension/PRIVACY.md" # rendered at /privacy/
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
