@@ -8,10 +8,12 @@ const { entry, lastUpdated } = Astro.locals.starlightRoute;
 const url = new URL(Astro.url.pathname, Astro.site).href;
 const docsUrl = new URL('docs/', SITE).href;
 const isAbout = entry.id === 'about';
+// Project pages sit at the site root, outside /docs/.
+const isTopLevel = isAbout || entry.id === 'privacy';
 
 const crumbs = [
 	{ name: 'acrawl', item: SITE },
-	...(isAbout ? [] : [{ name: 'Docs', item: docsUrl }]),
+	...(isTopLevel ? [] : [{ name: 'Docs', item: docsUrl }]),
 	...(url === docsUrl ? [] : [{ name: entry.data.title, item: url }]),
 ];
 
