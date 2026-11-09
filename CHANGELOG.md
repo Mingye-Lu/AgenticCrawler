@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-08
+
+### Added
+
+- **acrawl Bridge extension 1.5.0 can be started and stopped.** The popup has a **Start**/**Stop** switch: when stopped, the extension disconnects, stops retrying the bridge, and its badge shows **OFF**; the choice survives browser restarts. The extension icons are redrawn as the spider mark.
+
 ### Changed
 
 - **The documentation site is now a full website.** A new landing page (crawl animation, live terminal demo, script savings calculator, DevTools tour, MCP client list, comparison table and FAQ) sits at the site root, and the docs move to `/docs/` on Astro Starlight with search and a light/dark theme. Every page carries structured data for search and AI answer engines, alongside a sitemap, `robots.txt`, `llms.txt` and `llms-full.txt`. Old mdBook URLs such as `/install.html` redirect to their new pages.
+- **The README leads with install and quick start** and links to the website for the full reference.
 
 ## [0.17.0] - 2026-10-27
 
@@ -1098,6 +1105,7 @@ A security, correctness, and resilience pass covering 22 review-flagged issues a
 - Structured output in JSON, CSV, or plain text.
 - Credential management via `acrawl auth` with per-provider configuration.
 
+[0.17.1]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.17.1
 [0.17.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.17.0
 [0.16.0]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.16.0
 [0.15.2]: https://github.com/Mingye-Lu/AgenticCrawler/releases/tag/v0.15.2
