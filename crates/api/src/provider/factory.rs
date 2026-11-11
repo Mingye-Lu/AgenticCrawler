@@ -1,6 +1,6 @@
 use crate::credentials::StoredProviderConfig;
 use crate::error::ApiError;
-use crate::provider::preset::ProviderProtocol;
+use crate::provider::preset::{ProviderPreset, ProviderProtocol};
 
 use super::ProviderClient;
 
@@ -34,71 +34,21 @@ impl ProviderClient {
                     return Ok(Self::Gemini(client));
                 }
                 ProviderProtocol::ChatCompletions => {
-                    if preset.id == "azure" {
-                        let resource = config.resource_name.as_deref().unwrap_or("default");
-                        let deployment = config.deployment_name.as_deref().unwrap_or("gpt-4o");
-                        let base_url = format!(
-                            "https://{resource}.openai.azure.com/openai/deployments/{deployment}"
-                        );
-                        return Ok(Self::Custom(build_azure_chat_completions(
-                            config,
-                            model,
-                            &base_url,
-                            preset.chat_path,
-                        )));
-                    }
-                    if preset.id == "gitlab" {
-                        let base_url = config
-                            .base_url
-                            .as_deref()
-                            .unwrap_or("https://gitlab.com/api/v4/ai/v1");
-                        let gitlab_headers = vec![
-                            (
-                                "X-Gitlab-Authentication-Type".to_string(),
-                                "oidc".to_string(),
-                            ),
-                            (
-                                "X-Gitlab-Duo-Chat-Feature".to_string(),
-                                "code_suggestions".to_string(),
-                            ),
-                        ];
-                        return Ok(Self::Custom(
-                            build_chat_completions_from_config(
-                                config,
-                                model,
-                                base_url,
-                                preset.chat_path,
-                                preset.transform_id,
-                            )
-                            .with_extra_headers(gitlab_headers),
-                        ));
-                    }
-                    if preset.id == "copilot" {
-                        let base_url = config
-                            .base_url
-                            .as_deref()
-                            .unwrap_or("https://api.githubcopilot.com");
-                        let copilot_headers = vec![
-                            ("Copilot-Integration-Id".to_string(), "acrawl".to_string()),
-                            ("editor-version".to_string(), "acrawl/1.0.0".to_string()),
-                        ];
-                        return Ok(Self::Custom(
-                            build_copilot_chat_completions(
-                                config,
-                                model,
-                                base_url,
-                                preset.chat_path,
-                            )
-                            .with_extra_headers(copilot_headers),
-                        ));
-                    }
-                    let base_url = config.base_url.as_deref().unwrap_or(preset.base_url);
-                    return Ok(Self::Custom(build_chat_completions_from_config(
-                        config,
-                        model,
-                        base_url,
-                        preset.chat_path,
-                        preset.transform_id,
+                    // Per-provider quirks (Azure's URL template, GitLab/Copilot's
+                    // static feature headers, Copilot's OAuth-sourced credential)
+                    // are expressed as data on `ProviderPreset` rather than as
+                    // `if preset.id == "..."` branches here.
+                    let base_url = preset.base_url_resolver.map_or_else(
+                        || {
+                            config
+                                .base_url
+                                .clone()
+                                .unwrap_or_else(|| preset.base_url.to_string())
+                        },
+                        |resolve| resolve(config),
+                    );
+                    return Ok(Self::Custom(build_chat_completions_from_preset(
+                        preset, config, model, &base_url,
                     )));
                 }
             }
@@ -113,72 +63,64 @@ impl ProviderClient {
     }
 }
 
-fn build_chat_completions_from_config(
+/// Builds a `ChatCompletionsClient` from a `ProviderPreset` and the stored
+/// config, applying the preset's declared auth format (`Bearer` /
+/// `XApiKey(header)` / `AzureApiKey`), credential source (API key vs OAuth
+/// access token), static `extra_headers`, and `transform_id` -- so
+/// provider-specific quirks like Azure's `api-key` header, GitLab/Copilot's
+/// feature headers, and Copilot's OAuth token live in preset data instead of
+/// as `if preset.id == "..."` branches.
+fn build_chat_completions_from_preset(
+    preset: &ProviderPreset,
     config: &StoredProviderConfig,
     model: &str,
     base_url: &str,
-    chat_path: &str,
-    transform_id: Option<&str>,
 ) -> crate::ChatCompletionsClient {
     use crate::client::AuthSource;
+    use crate::provider::preset::{AuthHeaderFormat, CredentialSource};
     use crate::provider::transform::{MistralTransform, NoOpTransform};
 
-    let auth = config
-        .api_key
-        .as_deref()
-        .filter(|key| !key.is_empty())
-        .map_or(AuthSource::None, |key| {
-            AuthSource::BearerToken(key.to_string())
-        });
+    let credential = match preset.credential_source {
+        CredentialSource::ApiKey => config.api_key.clone(),
+        CredentialSource::OAuthAccessToken => config
+            .oauth
+            .as_ref()
+            .map(|oauth| oauth.access_token.clone()),
+    }
+    .filter(|value| !value.is_empty());
 
-    let transform: Box<dyn super::transform::ProviderTransform> = match transform_id {
+    let mut extra_headers: Vec<(String, String)> = preset
+        .extra_headers
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect();
+
+    let auth = match preset.auth_header_format {
+        AuthHeaderFormat::Bearer => credential.map_or(AuthSource::None, AuthSource::BearerToken),
+        AuthHeaderFormat::XApiKey(header_name) => {
+            if let Some(value) = credential {
+                extra_headers.push((header_name.to_string(), value));
+            }
+            AuthSource::None
+        }
+        AuthHeaderFormat::AzureApiKey => {
+            if let Some(value) = credential {
+                extra_headers.push(("api-key".to_string(), value));
+            }
+            AuthSource::None
+        }
+    };
+
+    let transform: Box<dyn super::transform::ProviderTransform> = match preset.transform_id {
         Some("mistral") => Box::new(MistralTransform),
         _ => Box::new(NoOpTransform),
     };
 
     crate::ChatCompletionsClient::with_no_auth(model, base_url)
         .with_optional_auth(auth)
-        .with_chat_path(chat_path)
+        .with_chat_path(preset.chat_path)
         .with_transform(transform)
-}
-
-fn build_azure_chat_completions(
-    config: &StoredProviderConfig,
-    model: &str,
-    base_url: &str,
-    chat_path: &str,
-) -> crate::ChatCompletionsClient {
-    let extra_headers: Vec<(String, String)> = config
-        .api_key
-        .as_deref()
-        .filter(|key| !key.is_empty())
-        .map(|key| vec![("api-key".to_string(), key.to_string())])
-        .unwrap_or_default();
-
-    crate::ChatCompletionsClient::with_no_auth(model, base_url)
-        .with_chat_path(chat_path)
         .with_extra_headers(extra_headers)
-}
-
-fn build_copilot_chat_completions(
-    config: &StoredProviderConfig,
-    model: &str,
-    base_url: &str,
-    chat_path: &str,
-) -> crate::ChatCompletionsClient {
-    use crate::client::AuthSource;
-
-    let auth = config
-        .oauth
-        .as_ref()
-        .filter(|o| !o.access_token.is_empty())
-        .map_or(AuthSource::None, |o| {
-            AuthSource::BearerToken(o.access_token.clone())
-        });
-
-    crate::ChatCompletionsClient::with_no_auth(model, base_url)
-        .with_optional_auth(auth)
-        .with_chat_path(chat_path)
 }
 
 fn build_vertex_client(config: &StoredProviderConfig, model: &str) -> ProviderClient {
