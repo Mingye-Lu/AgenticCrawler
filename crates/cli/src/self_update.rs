@@ -237,9 +237,12 @@ async fn install_cloakbrowser_if_needed() {
     }
 
     let config_home = config_home_dir();
-    let _ = std::fs::create_dir_all(&config_home);
+    let Some(package) = cloakbrowser_update_spec(&config_home) else {
+        println!("CloakBrowser is not installed. Run `acrawl install-browser` to choose a build.");
+        return;
+    };
 
-    if update_cloakbrowser_package(&config_home).await {
+    if update_cloakbrowser_package(&config_home, package).await {
         download_browser_binary(&config_home).await;
     }
 }
@@ -264,7 +267,24 @@ fn npx_command() -> tokio::process::Command {
     }
 }
 
-async fn update_cloakbrowser_package(config_home: &Path) -> bool {
+/// Keep the user on the line they chose at `acrawl install-browser`: 0.6 is the
+/// keyless legacy build, anything newer needs a license key.
+fn cloakbrowser_update_spec(config_home: &Path) -> Option<&'static str> {
+    let manifest = config_home
+        .join("node_modules")
+        .join("cloakbrowser")
+        .join("package.json");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(manifest).ok()?).ok()?;
+    let version = manifest.get("version")?.as_str()?;
+    Some(if version.starts_with("0.6.") {
+        "cloakbrowser@0.6"
+    } else {
+        "cloakbrowser@latest"
+    })
+}
+
+async fn update_cloakbrowser_package(config_home: &Path, package: &str) -> bool {
     let pb = make_spinner("Updating CloakBrowser package...");
     let npm_timeout = Duration::from_mins(2);
     let npm_result = tokio::time::timeout(
@@ -272,7 +292,7 @@ async fn update_cloakbrowser_package(config_home: &Path) -> bool {
         npm_command()
             .args(["install", "--prefix"])
             .arg(config_home)
-            .arg("cloakbrowser@latest")
+            .arg(package)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .output(),
@@ -293,7 +313,7 @@ async fn update_cloakbrowser_package(config_home: &Path) -> bool {
             );
             print_stderr_tail(&stderr);
             println!(
-                "  Run manually: npm install --prefix \"{}\" cloakbrowser@latest",
+                "  Run manually: npm install --prefix \"{}\" {package}",
                 config_home.display()
             );
             false
@@ -301,7 +321,7 @@ async fn update_cloakbrowser_package(config_home: &Path) -> bool {
         Ok(Err(e)) => {
             println!("WARNING: Could not run npm: {e}");
             println!(
-                "  Run manually: npm install --prefix \"{}\" cloakbrowser@latest",
+                "  Run manually: npm install --prefix \"{}\" {package}",
                 config_home.display()
             );
             false
@@ -312,7 +332,7 @@ async fn update_cloakbrowser_package(config_home: &Path) -> bool {
                 npm_timeout.as_secs()
             );
             println!(
-                "  Run manually: npm install --prefix \"{}\" cloakbrowser@latest",
+                "  Run manually: npm install --prefix \"{}\" {package}",
                 config_home.display()
             );
             false
@@ -360,7 +380,13 @@ async fn download_browser_binary(config_home: &Path) {
                 output.status
             );
             print_stderr_tail(&stderr);
-            println!("  The browser will be downloaded automatically on first use.");
+            if stderr.contains("license key") {
+                println!(
+                    "  Run `acrawl install-browser` to add a license key or switch to the keyless legacy build."
+                );
+            } else {
+                println!("  The browser will be downloaded automatically on first use.");
+            }
         }
         Ok(Err(e)) => {
             println!("WARNING: Could not download browser binary: {e}");
@@ -381,6 +407,31 @@ fn print_stderr_tail(stderr: &str) {
         let tail: Vec<&str> = stderr.lines().rev().take(5).collect();
         for line in tail.into_iter().rev() {
             println!("  {line}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cloakbrowser_update_spec;
+
+    #[test]
+    fn update_keeps_the_installed_cloakbrowser_line() {
+        let home = tempfile::tempdir().expect("tempdir");
+        assert_eq!(cloakbrowser_update_spec(home.path()), None);
+
+        let pkg = home.path().join("node_modules").join("cloakbrowser");
+        std::fs::create_dir_all(&pkg).expect("mkdir");
+        for (version, spec) in [
+            ("0.6.5", "cloakbrowser@0.6"),
+            ("0.7.2", "cloakbrowser@latest"),
+        ] {
+            std::fs::write(
+                pkg.join("package.json"),
+                format!(r#"{{"version":"{version}"}}"#),
+            )
+            .expect("write");
+            assert_eq!(cloakbrowser_update_spec(home.path()), Some(spec));
         }
     }
 }
