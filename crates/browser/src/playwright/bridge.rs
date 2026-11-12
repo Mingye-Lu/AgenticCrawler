@@ -753,8 +753,14 @@ impl PlaywrightBridge {
             return Err(BridgeError::PlaywrightNotInstalled(error.message));
         }
 
+        // CloakBrowser 0.7+ refuses to launch without a key; point at acrawl's own fix.
+        let hint = if error.message.contains("CloakBrowserLicenseError") {
+            ". Run `acrawl install-browser` to add a license key or switch to the keyless legacy build."
+        } else {
+            ""
+        };
         Err(BridgeError::Protocol(format!(
-            "bootstrap failed: {} ({})",
+            "bootstrap failed: {} ({}){hint}",
             error.message, error.kind
         )))
     }

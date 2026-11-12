@@ -608,6 +608,9 @@ async function bootstrap() {
       if (!fs.existsSync(pkgJson)) continue;
       try {
         const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf8'));
+        // 0.6 is the keyless legacy line (`acrawl install-browser --legacy`); its
+        // update notice points at 0.7+, which refuses to launch without a license key.
+        if (String(pkg.version).startsWith('0.6.')) process.env.CLOAKBROWSER_AUTO_UPDATE ??= 'false';
         const entry = pkg.exports?.['.']?.import || pkg.module || pkg.main || 'index.js';
         ({ launch } = await import(url.pathToFileURL(path.join(dir, 'cloakbrowser', entry)).href));
         resolved = true;
@@ -620,7 +623,7 @@ async function bootstrap() {
         ok: false,
         error: {
           kind: 'playwright_not_installed',
-          message: 'CloakBrowser package not found. Install with `npm install cloakbrowser`.'
+          message: 'CloakBrowser package not found'
         }
       }) + '\n');
       process.exit(1);
