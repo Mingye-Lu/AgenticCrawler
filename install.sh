@@ -146,39 +146,14 @@ elif [ -n "$node_major" ] && [ "$node_major" -lt 20 ]; then
 fi
 
 # --- 10. CloakBrowser install ---
+# `acrawl install-browser` asks which build to use (the latest needs a license
+# key) and also installs Linux system deps and the browser binary. It reads the
+# terminal directly: under `curl | sh`, stdin is this script.
 if [ -n "$node_major" ] && [ "$node_major" -ge 20 ]; then
     if [ -d "${CONFIG_HOME}/node_modules/cloakbrowser" ] && [ -d "${CONFIG_HOME}/node_modules/playwright-core" ]; then
         echo "CloakBrowser already installed at ${CONFIG_HOME}/node_modules/cloakbrowser (skipping)"
-    else
-        echo "Installing CloakBrowser..."
-        mkdir -p "$CONFIG_HOME"
-        if npm install --prefix "$CONFIG_HOME" cloakbrowser playwright-core; then
-            echo "CloakBrowser installed."
-        else
-            echo "WARNING: CloakBrowser install failed. Run manually: npm install --prefix \"$CONFIG_HOME\" cloakbrowser playwright-core"
-        fi
-    fi
-
-    # Install OS-level libraries required by Chromium (Linux only).
-    # playwright-core ships an install-deps command that handles this per-distro.
-    case "$(uname -s)" in
-        Linux)
-            echo "Installing system dependencies for Chromium..."
-            if npx --prefix "$CONFIG_HOME" playwright-core install-deps chromium; then
-                echo "System dependencies installed."
-            else
-                echo "WARNING: Could not install system dependencies (may need sudo)."
-                echo "If the browser fails to launch, run:"
-                echo "  sudo npx --prefix \"$CONFIG_HOME\" playwright-core install-deps chromium"
-            fi
-            ;;
-    esac
-
-    echo "Ensuring browser binary is downloaded..."
-    if npx --prefix "$CONFIG_HOME" cloakbrowser install; then
-        echo "Browser binary ready."
-    else
-        echo "WARNING: Browser binary download failed. It will be downloaded on first use."
+    elif ! { [ -r /dev/tty ] && "${INSTALL_DIR}/acrawl" install-browser </dev/tty; }; then
+        echo "WARNING: CloakBrowser was not installed. Run: acrawl install-browser"
     fi
 fi
 

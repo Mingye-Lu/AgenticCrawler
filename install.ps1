@@ -156,28 +156,18 @@ try {
 }
 
 # --- 10. CloakBrowser install ---
+# `acrawl install-browser` asks which build to use (the latest needs a license key)
+# and downloads the browser binary.
 if ($nodeAvailable) {
     $cloakbrowserDir = Join-Path $ConfigHome "node_modules\cloakbrowser"
     $playwrightCoreDir = Join-Path $ConfigHome "node_modules\playwright-core"
     if ((Test-Path $cloakbrowserDir) -and (Test-Path $playwrightCoreDir)) {
         Write-Host "  CloakBrowser already installed." -ForegroundColor Gray
     } else {
-        Write-Host "Installing CloakBrowser..." -ForegroundColor Gray
-        try {
-            & npm.cmd install --prefix $ConfigHome cloakbrowser playwright-core 2>&1 | Out-Null
-            Write-Host "  CloakBrowser installed." -ForegroundColor Green
-        } catch {
-            Write-Warning "CloakBrowser installation failed: $_"
-            Write-Warning "You can install it manually later: npm install --prefix `"$ConfigHome`" cloakbrowser playwright-core"
+        & $targetPath install-browser
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "CloakBrowser was not installed. Run: acrawl install-browser"
         }
-    }
-
-    Write-Host "Ensuring browser binary is downloaded..." -ForegroundColor Gray
-    try {
-        & npx.cmd --prefix $ConfigHome cloakbrowser install 2>&1 | Out-Null
-        Write-Host "  Browser binary ready." -ForegroundColor Green
-    } catch {
-        Write-Warning "Browser binary download failed. It will be downloaded on first use."
     }
 }
 
