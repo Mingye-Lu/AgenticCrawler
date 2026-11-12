@@ -24,7 +24,7 @@ head:
 | `acrawl mcp install` / `uninstall` | Add or remove acrawl in your editors' MCP config. |
 | `acrawl auth <provider>` | Set up a [provider](/AgenticCrawler/docs/providers/). Also `auth status` and `auth list`. |
 | `acrawl config get / set / unset / path` | Read and write [settings](/AgenticCrawler/docs/configuration/). |
-| `acrawl install-browser` | Install CloakBrowser and download its browser binary. |
+| `acrawl install-browser [--license-key KEY \| --latest \| --legacy]` | Install CloakBrowser: the latest build, which needs a [license key](/AgenticCrawler/docs/install/#cloakbrowser-license-key), or the keyless legacy build. Asks when no flag is given. |
 | `acrawl update` | Replace the binary with the latest release. |
 | `acrawl uninstall [--purge]` | Remove acrawl. `--purge` also deletes settings, credentials and sessions. |
 | `acrawl system-prompt` | Print the agent's system prompt, for debugging. |

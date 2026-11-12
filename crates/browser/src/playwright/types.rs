@@ -64,7 +64,7 @@ impl fmt::Display for BridgeError {
             Self::Protocol(message) => write!(f, "Browser bridge protocol error: {message}"),
             Self::PlaywrightNotInstalled(message) => write!(
                 f,
-                "CloakBrowser is not installed: {message}. Install with `npm install cloakbrowser`"
+                "CloakBrowser is not installed: {message}. Run `acrawl install-browser`"
             ),
             Self::Io(error) => write!(f, "CloakBrowser bridge I/O error: {error}"),
             Self::Json(error) => write!(f, "CloakBrowser bridge JSON error: {error}"),

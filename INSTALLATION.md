@@ -80,7 +80,7 @@ Install the browser once Node.js is ready:
 acrawl install-browser
 ```
 
-This installs `cloakbrowser` and `playwright-core` into `~/.acrawl/node_modules/` and downloads the Chromium binary. On Linux it also installs system-level Chromium dependencies (may require root). The browser binary also auto-downloads on first use if this step is skipped.
+It asks which build to install: the latest, which needs a CloakBrowser license key (free key at https://cloakbrowser.dev/free, one browser at a time), or the keyless legacy build (cloakbrowser 0.6, Chromium 146). Pass `--license-key KEY`, `--latest` or `--legacy` to skip the question. It installs `cloakbrowser` and `playwright-core` into `~/.acrawl/node_modules/` and downloads the Chromium binary. On Linux it also installs system-level Chromium dependencies (may require root). The browser binary also auto-downloads on first use if this step is skipped.
 
 Alternatively, install the [Chrome extension](#chrome-extension-backend) to drive your own installed browser — no Node.js required for that mode.
 
@@ -366,7 +366,7 @@ External MCP servers can be added directly to `settings.json`:
 acrawl update
 ```
 
-Downloads the latest binary from GitHub Releases, verifies its SHA-256 checksum, and replaces the running executable in-place. Also updates CloakBrowser if Node.js 20+ is installed. On Windows, the old binary is renamed to `acrawl.exe.old` before replacement.
+Downloads the latest binary from GitHub Releases, verifies its SHA-256 checksum, and replaces the running executable in-place. Also updates CloakBrowser within the build you chose (latest or legacy) if Node.js 20+ is installed. On Windows, the old binary is renamed to `acrawl.exe.old` before replacement.
 
 ## Uninstall
 

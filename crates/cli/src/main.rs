@@ -108,7 +108,7 @@ fn run(action: CliAction) -> Result<(), Box<dyn std::error::Error>> {
             rt.block_on(self_update::run_self_update())?;
         }
         CliAction::Uninstall { purge } => uninstall::run_uninstall(purge)?,
-        CliAction::InstallBrowser => install_browser()?,
+        CliAction::InstallBrowser(build) => install_browser(build)?,
         CliAction::Mcp => mcp_server::run_mcp_server(),
         CliAction::Run(options) => process::exit(acrawl_ui::run_script_cli(&options)),
         CliAction::McpInstall => {
@@ -205,6 +205,16 @@ fn run_repl(model: String, allowed_tools: Option<AllowedToolSet>) -> Result<(), 
     Ok(acrawl_tui::run_tui(model, allowed_tools)?)
 }
 
+/// Which `CloakBrowser` line `acrawl install-browser` installs. `CloakBrowser` 0.7+
+/// refuses to launch without a license key; 0.6 still runs the keyless v146 build.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BrowserBuild {
+    /// `cloakbrowser@latest`; `None` relies on a key already saved or set in the env.
+    Latest { license_key: Option<String> },
+    /// `cloakbrowser@0.6`, no key.
+    Legacy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CliAction {
     PrintSystemPrompt,
@@ -238,7 +248,7 @@ enum CliAction {
     Uninstall {
         purge: bool,
     },
-    InstallBrowser,
+    InstallBrowser(Option<BrowserBuild>),
     Mcp,
     Run(RunOptions),
     McpInstall,
@@ -405,7 +415,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         "uninstall" => Ok(CliAction::Uninstall {
             purge: rest.iter().any(|a| a == "--purge"),
         }),
-        "install-browser" => Ok(CliAction::InstallBrowser),
+        "install-browser" => parse_install_browser_args(&rest[1..]),
         "mcp" => parse_mcp_args(&rest[1..]),
         "run" => parse_run_args(&rest[1..]),
         "prompt" => {
@@ -915,6 +925,40 @@ fn parse_run_args(args: &[String]) -> Result<CliAction, String> {
 }
 
 /// Reads a flag's value from `--flag=value` or the following argument.
+fn parse_install_browser_args(args: &[String]) -> Result<CliAction, String> {
+    let mut build = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
+            _ => (arg, None),
+        };
+        let next = match flag {
+            "--license-key" => {
+                let key = take_flag_value(args, &mut index, flag, inline.as_deref())?;
+                BrowserBuild::Latest {
+                    license_key: Some(key),
+                }
+            }
+            "--latest" => {
+                index += 1;
+                BrowserBuild::Latest { license_key: None }
+            }
+            "--legacy" => {
+                index += 1;
+                BrowserBuild::Legacy
+            }
+            other => return Err(format!("unknown install-browser option: {other}")),
+        };
+        if build.is_some() {
+            return Err("choose one of --license-key, --latest or --legacy".to_string());
+        }
+        build = Some(next);
+    }
+    Ok(CliAction::InstallBrowser(build))
+}
+
 fn take_flag_value(
     args: &[String],
     index: &mut usize,
@@ -1226,7 +1270,7 @@ fn resume_session(session_path: &Path, commands: &[String]) {
 }
 
 #[allow(clippy::too_many_lines)]
-fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
+fn install_browser(build: Option<BrowserBuild>) -> Result<(), Box<dyn std::error::Error>> {
     use std::process::Command;
 
     // Check for Node.js 20+
@@ -1257,53 +1301,56 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     }
 
+    let build = match build {
+        Some(build) => build,
+        None => prompt_browser_build()?,
+    };
+    let package = match build {
+        BrowserBuild::Latest { .. } => "cloakbrowser@latest",
+        BrowserBuild::Legacy => "cloakbrowser@0.6",
+    };
+
     let config_home = runtime::config_home_dir();
     std::fs::create_dir_all(&config_home)?;
 
-    // npm install cloakbrowser playwright-core
-    let already_installed = config_home
-        .join("node_modules")
-        .join("cloakbrowser")
-        .exists()
-        && config_home
-            .join("node_modules")
-            .join("playwright-core")
-            .exists();
+    // Always run npm install so re-running switches between the latest and legacy lines.
+    println!("Installing {package}...");
+    let status = npm_command("npm")
+        .args([
+            "install",
+            "--prefix",
+            &config_home.to_string_lossy(),
+            package,
+            "playwright-core",
+        ])
+        .status()?;
+    if !status.success() {
+        return Err(format!(
+            "npm install failed. Run manually: npm install --prefix \"{}\" {package} playwright-core",
+            config_home.display()
+        )
+        .into());
+    }
+    println!("CloakBrowser installed.");
 
-    if already_installed {
-        println!(
-            "CloakBrowser already installed at {} (skipping npm install)",
-            config_home
-                .join("node_modules")
-                .join("cloakbrowser")
-                .display()
-        );
-    } else {
-        println!("Installing CloakBrowser...");
-        let mut cmd = if cfg!(windows) {
-            let mut c = Command::new("cmd");
-            c.args(["/C", "npm"]);
-            c
-        } else {
-            Command::new("npm")
-        };
-        let status = cmd
+    // `cloakbrowser login <key>` validates the key and saves it to
+    // ~/.cloakbrowser/license.key, where every later launch finds it.
+    if let BrowserBuild::Latest {
+        license_key: Some(key),
+    } = &build
+    {
+        let status = npm_command("npx")
             .args([
-                "install",
                 "--prefix",
                 &config_home.to_string_lossy(),
                 "cloakbrowser",
-                "playwright-core",
+                "login",
+                key,
             ])
             .status()?;
         if !status.success() {
-            return Err(format!(
-                "npm install failed. Run manually: npm install --prefix \"{}\" cloakbrowser playwright-core",
-                config_home.display()
-            )
-            .into());
+            return Err("CloakBrowser rejected the license key (see the message above).".into());
         }
-        println!("CloakBrowser installed.");
     }
 
     // Install system-level OS dependencies required by Chromium (Linux only).
@@ -1333,21 +1380,18 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
 
     // Download the browser binary
     println!("Ensuring browser binary is downloaded...");
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.args(["/C", "npx"]);
-        c
-    } else {
-        Command::new("npx")
-    };
-    let status = cmd
-        .args([
-            "--prefix",
-            &config_home.to_string_lossy(),
-            "cloakbrowser",
-            "install",
-        ])
-        .status()?;
+    let mut cmd = npm_command("npx");
+    cmd.args([
+        "--prefix",
+        &config_home.to_string_lossy(),
+        "cloakbrowser",
+        "install",
+    ]);
+    if build == BrowserBuild::Legacy {
+        // 0.6 otherwise suggests `npm install cloakbrowser@latest`, which needs a key.
+        cmd.env("CLOAKBROWSER_AUTO_UPDATE", "false");
+    }
+    let status = cmd.status()?;
     if status.success() {
         println!("Browser binary ready.");
     } else {
@@ -1355,6 +1399,52 @@ fn install_browser() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// `npm`/`npx` need `cmd /C` on Windows, where they are `.cmd` shims.
+fn npm_command(tool: &str) -> std::process::Command {
+    if cfg!(windows) {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.args(["/C", tool]);
+        cmd
+    } else {
+        std::process::Command::new(tool)
+    }
+}
+
+fn prompt_browser_build() -> Result<BrowserBuild, Box<dyn std::error::Error>> {
+    if !io::stdin().is_terminal() {
+        eprintln!("CloakBrowser 0.7+ needs a license key. Choose a build:");
+        eprintln!("  acrawl install-browser --license-key KEY   latest build (free key: https://cloakbrowser.dev/free)");
+        eprintln!("  acrawl install-browser --latest            latest build, key already saved or in CLOAKBROWSER_LICENSE_KEY");
+        eprintln!("  acrawl install-browser --legacy            keyless Chromium 146 build (cloakbrowser 0.6)");
+        process::exit(2);
+    }
+    println!("CloakBrowser 0.7+ needs a license key for every launch. Choose a build:");
+    println!("  1) Latest  - newest Chromium, needs a key (free key: https://cloakbrowser.dev/free, 1 concurrent browser)");
+    println!("  2) Legacy  - keyless Chromium 146 (cloakbrowser 0.6), no longer updated");
+    loop {
+        match read_line("Choice [1/2]: ")?.as_str() {
+            "1" => {
+                let key = read_line("License key (leave empty to use one already saved): ")?;
+                return Ok(BrowserBuild::Latest {
+                    license_key: (!key.is_empty()).then_some(key),
+                });
+            }
+            "2" => return Ok(BrowserBuild::Legacy),
+            _ => println!("Enter 1 or 2."),
+        }
+    }
+}
+
+fn read_line(prompt: &str) -> io::Result<String> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line)? == 0 {
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "input closed"));
+    }
+    Ok(line.trim().to_string())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1472,10 +1562,13 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Run a saved script (or script file) without an LLM; data goes to stdout or --output"
     )?;
-    writeln!(out, "  acrawl install-browser")?;
     writeln!(
         out,
-        "      Install CloakBrowser and download the browser binary"
+        "  acrawl install-browser [--license-key KEY | --latest | --legacy]"
+    )?;
+    writeln!(
+        out,
+        "      Install CloakBrowser: the latest build (needs a license key) or the keyless legacy build"
     )?;
     writeln!(out, "  acrawl uninstall [--purge]")?;
     writeln!(
@@ -1950,6 +2043,36 @@ mod tests {
                 .expect("uninstall --purge"),
             CliAction::Uninstall { purge: true }
         );
+    }
+
+    #[test]
+    fn parses_install_browser_build_choice() {
+        let parse = |args: &[&str]| {
+            let args: Vec<String> = std::iter::once("install-browser")
+                .chain(args.iter().copied())
+                .map(String::from)
+                .collect();
+            parse_args(&args)
+        };
+        assert_eq!(parse(&[]), Ok(CliAction::InstallBrowser(None)));
+        assert_eq!(
+            parse(&["--legacy"]),
+            Ok(CliAction::InstallBrowser(Some(BrowserBuild::Legacy)))
+        );
+        assert_eq!(
+            parse(&["--latest"]),
+            Ok(CliAction::InstallBrowser(Some(BrowserBuild::Latest {
+                license_key: None
+            })))
+        );
+        let with_key = Ok(CliAction::InstallBrowser(Some(BrowserBuild::Latest {
+            license_key: Some("cb_x".to_string()),
+        })));
+        assert_eq!(parse(&["--license-key", "cb_x"]), with_key);
+        assert_eq!(parse(&["--license-key=cb_x"]), with_key);
+        assert!(parse(&["--legacy", "--latest"]).is_err());
+        assert!(parse(&["--license-key"]).is_err());
+        assert!(parse(&["--bogus"]).is_err());
     }
 
     #[test]

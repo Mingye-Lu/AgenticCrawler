@@ -34,7 +34,7 @@ irm https://raw.githubusercontent.com/Mingye-Lu/AgenticCrawler/main/install.ps1 
 1. Detects your operating system and CPU, and picks the matching release (Linux and macOS on x64 or ARM64, Windows on x64).
 2. Downloads it from the latest GitHub release and checks it against the published SHA256 checksum. A mismatch stops the install.
 3. On Linux and macOS, puts the binary in `~/.local/bin` (or `ACRAWL_INSTALL_DIR`) and tells you if that folder isn't on your `PATH`. On Windows, puts it in `%USERPROFILE%\.acrawl\bin` and adds that folder to your user `PATH`.
-4. Installs CloakBrowser into `~/.acrawl` if Node.js 20+ is available. The browser itself downloads the first time a page needs it.
+4. Installs CloakBrowser into `~/.acrawl` if Node.js 20+ is available, asking which build you want (see [below](#cloakbrowser-license-key)). The browser itself downloads the first time a page needs it.
 
 Prefer to read the script first? It's [install.sh](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/install.sh) or [install.ps1](https://github.com/Mingye-Lu/AgenticCrawler/blob/main/install.ps1). You can also download a binary and `checksums.sha256` from the [releases page](https://github.com/Mingye-Lu/AgenticCrawler/releases) yourself.
 
@@ -92,13 +92,31 @@ Or configure the MCP server and install the skill in one step, without Node:
 acrawl mcp install --client claude-code --skill
 ```
 
+## CloakBrowser license key
+
+Since version 0.7, CloakBrowser needs a license key for every launch. `acrawl install-browser` asks which build to use:
+
+- **Latest**: the newest Chromium build. Needs a key. A [free key](https://cloakbrowser.dev/free) takes one email and allows one browser at a time, so running the terminal UI and the MCP server together needs a paid key.
+- **Legacy**: the keyless Chromium 146 build (cloakbrowser 0.6). It no longer gets updates.
+
+To choose without a prompt (CI, scripts):
+
+```bash
+acrawl install-browser --license-key cb_xxxxxxxx   # latest, saves the key
+acrawl install-browser --latest                   # latest, key already in CLOAKBROWSER_LICENSE_KEY or saved
+acrawl install-browser --legacy                   # keyless legacy build
+```
+
+Run it again at any time to switch. `acrawl update` keeps you on the build you chose.
+
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
 | `acrawl: command not found` | The install folder isn't on your `PATH`. On Linux and macOS the script prints the line to add to your shell profile. On any system, open a new terminal afterwards. |
 | "Node.js 20+ is required for browser automation" | Install Node.js 20 or newer, then run `acrawl install-browser`. Pages that don't need JavaScript still work without it. |
-| CloakBrowser install failed | Run `acrawl install-browser`, or `npm install --prefix ~/.acrawl cloakbrowser playwright-core`. |
+| CloakBrowser install failed | Run `acrawl install-browser`. |
+| `CloakBrowserLicenseError: No CloakBrowser license key` | Run `acrawl install-browser` to add a key or switch to the legacy build. |
 | `acrawl` refuses to start the UI | The terminal UI needs an interactive terminal. In scripts and CI, use `acrawl prompt` or `acrawl run`. |
 
 Next: [Quick start](/AgenticCrawler/docs/quickstart/).
