@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`acrawl install-browser` asks which CloakBrowser build to use.** CloakBrowser 0.7 requires a license key for every launch. Choose the latest build with a key (`--license-key KEY`, or `--latest` when one is already saved) or the keyless legacy build (`--legacy`, cloakbrowser 0.6 with Chromium 146). The install scripts run this step, `acrawl update` stays on the build you chose, and a missing-key launch error now says how to fix it.
+
 ## [0.17.1] - 2026-11-08
 
 ### Added
